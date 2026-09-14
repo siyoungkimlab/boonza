@@ -12,7 +12,7 @@ s.select("pbwithin 6 of protein")  # periodic, uses the system cell
 s.select("water and nearest 10 to protein")
 s.select("x > 10 and charge < -0.5")
 s.select('name "C.*"')  # double quotes: regular expression; single quotes are literal
-s.select("smarts 'c1ccccc1'")  # needs RDKit
+s.select("smarts 'c1ccccc1'")  # through RDKit
 s.select("resid 10 to 20 and backbone")
 ```
 

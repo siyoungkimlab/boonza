@@ -10,7 +10,7 @@ tool, running the real program where possible. The test suite has 463 tests.
 | PDB, SDF read/write, bond guessing | msys | canonical dump |
 | mmCIF | gemmi | atom records, models, cell |
 | GRO | MDAnalysis | atoms and coordinates |
-| DCD, XTC, TRR, Amber NetCDF | MDAnalysis | frames, boxes, times; MDAnalysis and SciPy read the files boonza writes |
+| DCD, XTC, TRR, Amber NetCDF | MDAnalysis | frames, boxes, times; XTC and TRR frames decoded bit for bit, and files written byte-identical to GROMACS's xdrfile (as compiled in MDAnalysis); MDAnalysis and SciPy read the files boonza writes |
 | Amber prmtop, inpcrd/rst7 | msys `LoadPrmTop`; OpenMM `AmberPrmtopFile` | every table, positions, velocities and cell on msys's test system and five more prmtops (CMAP included); energies |
 | PSF | MDAnalysis `PSFParser`; OpenMM `CharmmPsfFile` | atoms, types, charges, masses, residues, segments, bonds on nine PSF variants |
 | GROMACS topology | OpenMM `GromacsTopFile`; MDAnalysis `ITPParser` | energies of an Amber-style topology (and against its Amber original); GROMOS structure |

@@ -9,10 +9,7 @@ was requested.
 """
 
 import numpy as np
-from _common import OUT, require
-
-require("rdkit")
-
+from _common import OUT
 from rdkit import Chem  # noqa: E402
 
 import boonza  # noqa: E402

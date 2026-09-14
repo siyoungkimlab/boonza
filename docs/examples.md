@@ -5,33 +5,31 @@ step and prints what it finds. The output below is what the scripts
 printed when this page was generated with `python docs/gen_examples.py`.
 Run any of them with `python examples/NN_name.py`.
 
-Examples marked *needs openmm* or *needs rdkit* print a note and stop when
-that package is missing. The structures in `examples/data` come from the
-RCSB PDB.
+The structures in `examples/data` come from the RCSB PDB.
 
-- [01_load_and_inspect.py](#01-load-and-inspect) — Load a structure and look around: hierarchy, columns, selections, sequences
-- [02_selections.py](#02-selections) — A tour of the selection language (msys/VMD syntax)
-- [03_build_and_edit.py](#03-build-and-edit) — Build a system from scratch, edit it, and write it in several formats
-- [04_molecules_and_rings.py](#04-molecules-and-rings) — Molecules (bonded fragments), identical-molecule groups, and rings
-- [05_parameterize_with_openmm.py](#05-parameterize-with-openmm) — Parameterize a protein with OpenMM's Amber14 force field and save it as DMS
-- [06_edit_forcefield.py](#06-edit-forcefield) — Edit force-field parameters: copy-on-write terms, NBFIX overrides, exclusions
-- [07_superposition.py](#07-superposition) — Superpose proteins: ChimeraX-style matchmaker, PyMOL-style cealign, plain fits
-- [08_sequence_alignment.py](#08-sequence-alignment) — Pairwise sequence alignment, identity and similarity
-- [09_trajectory_analysis.py](#09-trajectory-analysis) — Make a short trajectory, then analyze it
-- [10_periodic_boxes.py](#10-periodic-boxes) — Periodic boundaries: minimum-image distances, making molecules whole, wrapping
-- [11_rdkit_bridge.py](#11-rdkit-bridge) — Small molecules through RDKit: SMILES to 3D, SMARTS selections, bond orders
-- [12_validate_and_diff.py](#12-validate-and-diff) — Catch problems before simulating: validate, find_knots, diff
-- [13_structure_analysis.py](#13-structure-analysis) — Analyze one structure: surface area, contacts, secondary structure, angles
-- [14_command_line.sh](#14-command-line) — The boonza command line on the example data
-- [15_ligand_rmsd.py](#15-ligand-rmsd) — Symmetry-corrected ligand RMSD: equivalent atoms should not count as errors
-- [16_build_from_text.py](#16-build-from-text) — From text to 3D: a molecule from SMILES and a peptide from its sequence
-- [17_solvate_and_ions.py](#17-solvate-and-ions) — Build a simulation box: solvate a protein, add salt, repartition hydrogen masses
-- [18_topology_files.py](#18-topology-files) — Read simulation topologies: a GROMACS .top with its .gro coordinates
-- [19_trajectory_formats.py](#19-trajectory-formats) — Trajectory formats: write and read DCD, Amber NetCDF, XTC and TRR
-- [20_analysis_extras.py](#20-analysis-extras) — More analysis: native contacts, contact frequencies, principal components,
-- [21_summaries_for_ai.py](#21-summaries-for-ai) — From 3D back to text: a summary for people and language models, a table, and a view
+- [01_load_and_inspect.py](#example-01-load-and-inspect) — Load a structure and look around: hierarchy, columns, selections, sequences
+- [02_selections.py](#example-02-selections) — A tour of the selection language (msys/VMD syntax)
+- [03_build_and_edit.py](#example-03-build-and-edit) — Build a system from scratch, edit it, and write it in several formats
+- [04_molecules_and_rings.py](#example-04-molecules-and-rings) — Molecules (bonded fragments), identical-molecule groups, and rings
+- [05_parameterize_with_openmm.py](#example-05-parameterize-with-openmm) — Parameterize a protein with OpenMM's Amber14 force field and save it as DMS
+- [06_edit_forcefield.py](#example-06-edit-forcefield) — Edit force-field parameters: copy-on-write terms, NBFIX overrides, exclusions
+- [07_superposition.py](#example-07-superposition) — Superpose proteins: ChimeraX-style matchmaker, PyMOL-style cealign, plain fits
+- [08_sequence_alignment.py](#example-08-sequence-alignment) — Pairwise sequence alignment, identity and similarity
+- [09_trajectory_analysis.py](#example-09-trajectory-analysis) — Make a short trajectory, then analyze it
+- [10_periodic_boxes.py](#example-10-periodic-boxes) — Periodic boundaries: minimum-image distances, making molecules whole, wrapping
+- [11_rdkit_bridge.py](#example-11-rdkit-bridge) — Small molecules through RDKit: SMILES to 3D, SMARTS selections, bond orders
+- [12_validate_and_diff.py](#example-12-validate-and-diff) — Catch problems before simulating: validate, find_knots, diff
+- [13_structure_analysis.py](#example-13-structure-analysis) — Analyze one structure: surface area, contacts, secondary structure, angles
+- [14_command_line.sh](#example-14-command-line) — The boonza command line on the example data
+- [15_ligand_rmsd.py](#example-15-ligand-rmsd) — Symmetry-corrected ligand RMSD: equivalent atoms should not count as errors
+- [16_build_from_text.py](#example-16-build-from-text) — From text to 3D: a molecule from SMILES and a peptide from its sequence
+- [17_solvate_and_ions.py](#example-17-solvate-and-ions) — Build a simulation box: solvate a protein, add salt, repartition hydrogen masses
+- [18_topology_files.py](#example-18-topology-files) — Read simulation topologies: a GROMACS .top with its .gro coordinates
+- [19_trajectory_formats.py](#example-19-trajectory-formats) — Trajectory formats: write and read DCD, Amber NetCDF, XTC and TRR
+- [20_analysis_extras.py](#example-20-analysis-extras) — More analysis: native contacts, contact frequencies, principal components,
+- [21_summaries_for_ai.py](#example-21-summaries-for-ai) — From 3D back to text: a summary for people and language models, a table, and a view
 
-<a id="01-load-and-inspect"></a>
+(example-01-load-and-inspect)=
 
 ## 01_load_and_inspect.py: Load a structure and look around: hierarchy, columns, selections, sequences
 
@@ -108,7 +106,7 @@ chain B: 146 residues  VHLTPEEKSAVTALWGKVNVDEVGGEALGR...
 protein center: [23.6 34.1 11.6]  extent: [46.8 40.  42.7]
 ```
 
-<a id="02-selections"></a>
+(example-02-selections)=
 
 ## 02_selections.py: A tour of the selection language (msys/VMD syntax)
 
@@ -192,7 +190,7 @@ heme pocket: 312 atoms in 35 residues, e.g. ['ALA65', 'ALA70', 'ASN102', 'ASN97'
 heavy atoms: 2396 | first five indices: [0, 1, 2, 3, 4]
 ```
 
-<a id="03-build-and-edit"></a>
+(example-03-build-and-edit)=
 
 ## 03_build_and_edit.py: Build a system from scratch, edit it, and write it in several formats
 
@@ -280,7 +278,7 @@ water + methanol: 33 atoms; methanol atoms are [30, 31, 32]
 depth column survived in DMS: True
 ```
 
-<a id="04-molecules-and-rings"></a>
+(example-04-molecules-and-rings)=
 
 ## 04_molecules_and_rings.py: Molecules (bonded fragments), identical-molecule groups, and rings
 
@@ -372,7 +370,7 @@ fused ring systems: [5] (the porphyrin is one system)
 rings in PHE/TYR/TRP/HIS side chains of chain A: 22 Counter({5: 11, 6: 11})
 ```
 
-<a id="05-parameterize-with-openmm"></a>
+(example-05-parameterize-with-openmm)=
 
 ## 05_parameterize_with_openmm.py: Parameterize a protein with OpenMM's Amber14 force field and save it as DMS
 
@@ -381,12 +379,10 @@ tables (stretches, angles, dihedrals, 1-4 pairs, Lennard-Jones, charges).
 Then we inspect the tables, report the parameters of a few atoms, check
 the system, compute energies, and make sure a DMS round trip is lossless.
 
-    python examples/05_parameterize_with_openmm.py        (needs openmm)
+    python examples/05_parameterize_with_openmm.py
 
 ```python
-from _common import OUT, amber_system, require
-
-require("openmm")
+from _common import OUT, amber_system
 
 import boonza  # noqa: E402
 
@@ -450,7 +446,7 @@ validate: no problems
 DMS round trip differences: []
 ```
 
-<a id="06-edit-forcefield"></a>
+(example-06-edit-forcefield)=
 
 ## 06_edit_forcefield.py: Edit force-field parameters: copy-on-write terms, NBFIX overrides, exclusions
 
@@ -460,14 +456,11 @@ Jones overrides (NBFIX) change one type pair.  ``diff`` shows exactly what
 changed, and ``update_exclusions`` rebuilds exclusions and 1-4 pairs from
 the bonds.
 
-    python examples/06_edit_forcefield.py        (needs openmm)
+    python examples/06_edit_forcefield.py
 
 ```python
-from _common import amber_system, require
-
-require("openmm")
-
 import numpy as np  # noqa: E402
+from _common import amber_system
 
 import boonza  # noqa: E402
 
@@ -530,7 +523,7 @@ total energy: -647.26 -> -689.57 kcal/mol
 rebuilt exclusions and 1-4 pairs vs original: identical
 ```
 
-<a id="07-superposition"></a>
+(example-07-superposition)=
 
 ## 07_superposition.py: Superpose proteins: ChimeraX-style matchmaker, PyMOL-style cealign, plain fits
 
@@ -602,7 +595,7 @@ cealign, 1FNA -> 1TEN
 by hand: RMSD 35.0 A before fitting, 1.052 A after the Kabsch fit
 ```
 
-<a id="08-sequence-alignment"></a>
+(example-08-sequence-alignment)=
 
 ## 08_sequence_alignment.py: Pairwise sequence alignment, identity and similarity
 
@@ -695,7 +688,7 @@ pairwise identity (%)
 closest pair: Hb alpha and Hb beta (43% identical)
 ```
 
-<a id="09-trajectory-analysis"></a>
+(example-09-trajectory-analysis)=
 
 ## 09_trajectory_analysis.py: Make a short trajectory, then analyze it
 
@@ -798,18 +791,18 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.35 0.47 0.56 0.59]
-radius of gyration: 13.31 +- 0.07 A
-most flexible residues: [(844, 0.7), (864, 0.66), (865, 0.51), (879, 0.47), (805, 0.44)]
+C-alpha RMSD to frame 0 (A): [0.   0.33 0.48 0.52 0.61]
+radius of gyration: 13.26 +- 0.06 A
+most flexible residues: [(884, 0.61), (843, 0.6), (845, 0.58), (879, 0.55), (883, 0.54)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-147. -147. -140. -131.] / [157. 156. 174. 158.]
-hydrogen bonds per frame: [53, 47, 36, 44, 32]
-    THR852:OG1 -> ASP854:OD1   present in 100% of frames
-      GLU870:N -> GLY838:O     present in 100% of frames
-      ILE821:N -> TYR858:O     present in 95% of frames
+residue 830 phi/psi over time: [-145. -148. -149. -140.] / [159. 161. 164. 161.]
+hydrogen bonds per frame: [53, 47, 39, 39, 38]
+    THR836:OG1 -> THR848:OG1   present in 100% of frames
+    ARG876:NH1 -> GLU834:OE2   present in 100% of frames
+    THR891:OG1 -> LYS864:O     present in 100% of frames
 ```
 
-<a id="10-periodic-boxes"></a>
+(example-10-periodic-boxes)=
 
 ## 10_periodic_boxes.py: Periodic boundaries: minimum-image distances, making molecules whole, wrapping
 
@@ -883,7 +876,7 @@ after Glue, every water is within half a box of residue 1: True
 waters within 3.5 A of residue 1, plain vs periodic: 6 9
 ```
 
-<a id="11-rdkit-bridge"></a>
+(example-11-rdkit-bridge)=
 
 ## 11_rdkit_bridge.py: Small molecules through RDKit: SMILES to 3D, SMARTS selections, bond orders
 
@@ -891,13 +884,10 @@ Aspirin goes from a SMILES string to a 3D boonza System and back.  SMARTS
 patterns select atoms, and bond orders are recovered from geometry alone,
 as needed for ligands read from PDB, GRO or mmCIF files.
 
-    python examples/11_rdkit_bridge.py        (needs rdkit)
+    python examples/11_rdkit_bridge.py
 
 ```python
-from _common import OUT, require
-
-require("rdkit")
-
+from _common import OUT
 from rdkit import Chem  # noqa: E402
 from rdkit.Chem import AllChem  # noqa: E402
 
@@ -954,7 +944,7 @@ bond orders recovered from geometry: True
 SDF data field: boonza example
 ```
 
-<a id="12-validate-and-diff"></a>
+(example-12-validate-and-diff)=
 
 ## 12_validate_and_diff.py: Catch problems before simulating: validate, find_knots, diff
 
@@ -962,14 +952,11 @@ We take a clean parameterized protein, break it in several typical ways,
 and let ``validate`` find each problem.  Then a hand-made "knot": a bond
 threaded through a benzene ring.
 
-    python examples/12_validate_and_diff.py        (needs openmm)
+    python examples/12_validate_and_diff.py
 
 ```python
-from _common import amber_system, require
-
-require("openmm")
-
 import numpy as np  # noqa: E402
+from _common import amber_system
 
 import boonza  # noqa: E402
 
@@ -1029,7 +1016,7 @@ what differs between the clean and broken systems:
 knot: bond (7, 6) passes through ring [5, 4, 3, 2, 1, 0]
 ```
 
-<a id="13-structure-analysis"></a>
+(example-13-structure-analysis)=
 
 ## 13_structure_analysis.py: Analyze one structure: surface area, contacts, secondary structure, angles
 
@@ -1115,7 +1102,7 @@ backbone H-bonds: 76, strongest -6.42 kcal/mol
 radius of gyration: 13.95 A
 ```
 
-<a id="14-command-line"></a>
+(example-14-command-line)=
 
 ## 14_command_line.sh: The boonza command line on the example data
 
@@ -1216,7 +1203,7 @@ residues: 230 residues != 125 residues
 chains: 2 chains != 1 chains
 ```
 
-<a id="15-ligand-rmsd"></a>
+(example-15-ligand-rmsd)=
 
 ## 15_ligand_rmsd.py: Symmetry-corrected ligand RMSD: equivalent atoms should not count as errors
 
@@ -1350,7 +1337,7 @@ dRMSD over 7 pocket C-alphas and 43 heme atoms:
   atoms in order (A):     [0.   0.13 0.27 0.42 0.53 0.86]
 ```
 
-<a id="16-build-from-text"></a>
+(example-16-build-from-text)=
 
 ## 16_build_from_text.py: From text to 3D: a molecule from SMILES and a peptide from its sequence
 
@@ -1363,10 +1350,7 @@ was requested.
 
 ```python
 import numpy as np
-from _common import OUT, require
-
-require("rdkit")
-
+from _common import OUT
 from rdkit import Chem  # noqa: E402
 
 import boonza  # noqa: E402
@@ -1414,7 +1398,7 @@ DSSP of the strand:  CCCCCCCCCCCC
 wrote examples/output/aspirin.sdf and examples/output/helix.pdb
 ```
 
-<a id="17-solvate-and-ions"></a>
+(example-17-solvate-and-ions)=
 
 ## 17_solvate_and_ions.py: Build a simulation box: solvate a protein, add salt, repartition hydrogen masses
 
@@ -1474,7 +1458,7 @@ total mass 486.405 -> 486.405 u
 wrote examples/output/lysozyme_solvated.pdb
 ```
 
-<a id="18-topology-files"></a>
+(example-18-topology-files)=
 
 ## 18_topology_files.py: Read simulation topologies: a GROMACS .top with its .gro coordinates
 
@@ -1544,7 +1528,7 @@ by table: {'stretch_harm': 5.6, 'angle_harm': 32.6, 'dihedral_trig': 28.6, 'nonb
 net charge +0.000 e over 877 molecules
 ```
 
-<a id="19-trajectory-formats"></a>
+(example-19-trajectory-formats)=
 
 ## 19_trajectory_formats.py: Trajectory formats: write and read DCD, Amber NetCDF, XTC and TRR
 
@@ -1555,8 +1539,6 @@ the same way (there is no DTR writer).
     python examples/19_trajectory_formats.py
 
 ```python
-import importlib.util
-
 import numpy as np
 from _common import OUT, water_box
 
@@ -1566,12 +1548,7 @@ s = water_box(4)
 rng = np.random.default_rng(0)
 frames = s.positions + rng.normal(0, 0.2, (5, s.natoms, 3))
 
-formats = ["dcd", "nc"]
-if importlib.util.find_spec("MDAnalysis"):
-    formats += ["xtc", "trr"]  # through MDAnalysis's compiled XDR library
-else:
-    print("(install MDAnalysis for XTC and TRR)")
-for fmt in formats:
+for fmt in ["dcd", "nc", "xtc", "trr"]:
     path = OUT / f"waters.{fmt}"
     # DCD stores a start and a uniform time step, not a time per frame
     options = {"dt": 2.0, "istart": 0} if fmt == "dcd" else {}
@@ -1604,7 +1581,7 @@ XTC stores 0.001 nm; the other formats keep float32 coordinates.
 every other frame: [0.0, 4.0, 8.0] | oxygens only: (5, 64, 3)
 ```
 
-<a id="20-analysis-extras"></a>
+(example-20-analysis-extras)=
 
 ## 20_analysis_extras.py: More analysis: native contacts, contact frequencies, principal components,
 
@@ -1618,9 +1595,6 @@ enough to see what each tool reports.
 
 ```python
 import numpy as np
-from _common import require
-
-require("rdkit")
 
 import boonza  # noqa: E402
 
@@ -1679,7 +1653,7 @@ step 20: CCCCCCCCCCCC
 mean 0.095: naive error 0.0233, from blocks 0.1444 (statistical inefficiency 38)
 ```
 
-<a id="21-summaries-for-ai"></a>
+(example-21-summaries-for-ai)=
 
 ## 21_summaries_for_ai.py: From 3D back to text: a summary for people and language models, a table, and a view
 

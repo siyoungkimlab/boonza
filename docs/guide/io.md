@@ -123,8 +123,10 @@ for chunk in traj.chunks(500, atoms="protein"):  # memory-bounded blocks
   when the file has no cell.
 - DCD is memory-mapped: CHARMM, NAMD and X-PLOR variants, fixed atoms,
   either byte order.
-- XTC and TRR use the compiled XDR reader that ships with MDAnalysis. TRR
-  frames that carry only velocities or forces have NaN positions.
+- XTC and TRR are read and written natively. The XTC compression is a numba
+  port of GROMACS's xdrfile library: frames decode bit for bit and files are
+  written byte-identical to GROMACS's. TRR frames that carry only
+  velocities or forces have NaN positions.
 - Amber NetCDF (`.nc`, `.ncdf`; restart files `.ncrst` as one frame) is
   read natively, from NetCDF-3 classic or 64-bit-offset files. NetCDF-4
   (HDF5) files are not supported.

@@ -6,14 +6,11 @@ Jones overrides (NBFIX) change one type pair.  ``diff`` shows exactly what
 changed, and ``update_exclusions`` rebuilds exclusions and 1-4 pairs from
 the bonds.
 
-    python examples/06_edit_forcefield.py        (needs openmm)
+    python examples/06_edit_forcefield.py
 """
 
-from _common import amber_system, require
-
-require("openmm")
-
 import numpy as np  # noqa: E402
+from _common import amber_system
 
 import boonza  # noqa: E402
 
