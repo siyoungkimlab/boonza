@@ -365,9 +365,16 @@ Per frame, (donor, hydrogen, acceptor) triplets by the Wernet-Nilsson cone (mdtr
 Criterion: donor-acceptor distance under 3.3 Å - 0.00044 Å/deg^2 * theta^2,
 with theta the hydrogen-donor-acceptor angle under 45 degrees.
 
-### `boonza.dssp(system, positions=None, simplified: 'bool' = False) -> 'np.ndarray'`
+### `boonza.dssp(system, positions=None, simplified: 'bool' = False, box=None, breaks: 'bool' = True) -> 'np.ndarray'`
 
-DSSP codes, shape (nframes, nresidues): one frame, a (nframes, natoms, 3) array or Frames.
+DSSP codes, shape (nframes, nresidues).
+
+``positions``: one frame, a (nframes, natoms, 3) array, a Frames block or
+a Trajectory (read chunk by chunk, backbone atoms only).  ``box``: a (3, 3)
+box or one per frame (Å) for minimum-image distances; Frames and
+trajectories use their own boxes unless ``box`` is given (``box=False``
+ignores them).  ``breaks``: cut chains at C-N gaps over 2.5 Å as the
+DSSP program does (False: topology chains only, as mdtraj).
 
 ### `boonza.backbone_dihedrals(system, positions=None, box=None) -> 'BackboneDihedrals'`
 
@@ -380,9 +387,11 @@ in one chain with C-N under 2.5 Å in the first frame (the DSSP break
 rule); angles lacking a linked neighbor or a backbone atom are NaN.
 ``box`` (3x3, Å) applies the minimum image to each bond vector.
 
-### `boonza.backbone_hbonds(system, positions=None)`
+### `boonza.backbone_hbonds(system, positions=None, box=None, breaks: 'bool' = True)`
 
 Kabsch-Sander backbone H-bonds of one frame: (donor residue, acceptor residue, kcal/mol).
+
+``box`` and ``breaks`` as in ``dssp``.
 
 ## RDKit
 
@@ -466,9 +475,13 @@ pseudo particles (atomic number 0).
 
 Read an MAE/CMS file (optionally gzip/bzip2 compressed); all cts go into one System.
 
-### `boonza.io.load_pdb(path, guess_bonds: 'bool' = True) -> 'System'`
+### `boonza.io.load_pdb(path, guess_bonds: 'bool' = True, conect: 'bool' = True, ssbond: 'bool' = True) -> 'System'`
 
 Read a PDB file (optionally gzip/bzip2 compressed).
+
+``guess_bonds``: bond atoms by distance (msys rules).  ``conect`` and
+``ssbond``: apply the file's CONECT and SSBOND records on top (see the
+module notes); False for msys behavior.
 
 ### `boonza.io.load_sdf(path) -> 'System'`
 
@@ -490,9 +503,15 @@ Write the system as .gro (nm); velocities are written when any is nonzero.
 
 Write ``system`` as MAE (``.gz``/``.bz2`` suffixes are compressed); one block per ct.
 
-### `boonza.io.save_pdb(system: 'System', path, append: 'bool' = False, reorder: 'bool' = False) -> 'None'`
+### `boonza.io.save_pdb(system: 'System', path, append: 'bool' = False, reorder: 'bool' = False, models='auto', conect='auto') -> 'None'`
 
 Write a PDB file; ``reorder`` groups atoms by chain and residue first.
+
+``models``: "auto" writes one model, or one MODEL per ct when the cts are
+an ensemble (same atoms in each); True always one MODEL per ct (msys);
+False always one model.  ``conect``: "auto" writes CONECT records for the
+atoms whose bonds re-guessing on reading would get wrong; True for every
+bonded atom; False never.
 
 ### `boonza.io.save_sdf(system: 'System', path, append: 'bool' = False, v3000: 'bool | None' = None) -> 'None'`
 
@@ -558,6 +577,10 @@ Distances between all pairs i < j of one set, in condensed (scipy pdist) order.
 
 ## Other
 
+### `class boonza.BlockAverage(mean: 'float', block_sizes: 'np.ndarray', sem: 'np.ndarray', sem_error: 'np.ndarray') -> None`
+
+Standard error of the mean from blocks of increasing size (see ``block_average``).
+
 ### `class boonza.DRMSD(drmsd: 'float | np.ndarray', plain_drmsd: 'float | np.ndarray | None', pocket: 'np.ndarray', reference_pocket: 'np.ndarray', mapping: 'np.ndarray', mobile_ligand: 'np.ndarray', reference_ligand: 'np.ndarray', reference_distances: 'np.ndarray') -> None`
 
 Outcome of ``drmsd``: pocket-ligand distance RMSD (per frame with ``positions``).
@@ -566,9 +589,38 @@ Outcome of ``drmsd``: pocket-ligand distance RMSD (per frame with ``positions``)
 
 Outcome of ``ligand_rmsd``: the protein fit and the ligand RMSD in that frame.
 
+### `class boonza.MoleculeView(pdb: 'str', nframes: 'int', styles: 'list', width: 'int', height: 'int', background: 'str', interval: 'int')`
+
+One 3Dmol.js viewer: shown by Jupyter, or written as a page with ``save``.
+
+### `class boonza.PCA(atoms: 'np.ndarray', mean: 'np.ndarray', variance: 'np.ndarray', components: 'np.ndarray', projections: 'np.ndarray', reference: 'np.ndarray | None') -> None`
+
+Principal components of atomic fluctuations (see ``pca``).
+
 ### `class boonza.SymmetryRMSD(rmsd: 'float | np.ndarray', plain_rmsd: 'float | np.ndarray | None', mapping: 'np.ndarray', mobile_atoms: 'np.ndarray', reference_atoms: 'np.ndarray', isomorphisms: 'int | None' = None, truncated: 'bool' = False) -> None`
 
 Outcome of ``symmetry_rmsd``.
+
+### `boonza.block_average(values, min_blocks: 'int' = 4) -> 'BlockAverage'`
+
+Flyvbjerg-Petersen blocking of a time series (for example an RMSD or Q per frame).
+
+For blocks of 1, 2, 4, ... frames (at least ``min_blocks`` blocks; a
+remainder is dropped), the standard error of the mean is estimated from
+the spread of the block means.  It grows with the block size until blocks
+are longer than the correlation time, then levels off at the true error
+(``estimate``).
+
+### `boonza.contact_frequency(system, sel1, sel2=None, positions=None, cutoff: 'float' = 4.5, level: 'str' = 'residue', periodic: 'bool' = True)`
+
+How often each pair is in contact: (rows, cols, fraction of frames).
+
+A residue pair (``level="residue"``) is in contact in a frame when any of
+their atoms are within ``cutoff`` Å; ``level="atom"`` uses atom pairs.
+``rows`` and ``cols`` are residue (or atom) indices of ``sel1`` and
+``sel2``, and the matrix has one fraction per (row, col).  Without
+``sel2`` the pairs are within ``sel1``, excluding a residue (atom) with
+itself.  With ``periodic``, distances use each frame's box.
 
 ### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
 
@@ -616,6 +668,28 @@ chunk, only the fit and ligand atoms.  With ``align="sequence"`` the
 residue pairing comes from the first frame.  ``apply`` moves ``mobile``
 (single structures only).
 
+### `boonza.native_contacts(system, sel1, sel2, positions=None, reference=None, radius: 'float' = 4.5, method: 'str' = 'hard_cut', beta: 'float' = 5.0, lambda_constant: 'float' = 1.8, periodic: 'bool' = True) -> 'np.ndarray'`
+
+Fraction of native contacts Q in each frame (MDAnalysis Contacts).
+
+Native contacts are the ``sel1`` x ``sel2`` atom pairs within ``radius``
+Å in ``reference`` (a System with the same selections; default the
+system's own coordinates), with reference distances r0.  ``method``:
+"hard_cut" counts r <= r0, "radius_cut" counts r <= radius, "soft_cut"
+is Best, Hummer and Eaton's 1 / (1 + exp(beta (r - lambda_constant r0)))
+with beta in 1/Å.  With ``periodic``, distances use each frame's box (and
+the reference cell).
+
+### `boonza.pca(system, positions=None, sel='name CA', align: 'bool' = True, n_components=None) -> 'PCA'`
+
+Principal component analysis of the ``sel`` atoms over frames (MDAnalysis PCA).
+
+With ``align`` every frame is first superposed on the first frame (as
+MDAnalysis does); the covariance of the fitted coordinates is divided by
+nframes - 1.  Components come from a singular value decomposition of the
+centered frames, so at most min(nframes, 3 natoms) are returned (the rest
+have zero variance), each with its largest element positive.
+
 ### `boonza.symmetry_rmsd(mobile, reference, atoms=None, reference_atoms=None, positions=None, superpose: 'bool' = False, heavy_only: 'bool' = True, bond_orders: 'bool' = False, max_isomorphisms: 'int' = 100000) -> 'SymmetryRMSD'`
 
 Smallest RMSD (Å) over atom mappings that preserve elements and bonds.
@@ -632,3 +706,21 @@ pseudo particles.  ``bond_orders=True`` also requires bond orders to match.
 Connectivity alone is the default, as in most docking benchmarks: with
 Kekulé bond orders a flipped phenyl ring or a carboxylate's two oxygens
 would no longer count as equivalent.
+
+### `boonza.topological_distances(system, atoms=None, targets=None, max_distance=None) -> 'np.ndarray'`
+
+Bonds along the shortest bond path, shape (len(atoms), len(targets)).
+
+``atoms`` and ``targets`` are indices, AtomSels or selection strings
+(``targets`` defaults to ``atoms``, ``atoms`` to every atom).  -1 marks
+pairs that are not connected, or farther apart than ``max_distance``.
+
+### `boonza.view(system, atoms=None, positions=None, style: 'str' = 'auto', width: 'int' = 640, height: 'int' = 480, water: 'bool' = False, background: 'str' = 'white', interval: 'int' = 100) -> 'MoleculeView'`
+
+A notebook view of ``atoms`` (default all), displayed with 3Dmol.js.
+
+``style="auto"`` draws polymers as cartoons, other molecules as sticks,
+ions as spheres and hides water (``water=True`` shows it as lines);
+"cartoon", "sticks", "lines" and "spheres" apply to everything.
+``positions``: one frame or several ((nframes, natoms, 3) or Frames),
+animated ``interval`` ms apart.

@@ -1,11 +1,26 @@
 # boonza
 
-**B**iomolecular **O**bjects & **O**perations, **N**umba-accelerated, **Z**ero-copy **A**rrays.
+boonza reads, edits and writes molecular systems so that people and AI models
+can reason about the spatial relationships between atoms and molecules. For
+AI in particular it is a bridge between three views of the same molecule:
 
-A molecular system reader, editor and writer that follows the msys data model
-(structure plus full force-field tables) without requiring msys, with
-trajectory analysis, superposition, sequence alignment and RDKit/OpenMM
-bridges on top.
+- **1-D text**: file formats, sequences, the atom selection language, SMILES
+  through RDKit;
+- **2-D graph**: atoms and bonds, residues, chains and molecules, rings,
+  symmetry-equivalent atoms;
+- **3-D positions that obey the rules of physics**: coordinates, periodic
+  boxes, force-field parameters and energies.
+
+Moving between these views, and keeping them consistent, is what the library
+is for.
+
+*The name: **B**iomolecular **O**bjects & **O**perations, **N**umba-accelerated,
+**Z**ero-copy **A**rrays.*
+
+It follows the msys data model (structure plus full force-field tables)
+without requiring msys, and adds trajectory analysis, superposition,
+sequence alignment and RDKit/OpenMM bridges on top. Everything is NumPy plus
+numba.
 
 ## Documentation
 
