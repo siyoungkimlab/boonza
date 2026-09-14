@@ -15,6 +15,7 @@ nav:
       - Selections: guide/selections.md
       - Files and trajectories: guide/io.md
       - Force fields: guide/forcefield.md
+      - Building systems: guide/building.md
       - Checking systems: guide/checking.md
       - Geometry and PBC: guide/geometry.md
       - Alignment: guide/alignment.md
