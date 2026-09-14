@@ -1,7 +1,7 @@
 # Verification and benchmarks
 
 Every feature that reimplements an established tool is tested against that
-tool, running the real program where possible. The test suite has 383 tests.
+tool, running the real program where possible. The test suite has 463 tests.
 
 | Feature | Reference | How it is compared |
 |---|---|---|
@@ -10,7 +10,9 @@ tool, running the real program where possible. The test suite has 383 tests.
 | PDB, SDF read/write, bond guessing | msys | canonical dump |
 | mmCIF | gemmi | atom records, models, cell |
 | GRO | MDAnalysis | atoms and coordinates |
-| DCD, XTC | MDAnalysis | frames, boxes, times |
+| DCD, XTC, TRR, Amber NetCDF | MDAnalysis | frames, boxes, times; MDAnalysis and SciPy read the files boonza writes |
+| Desmond DTR, STK | msys molfile | frames, boxes, times; DTRs written by msys (single and double precision, several frames per file), later runs replacing earlier ones in an STK |
+| PDB SSBOND/LINK and mmCIF `_struct_conn` bonds | gemmi | bond lists on 4 structures; PDB and mmCIF files of each give the same bonds |
 | periodic distances | MDAnalysis | distance matrices, capped pairs |
 | Glue / wrapping | msys `Wrapper` | wrapped positions |
 | DSSP, phi/psi/omega | mdtraj | codes and angles on 10 PDB files |
