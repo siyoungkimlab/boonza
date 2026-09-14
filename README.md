@@ -58,6 +58,11 @@ Implemented:
 - SDF/MOL V2000 read/write with data fields, charges, isotopes and stereo
   flags, matching msys
 - GRO read/write (first frame; nm → Å), matching MDAnalysis
+- Topologies: Amber prmtop (full force field as msys converts it, with
+  inpcrd/rst7 coordinates), CHARMM/NAMD PSF (structure, types, charges,
+  bonds) and GROMACS .top (preprocessed, molecules repeated, force field
+  for the common function types), checked against msys, MDAnalysis and
+  OpenMM
 - PDBx/mmCIF read/write (`_atom_site`, models, cell, space group), matching
   gemmi; chain = `auth_asym_id`, segid = `label_asym_id`
 - Cell-list neighbor search: `boonza.spatial.pairs_within(pos, r, cell)`

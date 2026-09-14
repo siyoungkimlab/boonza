@@ -19,6 +19,9 @@ format's reader or writer.
 | PDB (`.pdb`, compressed) | ✓ | ✓ | models, TER, hybrid-36 serials, CRYST1; msys bond guessing plus SSBOND/CONECT records |
 | PDBx/mmCIF (`.cif`, `.mmcif`, `.pdbx`) | ✓ | ✓ | `_atom_site`, models, cell; chain = `auth_asym_id`, segid = `label_asym_id`; matches gemmi |
 | GRO (`.gro`) | ✓ | ✓ | first frame; nm → Å; masses as MDAnalysis guesses them |
+| Amber prmtop (`.prmtop`, `.parm7`, `.top`) | ✓ | | full force field as msys's `LoadPrmTop` builds it, CMAP included; coordinates from inpcrd/rst7 or NetCDF restarts |
+| CHARMM/NAMD/X-PLOR PSF (`.psf`) | ✓ | | atoms, CHARMM types, charges, masses, bonds; segments as chains; standard, EXT and NAMD layouts |
+| GROMACS topology (`.top`) | ✓ | | `#include`/`#define`/`#ifdef`; force field for harmonic, Urey-Bradley, periodic, RB and improper terms, LJ combination rules 1-3, pairs, settles |
 | SDF / MOL (`.sdf`, `.mol`, compressed) | ✓ | ✓ | V2000 and V3000, data fields, charges, isotopes, stereo flags; matches msys |
 
 Reader options:
@@ -28,6 +31,9 @@ Reader options:
 | DMS | `structure_only` (skip force field), `without_tables` |
 | MAE | `structure_only`, `without_tables`, `ignore_unrecognized` |
 | PDB, GRO, CIF | `guess_bonds=True` (msys rules, same ct only) |
+| prmtop | `coordinates` (inpcrd/rst7 or NetCDF restart), `structure_only` |
+| PSF | `coordinates` (a file with the same atoms, or an array) |
+| GROMACS top | `coordinates` (.gro, ...), `defines={"FLEXIBLE": ""}`, `include_dirs`, `structure_only` |
 | CIF | `struct_conn=True`: add `_struct_conn` bonds (disulfides, covalent links, metal coordination; not hydrogen bonds or symmetry copies) |
 | PDB | `conect=True`, `ssbond=True`, `link=True`: apply the file's CONECT, SSBOND and LINK records (msys ignores them) |
 
@@ -75,6 +81,30 @@ coordinates and writes CONECT records only for the atoms where the guess
 would differ (a covalent ligand link, a long S-S bond, a missing bond), with
 bond orders as repeated entries. Reading the file back gives the same bonds.
 `conect=True` writes records for every bonded atom, `conect=False` none.
+
+### Topology files
+
+```python
+s = boonza.load("complex.prmtop", coordinates="complex.rst7")  # Amber
+s = boonza.load("step5_input.psf", coordinates="step5_input.pdb")  # CHARMM
+s = boonza.load("topol.top", coordinates="conf.gro", include_dirs=["/path/to/gromacs/top"])
+```
+
+- **Amber prmtop** follows msys's own converter table for table: merged
+  Fourier dihedrals, SCEE/SCNB-scaled 1-4 pairs, Lorentz-Berthelot van der
+  Waals, exclusions and CMAP. Charges are divided by 18.2223 and elements
+  are guessed from masses as msys does (a hydrogen repartitioned to 3 u reads
+  as helium). A `.top` file that starts with `%VERSION` is read as a prmtop.
+- **PSF** files carry no parameters, so only the structure, charges, masses,
+  CHARMM types (a `type` column) and bonds are read. For a CHARMM force field,
+  build the OpenMM system from the PSF and parameter files and use
+  `boonza.from_openmm`.
+- **GROMACS topologies** are preprocessed as GROMACS does, and each molecule
+  type is repeated as `[ molecules ]` says. Terms with no msys table (GROMOS
+  quartic bonds and cosine angles, tabulated terms, CMAP, virtual sites)
+  raise an error; `structure_only=True` reads atoms, residues and bonds. The
+  default `#ifdef` choices apply (for example rigid water); pass `defines` to
+  change them.
 
 ## Trajectories
 
