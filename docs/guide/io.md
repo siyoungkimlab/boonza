@@ -28,7 +28,8 @@ Reader options:
 | DMS | `structure_only` (skip force field), `without_tables` |
 | MAE | `structure_only`, `without_tables`, `ignore_unrecognized` |
 | PDB, GRO, CIF | `guess_bonds=True` (msys rules, same ct only) |
-| PDB | `conect=True`, `ssbond=True`: apply the file's CONECT and SSBOND records (msys ignores them) |
+| CIF | `struct_conn=True`: add `_struct_conn` bonds (disulfides, covalent links, metal coordination; not hydrogen bonds or symmetry copies) |
+| PDB | `conect=True`, `ssbond=True`, `link=True`: apply the file's CONECT, SSBOND and LINK records (msys ignores them) |
 
 Writer options:
 
@@ -51,13 +52,19 @@ records are applied.
 - `SSBOND` bonds the two cysteine SG atoms whatever their distance. Old
   structures often have S-S distances too long to guess; 1LYZ has 3 of 4.
   Bonds to a crystal symmetry copy (operator other than 1555) are skipped.
+- `LINK` bonds the two named atoms (covalent links, metal coordination),
+  also skipping symmetry copies. With alternate locations and no altloc in
+  the record, every copy is linked.
 - `CONECT` adds the listed bonds. An entry repeated two or three times sets
   the bond order, as PyMOL and Open Babel write it. Between atoms that have
   their own CONECT record, the records are authoritative: a guessed bond
   that CONECT does not list is removed (for example a bad heme geometry in
   1MBN). Bonds to atoms without records stay as guessed.
 
-Pass `conect=False, ssbond=False` for exactly msys's behavior.
+Pass `conect=False, ssbond=False, link=False` for exactly msys's behavior.
+
+mmCIF files get the same bonds from `_struct_conn` (`struct_conn=False` to
+skip them), so a structure read as PDB or as mmCIF has the same bonds.
 
 Writing: one model. A system with several cts (after `append`, say) is
 written as one model, so every program reads all of it. Only an ensemble

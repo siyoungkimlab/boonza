@@ -52,7 +52,8 @@ Implemented:
 
 - PDB read/write (multi-model, TER-aware, hybrid serials), matching msys,
   including its geometric bond guessing (`s.guess_bonds(periodic=...)`), plus
-  SSBOND and CONECT records (with bond orders); written as one model, with
+  SSBOND, LINK and CONECT records (with bond orders; mmCIF `_struct_conn` too);
+  written as one model, with
   CONECT records where re-guessing would get bonds wrong, so bonds round-trip
 - SDF/MOL V2000 read/write with data fields, charges, isotopes and stereo
   flags, matching msys
