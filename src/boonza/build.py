@@ -341,3 +341,134 @@ def repartition_hydrogen_masses(system: System, selection: str = "not water",
         raise ValueError("the total mass changed while repartitioning")
     s.atoms["mass"] = masses
     return s
+
+
+# ---------------------------------------------------------------------------
+# from text: SMILES and sequences
+
+HELIX = (-57.0, -47.0)
+SHEET = (-120.0, 130.0)
+EXTENDED = (180.0, 180.0)
+POLYPROLINE = (-75.0, 145.0)
+CONFORMATIONS = {"helix": HELIX, "alpha": HELIX, "sheet": SHEET, "beta": SHEET,
+                 "extended": EXTENDED, "polyproline": POLYPROLINE}  # fmt: skip
+
+
+def _unique_names(s: System) -> None:
+    """Atom names element + count (C1, C2, ..., H1, ...), as ligand files name them."""
+    from .elements import msys_symbol
+
+    counts: dict[str, int] = {}
+    names = []
+    for z in s.atoms["anum"].tolist():
+        sym = msys_symbol(int(z)) or "X"
+        counts[sym] = counts.get(sym, 0) + 1
+        names.append(f"{sym}{counts[sym]}")
+    s.atoms["name"] = np.array(names)
+
+
+def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool = True,
+                conformers: int = 1) -> System:  # fmt: skip
+    """A 3D molecule from a SMILES string (needs RDKit).
+
+    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
+    reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
+    (UFF when MMFF lacks parameters); the lowest-energy one is kept.  Bond
+    orders and formal charges come from the SMILES.  The molecule is one
+    residue named ``name`` with atoms named C1, C2, ..., H1, ...
+    """
+    from rdkit.Chem import AllChem
+
+    from .chem import _chem, from_rdkit
+
+    Chem = _chem()
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"RDKit cannot parse the SMILES {smiles!r}")
+    mol = Chem.AddHs(mol)
+    params = AllChem.ETKDGv3()
+    params.randomSeed = int(seed)
+    ids = list(AllChem.EmbedMultipleConfs(mol, numConfs=max(1, int(conformers)), params=params))
+    if not ids:
+        raise ValueError(f"RDKit could not embed {smiles!r} in 3D")
+    best = ids[0]
+    if optimize:
+        if AllChem.MMFFHasAllMoleculeParams(mol):
+            result = AllChem.MMFFOptimizeMoleculeConfs(mol, maxIters=2000)
+        else:
+            result = AllChem.UFFOptimizeMoleculeConfs(mol, maxIters=2000)
+        best = ids[int(np.argmin([energy for _, energy in result]))]
+    s = from_rdkit(mol, conf_id=best, name=name)
+    s.residues["name"] = np.full(s.nresidues, name)
+    _unique_names(s)
+    return s
+
+
+def peptide(sequence: str, conformation="helix", seed: int = 0, optimize: bool = True) -> System:
+    """A peptide built from a one-letter sequence (needs RDKit).
+
+    ``conformation``: "helix", "sheet", "extended", "polyproline", one
+    (phi, psi) pair, or one pair per residue (degrees).  The chain is built
+    by RDKit with PDB atom and residue names, every peptide bond is set
+    trans, and phi/psi are set residue by residue (proline's phi is fixed by
+    its ring).  With ``optimize`` the structure is minimized with MMFF94
+    while phi/psi are held, so side chains relax without losing the
+    backbone (omega included).  Termini are free amine and acid, as RDKit
+    builds them.
+    """
+    from rdkit.Chem import AllChem
+    from rdkit.Chem import rdMolTransforms as T
+
+    from .chem import _chem, from_rdkit
+
+    Chem = _chem()
+    seq = sequence.strip().upper()
+    mol = Chem.MolFromSequence(seq) if seq else None
+    if mol is None:
+        raise ValueError(f"cannot build a peptide from {sequence!r}")
+    n = len(seq)
+    if isinstance(conformation, str):
+        if conformation not in CONFORMATIONS:
+            raise ValueError(f"conformation must be one of {sorted(CONFORMATIONS)} or angles")
+        angles = [CONFORMATIONS[conformation]] * n
+    else:
+        arr = np.asarray(conformation, dtype=np.float64)
+        angles = [tuple(arr)] * n if arr.shape == (2,) else [tuple(r) for r in arr]
+        if len(angles) != n:
+            raise ValueError(f"got {len(angles)} (phi, psi) pairs for {n} residues")
+    mol = Chem.AddHs(mol, addResidueInfo=True)
+    params = AllChem.ETKDGv3()
+    params.useRandomCoords = True  # RDKit's advice for large, flexible molecules
+    for attempt in range(5):
+        params.randomSeed = int(seed) + attempt
+        if AllChem.EmbedMolecule(mol, params) >= 0:
+            break
+    else:
+        raise ValueError(f"RDKit could not embed the peptide {seq}")
+    backbone: dict[int, dict[str, int]] = {}
+    for atom in mol.GetAtoms():
+        info = atom.GetPDBResidueInfo()
+        if info is not None and info.GetName().strip() in ("N", "CA", "C"):
+            backbone.setdefault(info.GetResidueNumber(), {})[info.GetName().strip()] = atom.GetIdx()
+    res = [backbone[k] for k in sorted(backbone)]
+    conf = mol.GetConformer()
+    held = []
+    for k in range(n):
+        phi, psi = angles[k]
+        r = res[k]
+        if k > 0:
+            p = res[k - 1]
+            T.SetDihedralDeg(conf, p["CA"], p["C"], r["N"], r["CA"], 180.0)  # omega
+            held.append((p["CA"], p["C"], r["N"], r["CA"], 180.0))
+            if seq[k] != "P":
+                T.SetDihedralDeg(conf, p["C"], r["N"], r["CA"], r["C"], phi)
+                held.append((p["C"], r["N"], r["CA"], r["C"], phi))
+        if k < n - 1:
+            T.SetDihedralDeg(conf, r["N"], r["CA"], r["C"], res[k + 1]["N"], psi)
+            held.append((r["N"], r["CA"], r["C"], res[k + 1]["N"], psi))
+    if optimize and AllChem.MMFFHasAllMoleculeParams(mol):
+        ff = AllChem.MMFFGetMoleculeForceField(mol, AllChem.MMFFGetMoleculeProperties(mol))
+        for a, b, c, d, value in held:  # RDKit handles windows that cross +-180
+            ff.MMFFAddTorsionConstraint(a, b, c, d, False, value - 1.0, value + 1.0, 1e4)
+        ff.Minimize(maxIts=5000)
+    return from_rdkit(mol, name=f"peptide {seq}")
