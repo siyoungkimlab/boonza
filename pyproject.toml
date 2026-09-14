@@ -22,6 +22,9 @@ boonza = "boonza.cli:main"
 [tool.setuptools.dynamic]
 version = { attr = "boonza.__version__" }
 
+[tool.setuptools.package-data]
+boonza = ["data/*.dms"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
