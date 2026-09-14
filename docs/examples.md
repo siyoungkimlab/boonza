@@ -1,6 +1,6 @@
 # Examples
 
-Runnable scripts in [`examples/`](../examples). Each one teaches a task step by
+Runnable scripts in [`examples/`](https://github.com/siyoungkimlab/boonza/tree/main/examples). Each one teaches a task step by
 step and prints what it finds. The output below is what the scripts
 printed when this page was generated with `python docs/gen_examples.py`.
 Run any of them with `python examples/NN_name.py`.

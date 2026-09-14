@@ -1,6 +1,10 @@
 site_name: boonza
 site_description: Biomolecular Objects & Operations, Numba-accelerated, Zero-copy Arrays
 docs_dir: docs
+# the scripts that generate reference.md and examples.md are not pages
+exclude_docs: |
+  gen_*.py
+  requirements.txt
 nav:
   - Home: index.md
   - Examples: examples.md
