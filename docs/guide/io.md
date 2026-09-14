@@ -79,7 +79,7 @@ bond orders as repeated entries. Reading the file back gives the same bonds.
 ## Trajectories
 
 ```python
-traj = boonza.open_trajectory("run.xtc", s)  # DCD or XTC
+traj = boonza.open_trajectory("run.xtc", s)  # DCD, XTC, TRR, Amber NetCDF, Desmond DTR/STK
 len(traj), traj.natoms
 frame = traj[10]  # Frame: positions (natoms, 3), box (3, 3), time, step
 view = traj[::10]  # lazy view; also index arrays and masks
@@ -93,12 +93,20 @@ for chunk in traj.chunks(500, atoms="protein"):  # memory-bounded blocks
   when the file has no cell.
 - DCD is memory-mapped: CHARMM, NAMD and X-PLOR variants, fixed atoms,
   either byte order.
-- XTC uses the compiled XDR reader that ships with MDAnalysis.
+- XTC and TRR use the compiled XDR reader that ships with MDAnalysis. TRR
+  frames that carry only velocities or forces have NaN positions.
+- Amber NetCDF (`.nc`, `.ncdf`; restart files `.ncrst` as one frame) is
+  read natively, from NetCDF-3 classic or 64-bit-offset files. NetCDF-4
+  (HDF5) files are not supported.
+- Desmond DTR directories and STK lists of them are read natively, in
+  single or double precision. In an STK, a later run replaces the frames
+  of an earlier one from its first time on, as in msys. DTRs that hold
+  only energies or forces (no positions) are refused with an error.
 
 Writing:
 
 ```python
-with boonza.open_writer("out.dcd", s.natoms) as w:
+with boonza.open_writer("out.dcd", s.natoms) as w:  # also .xtc, .trr, .nc
     for f in traj:
         w.write(f.positions, f.box)
 ```

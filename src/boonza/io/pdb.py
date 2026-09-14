@@ -59,8 +59,14 @@ def load_pdb(path, guess_bonds: bool = True, conect: bool = True, ssbond: bool =
     """
     path = os.fspath(path)
     out = System(path)
-    lines = read_text(path).split("\n")
-    records = _bond_records(lines, conect, ssbond, link)
+    text = read_text(path)
+    lines = text.split("\n")
+    wanted = [tag for tag, on in (("CONECT", conect), ("SSBOND", ssbond), ("LINK", link)) if on]
+    # scan for bond records only when the file has some (most large files have none)
+    records = None
+    if any(tag in text for tag in wanted):
+        keep = [line for line in lines if line[:6].rstrip() in ("CONECT", "SSBOND", "LINK")]
+        records = _bond_records(keep, conect, ssbond, link)
     for atoms, ters, cryst in _models(lines):
         out.append(_model(atoms, ters, cryst, guess_bonds, records))
     out.name = path
@@ -472,7 +478,7 @@ def save_pdb(system: System, path, append: bool = False, reorder: bool = False,
     elems = _mapped(A.column("anum")[order], lambda z: msys_symbol(z)[:2])
     charges = _mapped(A.column("formal_charge")[order], _charge)
     if models == "auto":
-        multi = _is_ensemble(ct, A.column("name")[order], R.column("name")[res])
+        multi = _is_ensemble(ct, A.column("name")[order], R.column("name")[res], pos)
     else:
         multi = bool(models) and system.ncts > 1 and len(np.unique(ct)) > 1
     model_of = ct if multi else np.zeros(n, np.int64)
@@ -513,8 +519,9 @@ def save_pdb(system: System, path, append: bool = False, reorder: bool = False,
         fh.write(text)
 
 
-def _is_ensemble(ct, names, resnames) -> bool:
-    """Several cts with the same atoms in the same order: models of one structure."""
+def _is_ensemble(ct, names, resnames, pos) -> bool:
+    """Several cts with the same atoms in the same order that overlap in space: models of
+    one structure (NMR models, frames).  Copies placed side by side are one model."""
     starts = np.flatnonzero(np.r_[True, ct[1:] != ct[:-1]])
     if len(starts) < 2 or len(np.unique(ct)) != len(starts):
         return False
@@ -522,8 +529,13 @@ def _is_ensemble(ct, names, resnames) -> bool:
     if (sizes != sizes[0]).any():
         return False
     m = int(sizes[0])
-    return bool((names.reshape(-1, m) == names[:m]).all()
-                and (resnames.reshape(-1, m) == resnames[:m]).all())  # fmt: skip
+    if not ((names.reshape(-1, m) == names[:m]).all()
+            and (resnames.reshape(-1, m) == resnames[:m]).all()):  # fmt: skip
+        return False
+    xyz = pos.reshape(-1, m, 3)
+    centers = xyz.mean(axis=1)
+    rg = np.sqrt(((xyz[0] - centers[0]) ** 2).sum(axis=1).mean())
+    return bool((np.linalg.norm(centers - centers[0], axis=1) <= max(rg, 1.0)).all())
 
 
 def _conect_lines(system, rank, serials, pos, model_of, everything: bool) -> list[str]:

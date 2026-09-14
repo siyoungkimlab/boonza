@@ -166,3 +166,19 @@ def test_writer_one_model_ensembles_and_conect_round_trip(tmp_path):
     assert out.read_text().count("MODEL") == 2
     again = boonza.load(out)
     assert again.ncts == 2 and _bond_set(again) == _bond_set(ens)
+
+
+def test_side_by_side_copies_are_one_model(tmp_path):
+    data = Path(__file__).parent / "data"
+    heme = boonza.load(data / "1HHO.pdb").clone("resname HEM and chain A")
+    lattice, ensemble = heme.copy(), heme.copy()
+    for k in range(1, 3):
+        shifted, jiggled = heme.copy(), heme.copy()
+        shifted.positions = heme.positions + [30.0 * k, 0.0, 0.0]  # a lattice of copies
+        jiggled.positions = heme.positions + 0.2 * k  # overlapping models
+        lattice.append(shifted)
+        ensemble.append(jiggled)
+    boonza.save(lattice, tmp_path / "lattice.pdb")
+    boonza.save(ensemble, tmp_path / "ensemble.pdb")
+    assert "MODEL" not in (tmp_path / "lattice.pdb").read_text()
+    assert (tmp_path / "ensemble.pdb").read_text().count("MODEL") == 3

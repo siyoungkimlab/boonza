@@ -152,29 +152,33 @@ def _format(path, format: str | None) -> str:
     return (format or Path(path).suffix).lower().lstrip(".")
 
 
+_READERS = {"dcd": ("dcd", "DCDTrajectory"), "xtc": ("xtc", "XTCTrajectory"),
+            "trr": ("trr", "TRRTrajectory"), "nc": ("ncdf", "NCDFTrajectory"),
+            "ncdf": ("ncdf", "NCDFTrajectory"), "ncrst": ("ncdf", "NCDFTrajectory"),
+            "dtr": ("dtr", "DTRTrajectory"), "stk": ("dtr", "DTRTrajectory")}  # fmt: skip
+_WRITERS = {"dcd": ("dcd", "DCDWriter"), "xtc": ("xtc", "XTCWriter"),
+            "trr": ("trr", "TRRWriter"), "nc": ("ncdf", "NCDFWriter"),
+            "ncdf": ("ncdf", "NCDFWriter")}  # fmt: skip
+
+
+def _class(table: dict, fmt: str, what: str):
+    import importlib
+
+    if fmt not in table:
+        raise ValueError(f"cannot {what} {fmt!r} trajectories; supported: {', '.join(table)}")
+    module, name = table[fmt]
+    return getattr(importlib.import_module(f".io.{module}", __package__), name)
+
+
 def open_trajectory(path, system=None, format: str | None = None) -> Trajectory:
-    """Open a DCD or XTC trajectory; with ``system`` the atom counts must agree."""
-    fmt = _format(path, format)
-    if fmt == "dcd":
-        from .io.dcd import DCDTrajectory
+    """Open a trajectory: DCD, XTC, TRR, Amber NetCDF, or Desmond DTR/STK.
 
-        return DCDTrajectory(path, system)
-    if fmt == "xtc":
-        from .io.xtc import XTCTrajectory
-
-        return XTCTrajectory(path, system)
-    raise ValueError(f"cannot read {fmt!r} trajectories; supported: dcd, xtc")
+    With ``system`` the atom counts must agree.
+    """
+    return _class(_READERS, _format(path, format), "read")(path, system)
 
 
 def open_writer(path, natoms: int, format: str | None = None, **kwargs):
-    """A DCD or XTC writer: ``with open_writer(p, n) as w: w.write(positions, box)``."""
-    fmt = _format(path, format)
-    if fmt == "dcd":
-        from .io.dcd import DCDWriter
-
-        return DCDWriter(path, natoms, **kwargs)
-    if fmt == "xtc":
-        from .io.xtc import XTCWriter
-
-        return XTCWriter(path, natoms, **kwargs)
-    raise ValueError(f"cannot write {fmt!r} trajectories; supported: dcd, xtc")
+    """A DCD, XTC, TRR or Amber NetCDF writer:
+    ``with open_writer(p, n) as w: w.write(positions, box)``."""
+    return _class(_WRITERS, _format(path, format), "write")(path, natoms, **kwargs)

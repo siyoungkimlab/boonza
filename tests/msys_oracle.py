@@ -167,6 +167,42 @@ def main():
             "load": best(lambda: msys.Load(path), repeat),
             "save": best(lambda: msys.SaveDMS(m, out), repeat),
         }
+    elif mode == "iotime":
+        # load the files boonza wrote, then save msys's own copy of each
+        pdb, mae, workdir, repeat = args[0], args[1], args[2], int(args[3])
+        result = {}
+        for fmt, path, save in (("pdb", pdb, msys.SavePDB), ("mae", mae, msys.SaveMAE)):
+            m = msys.Load(path)
+            result[f"load {fmt}"] = best(lambda path=path: msys.Load(path), repeat)
+            out = f"{workdir}/msys_out.{fmt}"
+            result[f"save {fmt}"] = best(lambda m=m, save=save, out=out: save(m, out), repeat)
+    elif mode == "dtrwrite":
+        # write positions/boxes/times from an .npz as a DTR with msys's writer
+        import numpy
+        from msys import molfile
+
+        data = numpy.load(args[0])
+        pos, boxes, times = data["pos"], data["boxes"], data["times"]
+        natoms = pos.shape[1]
+        writer = molfile.DtrWriter(args[1], natoms=natoms, frames_per_file=int(args[2]))
+        fmt = "DBL_WRAPPED_V_2" if pos.dtype == numpy.float64 else "WRAPPED_V_2"
+        for p, b, tm in zip(pos, boxes, times, strict=True):
+            # the fields msys's own frame writer (DtrWriter::next) writes
+            writer.append(float(tm), {"CHEMICAL_TIME": numpy.array([float(tm)]),
+                                      "UNITCELL": numpy.asarray(b, numpy.float64).ravel(),
+                                      "POSITION": numpy.ascontiguousarray(p).ravel(),
+                                      "FORMAT": fmt})  # fmt: skip
+        writer.sync()
+        writer.close()
+        result = {"nframes": molfile.DtrReader(args[1]).nframes}
+    elif mode == "dtrread":
+        from msys import molfile
+
+        reader = molfile.dtr.read(args[0])
+        frames = [reader.frame(i) for i in range(reader.nframes)]
+        result = {"natoms": reader.natoms, "pos": [f.pos.tolist() for f in frames],
+                  "box": [f.box.tolist() for f in frames],
+                  "time": [f.time for f in frames]}  # fmt: skip
     else:
         raise SystemExit(f"unknown mode {mode}")
     json.dump(result, sys.stdout)
