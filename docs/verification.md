@@ -1,7 +1,7 @@
 # Verification and benchmarks
 
 Every feature that reimplements an established tool is tested against that
-tool, running the real program where possible. The test suite has 383 tests.
+tool, running the real program where possible. The test suite has 463 tests.
 
 | Feature | Reference | How it is compared |
 |---|---|---|
@@ -10,7 +10,9 @@ tool, running the real program where possible. The test suite has 383 tests.
 | PDB, SDF read/write, bond guessing | msys | canonical dump |
 | mmCIF | gemmi | atom records, models, cell |
 | GRO | MDAnalysis | atoms and coordinates |
-| DCD, XTC | MDAnalysis | frames, boxes, times |
+| DCD, XTC, TRR, Amber NetCDF | MDAnalysis | frames, boxes, times; MDAnalysis and SciPy read the files boonza writes |
+| Desmond DTR, STK | msys molfile | frames, boxes, times; DTRs written by msys (single and double precision, several frames per file), later runs replacing earlier ones in an STK |
+| PDB SSBOND/LINK and mmCIF `_struct_conn` bonds | gemmi | bond lists on 4 structures; PDB and mmCIF files of each give the same bonds |
 | periodic distances | MDAnalysis | distance matrices, capped pairs |
 | Glue / wrapping | msys `Wrapper` | wrapped positions |
 | DSSP, phi/psi/omega | mdtraj | codes and angles on 10 PDB files |
@@ -64,7 +66,25 @@ Apple Silicon, single process (numba kernels use all cores):
 | periodic pairs within 6 Å, 26k atoms | 0.049 s | MDAnalysis 0.185 s |
 | DCD read | 0.06 s | MDAnalysis 0.08 s |
 
+Text formats, 1.05 M atoms (msys's 3.dms tiled 40 times; every program loads
+the same files; boonza and msys guess bonds from PDB, gemmi and MDAnalysis do
+not):
+
+| Step | boonza | msys | gemmi | MDAnalysis |
+|---|---:|---:|---:|---:|
+| load PDB | 2.64 s | 1.52 s | 0.28 s | 6.78 s |
+| save PDB | 3.47 s | 1.02 s | 0.57 s | 5.61 s |
+| load mmCIF | 4.47 s | - | 1.58 s | - |
+| save mmCIF | 3.34 s | - | 0.54 s | - |
+| load MAE (with force field) | 12.36 s | 5.86 s | - | - |
+| save MAE (with force field) | 11.74 s | 15.55 s | - | - |
+
+The PDB and mmCIF writers format lines one at a time in Python, and MAE
+reading spends its time in a regex tokenizer. These are the known places to
+speed up.
+
 ```bash
 python benchmarks/bench_dms.py --copies 40
 python benchmarks/bench_fragments.py --copies 40
+python benchmarks/bench_io.py --copies 40
 ```

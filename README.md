@@ -64,8 +64,10 @@ Implemented:
 - Trajectories: `boonza.open_trajectory(path, system)` gives lazy, random-access
   frames (`traj[i]`, `traj[::10]`, `traj.chunks(500, atoms="protein")`).
   DCD is read natively via memory mapping (CHARMM/NAMD/X-PLOR, fixed atoms,
-  both byte orders); XTC uses MDAnalysis's compiled XDR library.  Writers:
-  `boonza.open_writer(path, natoms)`.  Both checked against MDAnalysis.
+  both byte orders); XTC and TRR use MDAnalysis's compiled XDR library;
+  Amber NetCDF and Desmond DTR/STK are read natively.  Writers (DCD, XTC,
+  TRR, Amber NetCDF): `boonza.open_writer(path, natoms)`.  Checked against
+  MDAnalysis (DCD, XTC, TRR, NetCDF) and msys (DTR, STK).
 
 - Periodic geometry (`boonza.pbc`): exact minimum image for orthorhombic and
   triclinic cells; parallel distance matrices, condensed self-distances,
