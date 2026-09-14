@@ -8,8 +8,8 @@ the same inputs give the same systems. The tests compare each with msys.
 import boonza
 
 protein = boonza.load("protein.dms")
-s = boonza.solvate(protein, thickness=10.0)       # TIP3P, 10 Å around the protein
-s = boonza.neutralize(s, concentration=0.15)      # Na+/Cl-: neutral, then 150 mM
+s = boonza.solvate(protein, thickness=10.0)  # TIP3P, 10 Å around the protein
+s = boonza.neutralize(s, concentration=0.15)  # Na+/Cl-: neutral, then 150 mM
 s = boonza.repartition_hydrogen_masses(s, "not water", 3.024)
 boonza.save(s, "solvated.dms")
 ```
