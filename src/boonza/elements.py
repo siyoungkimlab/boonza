@@ -49,7 +49,7 @@ _BY_SYMBOL = {s: i for i, s in enumerate(SYMBOLS[:_NMSYS]) if s}
 
 # Element masses as msys has them (elements.cxx), index = atomic number 0..111;
 # used to guess elements from masses (Amber prmtop files carry no elements).
-_MSYS_MASSES = np.array([
+MSYS_MASSES = _MSYS_MASSES = np.array([
     0.000000, 1.007940, 4.002600, 6.941000, 9.012182, 10.811000, 12.010700, 14.006700,
     15.999400, 18.998403, 20.179700, 22.989770, 24.305000, 26.981538, 28.085500, 30.973761,
     32.065000, 35.453000, 39.948000, 39.098300, 40.078000, 44.955910, 47.867000, 50.941500,

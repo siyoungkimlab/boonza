@@ -9,6 +9,7 @@ Runs under the Python that can import msys (3.10), never under boonza:
 """
 
 import json
+import os
 import sys
 import time
 
@@ -204,6 +205,33 @@ def main():
         result = {"natoms": reader.natoms, "pos": [f.pos.tolist() for f in frames],
                   "box": [f.box.tolist() for f in frames],
                   "time": [f.time for f in frames]}  # fmt: skip
+    elif mode in ("solvate", "neutralize", "hmr"):
+        # msys's own command-line tools; their printouts must not reach stdout
+        import contextlib
+        import io as _io
+
+        tools = os.environ.get("BOONZA_MSYS_TOOLS", os.path.expanduser("~/msys/tools"))
+        sys.path.insert(0, tools)
+        mol = msys.Load(args[0])
+        with contextlib.redirect_stdout(_io.StringIO()):
+            if mode == "solvate":
+                from solvate import solvate
+
+                out = solvate(mol, msys.Load(args[1]), [float(x) for x in args[2].split(",")])
+                path = args[3]
+            elif mode == "neutralize":
+                from neutralize import Neutralize
+
+                out = Neutralize(mol, concentration=float(args[1]), random_seed=int(args[2]),
+                                 charge=args[3])  # fmt: skip
+                path = args[4]
+            else:
+                from massrepartition import adjust_hmasses
+
+                out = adjust_hmasses(mol, args[1], float(args[2]), args[3] == "1")
+                path = args[4]
+        msys.SaveDMS(out, path)
+        result = {"natoms": out.natoms}
     else:
         raise SystemExit(f"unknown mode {mode}")
     json.dump(result, sys.stdout)

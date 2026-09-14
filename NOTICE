@@ -79,3 +79,8 @@ default parameters, pairing and pruning rules follow ChimeraX matchmaker
 (match_maker, std_commands/align.py), which is covered by the ChimeraX
 license (https://www.rbvi.ucsf.edu/chimerax/docs/licensing.html).  The
 BLOSUM-62 matrix is from the BLOCKS database (Henikoff & Henikoff, 1992).
+
+boonza's solvate, neutralize and hydrogen mass repartitioning (boonza/build.py)
+follow msys's dms-solvate, dms-neutralize and dms-hmr tools, and
+boonza/data/tip3p.dms is the TIP3P water box distributed with msys, under the
+msys license above.

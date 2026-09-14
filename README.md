@@ -152,6 +152,9 @@ Implemented:
   `boonza.identity_matrix(seqs)`): global, free-end-gap or local alignment
   with BLOSUM-62 and affine gaps. It reports EMBOSS-style identity,
   similarity and gap fractions. Scores match Biopython's PairwiseAligner.
+- Building systems: `boonza.solvate`, `boonza.neutralize` and
+  `boonza.repartition_hydrogen_masses` follow msys's dms-solvate,
+  dms-neutralize and dms-hmr and give the same systems (TIP3P box included)
 - Symmetry-corrected ligand RMSD (`boonza.ligand_rmsd`, `boonza.symmetry_rmsd`,
   `boonza rmsd`): fit the proteins, move the ligand with them, then take the
   smallest RMSD over element- and bond-preserving atom mappings (exact

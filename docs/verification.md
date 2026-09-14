@@ -14,6 +14,7 @@ tool, running the real program where possible. The test suite has 463 tests.
 | Amber prmtop, inpcrd/rst7 | msys `LoadPrmTop`; OpenMM `AmberPrmtopFile` | every table, positions, velocities and cell on msys's test system and five more prmtops (CMAP included); energies |
 | PSF | MDAnalysis `PSFParser`; OpenMM `CharmmPsfFile` | atoms, types, charges, masses, residues, segments, bonds on nine PSF variants |
 | GROMACS topology | OpenMM `GromacsTopFile`; MDAnalysis `ITPParser` | energies of an Amber-style topology (and against its Amber original); GROMOS structure |
+| solvate, neutralize, hydrogen mass repartitioning | msys `dms-solvate`, `dms-neutralize`, `dms-hmr` | the whole system, compared with `boonza.diff`; ions with 0 and 0.15 M salt |
 | Desmond DTR, STK | msys molfile | frames, boxes, times; DTRs written by msys (single and double precision, several frames per file), later runs replacing earlier ones in an STK |
 | PDB SSBOND/LINK and mmCIF `_struct_conn` bonds | gemmi | bond lists on 4 structures; PDB and mmCIF files of each give the same bonds |
 | periodic distances | MDAnalysis | distance matrices, capped pairs |
