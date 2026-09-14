@@ -11,6 +11,8 @@
     boonza rmsd docked.pdb crystal.pdb [--ligandsel SEL] [--align order|sequence|none]
     boonza rmsd system.pdb crystal.pdb --traj md.xtc     (one RMSD per frame)
     boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]
+    boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
+    boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
 
 ``validate``, ``knots`` and ``diff`` exit with status 1 when they find
 something.
@@ -195,6 +197,21 @@ def _drmsd(args) -> int:
     return 0
 
 
+def _build(args) -> int:
+    import boonza
+
+    if args.smiles:
+        s = boonza.from_smiles(args.smiles, name=args.name, seed=args.seed,
+                               optimize=not args.no_optimize,
+                               conformers=args.conformers)  # fmt: skip
+    else:
+        s = boonza.peptide(args.sequence, conformation=args.conformation, seed=args.seed,
+                           optimize=not args.no_optimize)  # fmt: skip
+    boonza.save(s, args.output)
+    print(f"wrote {args.output}: {s.natoms} atoms, {s.nbonds} bonds, {s.nresidues} residues")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boonza", description="Molecular system tools.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -267,6 +284,19 @@ def _parser() -> argparse.ArgumentParser:
                    help="pair fit atoms in order, by sequence alignment, or no fit")  # fmt: skip
     q.add_argument("--traj", help="trajectory of the mobile system (DCD/XTC): one RMSD per frame")
     q.set_defaults(run=_rmsd)
+
+    q = sub.add_parser("build", help="3D structure from a SMILES string or a peptide sequence")
+    what = q.add_mutually_exclusive_group(required=True)
+    what.add_argument("--smiles", help="molecule as SMILES")
+    what.add_argument("--sequence", help="peptide as one-letter sequence")
+    q.add_argument("-o", "--output", required=True, help="output file (.sdf, .pdb, .dms, ...)")
+    q.add_argument("--conformation", default="helix",
+                   help="peptide: helix, sheet, extended or polyproline")  # fmt: skip
+    q.add_argument("--name", default="LIG", help="SMILES: residue name")
+    q.add_argument("--conformers", type=int, default=1, help="SMILES: conformers to try")
+    q.add_argument("--seed", type=int, default=42, help="random seed for the embedding")
+    q.add_argument("--no-optimize", action="store_true", help="skip the MMFF minimization")
+    q.set_defaults(run=_build)
 
     q = sub.add_parser("drmsd", help="pocket-ligand distance RMSD, symmetry-corrected")
     q.add_argument("system", help="structure (topology of --traj)")

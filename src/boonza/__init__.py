@@ -24,7 +24,13 @@ from .analysis import (  # noqa: E402
     rmsf,
     sasa,
 )
-from .build import neutralize, repartition_hydrogen_masses, solvate  # noqa: E402
+from .build import (  # noqa: E402
+    from_smiles,
+    neutralize,
+    peptide,
+    repartition_hydrogen_masses,
+    solvate,
+)
 from .ce import CEResult, ce_align, cealign  # noqa: E402
 from .chem import assign_bond_orders, fragments_to_rdkit, from_rdkit, to_rdkit  # noqa: E402
 from .describe import ForceFieldReport, describe, topological_distances  # noqa: E402
@@ -61,6 +67,8 @@ from .validate import Problem, find_knots, validate  # noqa: E402
 from .view import MoleculeView, view  # noqa: E402
 
 __all__ = [
+    "from_smiles",
+    "peptide",
     "neutralize",
     "repartition_hydrogen_masses",
     "solvate",

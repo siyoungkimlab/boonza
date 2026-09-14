@@ -1,6 +1,6 @@
 # Building systems
 
-Solvating a solute, adding ions and repartitioning hydrogen masses follow
+Molecules and peptides can be built from text (SMILES, sequences). Solvating a solute, adding ions and repartitioning hydrogen masses follow
 msys's `dms-solvate`, `dms-neutralize` and `dms-hmr` tools step by step, so
 the same inputs give the same systems. The tests compare each with msys.
 
@@ -12,6 +12,34 @@ s = boonza.solvate(protein, thickness=10.0)  # TIP3P, 10 Å around the protein
 s = boonza.neutralize(s, concentration=0.15)  # Na+/Cl-: neutral, then 150 mM
 s = boonza.repartition_hydrogen_masses(s, "not water", 3.024)
 boonza.save(s, "solvated.dms")
+```
+
+## From text
+
+A molecule or a peptide can be built in 3D from one line of text (RDKit is
+needed):
+
+```python
+lig = boonza.from_smiles("CC(=O)Oc1ccccc1C(=O)O", name="ASP", conformers=10)
+pep = boonza.peptide("ACDEFGHIKLMNPQRSTVWY", "helix")  # or "sheet", "extended",
+pep = boonza.peptide("GPPG", [(-75, 145)] * 4)  # "polyproline", or (phi, psi)
+```
+
+- `from_smiles` adds hydrogens and embeds 3D conformers with RDKit's ETKDG
+  (reproducible with `seed`). It minimizes them with MMFF94, or UFF where
+  MMFF has no parameters, and keeps the lowest in energy. Bond orders and
+  formal charges come from the SMILES. The atoms are named C1, C2, ..., H1, ...
+  in one residue.
+- `peptide` builds the chain with PDB atom and residue names and makes every
+  peptide bond trans. It sets phi/psi residue by residue, then relaxes the
+  structure with MMFF94 while holding phi/psi. Proline's phi is left to its
+  ring. The termini are a free amine and a free acid.
+
+From the command line:
+
+```bash
+boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
+boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
 ```
 
 ## Solvate

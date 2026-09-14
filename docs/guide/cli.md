@@ -15,6 +15,8 @@ boonza phipsi protein.pdb                     # phi/psi/omega table
 boonza rmsd docked.pdb crystal.pdb [--ligandsel SEL] [--mobsel SEL] [--refsel SEL] [--align order|sequence|none]
 boonza rmsd system.pdb crystal.pdb --traj md.xtc [--ligandsel SEL]   # one ligand RMSD per frame
 boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]   # pocket-ligand dRMSD
+boonza build --smiles SMILES -o out.sdf [--conformers 10]   # a 3D molecule from SMILES
+boonza build --sequence ACDEF [--conformation helix] -o out.pdb   # a peptide
 ```
 
 `validate`, `knots` and `diff` exit with status 1 when they find something,
