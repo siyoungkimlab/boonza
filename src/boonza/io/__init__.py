@@ -12,6 +12,7 @@ from .gro import load_gro, save_gro
 from .mae import load_mae
 from .mae_writer import save_mae
 from .pdb import load_pdb, save_pdb
+from .psf import load_psf
 from .sdf import load_sdf, save_sdf
 
 _READERS = {
@@ -21,6 +22,7 @@ _READERS = {
     ".pdb": load_pdb,
     ".prmtop": load_prmtop,
     ".parm7": load_prmtop,
+    ".psf": load_psf,
     ".sdf": load_sdf,
     ".mol": load_sdf,
     ".gro": load_gro,
@@ -85,6 +87,7 @@ __all__ = [
     "load_mae",
     "load_pdb",
     "load_prmtop",
+    "load_psf",
     "read_amber_coordinates",
     "load_sdf",
     "save",
