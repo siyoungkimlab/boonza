@@ -20,6 +20,7 @@ nav:
       - Geometry and PBC: guide/geometry.md
       - Alignment: guide/alignment.md
       - Analysis: guide/analysis.md
+      - Summaries for AI: guide/summaries.md
       - RDKit and OpenMM: guide/bridges.md
       - Command line: guide/cli.md
   - API reference: reference.md

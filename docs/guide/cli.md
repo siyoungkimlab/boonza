@@ -16,6 +16,7 @@ boonza rmsd docked.pdb crystal.pdb [--ligandsel SEL] [--mobsel SEL] [--refsel SE
 boonza rmsd system.pdb crystal.pdb --traj md.xtc [--ligandsel SEL]   # one ligand RMSD per frame
 boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]   # pocket-ligand dRMSD
 boonza build --smiles SMILES -o out.sdf [--conformers 10]   # a 3D molecule from SMILES
+boonza summarize complex.pdb [--focus SEL] [--json]   # a text summary for people and AI
 boonza build --sequence ACDEF [--conformation helix] -o out.pdb   # a peptide
 ```
 
