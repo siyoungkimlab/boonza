@@ -15,13 +15,14 @@ FILES = ["1DUF.pdb", "3RYZ.pdb", "alanin.pdb", "arginine.pdb", "h2o.pdb"]
 
 @pytest.mark.parametrize("name", FILES)
 def test_load_matches_msys(name):
-    path = msys_file(name)  # msys ignores CONECT and SSBOND records
-    assert_same(canon(boonza.load(path, conect=False, ssbond=False)), run_msys("load", path))
+    path = msys_file(name)  # msys ignores CONECT, SSBOND and LINK records
+    ours = boonza.load(path, conect=False, ssbond=False, link=False)
+    assert_same(canon(ours), run_msys("load", path))
 
 
 @pytest.mark.parametrize("name", FILES)
 def test_write_roundtrip(name, tmp_path):
-    src = boonza.load(msys_file(name), conect=False, ssbond=False)
+    src = boonza.load(msys_file(name), conect=False, ssbond=False, link=False)
     out = tmp_path / "out.pdb"
     boonza.save(src, out, models=True)
     back = boonza.load(out)
@@ -99,7 +100,7 @@ def test_ssbond_and_conect_records():
     ss = {(_label(s, i), _label(s, j)) for i, j in _bond_set(s) if i in sg and j in sg}
     assert ss == {("CYS6:SG", "CYS127:SG"), ("CYS30:SG", "CYS115:SG"),
                   ("CYS64:SG", "CYS80:SG"), ("CYS76:SG", "CYS94:SG")}  # fmt: skip
-    plain = boonza.load(data / "1LYZ.pdb", conect=False, ssbond=False)
+    plain = boonza.load(data / "1LYZ.pdb", conect=False, ssbond=False, link=False)
     assert len(_bond_set(s) - _bond_set(plain)) == 3
     assert len(boonza.load(data / "1LYZ.pdb", conect=False).bonds) == len(s.bonds)  # SSBOND alone
 

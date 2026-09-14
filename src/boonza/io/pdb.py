@@ -11,6 +11,9 @@ the file's own records are applied (msys ignores them):
 
 - ``SSBOND``: the SG atoms of the two cysteines are bonded, whatever their
   distance (bonds to a symmetry copy, operator other than 1555, are skipped).
+- ``LINK``: the two named atoms are bonded (covalent links, metal
+  coordination), again skipping symmetry copies.  With alternate locations,
+  copies with the same altloc are paired.
 - ``CONECT``: the listed bonds are added; an entry repeated two or three
   times sets the bond order (the PyMOL/Open Babel convention).  For atoms
   that have their own CONECT record, the records are authoritative: a
@@ -46,17 +49,18 @@ SPACE_GROUP = "pdb_space_group"
 Z_VALUE = "pdb_z_value"
 
 
-def load_pdb(path, guess_bonds: bool = True, conect: bool = True, ssbond: bool = True) -> System:
+def load_pdb(path, guess_bonds: bool = True, conect: bool = True, ssbond: bool = True,
+             link: bool = True) -> System:  # fmt: skip
     """Read a PDB file (optionally gzip/bzip2 compressed).
 
-    ``guess_bonds``: bond atoms by distance (msys rules).  ``conect`` and
-    ``ssbond``: apply the file's CONECT and SSBOND records on top (see the
-    module notes); False for msys behavior.
+    ``guess_bonds``: bond atoms by distance (msys rules).  ``conect``,
+    ``ssbond`` and ``link``: apply the file's CONECT, SSBOND and LINK records
+    on top (see the module notes); all False for msys behavior.
     """
     path = os.fspath(path)
     out = System(path)
     lines = read_text(path).split("\n")
-    records = _bond_records(lines, conect, ssbond)
+    records = _bond_records(lines, conect, ssbond, link)
     for atoms, ters, cryst in _models(lines):
         out.append(_model(atoms, ters, cryst, guess_bonds, records))
     out.name = path
@@ -162,8 +166,9 @@ def _serial_value(field: str) -> int:
             return -1
 
 
-def _bond_records(lines, conect: bool, ssbond: bool):
-    """CONECT pairs {(serial, serial): max multiplicity}, base serials, SSBOND residue pairs."""
+def _bond_records(lines, conect: bool, ssbond: bool, link: bool = False):
+    """CONECT pairs {(serial, serial): max multiplicity}, base serials, and named atom pairs
+    ((chain, resid, insertion, atom name, altloc) x 2) from SSBOND and LINK."""
     pairs: dict[tuple[int, int], int] = {}
     bases: set[int] = set()
     ss = []
@@ -187,16 +192,62 @@ def _bond_records(lines, conect: bool, ssbond: bool):
             sym1, sym2 = rec[59:65].strip(), rec[66:72].strip()
             if sym1 and sym2 and sym1 != sym2:
                 continue  # bonded to a crystal symmetry copy
-            first = (rec[15].strip(), _atoi(rec[17:21]), rec[21].strip())
-            second = (rec[29].strip(), _atoi(rec[31:35]), rec[35].strip())
+            first = (rec[15].strip(), _atoi(rec[17:21]), rec[21].strip(), "SG", "")
+            second = (rec[29].strip(), _atoi(rec[31:35]), rec[35].strip(), "SG", "")
+            ss.append((first, second))
+        elif link and line.startswith("LINK"):
+            rec = line.rstrip("\r").ljust(80)
+            sym1, sym2 = rec[59:65].strip(), rec[66:72].strip()
+            if sym1 and sym2 and sym1 != sym2:
+                continue
+            first = (rec[21].strip(), _atoi(rec[22:26]), rec[26].strip(), rec[12:16].strip(),
+                     rec[16].strip())  # fmt: skip
+            second = (rec[51].strip(), _atoi(rec[52:56]), rec[56].strip(), rec[42:46].strip(),
+                      rec[46].strip())  # fmt: skip
             ss.append((first, second))
     if not pairs and not ss:
         return None
     return pairs, bases, ss
 
 
+def named_bonds(s: System, chain, resid, insertion, name, altloc, pairs) -> int:
+    """Bond atoms named by (chain, resid, insertion, atom name, altloc) pairs.
+
+    Per-atom arrays give each atom's chain id, resid, insertion code, name
+    and altloc (None when the file has none).  An empty altloc matches every
+    alternate location; when both partners have several, copies with the
+    same altloc are paired.  Unknown atoms are skipped.  Returns the number
+    of bonds made (new or existing)."""
+    if not pairs:
+        return 0
+    wanted = {key[3] for pair in pairs for key in pair}
+    index: dict[tuple, list[int]] = {}
+    for k in np.flatnonzero(np.isin(name, list(wanted))).tolist():
+        index.setdefault((str(chain[k]), int(resid[k]), str(insertion[k]), str(name[k])),
+                         []).append(k)  # fmt: skip
+
+    def candidates(key):
+        found = index.get(tuple(key[:4]), [])
+        if key[4] and altloc is not None:
+            found = [k for k in found if altloc[k] == key[4]] or found
+        return found
+
+    bonds = []
+    for a, b in pairs:
+        ka, kb = candidates(a), candidates(b)
+        if len(ka) > 1 and len(kb) > 1 and altloc is not None:
+            by_alt = {str(altloc[k]): k for k in kb}
+            bonds += [(x, by_alt[str(altloc[x])]) for x in ka if str(altloc[x]) in by_alt]
+        else:
+            bonds += [(x, y) for x in ka for y in kb]
+    bonds = [(x, y) for x, y in bonds if x != y]
+    if bonds:
+        s.add_bonds(bonds)
+    return len(bonds)
+
+
 def _apply_bond_records(s: System, serials: np.ndarray, chain, resid, insertion, name,
-                        records) -> None:  # fmt: skip
+                        records, altloc=None) -> None:  # fmt: skip
     pairs, bases, ss = records
     if pairs:
         uniq, counts = np.unique(serials[serials >= 0], return_counts=True)
@@ -220,15 +271,7 @@ def _apply_bond_records(s: System, serials: np.ndarray, chain, resid, insertion,
                 orders = s._bonds.column("order").copy()
                 orders[ids[multi]] = np.minimum(arr[multi, 2], 3)
                 s.bonds["order"] = orders
-    if ss:
-        sg = np.flatnonzero(name == "SG")
-        where: dict[tuple, int] = {}
-        for k in sg.tolist():
-            where.setdefault((str(chain[k]), int(resid[k]), str(insertion[k])), k)
-        bonds = [(where[a], where[b]) for a, b in ss if a in where and b in where
-                 and where[a] != where[b]]  # fmt: skip
-        if bonds:
-            s.add_bonds(bonds)
+    named_bonds(s, chain, resid, insertion, name, altloc, ss)
 
 
 def _model(lines, ters, cryst, guess_bonds: bool, records=None) -> System:
@@ -293,7 +336,16 @@ def _model(lines, ters, cryst, guess_bonds: bool, records=None) -> System:
         s.guess_bonds()
     if records is not None:
         serials = f.mapped(6, 11, _serial_value, np.int64)
-        _apply_bond_records(s, serials, chain, resid, insertion, name, records)
+        _apply_bond_records(
+            s,
+            serials,
+            chain,
+            resid,
+            insertion,
+            name,
+            records,
+            altloc if (altloc != "").any() else None,
+        )
     return s
 
 

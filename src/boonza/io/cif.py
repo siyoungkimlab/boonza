@@ -28,7 +28,14 @@ from ..system import System
 from ._maeparse import read_text
 from ._sqlite_scan import _gather
 from .dms import _factorize
-from .pdb import SPACE_GROUP, Z_VALUE, _element, cell_from_lengths_angles, lengths_angles_from_cell
+from .pdb import (
+    SPACE_GROUP,
+    Z_VALUE,
+    _element,
+    cell_from_lengths_angles,
+    lengths_angles_from_cell,
+    named_bonds,
+)
 
 _RESERVED = ("loop_", "data_", "save_", "global_", "stop_")
 _TOKEN = re.compile(
@@ -291,8 +298,14 @@ def _ints(col, n: int, default: int) -> np.ndarray:
 # reading
 
 
-def load_cif(path, guess_bonds: bool = True) -> System:
-    """Read the first data block with an ``_atom_site`` loop."""
+def load_cif(path, guess_bonds: bool = True, struct_conn: bool = True) -> System:
+    """Read the first data block with an ``_atom_site`` loop.
+
+    Bonds are guessed from distances (``guess_bonds``), then the
+    ``_struct_conn`` records (disulfides, covalent links, metal coordination;
+    not hydrogen bonds or bonds to symmetry copies) are added with
+    ``struct_conn``, as SSBOND/LINK are for PDB files.
+    """
     path = os.fspath(path)
     blocks = parse_cif(read_text(path))
     blk = next((b for b in blocks if "_atom_site.cartn_x" in b.items), None)
@@ -328,11 +341,12 @@ def load_cif(path, guess_bonds: bool = True) -> System:
     props, cell = _crystal(blk)
     model, _ = _factorize(_ints(pick("pdbx_pdb_model_num"), n, 1))
 
+    links = _struct_conn(blk) if struct_conn else []
     out = System(path)
     for m in range(int(model.max()) + 1 if n else 0):
         rows = np.flatnonzero(model == m)
         out.append(_model({k: v[rows] for k, v in fields.items()}, blk.name, props, cell,
-                          guess_bonds))  # fmt: skip
+                          guess_bonds, links))  # fmt: skip
     out.name = path
     return out
 
@@ -354,7 +368,46 @@ def _crystal(blk: CifBlock):
     return props, np.zeros((3, 3))
 
 
-def _model(f: dict, title: str, props: dict, cell, guess_bonds: bool) -> System:
+def _struct_conn(blk: CifBlock) -> list:
+    """Named atom pairs ((chain, resid, insertion, atom, altloc) x 2) from _struct_conn."""
+    conn = blk.category("_struct_conn")
+    if not conn or "conn_type_id" not in conn:
+        return []
+    m = len(conn["conn_type_id"])
+
+    def col(*names):
+        for name in names:
+            if name in conn:
+                vals = _text(conn[name])
+                return np.array(["" if v in ("?", ".") else str(v) for v in vals.tolist()])
+        return np.full(m, "")
+
+    kind = np.char.lower(col("conn_type_id").astype(str))
+    sym1, sym2 = col("ptnr1_symmetry"), col("ptnr2_symmetry")
+    ends = []
+    for p in ("1", "2"):
+        ends.append((col(f"ptnr{p}_auth_asym_id", f"ptnr{p}_label_asym_id"),
+                     col(f"ptnr{p}_auth_seq_id", f"ptnr{p}_label_seq_id"),
+                     col(f"pdbx_ptnr{p}_pdb_ins_code"),
+                     col(f"ptnr{p}_auth_atom_id", f"ptnr{p}_label_atom_id"),
+                     col(f"pdbx_ptnr{p}_label_alt_id")))  # fmt: skip
+    pairs = []
+    for k in range(m):
+        if kind[k] == "hydrog" or (sym1[k] and sym2[k] and sym1[k] != sym2[k]):
+            continue
+        keys = []
+        for chain, seq, ins, atom, alt in ends:
+            try:
+                resid = int(seq[k])
+            except ValueError:
+                break
+            keys.append((chain[k], resid, ins[k], atom[k], alt[k]))
+        if len(keys) == 2:
+            pairs.append(tuple(keys))
+    return pairs
+
+
+def _model(f: dict, title: str, props: dict, cell, guess_bonds: bool, links=()) -> System:
     n = len(f["name"])
     combo, reps = _factorize(f["element"], f["name"], f["resname"])
     guesses = [_element(str(f["element"][k]), str(f["name"][k]), str(f["resname"][k]))
@@ -380,6 +433,9 @@ def _model(f: dict, title: str, props: dict, cell, guess_bonds: bool) -> System:
     s.cell = cell
     if guess_bonds and n:
         s.guess_bonds()
+    if links:
+        alt = f["altloc"] if (f["altloc"] != "").any() else None
+        named_bonds(s, f["chain"], f["resid"], f["insertion"], f["name"], alt, links)
     return s
 
 

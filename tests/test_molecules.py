@@ -12,7 +12,8 @@ FILES = ["ww.dms", "2f4k.dms", "cofactors.sdf", "jandor.sdf", "knot.mae", "3RYZ.
 @pytest.mark.parametrize("name", FILES)
 def test_matches_msys(name):
     path = msys_file(name)
-    kw = {"conect": False, "ssbond": False} if name.endswith(".pdb") else {}  # as msys
+    as_msys = {"conect": False, "ssbond": False, "link": False}  # msys ignores bond records
+    kw = as_msys if name.endswith(".pdb") else {}
     ours = distinct_fragments(boonza.load(path, **kw))
     assert [[k, v] for k, v in ours.items()] == run_msys("distinct", path)
 
