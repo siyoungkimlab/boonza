@@ -25,5 +25,8 @@ boonza dssp data/1LYZ.pdb --simplified
 echo; echo "\$ boonza phipsi data/1LYZ.pdb | head -6"
 boonza phipsi data/1LYZ.pdb | head -6
 
+echo; echo "\$ boonza summarize data/1HHO.pdb --focus \"resname HEM and chain A\" --max-items 3 | head -24"
+boonza summarize data/1HHO.pdb --focus "resname HEM and chain A" --max-items 3 | head -24
+
 echo; echo "\$ boonza diff data/1LYZ.pdb output/lysozyme_protein.cif --no-positions | head -3"
 boonza diff data/1LYZ.pdb output/lysozyme_protein.cif --no-positions | head -3 || true

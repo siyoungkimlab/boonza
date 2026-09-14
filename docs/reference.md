@@ -14,11 +14,14 @@ Write ``system`` to ``path``; the format comes from the extension unless given.
 
 ### `boonza.open_trajectory(path, system=None, format: 'str | None' = None) -> 'Trajectory'`
 
-Open a DCD or XTC trajectory; with ``system`` the atom counts must agree.
+Open a trajectory: DCD, XTC, TRR, Amber NetCDF, or Desmond DTR/STK.
+
+With ``system`` the atom counts must agree.
 
 ### `boonza.open_writer(path, natoms: 'int', format: 'str | None' = None, **kwargs)`
 
-A DCD or XTC writer: ``with open_writer(p, n) as w: w.write(positions, box)``.
+A DCD, XTC, TRR or Amber NetCDF writer:
+``with open_writer(p, n) as w: w.write(positions, box)``.
 
 ### `class boonza.Trajectory(path, system=None)`
 
@@ -458,9 +461,14 @@ Energy of each translated force in kcal/mol (and the total).
 
 ## Per-format readers and writers (`boonza.io`)
 
-### `boonza.io.load_cif(path, guess_bonds: 'bool' = True) -> 'System'`
+### `boonza.io.load_cif(path, guess_bonds: 'bool' = True, struct_conn: 'bool' = True) -> 'System'`
 
 Read the first data block with an ``_atom_site`` loop.
+
+Bonds are guessed from distances (``guess_bonds``), then the
+``_struct_conn`` records (disulfides, covalent links, metal coordination;
+not hydrogen bonds or bonds to symmetry copies) are added with
+``struct_conn``, as SSBOND/LINK are for PDB files.
 
 ### `boonza.io.load_dms(path, structure_only: 'bool' = False, without_tables: 'bool' = False) -> 'System'`
 
@@ -475,17 +483,34 @@ pseudo particles (atomic number 0).
 
 Read an MAE/CMS file (optionally gzip/bzip2 compressed); all cts go into one System.
 
-### `boonza.io.load_pdb(path, guess_bonds: 'bool' = True, conect: 'bool' = True, ssbond: 'bool' = True) -> 'System'`
+### `boonza.io.load_pdb(path, guess_bonds: 'bool' = True, conect: 'bool' = True, ssbond: 'bool' = True, link: 'bool' = True) -> 'System'`
 
 Read a PDB file (optionally gzip/bzip2 compressed).
 
-``guess_bonds``: bond atoms by distance (msys rules).  ``conect`` and
-``ssbond``: apply the file's CONECT and SSBOND records on top (see the
-module notes); False for msys behavior.
+``guess_bonds``: bond atoms by distance (msys rules).  ``conect``,
+``ssbond`` and ``link``: apply the file's CONECT, SSBOND and LINK records
+on top (see the module notes); all False for msys behavior.
+
+### `boonza.io.load_prmtop(path, coordinates=None, structure_only: 'bool' = False, without_tables: 'bool' = False) -> 'System'`
+
+Read an Amber prmtop (or parm7) file, optionally with coordinates.
+
+``coordinates``: an inpcrd/rst7 file (ASCII) or an Amber NetCDF restart
+(positions, velocities and the cell).  ``structure_only`` or
+``without_tables`` skip the force-field tables (bonds are still made).
+
+### `boonza.io.load_psf(path, coordinates=None) -> 'System'`
+
+Read a PSF file; ``coordinates``: a file boonza can load with the same
+atoms (PDB, CRD-like formats, ...) or an (natoms, 3) array.
 
 ### `boonza.io.load_sdf(path) -> 'System'`
 
 Read every entry of an SDF file (optionally gzip/bzip2 compressed).
+
+### `boonza.io.load_top(path, coordinates=None, defines=None, include_dirs=None, structure_only: 'bool' = False) -> 'System'`
+
+Read a GROMACS topology; ``coordinates``: a .gro/.pdb (anything boonza loads).
 
 ### `boonza.io.save_cif(system: 'System', path) -> 'None'`
 
@@ -597,6 +622,10 @@ One 3Dmol.js viewer: shown by Jupyter, or written as a page with ``save``.
 
 Principal components of atomic fluctuations (see ``pca``).
 
+### `class boonza.Summary(title: 'str', sections: 'list[tuple[str, list[str]]]' = <factory>, data: 'dict' = <factory>) -> None`
+
+A structure summary: ``str()`` for text (Markdown), ``to_dict()`` for data.
+
 ### `class boonza.SymmetryRMSD(rmsd: 'float | np.ndarray', plain_rmsd: 'float | np.ndarray | None', mapping: 'np.ndarray', mobile_atoms: 'np.ndarray', reference_atoms: 'np.ndarray', isomorphisms: 'int | None' = None, truncated: 'bool' = False) -> None`
 
 Outcome of ``symmetry_rmsd``.
@@ -647,6 +676,16 @@ a Trajectory (read chunk by chunk, only pocket and ligand atoms).  With
 ``periodic=True`` distances use the minimum image of each frame's box (the
 system's cell for plain arrays).
 
+### `boonza.from_smiles(smiles: 'str', name: 'str' = 'LIG', seed: 'int' = 42, optimize: 'bool' = True, conformers: 'int' = 1) -> 'System'`
+
+A 3D molecule from a SMILES string (needs RDKit).
+
+Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
+reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
+(UFF when MMFF lacks parameters); the lowest-energy one is kept.  Bond
+orders and formal charges come from the SMILES.  The molecule is one
+residue named ``name`` with atoms named C1, C2, ..., H1, ...
+
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 
 Superpose ``mobile`` onto ``reference`` by protein atoms, then the ligand RMSD.
@@ -680,6 +719,21 @@ is Best, Hummer and Eaton's 1 / (1 + exp(beta (r - lambda_constant r0)))
 with beta in 1/Å.  With ``periodic``, distances use each frame's box (and
 the reference cell).
 
+### `boonza.neutralize(system: 'System', cation='Na', anion='Cl', charge='formal_charge', chain: 'str' = 'ION', chain2: 'str' = 'ION2', solute_pad: 'float' = 5.0, ion_pad: 'float' = 3.0, water_pad: 'float' = 0.0, concentration: 'float' = 0.0, keep: 'str' = 'none', random_seed: 'int' = 0) -> 'System'`
+
+Replace water molecules with ions (msys ``dms-neutralize``).
+
+Enough counterions are added to cancel the solute's charge (the sum of
+``charge``: "formal_charge", "charge", or a number), then ion pairs up to
+``concentration`` (mol/L, counted against the waters as msys does).
+Waters within ``solute_pad`` of anything that is not water, or matching
+``keep``, are never replaced; they are picked in a random order fixed by
+``random_seed``.  As in msys, candidate waters closer than
+``ion_pad`` squared (Å) to an earlier pick are skipped.  Ions sit at the
+replaced water's mass-weighted center, in a new ct: counterions in chain
+``chain`` and the others in ``chain2``, numbered from 1.  Unlike msys,
+ions get their element mass.
+
 ### `boonza.pca(system, positions=None, sel='name CA', align: 'bool' = True, n_components=None) -> 'PCA'`
 
 Principal component analysis of the ``sel`` atoms over frames (MDAnalysis PCA).
@@ -689,6 +743,50 @@ MDAnalysis does); the covariance of the fitted coordinates is divided by
 nframes - 1.  Components come from a singular value decomposition of the
 centered frames, so at most min(nframes, 3 natoms) are returned (the rest
 have zero variance), each with its largest element positive.
+
+### `boonza.peptide(sequence: 'str', conformation='helix', seed: 'int' = 0, optimize: 'bool' = True) -> 'System'`
+
+A peptide built from a one-letter sequence (needs RDKit).
+
+``conformation``: "helix", "sheet", "extended", "polyproline", one
+(phi, psi) pair, or one pair per residue (degrees).  The chain is built
+by RDKit with PDB atom and residue names, every peptide bond is set
+trans, and phi/psi are set residue by residue (proline's phi is fixed by
+its ring).  With ``optimize`` the structure is minimized with MMFF94
+while phi/psi are held, so side chains relax without losing the
+backbone (omega included).  Termini are free amine and acid, as RDKit
+builds them.
+
+### `boonza.repartition_hydrogen_masses(system: 'System', selection: 'str' = 'not water', mass: 'float' = 3.024, repartition: 'bool' = True) -> 'System'`
+
+Set the mass of the hydrogens in ``selection`` (msys ``dms-hmr``).
+
+With ``repartition`` the added mass is taken from the heavy atom each
+hydrogen is bonded to, so the total mass is unchanged (hydrogen mass
+repartitioning, for 4 fs time steps); without it only the hydrogens
+change (for example deuterium, 2.014).
+
+### `boonza.solvate(solute: 'System', solvent=None, box=None, thickness: 'float' = 5.0, min_solute_dist: 'float' = 2.4, min_solvent_dist: 'float' = 1.0, solvent_selection: 'str' = 'oxygen', center_selection: 'str' = 'all') -> 'System'`
+
+Tile a solvent box around ``solute`` and remove overlaps (msys ``dms-solvate``).
+
+``box``: the box edge lengths (one value or three, Å); by default a cube
+of the solute's largest extent plus ``thickness`` on each side.  The
+solute is first centered on ``center_selection`` ("none" to skip).
+``solvent``: a System or file with a periodic cell (default: the
+bundled TIP3P box).  Solvent molecules are removed when a
+``solvent_selection`` atom is within ``min_solute_dist`` of the solute
+(periodically), when their center lies outside the box, or when any of
+their atoms is within ``min_solvent_dist`` of a periodic image of the
+solvent.  Water chains are named W1, W2, ... with residues numbered from 1.
+
+### `boonza.summarize(system, focus=None, cutoff: 'float' = 4.0, max_items: 'int' = 20, title: 'str | None' = None) -> 'Summary'`
+
+A text summary of ``system`` (see the module docstring).
+
+``focus``: a selection (string, indices or AtomSel) to describe in
+detail: its surroundings within ``cutoff`` Å, bonds, polar contacts and
+burial.  ``max_items`` caps every list; longer lists say how many more.
 
 ### `boonza.symmetry_rmsd(mobile, reference, atoms=None, reference_atoms=None, positions=None, superpose: 'bool' = False, heavy_only: 'bool' = True, bond_orders: 'bool' = False, max_isomorphisms: 'int' = 100000) -> 'SymmetryRMSD'`
 
