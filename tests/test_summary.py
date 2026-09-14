@@ -45,6 +45,18 @@ def test_heme_site(hemoglobin):
     assert any("HIS A87 NE2" in b for b in heme["bonds_out"])
     assert 0.5 < heme["buried_fraction"] < 1.0
     assert any(c["distance"] <= 3.5 for c in heme["polar_contacts"])
+    assert heme["smiles"] is None  # no hydrogens or bond orders in this file: no guessing
+
+
+def test_smiles_when_the_chemistry_is_known():
+    pytest.importorskip("rdkit")
+    from rdkit import Chem
+
+    smiles = "CC(=O)Oc1ccccc1C(=O)O"
+    lig = boonza.from_smiles(smiles, name="AIN")
+    entry = boonza.summarize(lig).to_dict()["molecules"][0]
+    assert entry["smiles"] == Chem.MolToSmiles(Chem.MolFromSmiles(smiles))
+    assert entry["formula"] == "C9H8O4"
 
 
 def test_disulfides_and_focus():

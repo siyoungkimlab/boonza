@@ -83,7 +83,7 @@ rmsd = boonza.rmsd_trajectory(s, traj.read(), "protein and name CA")
 
 ## Examples
 
-Start with the [examples](examples.md): 15 runnable scripts in `examples/`, each
+Start with the [examples](examples.md): 21 runnable scripts in `examples/`, each
 shown with its real output. They cover loading and selecting, building and
 editing, parameterizing a protein with OpenMM, editing force fields,
 superposition, sequence alignment, running and analyzing a short

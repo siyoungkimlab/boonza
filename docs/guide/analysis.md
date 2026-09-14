@@ -99,6 +99,77 @@ ss = boonza.chimerax_ss(s)  # 'H', 'S', 'O' as ChimeraX assigns (used by matchma
 - `chimerax_ss` reproduces ChimeraX's own assignment, which differs slightly
   from DSSP 2.2.
 
+Chains are also cut where the C-N distance between consecutive residues is
+over 2.5 Å, or where a residue lacks backbone atoms, as the DSSP program
+does. mdtraj uses the topology's chains only; `breaks=False` reproduces it
+exactly. With `box=`, or with Frames and trajectories that carry boxes,
+distances use the minimum image, so a protein split across the box needs no
+glueing. A PDB file's CRYST1 cell is not used unless you pass it, because it
+would add contacts to symmetry mates.
+
+```python
+codes = boonza.dssp(s, traj)  # boxes from the trajectory
+codes = boonza.dssp(s, frames, box=cell, breaks=True)
+```
+
+## Native contacts
+
+```python
+q = boonza.native_contacts(s, "segid A", "segid B", positions=frames)  # hard_cut
+q = boonza.native_contacts(
+    s, sel1, sel2, positions=frames, reference=crystal, method="soft_cut", radius=4.5
+)
+```
+
+This is the fraction of native contacts Q per frame, as MDAnalysis
+`Contacts` computes it. Native contacts are the pairs within `radius` in the
+reference: the system's own coordinates, or another System. `method`:
+
+- `"hard_cut"`: counts r ≤ r0;
+- `"radius_cut"`: counts r ≤ radius;
+- `"soft_cut"`: Best-Hummer-Eaton's 1 / (1 + exp(β (r − λ r0))).
+
+Distances use each frame's box.
+
+## Contact frequencies
+
+```python
+rows, cols, freq = boonza.contact_frequency(s, "protein", "resname LIG", positions=frames)
+rows, cols, freq = boonza.contact_frequency(s, "protein", positions=frames, level="atom")
+```
+
+This gives the fraction of frames in which each pair is in contact. A
+residue pair counts when any of its atoms are within `cutoff`. `rows` and
+`cols` are residue (or atom) indices. Without a second selection, pairs are
+within the first one, excluding a residue with itself.
+
+## Principal components
+
+```python
+p = boonza.pca(s, frames, sel="name CA")  # every frame fitted on the first, as MDAnalysis
+p.variance, p.cumulated_variance  # Å², largest first
+p.components  # (ncomponents, 3 natoms), unit vectors
+p.projections  # the frames along each component
+p.transform(s, other_frames)  # project other frames the same way
+```
+
+The variances and components match MDAnalysis `PCA`. They come from a
+singular value decomposition of the centered frames, so large selections do
+not build a 3N x 3N matrix.
+
+## Block averaging
+
+```python
+b = boonza.block_average(rmsd_per_frame)
+b.mean, b.block_sizes, b.sem, b.sem_error
+b.estimate  # the plateau: the standard error of the mean
+b.statistical_inefficiency  # frames per independent sample
+```
+
+This is Flyvbjerg-Petersen blocking. The standard error estimated from
+blocks grows with the block size until blocks are longer than the
+correlation time, then levels off at the true error.
+
 ## Rings
 
 ```python

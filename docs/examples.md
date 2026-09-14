@@ -24,6 +24,12 @@ RCSB PDB.
 - [13_structure_analysis.py](#13-structure-analysis) — Analyze one structure: surface area, contacts, secondary structure, angles
 - [14_command_line.sh](#14-command-line) — The boonza command line on the example data
 - [15_ligand_rmsd.py](#15-ligand-rmsd) — Symmetry-corrected ligand RMSD: equivalent atoms should not count as errors
+- [16_build_from_text.py](#16-build-from-text) — From text to 3D: a molecule from SMILES and a peptide from its sequence
+- [17_solvate_and_ions.py](#17-solvate-and-ions) — Build a simulation box: solvate a protein, add salt, repartition hydrogen masses
+- [18_topology_files.py](#18-topology-files) — Read simulation topologies: a GROMACS .top with its .gro coordinates
+- [19_trajectory_formats.py](#19-trajectory-formats) — Trajectory formats: write and read DCD, Amber NetCDF, XTC and TRR
+- [20_analysis_extras.py](#20-analysis-extras) — More analysis: native contacts, contact frequencies, principal components,
+- [21_summaries_for_ai.py](#21-summaries-for-ai) — From 3D back to text: a summary for people and language models, a table, and a view
 
 <a id="01-load-and-inspect"></a>
 
@@ -85,7 +91,7 @@ print("protein center:", np.round(center, 1), " extent:", np.round(extent, 1))
 Output:
 
 ```text
-<System 'examples/data/1HHO.pdb': 2396 atoms, 2360 bonds, 401 residues, 4 chains, 0 tables>
+<System 'examples/data/1HHO.pdb': 2396 atoms, 2361 bonds, 401 residues, 4 chains, 0 tables>
 chains: ['A', 'B', 'A', 'B'] (protein chains A and B, then their waters)
 residues: 401 | molecules: 112
 first atom names: ['N', 'CA', 'C', 'O', 'CB', 'CG1']
@@ -95,7 +101,7 @@ atom 100: CE2 (C) in TRP14, chain A
   bonded to ['CD2', 'NE1', 'CZ2']; its molecule has 1114 atoms
 C-alpha atoms: 287
 heme atoms: 86 in 2 heme residues
-iron bonded to: ['HIS87:NE2', 'HIS92:NE2', 'OXY150:O1']
+iron bonded to: ['HIS87:NE2', 'HIS92:NE2', 'OXY150:O1', 'OXY150:O2']
 waters within 3.5 A of a heme: 3
 chain A: 141 residues  VLSPADKTNVKAAWGKVGAHAGEYGAEALE...
 chain B: 146 residues  VHLTPEEKSAVTALWGKVNVDEVGGEALGR...
@@ -169,7 +175,7 @@ Output:
    153  chain B and resid 1 to 20
     86  resname HEM
      2  element Fe
-    14  withinbonds 1 of element Fe
+    15  withinbonds 1 of element Fe
     15  protein and within 5 of element Fe
     54  same residue as (protein and within 5 of element Fe)
      5  water and nearest 5 to resname HEM
@@ -339,12 +345,13 @@ print("rings in PHE/TYR/TRP/HIS side chains of chain A:", len(aromatic),
 Output:
 
 ```text
-<System 'examples/data/1HHO.pdb': 2396 atoms, 2360 bonds, 401 residues, 4 chains, 0 tables>
+<System 'examples/data/1HHO.pdb': 2396 atoms, 2361 bonds, 401 residues, 4 chains, 0 tables>
 molecules: 112
   cutting Fe - HIS87:NE2
   cutting Fe - HIS92:NE2
   cutting Fe - OXY150:O1
   cutting Fe - OXY150:O1
+  cutting Fe - OXY150:O2
 molecules after cutting: 116
    109 x HOH
      2 x HEM
@@ -427,8 +434,8 @@ atoms
     106  A:GLU810:CA        C  12.01   0.0145      2  3.39967   0.1094
 
 pairs
-    i    j     label_i      label_j           qq  excluded    sigma   epsilon  nbfix
-  105  106  A:GLU810:N  A:GLU810:CA  -0.00602765       yes  3.32483  0.136374     no
+    i    j     label_i      label_j  bonds        r           qq  excluded    sigma   epsilon  nbfix  e_vdw  e_es  energy
+  105  106  A:GLU810:N  A:GLU810:CA      1  1.44682  -0.00602765       yes  3.32483  0.136374     no      0     0       0
 
 angle_harm (16 terms)  E = fc (theta - theta0)^2
         atoms                                labels  param  theta0  fc  constrained
@@ -791,15 +798,15 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.3  0.47 0.55 0.65]
-radius of gyration: 13.20 +- 0.04 A
-most flexible residues: [(879, 0.82), (862, 0.7), (861, 0.65), (878, 0.64), (844, 0.52)]
+C-alpha RMSD to frame 0 (A): [0.   0.35 0.47 0.56 0.59]
+radius of gyration: 13.31 +- 0.07 A
+most flexible residues: [(844, 0.7), (864, 0.66), (865, 0.51), (879, 0.47), (805, 0.44)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-146. -138. -137. -141.] / [159. 144. 161. 163.]
-hydrogen bonds per frame: [53, 46, 45, 36, 26]
+residue 830 phi/psi over time: [-147. -147. -140. -131.] / [157. 156. 174. 158.]
+hydrogen bonds per frame: [53, 47, 36, 44, 32]
     THR852:OG1 -> ASP854:OD1   present in 100% of frames
-      PHE824:N -> SER807:O     present in 95% of frames
-      GLU834:N -> ILE874:O     present in 95% of frames
+      GLU870:N -> GLY838:O     present in 100% of frames
+      ILE821:N -> TYR858:O     present in 95% of frames
 ```
 
 <a id="10-periodic-boxes"></a>
@@ -1073,8 +1080,9 @@ print(f"residues in the helical phi/psi region: {int(helical.sum())}; "
 # Backbone hydrogen bonds (Kabsch-Sander energies) and disulfides.
 donor, acceptor, energy = boonza.backbone_hbonds(protein)
 print(f"backbone H-bonds: {len(donor)}, strongest {energy.min():.2f} kcal/mol")
-# Disulfides: PDB bonds are guessed from distance with msys's rule (S-S under 2.16 A).
-# 1LYZ is an old 2 A structure with stretched S-S geometry, so compare with a looser cut.
+# Disulfides: PDB bonds are guessed from distance with msys's rule (S-S under 2.16 A),
+# then the file's SSBOND and CONECT records are applied.  1LYZ is an old 2 A structure
+# with stretched S-S geometry: only one S-S is short enough to guess, SSBOND gives all four.
 sg = protein.select("name SG").ids
 d = boonza.pbc.distances(protein.positions[sg], protein.positions[sg])
 for a, b in zip(*[x.tolist() for x in np.nonzero(np.triu(d < 2.5, 1))], strict=True):
@@ -1087,7 +1095,7 @@ print(f"radius of gyration: {boonza.radius_of_gyration(protein)[0]:.2f} A")
 Output:
 
 ```text
-<System 'examples/data/1LYZ.pdb': 976 atoms, 1028 bonds, 125 residues, 1 chains, 0 tables>
+<System 'examples/data/1LYZ.pdb': 976 atoms, 1031 bonds, 125 residues, 1 chains, 0 tables>
 total SASA 6675 A^2
 most exposed residues: [('ARG128', 227), ('ARG14', 192), ('ARG45', 150), ('ARG21', 148), ('THR47', 144)]
 buried residues (< 5 A^2): 22
@@ -1095,15 +1103,15 @@ buried residues (< 5 A^2): 22
 237 residue pairs in contact (< 4 A heavy-atom distance)
 long-range contacts (> 20 residues apart), first five: [('LYS1', 'PHE38'), ('LYS1', 'ASN39'), ('LYS1', 'THR40'), ('LYS1', 'SER86'), ('VAL2', 'PHE38')]
 
-DSSP:         -B--GGGGHHHHTT-TTBTTB-THHHHHGGGTTTTBSS-EEE-TTS-EEETTTTEETTTS-BSS-TT---TT-SBGGGGGSS--HHHHHHHHHHTTSSSGGGGSHHHHHHTTTS-GGGGSTT---
+DSSP:         -B------HHHHTT-TTBTTB-THHHHH--TTTTTBSS-EEE-TTS-EEETTTTEETTTS-B---TT---TT-SBGGGGGSS--HHHHHHHHHHTTSSSGGGGSHHHHHHTTTS-GGGGSTT---
 ChimeraX H/S: OOOOOOHHHHHHOOOOOHHHOOHHHOOOHHHOOOOOOOOSSSOOOOOSSSHHHOOOOOOOOOOOOOOOOOOOOOOHHHHHOOOOHHHHHHHHHHOOOOOHHHHOHHHHHHOOOOOHHHHOOOOOO
-DSSP counts: {'H': 25, 'G': 20, 'E': 8, 'B': 6, 'T': 31, 'S': 15}
+DSSP counts: {'H': 25, 'G': 13, 'E': 8, 'B': 6, 'T': 32, 'S': 13}
 residues in the helical phi/psi region: 44; cis peptide bonds: 0
-backbone H-bonds: 78, strongest -6.42 kcal/mol
+backbone H-bonds: 76, strongest -6.42 kcal/mol
   CYS6-CYS127: S-S 2.06 A, bonded: True
-  CYS30-CYS115: S-S 2.42 A, bonded: False
-  CYS64-CYS80: S-S 2.34 A, bonded: False
-  CYS76-CYS94: S-S 2.22 A, bonded: False
+  CYS30-CYS115: S-S 2.42 A, bonded: True
+  CYS64-CYS80: S-S 2.34 A, bonded: True
+  CYS76-CYS94: S-S 2.22 A, bonded: True
 radius of gyration: 13.95 A
 ```
 
@@ -1144,6 +1152,9 @@ boonza dssp data/1LYZ.pdb --simplified
 echo; echo "\$ boonza phipsi data/1LYZ.pdb | head -6"
 boonza phipsi data/1LYZ.pdb | head -6
 
+echo; echo "\$ boonza summarize data/1HHO.pdb --focus \"resname HEM and chain A\" --max-items 3 | head -24"
+boonza summarize data/1HHO.pdb --focus "resname HEM and chain A" --max-items 3 | head -24
+
 echo; echo "\$ boonza diff data/1LYZ.pdb output/lysozyme_protein.cif --no-positions | head -3"
 boonza diff data/1LYZ.pdb output/lysozyme_protein.cif --no-positions | head -3 || true
 ```
@@ -1152,7 +1163,7 @@ Output:
 
 ```text
 $ boonza info data/1LYZ.pdb
-data/1LYZ.pdb: 1102 atoms, 1066 bonds, 230 residues, 2 chains, 1 cts, 100 molecules
+data/1LYZ.pdb: 1102 atoms, 1069 bonds, 230 residues, 2 chains, 1 cts, 100 molecules
 cell: [79.1 0 0] [0 79.1 0] [0 0 37.9]
 extra atom columns: occupancy, bfactor
 
@@ -1172,6 +1183,32 @@ chain  resid  res      phi      psi    omega
     A      3  PHE   -72.96   166.20   164.63
     A      4  GLY  -111.07   158.97  -176.44
     A      5  ARG   -56.42   -77.02  -162.90
+
+$ boonza summarize data/1HHO.pdb --focus "resname HEM and chain A" --max-items 3 | head -24
+# data/1HHO.pdb
+
+## Composition
+- 2396 atoms in 401 residues, 4 chains and 112 molecules
+- periodic box 53.7 x 53.7 x 193.8 Å (angles 90, 90, 90)
+- 2 polymer chain(s): A, B
+- 109 water molecules
+- other molecules: PO4 x 1, HEM x 2, OXY x 2
+- net formal charge +0
+- no force-field parameters
+
+## Chains
+- chain A: 141 residues (VAL A1 to ARG A141)
+- chain A sequence: VLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSHGSAQVKGHGKKVADALTNAVAHVDDMPNALSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTPAVHASLDKFLASVSTVLTSKYR
+- chain A secondary structure (DSSP; H helix, E strand, C coil): 75% helix, 0% strand: CCCHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHCHHHHHHCCCCCCCCCCHHHHHHHHHHHHHHHHHHCCHHHHHHHCHHHHHHHHHHCCCCCHHHHHHHHHHHHHHHCCCCCCCCHHHHHHHHHHHHHHHHHHCCCCC
+- chain B: 146 residues (VAL B1 to HIS B146)
+- chain B sequence: VHLTPEEKSAVTALWGKVNVDEVGGEALGRLLVVYPWTQRFFESFGDLSTPDAVMGNPKVKAHGKKVLGAFSDGLAHLDNLKGTFATLSELHCDKLHVDPENFRLLGNVLVCVLAHHFGKEFTPPVQAAYQKVVAGVANALAHKYH
+- chain B secondary structure (DSSP; H helix, E strand, C coil): 79% helix, 0% strand: CCCCHHHHHHHHHHHCCCCCCCHHHHHHHHHHHHCHHHHHHHHHHCCCCCHHHHHCCHHHHHHHHHHHHHHHHHHCCHHHHHHHHHHHHHHHHCCCCCCCHHHHHHHHHHHHHHHHHHHHHCCHHHHHHHHHHHHHHHHHHHHHHC
+
+## Other molecules and their sites
+- PO4 A142: O4P, 5 heavy atoms, charge +0 (no SMILES: the file gives neither hydrogens nor bond orders)
+- PO4 A142: 2 polymer residues within 4 Å, closest first: LYS A99 2.9 Å (O2-NZ); ARG A141 3.3 Å (O1-NH2)
+- PO4 A142: 1 water molecules within 4 Å
+- PO4 A142: 2 polar contacts (N/O within 3.5 Å): O2-LYS A99 NZ 2.91 Å; O1-ARG A141 NH2 3.31 Å
 
 $ boonza diff data/1LYZ.pdb output/lysozyme_protein.cif --no-positions | head -3
 atoms: 1102 atoms != 976 atoms
@@ -1311,4 +1348,431 @@ frames of a tumbling, increasingly jiggled hemoglobin:
 dRMSD over 7 pocket C-alphas and 43 heme atoms:
   symmetry-corrected (A): [0.   0.13 0.27 0.42 0.53 0.86]
   atoms in order (A):     [0.   0.13 0.27 0.42 0.53 0.86]
+```
+
+<a id="16-build-from-text"></a>
+
+## 16_build_from_text.py: From text to 3D: a molecule from SMILES and a peptide from its sequence
+
+One line of text becomes a physically sensible structure (RDKit embedding
+and an MMFF94 relaxation), and boonza's own tools read it back to check that
+it is what was asked for: the same SMILES, the same sequence, the helix that
+was requested.
+
+    python examples/16_build_from_text.py
+
+```python
+import numpy as np
+from _common import OUT, require
+
+require("rdkit")
+
+from rdkit import Chem  # noqa: E402
+
+import boonza  # noqa: E402
+
+# A small molecule: the lowest-energy of five MMFF94-relaxed conformers.
+aspirin = boonza.from_smiles("CC(=O)Oc1ccccc1C(=O)O", name="AIN", conformers=5, seed=1)
+print(f"aspirin: {aspirin.natoms} atoms, {aspirin.nbonds} bonds, "
+      f"atoms named {', '.join(aspirin.atoms['name'][:5].tolist())}, ...")  # fmt: skip
+print("read back as SMILES:", Chem.MolToSmiles(Chem.RemoveHs(aspirin.to_rdkit())))
+ch = [np.linalg.norm(aspirin.positions[i] - aspirin.positions[j])
+      for i, j in zip(aspirin.bonds["i"], aspirin.bonds["j"], strict=True)
+      if {aspirin.atoms["anum"][i], aspirin.atoms["anum"][j]} == {1, 6}]  # fmt: skip
+print(f"C-H bond lengths {min(ch):.3f} to {max(ch):.3f} Å")
+boonza.save(aspirin, OUT / "aspirin.sdf")
+
+# A peptide: every peptide bond trans, phi/psi set, side chains relaxed with MMFF94.
+seq = "AEAAAKEAAAKA"
+helix = boonza.peptide(seq, "helix")
+phi, psi, omega = (x[0] for x in boonza.backbone_dihedrals(helix))
+print(f"\npeptide {seq}: {helix.natoms} atoms in {helix.nresidues} residues")
+print("sequence read back:", boonza.sequence(helix))
+print("phi of the inner residues:", np.round(phi[1:-1]).astype(int).tolist())
+print("psi of the inner residues:", np.round(psi[1:-1]).astype(int).tolist())
+print("DSSP of the helix:  ", "".join(boonza.dssp(helix, simplified=True)[0]))
+strand = boonza.peptide(seq, "sheet")
+print("DSSP of the strand: ", "".join(boonza.dssp(strand, simplified=True)[0]))
+boonza.save(helix, OUT / "helix.pdb")
+print("\nwrote", OUT / "aspirin.sdf", "and", OUT / "helix.pdb")
+```
+
+Output:
+
+```text
+aspirin: 21 atoms, 21 bonds, atoms named C1, C2, O1, O2, C3, ...
+read back as SMILES: CC(=O)Oc1ccccc1C(=O)O
+C-H bond lengths 1.086 to 1.094 Å
+
+peptide AEAAAKEAAAKA: 157 atoms in 12 residues
+sequence read back: AEAAAKEAAAKA
+phi of the inner residues: [-56, -56, -57, -58, -56, -57, -57, -57, -56, -58]
+psi of the inner residues: [-46, -47, -46, -48, -47, -46, -48, -47, -48, -47]
+DSSP of the helix:   CHHHHHHHHHHC
+DSSP of the strand:  CCCCCCCCCCCC
+
+wrote examples/output/aspirin.sdf and examples/output/helix.pdb
+```
+
+<a id="17-solvate-and-ions"></a>
+
+## 17_solvate_and_ions.py: Build a simulation box: solvate a protein, add salt, repartition hydrogen masses
+
+These follow msys's dms-solvate, dms-neutralize and dms-hmr tools step by
+step and give the same systems.  The water is the TIP3P box that ships
+with msys and boonza.
+
+    python examples/17_solvate_and_ions.py
+
+```python
+import numpy as np
+from _common import DATA, OUT, water_box
+
+import boonza
+
+protein = boonza.load(DATA / "1LYZ.pdb").clone("protein")
+box = boonza.solvate(protein, thickness=8.0)
+waters = len(box.select("water and oxygen"))
+print(f"lysozyme in water: {box.natoms} atoms, {waters} waters, "
+      f"box {' x '.join(f'{x:.1f}' for x in np.diag(box.cell))} Å")  # fmt: skip
+oxygens = box.positions[box.select("water and oxygen").ids]
+solute = box.positions[box.select("protein").ids]
+closest = boonza.pbc.distances(oxygens, solute, box.cell).min()
+print(f"closest water oxygen to the protein: {closest:.2f} Å (solvate keeps at least 2.4 Å)")
+print("water chains:", ", ".join(box.chains["name"][1:4].tolist()), "...")
+
+# The PDB file carries no charges, so only the 150 mM salt is added here; with a
+# force field (charge="charge") the counterions for the protein's charge come first.
+salted = boonza.neutralize(box, concentration=0.15, random_seed=1)
+na, cl = len(salted.select("name Na")), len(salted.select("name Cl"))
+print(f"\nafter neutralize: {na} Na+ and {cl} Cl- replace waters; "
+      f"{len(salted.select('water and oxygen'))} waters left")  # fmt: skip
+boonza.save(salted, OUT / "lysozyme_solvated.pdb")
+
+# Hydrogen mass repartitioning keeps the total mass: hydrogens get 3.024 u,
+# taken from the atom each is bonded to.
+w = water_box(3)
+hmr = boonza.repartition_hydrogen_masses(w, "all", 3.024)
+print(f"\nwater masses before: {w.atoms['mass'][:3].round(3).tolist()}, "
+      f"after: {hmr.atoms['mass'][:3].round(3).tolist()}")  # fmt: skip
+print(f"total mass {w.atoms['mass'].sum():.3f} -> {hmr.atoms['mass'].sum():.3f} u")
+print("\nwrote", OUT / "lysozyme_solvated.pdb")
+```
+
+Output:
+
+```text
+lysozyme in water: 20236 atoms, 6420 waters, box 60.1 x 60.1 x 60.1 Å
+closest water oxygen to the protein: 2.41 Å (solvate keeps at least 2.4 Å)
+water chains: W1, W2, W3 ...
+
+after neutralize: 17 Na+ and 17 Cl- replace waters; 6386 waters left
+
+water masses before: [15.999, 1.008, 1.008], after: [11.967, 3.024, 3.024]
+total mass 486.405 -> 486.405 u
+
+wrote examples/output/lysozyme_solvated.pdb
+```
+
+<a id="18-topology-files"></a>
+
+## 18_topology_files.py: Read simulation topologies: a GROMACS .top with its .gro coordinates
+
+examples/data/gmx_amber holds a GROMACS topology that ParmEd wrote from an
+Amber system (a peptide in 876 waters).  Amber prmtop and CHARMM PSF files
+load the same way (``boonza.load("x.prmtop", coordinates="x.rst7")``,
+``boonza.load("x.psf", coordinates="x.pdb")``).
+
+    python examples/18_topology_files.py
+
+```python
+import importlib.util
+
+import numpy as np
+from _common import DATA
+
+import boonza
+
+top = DATA / "gmx_amber"
+s = boonza.load(top / "topol.top", coordinates=top / "conf.gro")
+print(s)
+print("force-field tables:", ", ".join(sorted(s.tables)))
+info = s.nonbonded_info
+print(f"van der Waals: {info.vdw_funct}, combining rule {info.vdw_rule}")
+
+# #ifdef blocks follow the defines: rigid water (settles) by default.
+flexible = boonza.load(top / "topol.top", defines={"FLEXIBLE": ""})
+print(f"rigid water: {'constraint_hoh' in s.tables}; with FLEXIBLE defined, "
+      f"{flexible.nbonds - s.nbonds} more bonds (one H-H per water)")  # fmt: skip
+
+# The force field of a few atoms, with each pair's bonds apart and bare energy.
+report = boonza.describe(s, "resid 1 and name N CA C O", pairs=True)
+print("\npairs in the first residue's backbone:")
+for p in report.pairs[:5]:
+    print(f"  {p['label_i']:>12} - {p['label_j']:<12} {p['bonds']} bonds apart, "
+          f"r {p['r']:.2f} Å, energy {p['energy']:+.3f} kcal/mol")  # fmt: skip
+d = boonza.topological_distances(s, "resid 1 and name N", "resid 1 to 4 and name CA")
+print("bonds from residue 1's N to the first four CA atoms:", d[0].tolist())
+
+if importlib.util.find_spec("openmm"):
+    e = boonza.openmm_energies(s, nonbonded_method="NoCutoff", constraints=False)
+    print(f"\npotential energy (OpenMM, no cutoff): {e['total']:.1f} kcal/mol")
+    print("by table:", {k: round(v, 1) for k, v in e.items() if k != "total"})
+else:
+    print("\n(install OpenMM to compute the energy)")
+print(f"net charge {s.atoms['charge'].sum():+.3f} e over {np.unique(s.fragids).size} molecules")
+```
+
+Output:
+
+```text
+<System 'examples/data/gmx_amber/topol.top': 2681 atoms, 1805 bonds, 879 residues, 2 chains, 7 tables>
+force-field tables: angle_harm, constraint_hoh, dihedral_trig, exclusion, nonbonded, pair_12_6_es, stretch_harm
+van der Waals: vdw_12_6, combining rule arithmetic/geometric
+rigid water: True; with FLEXIBLE defined, 876 more bonds (one H-H per water)
+
+pairs in the first residue's backbone:
+        ARG1:N - ARG1:CA      1 bonds apart, r 1.48 Å, energy +0.000 kcal/mol
+        ARG1:N - ARG1:C       2 bonds apart, r 2.44 Å, energy +0.000 kcal/mol
+        ARG1:N - ARG1:O       3 bonds apart, r 2.65 Å, energy -6.660 kcal/mol
+       ARG1:CA - ARG1:C       1 bonds apart, r 1.50 Å, energy +0.000 kcal/mol
+       ARG1:CA - ARG1:O       2 bonds apart, r 2.36 Å, energy +0.000 kcal/mol
+bonds from residue 1's N to the first four CA atoms: [1, 4, 7]
+
+potential energy (OpenMM, no cutoff): -7082.1 kcal/mol
+by table: {'stretch_harm': 5.6, 'angle_harm': 32.6, 'dihedral_trig': 28.6, 'nonbonded': -7148.9}
+net charge +0.000 e over 877 molecules
+```
+
+<a id="19-trajectory-formats"></a>
+
+## 19_trajectory_formats.py: Trajectory formats: write and read DCD, Amber NetCDF, XTC and TRR
+
+Every format goes through the same two calls, ``boonza.open_writer`` and
+``boonza.open_trajectory``.  Desmond DTR directories and STK lists are read
+the same way (there is no DTR writer).
+
+    python examples/19_trajectory_formats.py
+
+```python
+import importlib.util
+
+import numpy as np
+from _common import OUT, water_box
+
+import boonza
+
+s = water_box(4)
+rng = np.random.default_rng(0)
+frames = s.positions + rng.normal(0, 0.2, (5, s.natoms, 3))
+
+formats = ["dcd", "nc"]
+if importlib.util.find_spec("MDAnalysis"):
+    formats += ["xtc", "trr"]  # through MDAnalysis's compiled XDR library
+else:
+    print("(install MDAnalysis for XTC and TRR)")
+for fmt in formats:
+    path = OUT / f"waters.{fmt}"
+    # DCD stores a start and a uniform time step, not a time per frame
+    options = {"dt": 2.0, "istart": 0} if fmt == "dcd" else {}
+    with boonza.open_writer(path, s.natoms, **options) as w:
+        for k, f in enumerate(frames):
+            w.write(f, box=s.cell, time=2.0 * k)
+    traj = boonza.open_trajectory(path, s)
+    back = traj.read()
+    change = np.abs(back.positions - frames).max()
+    box = np.diag(back.boxes[0]).round(2).tolist()
+    times = np.round(back.times, 3).tolist()
+    print(f"{fmt:>4}: {len(traj)} frames at {times} ps, box {box} Å, "
+          f"largest change {change:.4f} Å")  # fmt: skip
+print("XTC stores 0.001 nm; the other formats keep float32 coordinates.")
+
+# frames can be read lazily, by slice, and only for the atoms you need
+traj = boonza.open_trajectory(OUT / "waters.dcd", s)
+print("every other frame:", np.round(traj[::2].read().times, 3).tolist(),
+      "| oxygens only:", traj.read(atoms="name O").positions.shape)  # fmt: skip
+```
+
+Output:
+
+```text
+ dcd: 5 frames at [0.0, 2.0, 4.0, 6.0, 8.0] ps, box [12.4, 12.4, 12.4] Å, largest change 0.0000 Å
+  nc: 5 frames at [0.0, 2.0, 4.0, 6.0, 8.0] ps, box [12.4, 12.4, 12.4] Å, largest change 0.0000 Å
+ xtc: 5 frames at [0.0, 2.0, 4.0, 6.0, 8.0] ps, box [12.4, 12.4, 12.4] Å, largest change 0.0050 Å
+ trr: 5 frames at [0.0, 2.0, 4.0, 6.0, 8.0] ps, box [12.4, 12.4, 12.4] Å, largest change 0.0000 Å
+XTC stores 0.001 nm; the other formats keep float32 coordinates.
+every other frame: [0.0, 4.0, 8.0] | oxygens only: (5, 64, 3)
+```
+
+<a id="20-analysis-extras"></a>
+
+## 20_analysis_extras.py: More analysis: native contacts, contact frequencies, principal components,
+
+secondary structure along a path, and block averaging.
+
+A peptide is unfolded from a helix to an extended strand in 20 steps.  The
+path is made up (straight-line interpolation, not dynamics), but it is
+enough to see what each tool reports.
+
+    python examples/20_analysis_extras.py
+
+```python
+import numpy as np
+from _common import require
+
+require("rdkit")
+
+import boonza  # noqa: E402
+
+seq = "AEAAAKEAAAKA"
+helix = boonza.peptide(seq, "helix", optimize=False)
+strand = boonza.peptide(seq, "extended", optimize=False)
+rot, shift = boonza.kabsch(strand.positions, helix.positions)
+extended = strand.positions @ rot.T + shift
+steps = np.linspace(0.0, 1.0, 21)
+frames = np.array([(1 - t) * helix.positions + t * extended for t in steps])
+
+# Fraction of native contacts: pairs of heavy atoms between the two halves
+# that are within 4.5 Å in the helix.
+q = boonza.native_contacts(helix, "resid 1 to 6 and noh", "resid 7 to 12 and noh",
+                           positions=frames, method="soft_cut")  # fmt: skip
+print("native contacts Q along the path:", np.round(q[::5], 2).tolist())
+
+# Which residue pairs touch, and how often (neighbors in sequence always do).
+rows, cols, freq = boonza.contact_frequency(helix, "all", positions=frames, cutoff=4.5)
+far = np.abs(rows[:, None] - cols[None, :]) >= 3
+often = int((freq[far] > 0.5).sum() // 2)
+print(f"residue pairs 3+ apart in contact in over half the frames: {often}")
+
+# Principal components of the C-alpha motion: one direction carries the unfolding.
+p = boonza.pca(helix, positions=frames, sel="name CA")
+print(f"first principal component: {p.cumulated_variance[0]:.0%} of the variance; "
+      f"projections {np.round(p.projections[::5, 0], 1).tolist()}")  # fmt: skip
+
+# DSSP frame by frame (chains are cut at C-N gaps, as the DSSP program does)
+codes = boonza.dssp(helix, frames, simplified=True)
+for k in (0, 5, 10, 20):
+    print(f"step {k:2d}: {''.join(codes[k])}")
+
+# Block averaging: the error of the mean of a correlated series (an AR(1) process).
+rng = np.random.default_rng(0)
+x = np.empty(20000)
+x[0] = 0.0
+for k in range(1, len(x)):
+    x[k] = 0.95 * x[k - 1] + rng.normal()
+b = boonza.block_average(x)
+print(f"\nmean {b.mean:.3f}: naive error {b.sem[0]:.4f}, from blocks {b.estimate:.4f} "
+      f"(statistical inefficiency {b.statistical_inefficiency:.0f})")  # fmt: skip
+```
+
+Output:
+
+```text
+native contacts Q along the path: [1.0, 0.96, 0.63, 0.39, 0.35]
+residue pairs 3+ apart in contact in over half the frames: 3
+first principal component: 100% of the variance; projections [-13.7, -6.8, -0.0, 6.8, 13.6]
+step  0: CHHHHHHHHHHC
+step  5: CCCHHHCHHHCC
+step 10: CCCCCCCCCCCC
+step 20: CCCCCCCCCCCC
+
+mean 0.095: naive error 0.0233, from blocks 0.1444 (statistical inefficiency 38)
+```
+
+<a id="21-summaries-for-ai"></a>
+
+## 21_summaries_for_ai.py: From 3D back to text: a summary for people and language models, a table, and a view
+
+``boonza.summarize`` states in words and numbers what a structure holds, so
+a language model can reason about it without the coordinates.  The same
+facts come as JSON-ready data.  ``to_pandas`` gives the atoms as a table,
+and ``view`` draws the structure in a notebook (or a standalone page).
+
+    python examples/21_summaries_for_ai.py
+
+```python
+import importlib.util
+import json
+
+from _common import DATA, OUT
+
+import boonza
+
+hb = boonza.load(DATA / "1HHO.pdb")
+summary = boonza.summarize(hb, focus="resname HEM and chain A", max_items=5)
+lines = str(summary).splitlines()
+print("\n".join(lines[:40]))
+if len(lines) > 40:
+    print(f"... ({len(lines) - 40} more lines)")
+
+data = summary.to_dict()
+(OUT / "1HHO_summary.json").write_text(json.dumps(data, indent=1))
+heme = data["focus"]
+print("\nas data: the heme's closest residue is", heme["neighbors"][0]["residue"],
+      f"at {heme['neighbors'][0]['distance']} Å; buried {heme['buried_fraction']:.0%}")  # fmt: skip
+
+if importlib.util.find_spec("pandas"):
+    table = hb.to_pandas("resname HEM and chain A and element Fe N")
+    print("\n" + table[["atom", "name", "element", "resname", "chain", "resid",
+                        "x", "y", "z"]].to_string(index=False))  # fmt: skip
+
+hb.view("protein or resname HEM").save(OUT / "1HHO_view.html")
+print("\nwrote", OUT / "1HHO_summary.json", "and", OUT / "1HHO_view.html")
+```
+
+Output:
+
+```text
+# examples/data/1HHO.pdb
+
+## Composition
+- 2396 atoms in 401 residues, 4 chains and 112 molecules
+- periodic box 53.7 x 53.7 x 193.8 Å (angles 90, 90, 90)
+- 2 polymer chain(s): A, B
+- 109 water molecules
+- other molecules: PO4 x 1, HEM x 2, OXY x 2
+- net formal charge +0
+- no force-field parameters
+
+## Chains
+- chain A: 141 residues (VAL A1 to ARG A141)
+- chain A sequence: VLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSHGSAQVKGHGKKVADALTNAVAHVDDMPNALSALSDLHAHKLRVDPVNFKLLSHCLLVTLAAHLPAEFTPAVHASLDKFLASVSTVLTSKYR
+- chain A secondary structure (DSSP; H helix, E strand, C coil): 75% helix, 0% strand: CCCHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHCHHHHHHCCCCCCCCCCHHHHHHHHHHHHHHHHHHCCHHHHHHHCHHHHHHHHHHCCCCCHHHHHHHHHHHHHHHCCCCCCCCHHHHHHHHHHHHHHHHHHCCCCC
+- chain B: 146 residues (VAL B1 to HIS B146)
+- chain B sequence: VHLTPEEKSAVTALWGKVNVDEVGGEALGRLLVVYPWTQRFFESFGDLSTPDAVMGNPKVKAHGKKVLGAFSDGLAHLDNLKGTFATLSELHCDKLHVDPENFRLLGNVLVCVLAHHFGKEFTPPVQAAYQKVVAGVANALAHKYH
+- chain B secondary structure (DSSP; H helix, E strand, C coil): 79% helix, 0% strand: CCCCHHHHHHHHHHHCCCCCCCHHHHHHHHHHHHCHHHHHHHHHHCCCCCHHHHHCCHHHHHHHHHHHHHHHHHHCCHHHHHHHHHHHHHHHHCCCCCCCHHHHHHHHHHHHHHHHHHHHHCCHHHHHHHHHHHHHHHHHHHHHHC
+
+## Other molecules and their sites
+- PO4 A142: O4P, 5 heavy atoms, charge +0 (no SMILES: the file gives neither hydrogens nor bond orders)
+- PO4 A142: 2 polymer residues within 4 Å, closest first: LYS A99 2.9 Å (O2-NZ); ARG A141 3.3 Å (O1-NH2)
+- PO4 A142: 1 water molecules within 4 Å
+- PO4 A142: 2 polar contacts (N/O within 3.5 Å): O2-LYS A99 NZ 2.91 Å; O1-ARG A141 NH2 3.31 Å
+- PO4 A142: 31% of its solvent-accessible surface is buried
+- HEM A143: C34FeN4O4, 43 heavy atoms, charge +0 (no SMILES: the file gives neither hydrogens nor bond orders)
+- HEM A143: 18 polymer residues within 4 Å, closest first: HIS A87 1.9 Å (FE-NE2); HIS A45 2.9 Å (O1D-NE2); LEU A83 3.2 Å (CBA-CD2); LYS A61 3.2 Å (CMA-O); ASN A97 3.3 Å (CMC-O) ... and 13 more
+- HEM A143: other molecules within 4 Å: OXY A150 1.7 Å
+- HEM A143: 1 water molecules within 4 Å
+- HEM A143: bonded to FE to HIS A87 NE2 (1.94 Å); FE to OXY A150 O1 (1.66 Å); FE to OXY A150 O2 (2.79 Å)
+- HEM A143: 12 polar contacts (N/O within 3.5 Å): NC-OXY A150 O1 2.47 Å; NA-OXY A150 O1 2.47 Å; ND-OXY A150 O1 2.54 Å; NB-OXY A150 O1 2.55 Å; ND-HIS A87 NE2 2.74 Å
+- HEM A143: 80% of its solvent-accessible surface is buried
+- OXY A150: O2, 2 heavy atoms, charge +0 (no SMILES: the file gives neither hydrogens nor bond orders)
+- OXY A150: 4 polymer residues within 4 Å, closest first: HIS A58 2.6 Å (O2-NE2); VAL A62 3.2 Å (O2-CG2); HIS A87 3.6 Å (O1-NE2); PHE A43 4.0 Å (O2-CZ)
+- OXY A150: other molecules within 4 Å: HEM A143 1.7 Å
+- OXY A150: bonded to O1 to HEM A143 FE (1.66 Å); O2 to HEM A143 FE (2.79 Å)
+- OXY A150: 9 polar contacts (N/O within 3.5 Å): O1-HEM A143 NC 2.47 Å; O1-HEM A143 NA 2.47 Å; O1-HEM A143 ND 2.54 Å; O1-HEM A143 NB 2.55 Å; O2-HIS A58 NE2 2.57 Å
+- OXY A150: 100% of its solvent-accessible surface is buried
+- HEM B147: C34FeN4O4, 43 heavy atoms, charge +0 (no SMILES: the file gives neither hydrogens nor bond orders)
+- HEM B147: 18 polymer residues within 4 Å, closest first: HIS B92 2.1 Å (FE-NE2); ASN B102 3.1 Å (CMC-O); PHE B41 3.2 Å (CMD-O); VAL B98 3.2 Å (CAC-CG1); LEU B141 3.3 Å (CAB-CD1) ... and 13 more
+... (27 more lines)
+
+as data: the heme's closest residue is HIS A87 at 1.94 Å; buried 80%
+
+ atom name element resname chain  resid      x      y      z
+ 2235   NA       N     HEM     A    143 41.733 30.289 16.697
+ 2236   NB       N     HEM     A    143 39.735 31.127 15.103
+ 2237   NC       N     HEM     A    143 39.061 28.391 14.492
+ 2238   ND       N     HEM     A    143 41.176 27.517 15.877
+ 2239   FE      Fe     HEM     A    143 40.513 29.278 15.451
+
+wrote examples/output/1HHO_summary.json and examples/output/1HHO_view.html
 ```

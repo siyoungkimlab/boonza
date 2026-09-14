@@ -98,6 +98,21 @@ angle_harm (16 terms)  E = fc (theta - theta0)^2
   ...
 ```
 
+Pair rows also give each pair's topological distance (`bonds`: the number
+of bonds along the shortest path; None when not connected), its distance
+`r`, and its bare pair energy at the current positions (`e_vdw`, `e_es`,
+`energy`, in kcal/mol). This is the full Lennard-Jones and Coulomb energy
+unless the pair is excluded, plus any scaled 1-4 term, with no cutoff or
+periodic images. Summed over all the pairs of a molecule, it equals the
+nonbonded energy OpenMM computes with NoCutoff (the tests check this).
+
+```python
+report = boonza.describe(s, "resname LIG", pairs=True)
+sum(p["energy"] for p in report.pairs)
+boonza.topological_distances(s, "resname LIG")  # bonds apart; -1 when not connected
+frames = report.to_pandas()  # {"atoms", "pairs", "stretch_harm", ...} as DataFrames
+```
+
 ## Energies
 
 With OpenMM installed, `boonza.openmm_energies(s)` evaluates the force field
