@@ -29,7 +29,9 @@ boonza summarize 1HHO.pdb --json
   strand fractions. Also chain breaks (C-N over 2.5 Å) and disulfide bonds.
 - **Other molecules and their sites**: for each ligand, cofactor or other
   molecule:
-  - its Hill formula, heavy atoms, charge and SMILES (with RDKit);
+  - its Hill formula, heavy atoms and charge, and its SMILES (with RDKit)
+    when the file gives hydrogens or bond orders; without them a SMILES
+    would describe a different, saturated molecule, so none is given;
   - the polymer residues within the cutoff (4 Å), closest first, with the
     closest atom pair;
   - other molecules and waters nearby;

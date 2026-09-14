@@ -25,7 +25,7 @@ numba.
 ## Documentation
 
 - [Getting started and guide](docs/index.md)
-- [Examples](docs/examples.md): 15 runnable scripts in [`examples/`](examples),
+- [Examples](docs/examples.md): 21 runnable scripts in [`examples/`](examples),
   shown with their real output
 - [API reference](docs/reference.md), generated from the code
 - [Verification and benchmarks](docs/verification.md)

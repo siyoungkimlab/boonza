@@ -389,7 +389,9 @@ def _ligands(s, kinds, cutoff, max_items):
         smiles = _smiles(s, ids)
         if smiles:
             head += f", SMILES {smiles}"
-            entry["smiles"] = smiles
+        else:
+            head += " (no SMILES: the file gives neither hydrogens nor bond orders)"
+        entry["smiles"] = smiles
         lines.append(head)
         site_lines, site = _site(s, ids, kinds, cutoff, max_items, label)
         lines += site_lines
@@ -401,6 +403,16 @@ def _ligands(s, kinds, cutoff, max_items):
 
 
 def _smiles(s, ids) -> str | None:
+    """SMILES when the file says enough about the chemistry: explicit hydrogens or
+    bond orders.  Without either (most crystal ligands), RDKit would saturate every
+    atom with implicit hydrogens and write a different molecule."""
+    anum = s.atoms["anum"]
+    inside = np.zeros(s.natoms, bool)
+    inside[ids] = True
+    i, j = s.bonds["i"], s.bonds["j"]
+    own = inside[i] & inside[j]
+    if not ((anum[ids] == 1).any() or (s.bonds["order"][own] > 1).any()):
+        return None
     try:
         from rdkit import Chem
 

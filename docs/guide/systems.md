@@ -126,6 +126,52 @@ Editing a parameter through a term is **copy-on-write**. Changing one term's
 `fc` does not change other terms that shared the parameter row (see
 [Force fields](forcefield.md)).
 
+Batches and whole systems from arrays:
+
+```python
+chains = s.add_chains(2, name=["A", "B"], segid="PROT")
+residues = s.add_residues(
+    4, chain=[chains[0]] * 2 + [chains[1]] * 2, name="ALA", resid=[1, 2, 1, 2]
+)
+s.add_atoms(8, residue=np.repeat(residues, 2), name=["N", "CA"] * 4, anum=[7, 6] * 4)
+
+s = boonza.System.from_arrays(
+    positions,
+    names=names,
+    elements=elements,
+    resnames=resnames,
+    resids=resids,
+    chains=chains,
+    bonds=pairs,
+    charge=charges,
+)
+```
+
+`from_arrays` groups residues and chains the way a PDB reader does. Elements
+come from `anum`, or from `elements` symbols, or are guessed from the names.
+
+## Tables as pandas DataFrames
+
+```python
+df = s.to_pandas()  # one row per atom: name, element, x, y, z, resid, resname, chain, fragid, ...
+df = s.to_pandas("resname LIG")
+s.atoms.to_pandas()  # the raw atom table (pos as pos_x, pos_y, pos_z)
+s.residues.to_pandas()
+s.table("stretch_harm").to_pandas()  # terms: atom0, atom1, param, r0, fc, ...
+```
+
+## Viewing in a notebook
+
+```python
+s.view()  # cartoon for polymers, sticks for ligands, spheres for ions, water hidden
+s.view("protein or resname LIG", style="sticks")
+boonza.view(s, positions=frames[::10])  # an animation
+boonza.view(s).save("complex.html")  # a standalone page
+```
+
+Views are drawn with 3Dmol.js, which the page loads from a CDN, so no Python
+package is needed.
+
 ## Secondary structure and rings
 
 ```python
