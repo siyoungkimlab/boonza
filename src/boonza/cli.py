@@ -12,6 +12,7 @@
     boonza rmsd system.pdb crystal.pdb --traj md.xtc     (one RMSD per frame)
     boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
+    boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
 
 ``validate``, ``knots`` and ``diff`` exit with status 1 when they find
@@ -197,6 +198,15 @@ def _drmsd(args) -> int:
     return 0
 
 
+def _summarize(args) -> int:
+    import boonza
+
+    s = _load(args.file)
+    summary = boonza.summarize(s, focus=args.focus, cutoff=args.cutoff, max_items=args.max_items)
+    print(summary.to_json(indent=1) if args.json else summary, end="" if not args.json else "\n")
+    return 0
+
+
 def _build(args) -> int:
     import boonza
 
@@ -284,6 +294,14 @@ def _parser() -> argparse.ArgumentParser:
                    help="pair fit atoms in order, by sequence alignment, or no fit")  # fmt: skip
     q.add_argument("--traj", help="trajectory of the mobile system (DCD/XTC): one RMSD per frame")
     q.set_defaults(run=_rmsd)
+
+    q = sub.add_parser("summarize", help="plain-text summary of a structure (for people and AI)")
+    q.add_argument("file")
+    q.add_argument("--focus", help="selection to describe in detail")
+    q.add_argument("--cutoff", type=float, default=4.0, help="contact distance (A)")
+    q.add_argument("--max-items", type=int, default=20, help="longest list printed")
+    q.add_argument("--json", action="store_true", help="print the summary as JSON")
+    q.set_defaults(run=_summarize)
 
     q = sub.add_parser("build", help="3D structure from a SMILES string or a peptide sequence")
     what = q.add_mutually_exclusive_group(required=True)

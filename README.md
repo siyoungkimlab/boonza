@@ -152,6 +152,10 @@ Implemented:
   `boonza.identity_matrix(seqs)`): global, free-end-gap or local alignment
   with BLOSUM-62 and affine gaps. It reports EMBOSS-style identity,
   similarity and gap fractions. Scores match Biopython's PairwiseAligner.
+- From 3D back to text: `boonza.summarize(s, focus=...)` states the
+  composition, sequences, secondary structure, ligand sites (neighbors,
+  bonds, polar contacts, burial), chain interfaces and clashes as text or
+  JSON, for people and language models (`boonza summarize`)
 - From text to 3D: `boonza.from_smiles` (RDKit embedding, MMFF) and
   `boonza.peptide` (a sequence in a helix, sheet or any phi/psi), also as
   `boonza build`
