@@ -156,7 +156,8 @@ def main():
         result = [[list(cycle), list(bond), idx] for cycle, bond, idx in found]
     elif mode == "prmtop":
         m = msys.LoadPrmTop(args[0])
-        msys.ReadCrdCoordinates(m, args[1])
+        if args[1] != "-":  # "-": topology only
+            msys.ReadCrdCoordinates(m, args[1])
         msys.SaveDMS(m, args[2])
         result = {"natoms": m.natoms}
     elif mode == "time":
