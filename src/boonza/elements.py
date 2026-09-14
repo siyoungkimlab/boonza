@@ -47,6 +47,43 @@ _FAST = {"H": 1, "C": 6, "N": 7, "O": 8, "P": 15, "S": 16}
 _BY_SYMBOL = {s: i for i, s in enumerate(SYMBOLS[:_NMSYS]) if s}
 
 
+# Element masses as msys has them (elements.cxx), index = atomic number 0..111;
+# used to guess elements from masses (Amber prmtop files carry no elements).
+_MSYS_MASSES = np.array([
+    0.000000, 1.007940, 4.002600, 6.941000, 9.012182, 10.811000, 12.010700, 14.006700,
+    15.999400, 18.998403, 20.179700, 22.989770, 24.305000, 26.981538, 28.085500, 30.973761,
+    32.065000, 35.453000, 39.948000, 39.098300, 40.078000, 44.955910, 47.867000, 50.941500,
+    51.996100, 54.938049, 55.845000, 58.933200, 58.693400, 63.546000, 65.409000, 69.723000,
+    72.640000, 74.921600, 78.960000, 79.904000, 83.798000, 85.467800, 87.620000, 88.905850,
+    91.224000, 92.906380, 95.940000, 98.000000, 101.070000, 102.905500, 106.420000, 107.868200,
+    112.411000, 114.818000, 118.710000, 121.760000, 127.600000, 126.904470, 131.293000, 132.905450,
+    137.327000, 138.905500, 140.116000, 140.907650, 144.240000, 145.000000, 150.360000, 151.964000,
+    157.250000, 158.925340, 162.500000, 164.930320, 167.259000, 168.934210, 173.040000, 174.967000,
+    178.490000, 180.947900, 183.840000, 186.207000, 190.230000, 192.217000, 195.078000, 196.966550,
+    200.590000, 204.383300, 207.200000, 208.980380, 209.000000, 210.000000, 222.000000, 223.000000,
+    226.000000, 227.000000, 232.038100, 231.035880, 238.028910, 237.000000, 244.000000, 243.000000,
+    247.000000, 247.000000, 251.000000, 252.000000, 257.000000, 258.000000, 259.000000, 262.000000,
+    261.000000, 262.000000, 266.000000, 264.000000, 269.000000, 268.000000, 271.000000, 272.000000,
+]
+)  # fmt: skip
+_BY_MASS = np.argsort(_MSYS_MASSES, kind="stable")
+
+
+def guess_atomic_number(mass) -> np.ndarray:
+    """Atomic numbers from masses, as msys GuessAtomicNumber: the element whose
+    mass is closest (0 for masses that are not positive or beyond the table)."""
+    m = np.atleast_1d(np.asarray(mass, dtype=np.float64))
+    sorted_masses = _MSYS_MASSES[_BY_MASS]
+    rhs = np.searchsorted(sorted_masses, m, side="left")  # first not less than mass
+    inside = (rhs > 0) & (rhs < len(sorted_masses))
+    rhs_c = np.clip(rhs, 1, len(sorted_masses) - 1)
+    lhs = rhs_c - 1
+    ldiff = m - sorted_masses[lhs]
+    rdiff = sorted_masses[rhs_c] - m
+    pick = np.where(ldiff < rdiff, _BY_MASS[lhs], _BY_MASS[rhs_c])
+    return np.where(inside, pick, 0).astype(np.int64)
+
+
 def radii(anum) -> np.ndarray:
     """Bond-guessing radius for each atomic number (0 for negative, 2.0 if unknown)."""
     anum = np.asarray(anum, dtype=np.int64)

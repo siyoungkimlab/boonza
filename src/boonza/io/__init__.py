@@ -5,19 +5,38 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._maeparse import MaeError
+from .amber import load_prmtop, read_amber_coordinates
 from .cif import CifError, load_cif, save_cif
 from .dms import DMSError, load_dms, save_dms
 from .gro import load_gro, save_gro
+from .gromacs import GromacsError, load_top
 from .mae import load_mae
 from .mae_writer import save_mae
 from .pdb import load_pdb, save_pdb
+from .psf import load_psf
 from .sdf import load_sdf, save_sdf
+
+
+def _load_top(path, **kwargs):
+    """``.top`` is a GROMACS topology, or an Amber prmtop under an old name."""
+    import os
+
+    with open(os.fspath(path), errors="replace") as fh:
+        head = fh.read(4096)
+    if head.startswith("%VERSION") or "%FLAG" in head:
+        return load_prmtop(path, **kwargs)
+    return load_top(path, **kwargs)
+
 
 _READERS = {
     ".dms": load_dms,
     ".mae": load_mae,
     ".cms": load_mae,
     ".pdb": load_pdb,
+    ".prmtop": load_prmtop,
+    ".parm7": load_prmtop,
+    ".psf": load_psf,
+    ".top": _load_top,
     ".sdf": load_sdf,
     ".mol": load_sdf,
     ".gro": load_gro,
@@ -81,6 +100,11 @@ __all__ = [
     "load_gro",
     "load_mae",
     "load_pdb",
+    "load_prmtop",
+    "load_psf",
+    "load_top",
+    "GromacsError",
+    "read_amber_coordinates",
     "load_sdf",
     "save",
     "save_cif",
