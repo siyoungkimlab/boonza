@@ -50,9 +50,13 @@ jobs:
         run: |
           python -c "import numpy, numba; print('numpy', numpy.__version__, 'numba', numba.__version__)"
           python -c "import rdkit, openmm, MDAnalysis; print('rdkit', rdkit.__version__, 'openmm', openmm.version.version, 'MDAnalysis', MDAnalysis.__version__)"
+      - name: Fetch the public viparr force fields
+        run: git clone --depth 1 https://github.com/DEShawResearch/viparr-ffpublic "$RUNNER_TEMP/viparr-ffpublic"
       - name: Run tests
-        # msys, mdtraj, gemmi and ChimeraX oracles and the MDAnalysis test data
-        # are not installed here; those tests skip themselves
+        # msys, viparr, mdtraj, gemmi and ChimeraX oracles and the MDAnalysis
+        # test data are not installed here; those tests skip themselves
+        env:
+          VIPARR_FFPATH: ${{ runner.temp }}/viparr-ffpublic/ff
         run: pytest tests -q -rs
 
   docs:

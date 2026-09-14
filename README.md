@@ -100,6 +100,13 @@ Implemented:
   mdtraj code for code (full and simplified alphabets); backbone phi/psi/omega
   (`boonza.backbone_dihedrals`, per residue and frame, NaN at chain breaks),
   matching mdtraj; SDF V3000 read/write.
+- viparr force fields (`boonza.parameterize`, `load_forcefield`,
+  `merge_forcefields`, `boonza parameterize`): the ~70 force fields of
+  viparr-ffpublic (Amber, CHARMM, DES-Amber, lipids, nucleic acids, ions,
+  waters) applied as viparr applies them: templates matched by bond graph,
+  the first listed force field wins for each molecule, `-m`/`-a` patches.
+  Identical to viparr term by term on 11 systems; D residues get mirrored
+  CMAP grids.
 - RDKit bridge (`boonza.to_rdkit`, `from_rdkit`, `fragments_to_rdkit`,
   `sel.to_rdkit()`): atom indices, names and residue info are carried both ways;
   `assign_bond_orders` perceives bond orders and charges for ligands read

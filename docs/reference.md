@@ -630,6 +630,14 @@ A structure summary: ``str()`` for text (Markdown), ``to_dict()`` for data.
 
 Outcome of ``symmetry_rmsd``.
 
+### `class boonza.ViparrForcefield(name: 'str', rules: 'Rules', templates, params: 'dict', cmaps=())`
+
+A viparr force field: rules, templates, parameter tables and CMAP grids.
+
+``params[table]`` lists the :class:`ParamRow` of each parameter file in
+file order; ``cmaps[k - 1]`` is the grid that ``cmapid`` ``cmapk`` names,
+an array of (phi, psi, energy) rows.
+
 ### `boonza.block_average(values, min_blocks: 'int' = 4) -> 'BlockAverage'`
 
 Flyvbjerg-Petersen blocking of a time series (for example an RMSD or Q per frame).
@@ -707,6 +715,26 @@ chunk, only the fit and ligand atoms.  With ``align="sequence"`` the
 residue pairing comes from the first frame.  ``apply`` moves ``mobile``
 (single structures only).
 
+### `boonza.load_forcefield(name, path=None, require_rules: 'bool' = True) -> 'ViparrForcefield'`
+
+Read a viparr force field directory, given as a path or as a name in
+``path`` (default ``$VIPARR_FFPATH``).
+
+``require_rules=False`` reads a patch that has no ``rules`` file (for
+:func:`merge_forcefields`).
+
+### `boonza.merge_forcefields(base, patch, append_only: 'bool' = False, path=None) -> 'ViparrForcefield'`
+
+``base`` with ``patch`` merged in, as viparr's ``-m`` (or ``-a`` with
+``append_only``) options do.
+
+Templates of the patch replace templates of the same name; parameter rows
+of the patch replace the rows of ``base`` with the same types, and rows
+with new types go first; CMAP grids are replaced. Rules merge (plugins
+and info are joined; functional forms and scale factors must agree).
+``append_only`` refuses to replace anything. ``base`` and ``patch`` may
+be force fields or names in ``path``; neither is modified.
+
 ### `boonza.native_contacts(system, sel1, sel2, positions=None, reference=None, radius: 'float' = 4.5, method: 'str' = 'hard_cut', beta: 'float' = 5.0, lambda_constant: 'float' = 1.8, periodic: 'bool' = True) -> 'np.ndarray'`
 
 Fraction of native contacts Q in each frame (MDAnalysis Contacts).
@@ -733,6 +761,25 @@ Waters within ``solute_pad`` of anything that is not water, or matching
 replaced water's mass-weighted center, in a new ct: counterions in chain
 ``chain`` and the others in ``chain2``, numbered from 1.  Unlike msys,
 ions get their element mass.
+
+### `boonza.parameterize(system: 'System', forcefields, *, rename_atoms: 'bool' = False, rename_residues: 'bool' = False, fix_masses: 'bool' = True, fatal: 'bool' = True, cmap_chirality: 'bool' = True, reorder_ids: 'bool' = False, path=None) -> 'System'`
+
+A copy of ``system`` with a force field from viparr force fields.
+
+``forcefields`` is a list of :class:`ViparrForcefield` objects, names in
+``path`` (default ``$VIPARR_FFPATH``) or directories. Each molecule takes
+its parameters from the first force field whose templates match all its
+residues, so list the force field you trust most first; combine
+force fields into one with :func:`merge_forcefields`.
+
+The input's force field and pseudo particles are dropped; virtual sites
+come from the templates. ``rename_atoms``/``rename_residues`` copy names
+from the matched templates. ``fix_masses`` gives all atoms of an element
+the median of their masses, as viparr does by default. ``fatal=False``
+turns missing parameters into warnings. ``cmap_chirality=False`` applies
+L CMAP grids to D residues as viparr does. ``reorder_ids`` puts pseudo
+particles right after their parent atoms (they are appended otherwise).
+Constraints are not added.
 
 ### `boonza.pca(system, positions=None, sel='name CA', align: 'bool' = True, n_components=None) -> 'PCA'`
 
@@ -822,3 +869,5 @@ ions as spheres and hides water (``water=True`` shows it as lines);
 "cartoon", "sticks", "lines" and "spheres" apply to everything.
 ``positions``: one frame or several ((nframes, natoms, 3) or Frames),
 animated ``interval`` ms apart.
+
+### `boonza.viparr`

@@ -8,7 +8,11 @@ Biomolecular Objects & Operations, Numba-accelerated, Zero-copy Arrays.
 
 __version__ = "0.1.0.dev0"
 
-from . import analysis, pbc  # noqa: E402
+from . import (  # noqa: E402
+    analysis,
+    pbc,
+    viparr,  # noqa: E402
+)
 from .align import kabsch, rmsd, superpose  # noqa: E402
 from .analysis import (  # noqa: E402
     PCA,
@@ -66,6 +70,12 @@ from .terms import OverrideTable, Param, ParamTable, Term, TermTable  # noqa: E4
 from .trajectory import Frame, Frames, Trajectory, open_trajectory, open_writer  # noqa: E402
 from .validate import Problem, find_knots, validate  # noqa: E402
 from .view import MoleculeView, view  # noqa: E402
+from .viparr import (  # noqa: E402
+    ViparrForcefield,
+    load_forcefield,
+    merge_forcefields,
+    parameterize,
+)
 
 __all__ = [
     "Summary",
@@ -75,6 +85,11 @@ __all__ = [
     "neutralize",
     "repartition_hydrogen_masses",
     "solvate",
+    "viparr",
+    "ViparrForcefield",
+    "load_forcefield",
+    "merge_forcefields",
+    "parameterize",
     "PCA",
     "BlockAverage",
     "MoleculeView",
