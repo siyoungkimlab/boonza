@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+
+# Documentation build (mkdocs)
+site/
+
+# Files the examples write
+examples/output/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

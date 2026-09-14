@@ -1,0 +1,19 @@
+site_name: boonza
+site_description: Biomolecular Objects & Operations, Numba-accelerated, Zero-copy Arrays
+docs_dir: docs
+nav:
+  - Home: index.md
+  - Examples: examples.md
+  - Guide:
+      - Systems: guide/systems.md
+      - Selections: guide/selections.md
+      - Files and trajectories: guide/io.md
+      - Force fields: guide/forcefield.md
+      - Checking systems: guide/checking.md
+      - Geometry and PBC: guide/geometry.md
+      - Alignment: guide/alignment.md
+      - Analysis: guide/analysis.md
+      - RDKit and OpenMM: guide/bridges.md
+      - Command line: guide/cli.md
+  - API reference: reference.md
+  - Verification: verification.md

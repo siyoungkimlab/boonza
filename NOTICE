@@ -1,0 +1,81 @@
+boonza includes the DMS term-table schema list from msys
+(src/schema/schema.cxx, reproduced in src/boonza/schemas.py) and follows the
+DMS layout implemented by msys.  msys is distributed under this license:
+
+                            MSYS LICENSE AGREEMENT
+
+Copyright 2018-2020, D. E. Shaw Research. All rights reserved.
+
+Redistribution and use of (1) the MSYS software in source and binary forms
+and (2) the associated chemical system data released with the software,
+with or without modification, is permitted provided that the following
+conditions are met:
+
+    * Redistributions of source code and the associated data must retain the
+    above copyright notice, this list of conditions, and the following
+    disclaimer.
+
+    * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions, and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+
+Neither the name of D. E. Shaw Research nor the names of its contributors may
+be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE AND DATA ARE PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE AND/OR DATA, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------
+src/boonza/ce.py ports the Combinatorial Extension (CE) code in Biopython
+(Bio/PDB/cealign.py and ccealignmodule.c), itself adapted from open-source
+PyMOL.  Its notices:
+
+  Original Code Copyright (C) Jason Vertrees.
+  Modifications Copyright (C) Joao Rodrigues.
+  All rights reserved.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are
+  met:
+      * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+      * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in
+      the documentation and/or other materials provided with the
+      distribution.
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.
+
+  Open-Source PyMOL is Copyright (C) Schrodinger, LLC.  All Rights Reserved.
+  Permission to use, copy, modify, distribute, and distribute modified
+  versions of this software and its built-in documentation for any
+  purpose and without fee is hereby granted, provided that the above
+  copyright notice appears in all copies and that both the copyright
+  notice and this permission notice appear in supporting documentation,
+  and that the name of Schrodinger, LLC not be used in advertising or
+  publicity pertaining to distribution of the software without specific,
+  written prior permission.  SCHRODINGER, LLC DISCLAIMS ALL WARRANTIES WITH
+  REGARD TO THIS SOFTWARE.
+  PyMOL is a trademark of Schrodinger, LLC.
+
+Reference: Shindyalov, I.N., Bourne P.E. (1998). Protein Engineering 11(9),
+739-747.
+
+------------------------------------------------------------------------
+src/boonza/matchmaker.py and secondary.chimerax_ss port UCSF ChimeraX code:
+the Needleman-Wunsch alignment (alignment_algs/_nw/nw.cpp, support.cpp) and
+the Kabsch-Sander secondary-structure assignment (atomstruct CompSS.cpp),
+Copyright 2022 Regents of the University of California, which ChimeraX
+distributes under the GNU Lesser General Public License version 2.1.  The
+default parameters, pairing and pruning rules follow ChimeraX matchmaker
+(match_maker, std_commands/align.py), which is covered by the ChimeraX
+license (https://www.rbvi.ucsf.edu/chimerax/docs/licensing.html).  The
+BLOSUM-62 matrix is from the BLOCKS database (Henikoff & Henikoff, 1992).
