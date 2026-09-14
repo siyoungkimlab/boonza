@@ -18,8 +18,8 @@ venv/
 htmlcov/
 .ipynb_checkpoints/
 
-# Documentation build (mkdocs)
-site/
+# Documentation build (Sphinx)
+docs/_build/
 
 # Files the examples write
 examples/output/

@@ -1,6 +1,6 @@
 # RDKit and OpenMM
 
-## RDKit (`pip install rdkit`)
+## RDKit
 
 ```python
 mol = s.select("resname LIG").to_rdkit()  # or boonza.to_rdkit(s, atoms)
@@ -22,7 +22,7 @@ s.select("smarts 'c1ccccc1'")  # SMARTS inside selections
 - `assign_bond_orders` uses RDKit's xyz2mol on each molecule and chooses the
   resonance form with the fewest charges.
 
-## OpenMM (`pip install openmm`)
+## OpenMM
 
 ```python
 topology, system, positions = boonza.to_openmm(s, nonbonded_method="PME", cutoff=9.0)

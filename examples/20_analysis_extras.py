@@ -9,9 +9,6 @@ enough to see what each tool reports.
 """
 
 import numpy as np
-from _common import require
-
-require("rdkit")
 
 import boonza  # noqa: E402
 

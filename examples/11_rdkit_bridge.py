@@ -4,13 +4,10 @@ Aspirin goes from a SMILES string to a 3D boonza System and back.  SMARTS
 patterns select atoms, and bond orders are recovered from geometry alone,
 as needed for ligands read from PDB, GRO or mmCIF files.
 
-    python examples/11_rdkit_bridge.py        (needs rdkit)
+    python examples/11_rdkit_bridge.py
 """
 
-from _common import OUT, require
-
-require("rdkit")
-
+from _common import OUT
 from rdkit import Chem  # noqa: E402
 from rdkit.Chem import AllChem  # noqa: E402
 

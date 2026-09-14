@@ -27,11 +27,8 @@ checks them against that tool (see [Verification](verification.md)).
 ## Install
 
 ```bash
-pip install -e .              # numpy and numba only
-pip install -e ".[chem]"      # + RDKit bridge, SMARTS selections, bond-order perception
-pip install -e ".[openmm]"    # + OpenMM bridge and energies
-pip install -e ".[trajectories]"  # + XTC reading/writing (MDAnalysis XDR library)
-pip install -e ".[dev]"       # + pytest, ruff
+pip install -e .          # everything: NumPy, numba, RDKit, OpenMM, pandas, networkx
+pip install -e ".[dev]"   # + pytest, ruff and MDAnalysis (a reference in the tests)
 ```
 
 Python 3.11 or newer. The `boonza` command is installed with the package.
@@ -103,3 +100,24 @@ trajectory, periodic boxes, RDKit, validation and the command line.
 10. [Command line](guide/cli.md)
 
 [API reference](reference.md) · [Verification and benchmarks](verification.md)
+
+```{toctree}
+:hidden:
+:caption: Contents
+
+examples
+guide/systems
+guide/selections
+guide/io
+guide/forcefield
+guide/building
+guide/checking
+guide/geometry
+guide/alignment
+guide/analysis
+guide/summaries
+guide/bridges
+guide/cli
+reference
+verification
+```

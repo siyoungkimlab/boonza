@@ -37,6 +37,11 @@ def _describe(path: Path) -> tuple[str, str, str]:
     return title.strip().rstrip("."), rest.strip("\n"), body.rstrip()
 
 
+def _target(path: Path) -> str:
+    """The MyST target of an example's section (a name must not start with a digit)."""
+    return "example-" + path.stem.replace("_", "-")
+
+
 def _run(path: Path) -> str:
     cmd = [sys.executable, str(path)] if path.suffix == ".py" else ["bash", str(path)]
     env = {**os.environ, "PYTHON": sys.executable, "PYTHONWARNINGS": "ignore"}
@@ -62,21 +67,19 @@ def main():
         "printed when this page was generated with `python docs/gen_examples.py`.",
         "Run any of them with `python examples/NN_name.py`.",
         "",
-        "Examples marked *needs openmm* or *needs rdkit* print a note and stop when",
-        "that package is missing. The structures in `examples/data` come from the",
-        "RCSB PDB.",
+        "The structures in `examples/data` come from the RCSB PDB.",
         "",
     ]
     for p in scripts:
         title, _, _ = _describe(p)
-        out.append(f"- [{p.name}](#{p.stem.replace('_', '-')}) — {title}")
+        out.append(f"- [{p.name}](#{_target(p)}) — {title}")
     out.append("")
     for p in scripts:
         title, desc, code = _describe(p)
         lang = "python" if p.suffix == ".py" else "bash"
         print(f"running {p.name} ...", flush=True)
         output = _run(p)
-        out += [f'<a id="{p.stem.replace("_", "-")}"></a>', "", f"## {p.name}: {title}", ""]
+        out += [f"({_target(p)})=", "", f"## {p.name}: {title}", ""]
         if desc:
             out += [desc, ""]
         out += [f"```{lang}", code, "```", "", "Output:", "", "```text", output, "```", ""]

@@ -8,13 +8,18 @@ dynamic = ["version"]
 description = "A molecular reader, editor and writer that helps humans and AI understand how atoms and molecules are arranged in space"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["numpy>=2.0", "numba>=0.59"]
+dependencies = [
+    "numpy>=2.0",
+    "numba>=0.59",
+    "rdkit>=2023.9",
+    "openmm>=8.1",
+    "pandas>=2.0",
+    "networkx>=3.0",
+]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
-chem = ["rdkit"]
-openmm = ["openmm"]
-trajectories = ["MDAnalysis"]
+# development: tests (with MDAnalysis as a reference) and lint
+dev = ["pytest", "ruff", "MDAnalysis>=2.7"]
 
 [project.scripts]
 boonza = "boonza.cli:main"

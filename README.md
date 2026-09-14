@@ -69,7 +69,8 @@ Implemented:
 - Trajectories: `boonza.open_trajectory(path, system)` gives lazy, random-access
   frames (`traj[i]`, `traj[::10]`, `traj.chunks(500, atoms="protein")`).
   DCD is read natively via memory mapping (CHARMM/NAMD/X-PLOR, fixed atoms,
-  both byte orders); XTC and TRR use MDAnalysis's compiled XDR library;
+  both byte orders); XTC and TRR are read and written natively too (a numba
+  port of GROMACS's xdrfile compression, byte-identical to GROMACS);
   Amber NetCDF and Desmond DTR/STK are read natively.  Writers (DCD, XTC,
   TRR, Amber NetCDF): `boonza.open_writer(path, natoms)`.  Checked against
   MDAnalysis (DCD, XTC, TRR, NetCDF) and msys (DTR, STK).
@@ -195,7 +196,8 @@ Planned: alchemical DMS.
 ## Install
 
 ```bash
-pip install -e .[dev]
+pip install -e .          # everything: NumPy, numba, RDKit, OpenMM, pandas, networkx
+pip install -e ".[dev]"   # + pytest, ruff and MDAnalysis (a reference in the tests)
 ```
 
 ## Example

@@ -5,12 +5,10 @@ tables (stretches, angles, dihedrals, 1-4 pairs, Lennard-Jones, charges).
 Then we inspect the tables, report the parameters of a few atoms, check
 the system, compute energies, and make sure a DMS round trip is lossless.
 
-    python examples/05_parameterize_with_openmm.py        (needs openmm)
+    python examples/05_parameterize_with_openmm.py
 """
 
-from _common import OUT, amber_system, require
-
-require("openmm")
+from _common import OUT, amber_system
 
 import boonza  # noqa: E402
 

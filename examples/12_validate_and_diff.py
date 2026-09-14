@@ -4,14 +4,11 @@ We take a clean parameterized protein, break it in several typical ways,
 and let ``validate`` find each problem.  Then a hand-made "knot": a bond
 threaded through a benzene ring.
 
-    python examples/12_validate_and_diff.py        (needs openmm)
+    python examples/12_validate_and_diff.py
 """
 
-from _common import amber_system, require
-
-require("openmm")
-
 import numpy as np  # noqa: E402
+from _common import amber_system
 
 import boonza  # noqa: E402
 
