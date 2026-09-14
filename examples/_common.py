@@ -1,9 +1,7 @@
-"""Shared helpers for the examples: data paths, optional dependencies, small builders."""
+"""Shared helpers for the examples: data paths and small builders."""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -14,14 +12,6 @@ HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"  # PDB files from the RCSB used by the examples
 OUT = HERE / "output"  # files the examples write
 OUT.mkdir(exist_ok=True)
-
-
-def require(*modules: str) -> None:
-    """Exit politely (status 0) when an optional package is missing."""
-    missing = [m for m in modules if importlib.util.find_spec(m) is None]
-    if missing:
-        print(f"skipped: this example needs {', '.join(missing)} (pip install {' '.join(missing)})")
-        sys.exit(0)
 
 
 def water_box(n: int = 5, spacing: float = 3.1) -> boonza.System:
@@ -63,7 +53,6 @@ def amber_system(pdb_name: str) -> boonza.System:
     Waters are removed and hydrogens added; the result is cached as a DMS
     file in ``output/`` so later examples load it instantly.
     """
-    require("openmm")
     cached = OUT / (Path(pdb_name).stem + "_amber14.dms")
     if cached.exists():
         return boonza.load(cached)

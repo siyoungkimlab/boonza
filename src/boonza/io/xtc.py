@@ -1,7 +1,8 @@
-"""GROMACS XTC trajectories through MDAnalysis's compiled XDR library.
+"""GROMACS XTC trajectories, read and written natively.
 
-XTC coordinates are compressed, so decoding uses the C implementation from
-MDAnalysis (optional dependency).  Positions and boxes are converted from nm
+XTC coordinates are compressed with GROMACS's xdrfile algorithm, which
+``boonza.io._xdr`` ports to numba: files are read exactly and written
+byte-identical to GROMACS's own.  Positions and boxes are converted from nm
 to Å; frame offsets let any frame be read directly.
 """
 
@@ -12,18 +13,9 @@ import os
 import numpy as np
 
 from ..trajectory import Frames, Trajectory
+from ._xdr import XDRError, frame_offsets, read_xtc_frame, xtc_frame_bytes
 
 NM = 10.0
-
-
-def _xdr():
-    try:
-        from MDAnalysis.lib.formats import libmdaxdr
-    except ImportError as e:
-        raise ImportError(
-            "XTC support uses MDAnalysis's compiled XDR reader; install MDAnalysis"
-        ) from e
-    return libmdaxdr
 
 
 class XTCTrajectory(Trajectory):
@@ -31,9 +23,12 @@ class XTCTrajectory(Trajectory):
 
     def __init__(self, path, system=None):
         super().__init__(path, system)
-        self._f = _xdr().XTCFile(self.path, "r")
-        self._next = 0
-        self._setup(self._f.n_atoms, len(self._f.offsets))
+        if os.path.getsize(self.path) == 0:
+            raise XDRError(f"{self.path} is empty")
+        self._buf = np.memmap(self.path, np.uint8, "r")
+        self._offsets = frame_offsets(self._buf, "xtc")
+        natoms = int(np.frombuffer(self._buf, ">i4", 1, 4)[0])
+        self._setup(natoms, len(self._offsets))
 
     def _read(self, idx: np.ndarray) -> Frames:
         k = len(idx)
@@ -42,18 +37,16 @@ class XTCTrajectory(Trajectory):
         times = np.empty(k)
         steps = np.empty(k, np.int64)
         for j, i in enumerate(idx.tolist()):
-            if i != self._next:
-                self._f.seek(i)
-            frame = self._f.read_direct_x(pos[j])
-            self._next = i + 1
-            boxes[j] = np.asarray(frame.box, dtype=np.float64) * NM
-            times[j] = frame.time
-            steps[j] = frame.step
+            _, step, time, box, xyz = read_xtc_frame(self._buf, int(self._offsets[i]))
+            pos[j] = xyz
+            boxes[j] = box * NM
+            times[j] = time
+            steps[j] = step
         pos *= NM
         return Frames(idx.copy(), pos, boxes, times, steps)
 
     def close(self) -> None:
-        self._f.close()
+        self._buf = None
 
 
 class XTCWriter:
@@ -65,14 +58,14 @@ class XTCWriter:
         self.precision = float(precision)
         self.dt = float(dt)
         self.nframes = 0
-        self._f = _xdr().XTCFile(self.path, "w")
+        self._fh = open(self.path, "wb")
 
     def write(self, positions, box=None, time=None, step=None) -> None:
         pos = np.asarray(positions, dtype=np.float32).reshape(self.natoms, 3) / NM
         box = np.zeros((3, 3)) if box is None else np.asarray(box, dtype=np.float64) / NM
         time = self.nframes * self.dt if time is None else float(time)
         step = self.nframes if step is None else int(step)
-        self._f.write(pos, box.astype(np.float32), step, time, self.precision)
+        self._fh.write(xtc_frame_bytes(pos, box.astype(np.float32), step, time, self.precision))
         self.nframes += 1
 
     def write_frames(self, frames) -> None:
@@ -80,7 +73,9 @@ class XTCWriter:
             self.write(frame.positions, frame.box, frame.time, frame.step)
 
     def close(self) -> None:
-        self._f.close()
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
 
     def __enter__(self):
         return self

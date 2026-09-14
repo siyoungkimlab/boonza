@@ -7,8 +7,6 @@ the same way (there is no DTR writer).
     python examples/19_trajectory_formats.py
 """
 
-import importlib.util
-
 import numpy as np
 from _common import OUT, water_box
 
@@ -18,12 +16,7 @@ s = water_box(4)
 rng = np.random.default_rng(0)
 frames = s.positions + rng.normal(0, 0.2, (5, s.natoms, 3))
 
-formats = ["dcd", "nc"]
-if importlib.util.find_spec("MDAnalysis"):
-    formats += ["xtc", "trr"]  # through MDAnalysis's compiled XDR library
-else:
-    print("(install MDAnalysis for XTC and TRR)")
-for fmt in formats:
+for fmt in ["dcd", "nc", "xtc", "trr"]:
     path = OUT / f"waters.{fmt}"
     # DCD stores a start and a uniform time step, not a time per frame
     options = {"dt": 2.0, "istart": 0} if fmt == "dcd" else {}

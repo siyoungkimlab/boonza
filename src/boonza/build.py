@@ -369,7 +369,7 @@ def _unique_names(s: System) -> None:
 
 def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool = True,
                 conformers: int = 1) -> System:  # fmt: skip
-    """A 3D molecule from a SMILES string (needs RDKit).
+    """A 3D molecule from a SMILES string (through RDKit).
 
     Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
     reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
@@ -405,7 +405,7 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
 
 
 def peptide(sequence: str, conformation="helix", seed: int = 0, optimize: bool = True) -> System:
-    """A peptide built from a one-letter sequence (needs RDKit).
+    """A peptide built from a one-letter sequence (through RDKit).
 
     ``conformation``: "helix", "sheet", "extended", "polyproline", one
     (phi, psi) pair, or one pair per residue (degrees).  The chain is built
