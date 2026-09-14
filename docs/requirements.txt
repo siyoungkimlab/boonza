@@ -1,1 +1,3 @@
-mkdocs>=1.6
+# MkDocs 2.0 breaks Material for MkDocs (no migration path), so stay on 1.x
+mkdocs>=1.6,<2
+mkdocs-material>=9.5

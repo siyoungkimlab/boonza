@@ -1,4 +1,10 @@
-"""boonza: Biomolecular Objects & Operations, Numba-accelerated, Zero-copy Arrays."""
+"""boonza: a molecular reader, editor and writer for humans and AI.
+
+It connects three views of a molecule: 1-D text (files, sequences, selections),
+the 2-D graph (atoms, bonds, residues, molecules) and 3-D positions that obey
+the rules of physics (coordinates, boxes, force fields).  The name stands for
+Biomolecular Objects & Operations, Numba-accelerated, Zero-copy Arrays.
+"""
 
 __version__ = "0.1.0.dev0"
 
