@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._maeparse import MaeError
+from .amber import load_prmtop, read_amber_coordinates
 from .cif import CifError, load_cif, save_cif
 from .dms import DMSError, load_dms, save_dms
 from .gro import load_gro, save_gro
@@ -18,6 +19,8 @@ _READERS = {
     ".mae": load_mae,
     ".cms": load_mae,
     ".pdb": load_pdb,
+    ".prmtop": load_prmtop,
+    ".parm7": load_prmtop,
     ".sdf": load_sdf,
     ".mol": load_sdf,
     ".gro": load_gro,
@@ -81,6 +84,8 @@ __all__ = [
     "load_gro",
     "load_mae",
     "load_pdb",
+    "load_prmtop",
+    "read_amber_coordinates",
     "load_sdf",
     "save",
     "save_cif",
