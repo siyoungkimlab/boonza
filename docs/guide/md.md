@@ -70,6 +70,7 @@ Modeller also counts against the waters but rounds to the nearest pair (with
 | `proteinff`, `waterff` | none | OpenMM XML families instead |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
+| `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |
 | `temperature`, `pressure` | 298 K, 1 bar | |
@@ -133,6 +134,7 @@ turned off or a larger `production_ns` is given.
 | `solvated.pdb`, `solvated.mae` | the same structure, with bonds and box |
 | `components.json` | the molecules of the input and their atoms in the simulation |
 | `gaff2/`, `gaff2_patch/` | AmberTools files and the GAFF2 patch, when ligands were found |
+| `covalent_*.png` | a 2D drawing of each covalent adduct: blue atoms keep protein types, orange ones are GAFF2 |
 | `equilibration.dcd`, `equilibration.csv` | equilibration |
 | `equilibrated.pdb`, `.mae` | the structure production starts from |
 | `trajectory.dcd`, `state.csv` | production (step and time start at 0) |

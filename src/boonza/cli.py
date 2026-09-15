@@ -263,7 +263,8 @@ def _parameterize(args) -> int:
             if not res or not q.lstrip("+-").isdigit():
                 raise SystemExit(f"--charge {item}: give RESNAME=CHARGE, e.g. LIG=-1")
             charges[res] = int(q)
-        patch = gaff.gaff2_patch(system, ffs, charges=charges)
+        patch = gaff.gaff2_patch(system, ffs, charges=charges,
+                                 protein_extent=args.protein_extent, draw=args.draw)  # fmt: skip
         if args.save_patch:
             viparr.write_forcefield(patch, args.save_patch)
         names = ", ".join(t.name for t in patch.templates) or "none needed"
@@ -272,8 +273,8 @@ def _parameterize(args) -> int:
             ffs[0] = viparr.merge_forcefields(ffs[0], patch)
         else:
             ffs = [patch]
-    elif args.charge or args.save_patch:
-        raise SystemExit("--charge and --save-patch go with --gaff2")
+    elif args.charge or args.save_patch or args.draw:
+        raise SystemExit("--charge, --save-patch and --draw go with --gaff2")
     s = viparr.parameterize(system, ffs, rename_atoms=args.rename_atoms,
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
@@ -459,6 +460,14 @@ def _parser() -> argparse.ArgumentParser:
         help="formal charge of a residue for --gaff2, where the input has none",
     )
     q.add_argument("--save-patch", metavar="DIR", help="write the --gaff2 templates as a viparr ff")
+    q.add_argument(
+        "--protein-extent",
+        choices=("matched", "cb"),
+        default="matched",
+        help="amino acids with GAFF2 atoms keep protein types as far as they match "
+        "(matched) or on the backbone and CB only (cb)",
+    )
+    q.add_argument("--draw", metavar="DIR", help="2D drawings of covalent adducts (PNG)")
     q.set_defaults(run=_parameterize)  # fmt: skip
 
     q = sub.add_parser("drmsd", help="pocket-ligand distance RMSD, symmetry-corrected")

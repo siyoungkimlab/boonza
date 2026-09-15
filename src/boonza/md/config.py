@@ -19,6 +19,7 @@ PRECISIONS = ("mixed", "single", "double")
 DIHEDRAL_RESTRAINTS = ("none", "bb", "ss")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
+PROTEIN_EXTENTS = ("matched", "cb")
 HYDROGEN_MASS_AMU = 4.0
 HMR_INTEGRATION_FS = 4.0
 
@@ -72,6 +73,7 @@ DEFAULTS: dict = {
     "ligand_mode": "auto",
     "ligandff": "gaff-2.11",
     "ligand_charges": None,
+    "protein_extent": "matched",
     "padding_nm": 1.0,
     "cutoff_nm": None,
     "saltM": 0.15,
@@ -125,6 +127,7 @@ _BOOLEANS = {"hmr", "early_stop"}
 _CHOICES = {
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
+    "protein_extent": PROTEIN_EXTENTS,
     "dihedral_restraint": DIHEDRAL_RESTRAINTS,
     "precision": PRECISIONS,
     "platform": PLATFORMS,
@@ -267,6 +270,13 @@ def build_parser() -> argparse.ArgumentParser:
         "match; disabled: that is an error",
     )
     p.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS, help="default: gaff-2.11")
+    p.add_argument(
+        "--protein-extent",
+        dest="protein_extent",
+        choices=PROTEIN_EXTENTS,
+        help="amino acids with GAFF2 atoms keep protein types as far as they match "
+        "(matched, the default) or on the backbone and CB only (cb)",
+    )
     p.add_argument(
         "--charge",
         dest="charge_options",
@@ -519,6 +529,10 @@ ligand_mode = "auto"
 ligandff = "gaff-2.11"
 # Formal charges of ligand residues read from files without them (PDB):
 # ligand_charges = { LIG = -1 }
+# Atoms of an amino acid that has GAFF2 atoms (a covalent adduct, a non-standard
+# residue) keep protein types "matched": as far as they and their neighbours
+# match the parent residue; or "cb": on the backbone, CB and CB's hydrogens only.
+protein_extent = "matched"
 
 padding_nm = 1.0
 # cutoff_nm defaults to 0.9 for Amber and 1.2 for CHARMM.

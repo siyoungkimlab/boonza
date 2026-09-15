@@ -199,8 +199,17 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
                 "ligand_mode = 'auto' makes GAFF2 templates for them"
             )
         log(f"GAFF2 {args.ligandff} templates (AM1-BCC charges) for {_label(s, groups)}")
-        patch = gaff.gaff2_patch(s, ff, charges=args.ligand_charges, workdir=workdir / "gaff2")
+        patch = gaff.gaff2_patch(
+            s,
+            ff,
+            charges=args.ligand_charges,
+            workdir=workdir / "gaff2",
+            protein_extent=args.protein_extent,
+            draw=workdir,
+        )
         viparr.write_forcefield(patch, workdir / "gaff2_patch")
+        for png in sorted(workdir.glob("covalent_*.png")):
+            log(f"Covalent adduct drawn in {png.name} (blue: protein types, orange: GAFF2)")
         host = gaff.host_index(ff)
         ff[host] = viparr.merge_forcefields(ff[host], patch)
 

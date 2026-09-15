@@ -19,6 +19,7 @@ is brought to its formal charge by shifting its GAFF2 atoms evenly.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -137,7 +138,8 @@ def find_unmatched(system: System, forcefields, path=None) -> list[list[int]]:
 
 def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
                 gaff: str = "2.11", charge_method: str = "bcc", amberhome=None,
-                workdir=None, path=None) -> ViparrForcefield:  # fmt: skip
+                workdir=None, path=None, protein_extent: str = "matched",
+                draw=None) -> ViparrForcefield:  # fmt: skip
     """A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
 
     ``forcefields`` is the list to be given to :func:`boonza.parameterize`;
@@ -163,12 +165,35 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     bound to a ligand takes its own template rather than CYX, even when the
     ligand is bound through a sulfur.
     ``workdir`` keeps the AmberTools files, one directory per template.
+
+    ``protein_extent``: "matched" keeps protein types on every amino-acid
+    atom that matches its parent with all its neighbours; "cb" only on the
+    backbone (N, H, CA, HA, C, O, and OXT or H1-H3 at the termini), CB and
+    the hydrogens on CB, so everything past CB is GAFF2. ``draw``: a
+    directory for ``covalent_<residues>.png``, a 2D drawing of each covalent
+    adduct (a ligand bound to an amino acid other than by a peptide bond)
+    with heavy atoms colored by where their types come from.
     """
+    if protein_extent not in PROTEIN_EXTENTS:
+        raise ValueError(f"protein_extent must be one of {PROTEIN_EXTENTS}")
     ffs = _load(forcefields, path)
     b = _Builder(system, ffs, charges or {}, parents or {},
                  dict(gaff=gaff, charge_method=charge_method, amberhome=amberhome),
-                 None if workdir is None else Path(workdir))  # fmt: skip
+                 None if workdir is None else Path(workdir), protein_extent,
+                 None if draw is None else Path(draw))  # fmt: skip
     return b.patch()
+
+
+#: How far amino-acid atoms keep protein types (see :func:`gaff2_patch`).
+PROTEIN_EXTENTS = ("matched", "cb")
+_UP_TO_CB = {"N", "H", "H1", "H2", "H3", "HN", "CA", "HA", "HA2", "HA3", "C", "O", "OXT", "CB"}
+
+
+def _up_to_cb(t: Template, ti: int) -> bool:
+    """Whether template atom ``ti`` is a backbone atom, CB, or a hydrogen on CB."""
+    if t.names[ti] in _UP_TO_CB:
+        return True
+    return t.anum[ti] == 1 and any(t.names[j] == "CB" for j in t._nbrs[ti])
 
 
 def host_index(forcefields) -> int:
@@ -200,7 +225,10 @@ def _check_host(ff: ViparrForcefield) -> None:
 
 
 class _Builder:
-    def __init__(self, system, ffs, charges=None, parents=None, run=None, workdir=None):
+    def __init__(self, system, ffs, charges=None, parents=None, run=None, workdir=None,
+                 extent="matched", draw=None):  # fmt: skip
+        self.extent, self.draw = extent, draw
+        self.drawings: list[Path] = []
         self.P = P = _Parameterizer(system, ffs, False, False, True)
         self.ffs = ffs
         self.host = ffs[host_index(ffs)] if ffs else None
@@ -398,7 +426,10 @@ class _Builder:
         protein: dict[int, tuple[Template, int]] = {}
         parents = {}
         for r in residues:
-            t, m, ok = parents[r] = self._parent(r)
+            t, m, ok = self._parent(r)
+            if self.extent == "cb" and t is not None:
+                ok = {a for a in ok if _up_to_cb(t, m[a])}
+            parents[r] = (t, m, ok)
             for a in ok:
                 protein[a] = (t, m[a])
         frag, f = self._capped(atoms, residues)
@@ -439,6 +470,8 @@ class _Builder:
                 matched = self._matched(self.residue[a])
                 types[i] = matched[a]
         impropers = self._terms(p, f, types, gaff_atoms, len(frag), memo)
+        if self.draw is not None and self._covalent(residues):
+            self.drawings.append(self._draw(residues, frag, f, gaff_atoms))
 
         parts = [self.resnames[r] or "LIG" for r in residues]
         for i, r in enumerate(residues):
@@ -447,6 +480,82 @@ class _Builder:
             tname = name if len(residues) == 1 else f"{name}_{part}"
             self.templates.append(self._template(r, tname, types, index, protein, gcharge, f,
                                                  t, m, impropers))  # fmt: skip
+
+    def _amino_acids(self, residues) -> set[int]:
+        return {r for r in residues
+                if {"N", "CA", "C"} <= {self.names[a] for a in self.res_atoms[r]}}  # fmt: skip
+
+    def _covalent(self, residues) -> bool:
+        """A ligand bound to an amino acid: a group with both kinds of residue."""
+        return 0 < len(self._amino_acids(residues)) < len(residues)
+
+    def _draw(self, residues, frag, f, gaff_atoms) -> Path:
+        """A 2D drawing of a covalent adduct: heavy atoms with protein types in
+        blue, GAFF2 atoms in orange, ``*`` where the chain goes on."""
+        from rdkit import Chem
+        from rdkit.Chem import rdDepictor
+        from rdkit.Chem.Draw import rdMolDraw2D
+
+        from .chem import to_rdkit
+
+        wanted = set(residues)
+        group = {i for i, a in enumerate(frag) if self.residue[a] in wanted}
+        bonds = list(zip(f.bonds["i"].tolist(), f.bonds["j"].tolist(), strict=True))
+        adj: dict[int, list[int]] = {}
+        for i, j in bonds:
+            adj.setdefault(i, []).append(j)
+            adj.setdefault(j, []).append(i)
+        stubs = {j for i in group for j in adj.get(i, []) if j not in group}
+        aa = self._amino_acids(residues)
+        mol = Chem.RWMol(to_rdkit(f, sanitize=False, implicit_hydrogens=False, stereo=False,
+                                  residue_info=False, conformer=False))  # fmt: skip
+        for atom in mol.GetAtoms():
+            i = atom.GetIdx()
+            atom.SetIntProp("frag", i)
+            atom.SetNoImplicit(True)
+            if i in stubs:  # the neighbouring residue, as an attachment point
+                r = self.residue[frag[i]]
+                atom.SetAtomicNum(0)
+                atom.SetFormalCharge(0)
+                atom.SetProp("atomNote", f"{self.resnames[r]}{self.resid[r]}")
+            elif i in group and atom.GetAtomicNum() > 1:
+                r = self.residue[frag[i]]
+                bound = any(j in group and self.residue[frag[j]] in aa - {r} for j in adj[i])
+                if r in aa or bound:
+                    atom.SetProp("atomNote", str(self.names[frag[i]]))
+        for i in sorted(set(range(mol.GetNumAtoms())) - group - stubs, reverse=True):
+            mol.RemoveAtom(i)
+        mol = Chem.RemoveHs(mol.GetMol(), sanitize=False)
+        Chem.SanitizeMol(mol, Chem.SanitizeFlags.SANITIZE_ALL
+                         ^ Chem.SanitizeFlags.SANITIZE_FINDRADICALS)  # fmt: skip
+        blue, orange = (0.55, 0.75, 1.0), (1.0, 0.68, 0.35)
+        atom_colors = {}
+        for atom in mol.GetAtoms():
+            i = atom.GetIntProp("frag")
+            if i in group and atom.GetAtomicNum() > 1:
+                atom_colors[atom.GetIdx()] = orange if i in gaff_atoms else blue
+        bond_colors = {}
+        for b in mol.GetBonds():
+            c = atom_colors.get(b.GetBeginAtomIdx())
+            if c is not None and c == atom_colors.get(b.GetEndAtomIdx()):
+                bond_colors[b.GetIdx()] = c
+        rdDepictor.SetPreferCoordGen(True)
+        rdDepictor.Compute2DCoords(mol)
+        label = "+".join(f"{self.resnames[r]}{self.resid[r]}" for r in residues)
+        host = Path(self.host.name.split("__")[0]).name if self.host else "protein"
+        reach = "backbone and CB" if self.extent == "cb" else "as far as they match"
+        drawer = rdMolDraw2D.MolDraw2DCairo(1000, 800)
+        drawer.drawOptions().legendFontSize = 22
+        drawer.drawOptions().annotationFontScale = 0.7
+        rdMolDraw2D.PrepareAndDrawMolecule(
+            drawer, mol, legend=f"{label}   blue: {host} types ({reach})   orange: GAFF2",
+            highlightAtoms=list(atom_colors), highlightAtomColors=atom_colors,
+            highlightBonds=list(bond_colors), highlightBondColors=bond_colors)  # fmt: skip
+        drawer.FinishDrawing()
+        out = self.draw / ("covalent_" + re.sub(r"[^A-Za-z0-9+_-]", "_", label) + ".png")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(drawer.GetDrawingText())
+        return out
 
     def _template_name(self, residues) -> str:
         base = "+".join(self.resnames[r] or "LIG" for r in residues) + "_gaff2"
