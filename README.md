@@ -247,11 +247,7 @@ GAFF2 ([Ligands](docs/guide/ligands.md)):
 |---|---|
 | protein, water, ions, and modified residues the force fields match | not needed |
 | `boonza swim` with peptide ligands, or with a library of parameterized DMS files | not needed |
-| small-molecule ligands and covalent adducts (`boonza md`, `boonza parameterize --gaff2`, `boonza swim`) | needed where they are parameterized |
-
-`boonza md` parameterizes when a run starts, so the node that starts it needs
-AmberTools; `boonza swim` does it while preparing, so its simulations need
-only OpenMM.
+| small-molecule ligands and covalent adducts (`boonza md`, `boonza parameterize --gaff2`, `boonza swim`) | needed |
 
 ## Example
 
