@@ -76,6 +76,7 @@ DEFAULTS: dict = {
     "parents": None,
     "protein_extent": "matched",
     "padding_nm": 1.0,
+    "box_nm": None,
     "cutoff_nm": None,
     "saltM": 0.15,
     "temperature": 298.0,
@@ -106,6 +107,7 @@ DEFAULTS: dict = {
 }
 _NUMBERS = {
     "padding_nm",
+    "box_nm",
     "cutoff_nm",
     "saltM",
     "temperature",
@@ -215,11 +217,11 @@ def load_configuration(path) -> dict:
         return check_settings(tomllib.load(fh), str(path))
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     """The ``boonza md`` parser; an option left out is left out of the result."""
     d = DEFAULTS
     p = argparse.ArgumentParser(
-        prog="boonza md",
+        prog=prog,
         argument_default=argparse.SUPPRESS,
         description="Prepare and run explicit-solvent MD with OpenMM. Running the same "
         "command on a used work directory resumes it.",
@@ -352,10 +354,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def parse_arguments(argv=None) -> argparse.Namespace:
+def parse_arguments(argv=None, parser=None) -> argparse.Namespace:
     """The resolved settings; ``args.specified`` names those given in the
-    TOML file or on the command line."""
-    parser = build_parser()
+    TOML file or on the command line, and ``args.extra`` the options of a
+    ``parser`` built on :func:`build_parser` that are not settings."""
+    parser = build_parser() if parser is None else parser
     given = vars(parser.parse_args(argv))
     from_file: dict = {}
     if "config" in given:
@@ -379,6 +382,9 @@ def parse_arguments(argv=None) -> argparse.Namespace:
     args.write_default_config = given.get("write_default_config")
     args.list_components = given.get("list_components", False)
     args.specified = set(from_file) | set(cli)
+    own = {"config", "write_default_config", "list_components", "ff_options", "charge_options",
+           "parent_options"}  # fmt: skip
+    args.extra = {k: v for k, v in given.items() if k not in DEFAULTS and k not in own}
     try:
         finish(args)
     except ValueError as e:
@@ -436,7 +442,7 @@ def finish(args) -> None:
         "contact_cutoff_nm",
         "detach_cutoff_nm",
     ]
-    for key in positive + ["cutoff_nm"]:
+    for key in positive + ["cutoff_nm", "box_nm"]:
         v = getattr(args, key)
         if v is not None and (not math.isfinite(v) or v <= 0):
             raise ValueError(f"'{key}' must be positive")

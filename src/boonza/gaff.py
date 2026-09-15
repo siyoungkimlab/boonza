@@ -139,7 +139,7 @@ def find_unmatched(system: System, forcefields, path=None) -> list[list[int]]:
 def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
                 gaff: str = "2.11", charge_method: str = "bcc", amberhome=None,
                 workdir=None, path=None, protein_extent: str = "matched",
-                draw=None) -> ViparrForcefield:  # fmt: skip
+                draw=None, tag=None) -> ViparrForcefield:  # fmt: skip
     """A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
 
     ``forcefields`` is the list to be given to :func:`boonza.parameterize`;
@@ -180,7 +180,9 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     the hydrogens on CB, so everything past CB is GAFF2. ``draw``: a
     directory for ``covalent_<residues>.png``, a 2D drawing of each covalent
     adduct (a ligand bound to an amino acid other than by a peptide bond)
-    with heavy atoms colored by where their types come from.
+    with heavy atoms colored by where their types come from. ``tag`` makes
+    the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
+    so patches made separately (one per ligand) can join one force field.
     """
     if protein_extent not in PROTEIN_EXTENTS:
         raise ValueError(f"protein_extent must be one of {PROTEIN_EXTENTS}")
@@ -189,6 +191,7 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
                  dict(gaff=gaff, charge_method=charge_method, amberhome=amberhome),
                  None if workdir is None else Path(workdir), protein_extent,
                  None if draw is None else Path(draw))  # fmt: skip
+    b.tag = None if tag is None else str(tag)
     return b.patch()
 
 
@@ -259,6 +262,7 @@ class _Builder:
     def __init__(self, system, ffs, charges=None, parents=None, run=None, workdir=None,
                  extent="matched", draw=None):  # fmt: skip
         self.extent, self.draw = extent, draw
+        self.tag: str | None = None
         self.drawings: list[Path] = []
         self.P = P = _Parameterizer(system, ffs, False, False, True)
         self.ffs = ffs
@@ -648,7 +652,7 @@ class _Builder:
             nb.params["epsilon"][pid],
         )
         gcharge, gmass = p.atoms["charge"], p.atoms["mass"]
-        tag = f"~{k}"
+        tag = f"~{k}" if self.tag is None else f"~{self.tag}" + (f".{k}" if k > 1 else "")
         memo = f"GAFF2 {self.run_opts.get('gaff', '2.11')} with AmberTools ({name})"
         types: list[tuple[str, str] | None] = [None] * f.natoms
         gaff_atoms = set()
@@ -759,6 +763,8 @@ class _Builder:
 
     def _template_name(self, residues) -> str:
         base = "+".join(self.resnames[r] or "LIG" for r in residues) + "_gaff2"
+        if self.tag is not None:
+            base = f"{self.tag}_{base}"
         taken = {t.name for t in self.templates} | (
             {t.name for t in self.host.templates} if self.host else set())  # fmt: skip
         name, n = base, 1
