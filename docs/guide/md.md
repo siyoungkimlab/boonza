@@ -180,13 +180,22 @@ integrates.
 ## Installing
 
 OpenMM is a dependency of boonza. For GAFF2 ligands, AmberTools comes from
-conda-forge; `environment.yml` makes an environment with both:
+conda-forge; `install.sh` makes a conda environment with both
+(`environment.yml`) and installs boonza into it:
 
 ```bash
-conda env create -f environment.yml
+bash install.sh --cuda 12.6                # for GPU nodes whose driver supports CUDA 12.6
+bash install.sh --cuda none --openmm 8.2   # without CUDA: run with --platform OpenCL
 conda activate boonza
-pip install -e .
 ```
+
+Give `--cuda` the release the GPU nodes' driver supports (`CUDA Version` in
+`nvidia-smi` on one of them). Without it, conda picks one from the machine
+running the installer, often a login node, and older GPU nodes then fail
+with `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`. conda-forge builds OpenMM for CUDA
+before 12.6 against NumPy 1 only, which boonza cannot use, so for an older
+driver install with `--cuda none` and run on the OpenCL platform, which the
+driver compiles for itself.
 
 numpy stays below 2.4, whose builds need x86-64-v2 CPUs that older HPC nodes
 lack. `pip check` still reports that four Python tools bundled with AmberTools
