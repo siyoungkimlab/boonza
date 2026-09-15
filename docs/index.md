@@ -26,10 +26,28 @@ checks them against that tool (see [Verification](verification.md)).
 
 ## Install
 
+With conda, which also brings AmberTools for GAFF2 ligands:
+
 ```bash
-pip install -e .          # everything: NumPy, numba, RDKit, OpenMM, pandas, networkx
-pip install -e ".[dev]"   # + pytest, ruff and MDAnalysis (a reference in the tests)
+conda env create -f environment.yml   # Python 3.12, NumPy, numba, RDKit, OpenMM, AmberTools, ...
+conda activate boonza
+pip install -e . --no-deps            # boonza itself; conda has the dependencies
+pip install -e ".[dev]"               # + pytest, ruff and MDAnalysis (a reference in the tests)
 ```
+
+With pip alone (`pip install -e .`) you get NumPy, numba, RDKit, OpenMM,
+pandas and networkx, but not AmberTools: it is not on PyPI. Add it to any
+environment with `conda install -c conda-forge ambertools`; boonza finds it
+through `$AMBERHOME` or the `antechamber` on your `PATH`.
+
+AmberTools is only needed where something has to be parameterized with
+GAFF2 ([Ligands](guide/ligands.md)):
+
+| | AmberTools |
+|---|---|
+| protein, water, ions, and modified residues the force fields match | not needed |
+| `boonza swim` with peptide ligands, or with a library of parameterized DMS files | not needed |
+| small-molecule ligands and covalent adducts (`boonza md`, `boonza parameterize --gaff2`, `boonza swim`) | needed |
 
 Python 3.11 or newer. The `boonza` command is installed with the package.
 
