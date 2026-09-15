@@ -21,6 +21,9 @@ the file's own records are applied (msys ignores them):
   Bonds from them to atoms without records (a ligand's link to the protein
   when only the ligand is listed) stay as guessed.
 
+``MODRES`` records name the standard parents of modified residues; they are
+kept as the residue property ``parent`` (GAFF2 templates use them).
+
 Writing: one model; several MODELs only for an ensemble (several cts with
 the same atoms, as read from an NMR file) or with ``models=True`` (msys: one
 MODEL per ct).  TER records where a chain id is reused, and hexadecimal
@@ -69,6 +72,8 @@ def load_pdb(path, guess_bonds: bool = True, conect: bool = True, ssbond: bool =
         records = _bond_records(keep, conect, ssbond, link)
     for atoms, ters, cryst in _models(lines):
         out.append(_model(atoms, ters, cryst, guess_bonds, records))
+    if "MODRES" in text:
+        set_parents(out, _modres(lines))
     out.name = path
     return out
 
@@ -214,6 +219,37 @@ def _bond_records(lines, conect: bool, ssbond: bool, link: bool = False):
     if not pairs and not ss:
         return None
     return pairs, bases, ss
+
+
+def _modres(lines) -> dict[tuple[str, int, str], tuple[str, str]]:
+    """{(chain, resid, insertion): (residue name, standard parent)} from MODRES records."""
+    out = {}
+    for line in lines:
+        if line.startswith("MODRES"):
+            rec = line.rstrip("\r").ljust(80)
+            parent = rec[24:27].strip()
+            if parent:
+                out[(rec[16].strip(), _atoi(rec[18:22]), rec[22].strip())] = (rec[12:15].strip(),
+                                                                              parent)  # fmt: skip
+    return out
+
+
+def set_parents(s: System, mods: dict) -> None:
+    """Keep the standard parents of modified residues (PDB MODRES, mmCIF
+    _pdbx_struct_mod_residue), keyed by (chain, resid, insertion), as the
+    residue property ``parent``."""
+    if not mods:
+        return
+    res = s.residues
+    chains = s.chains["name"][res["chain"]].tolist()
+    values = []
+    for c, i, ins, nm in zip(chains, res["resid"].tolist(), res["insertion"].tolist(),
+                             res["name"].tolist(), strict=True):  # fmt: skip
+        hit = mods.get((str(c), int(i), str(ins)))
+        values.append(hit[1] if hit is not None and hit[0] in ("", str(nm)) else "")
+    if "parent" not in res.props:
+        res.add_prop("parent", str)
+    s.residues["parent"] = np.array(values, dtype=STR)
 
 
 def named_bonds(s: System, chain, resid, insertion, name, altloc, pairs) -> int:

@@ -73,6 +73,7 @@ DEFAULTS: dict = {
     "ligand_mode": "auto",
     "ligandff": "gaff-2.11",
     "ligand_charges": None,
+    "parents": None,
     "protein_extent": "matched",
     "padding_nm": 1.0,
     "cutoff_nm": None,
@@ -197,6 +198,8 @@ def check_settings(values: dict, where: str) -> dict:
             ok = isinstance(v, dict) and all(
                 isinstance(q, int) and not isinstance(q, bool) for q in v.values()
             )
+        elif key == "parents":
+            ok = isinstance(v, dict) and all(isinstance(p, str) and p for p in v.values())
         else:
             ok = isinstance(v, str) and v != ""
         if not ok:
@@ -284,6 +287,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="RES=Q",
         help="formal charge of a ligand residue whose file has none",
     )
+    p.add_argument(
+        "--parent",
+        dest="parent_options",
+        action="append",
+        metavar="RES=PARENT",
+        help="the standard residue a modified residue comes from, e.g. MSE=MET",
+    )
     floats = [
         ("--padding-nm", "padding_nm", "solute to box edge (nm)"),
         ("--cutoff-nm", "cutoff_nm", "nonbonded cutoff (nm; 0.9 Amber, 1.2 CHARMM)"),
@@ -361,6 +371,9 @@ def parse_arguments(argv=None) -> argparse.Namespace:
             **(from_file.get("ligand_charges") or {}),
             **_cli_charges(given["charge_options"], parser),
         }
+    if "parent_options" in given:
+        cli["parents"] = {**(from_file.get("parents") or {}),
+                          **_cli_parents(given["parent_options"], parser)}  # fmt: skip
     args = argparse.Namespace(**{**DEFAULTS, **from_file, **cli})
     args.config = given.get("config")
     args.write_default_config = given.get("write_default_config")
@@ -383,6 +396,16 @@ def _cli_forcefields(options, parser) -> tuple[tuple[str, ...], ...]:
         else:
             out[-1].append(name)
     return tuple(tuple(x) for x in out)
+
+
+def _cli_parents(options, parser) -> dict[str, str]:
+    out = {}
+    for item in options:
+        res, _, parent = item.partition("=")
+        if not res or not parent:
+            parser.error(f"--parent {item}: give RESNAME=PARENT, e.g. MSE=MET")
+        out[res] = parent
+    return out
 
 
 def _cli_charges(options, parser) -> dict[str, int]:
@@ -446,6 +469,7 @@ def finish(args) -> None:
     if args.hmr and "integration_fs" not in args.specified:
         args.integration_fs = HMR_INTEGRATION_FS
     args.ligand_charges = dict(args.ligand_charges or {})
+    args.parents = dict(args.parents or {})
     chosen = [k for k in MONITOR_SELECTORS if getattr(args, k) is not None]
     if len(chosen) > 1:
         raise ValueError("choose at most one early-stop target: " + ", ".join(chosen))
@@ -529,6 +553,9 @@ ligand_mode = "auto"
 ligandff = "gaff-2.11"
 # Formal charges of ligand residues read from files without them (PDB):
 # ligand_charges = { LIG = -1 }
+# The standard residue each modified residue comes from, where the file has no
+# MODRES record and the PDB's dictionary does not know it (an unclear guess stops):
+# parents = { XYZ = "LYS" }
 # Atoms of an amino acid that has GAFF2 atoms (a covalent adduct, a non-standard
 # residue) keep protein types "matched": as far as they and their neighbours
 # match the parent residue; or "cb": on the backbone, CB and CB's hydrogens only.

@@ -195,6 +195,87 @@ def test_pinned_residue_formula_tells_ligand_sulfur_from_disulfide(mixed):
     assert found({}, 7) == "CYL"  # the element alone cannot tell them apart
 
 
+MSE_PEPTIDE = (
+    "[CH3:1][C:2](=[O:3])[NH:4][C@@H:5]([CH3:6])[C:7](=[O:8])[NH:9][C@@H:10]([CH2:11][CH2:12]"
+    "[Se:13][CH3:14])[C:15](=[O:16])[NH:17][C@@H:18]([CH3:19])[C:20](=[O:21])[NH:22][CH3:23]",
+    ["ACE 1 CH3", "ACE 1 C", "ACE 1 O", "ALA 2 N", "ALA 2 CA", "ALA 2 CB", "ALA 2 C", "ALA 2 O",
+     "{r} 3 N", "{r} 3 CA", "{r} 3 CB", "{r} 3 CG", "{r} 3 SE", "{r} 3 CE", "{r} 3 C", "{r} 3 O",
+     "ALA 4 N", "ALA 4 CA", "ALA 4 CB", "ALA 4 C", "ALA 4 O", "NME 5 N", "NME 5 CH3"],
+)  # fmt: skip
+
+
+def _mse(resname="MSE"):
+    """ACE-ALA-<selenomethionine>-ALA-NME, the modified residue named ``resname``."""
+    smi, spec = MSE_PEPTIDE
+    return _mapped(smi, [x.format(r=resname) for x in spec], "A")
+
+
+def _parent_of(s, parents=None):
+    """(parent template, source, heavy atoms keeping protein types) of residue 3."""
+    b = gaff._Builder(s, [viparr.load_forcefield("aa.amber.ff19SB")], parents=parents)
+    r = int(np.flatnonzero(s.residues["resid"] == 3)[0])
+    t, _, ok, source = b._parent(r)
+    heavy = sorted(int(a) for a in ok if s.atoms["anum"][a] > 1)
+    return (None if t is None else t.name), source, heavy
+
+
+def test_parent_of_a_modified_residue():
+    s = _mse()
+    names = s.atoms["name"]
+    t, source, heavy = _parent_of(s)
+    assert (t, source) == ("MET", "known")  # from the PDB's chemical component dictionary
+    assert sorted(str(names[a]) for a in heavy) == ["C", "CA", "CB", "N", "O"]  # CG is bonded to Se
+    x = _mse("XSE")  # unknown: MET, LEU, GLU, ... all match only the backbone and CB
+    with pytest.raises(viparr.ViparrError, match="cannot tell the parent residue of XSE3"):
+        _parent_of(x)
+    x.residues.add_prop("parent", str)
+    x.residues["parent"] = np.array(["", "", "MET", "", ""])
+    assert _parent_of(x)[:2] == ("MET", "file")
+    t, source, _ = _parent_of(x, parents={"XSE": "CYS"})  # given beats the file
+    assert (gaff._family(t), source) == ("CYS", "given")  # the Cys template matching most
+    # atom names are not needed: the backbone is found by structure
+    ren = _mse("XSE")
+    r3 = np.flatnonzero(ren.atoms["residue"] == 2)
+    nm = ren.atoms["name"].copy()
+    nm[r3] = [f"X{k}" for k in range(len(r3))]
+    ren.atoms["name"] = nm
+    assert gaff.find_unmatched(ren, ["aa.amber.ff19SB"]) == [[2]]  # the neighbours stay out
+    assert _parent_of(ren, parents={"XSE": "MET"}) == ("MET", "given", heavy)
+
+
+def test_free_molecules_and_their_hydrogens_stay_gaff2():
+    free = boonza.from_smiles("NCC(=O)O", name="XGL")  # glycine, not in a chain
+    free.atoms["name"] = np.array(["N", "CA", "C", "O", "OXT"]
+                                  + [f"H{k}" for k in range(free.natoms - 5)])  # fmt: skip
+    b = gaff._Builder(free, [viparr.load_forcefield("aa.amber.ff19SB")])
+    assert b._parent(0)[0] is None
+    # acetylated Lys: NZ is GAFF2, and so is the hydrogen on it
+    s = _mapped(*LYS_ACETYL, "A")
+    b = gaff._Builder(s, [viparr.load_forcefield("aa.amber.ff19SB")])
+    r = int(np.flatnonzero(s.residues["resid"] == 3)[0])
+    t, _, ok, source = b._parent(r)
+    nz = next(a for a in s.residue_atoms(r).tolist() if s.atoms["name"][a] == "NZ")
+    hz = [a for a in s.bonded_atoms(nz).tolist() if s.atoms["anum"][a] == 1]
+    assert (source, nz in ok, any(h in ok for h in hz)) == ("guessed", False, False)
+    assert t.name.endswith("LYS") or t.name == "LYN"
+
+
+def test_modified_residue_records(tmp_path):
+    s = _mse()
+    pdb = tmp_path / "mse.pdb"
+    boonza.save(s, pdb)
+    pdb.write_text("MODRES 1ABC MSE A    3  MET  SELENOMETHIONINE\n" + pdb.read_text())
+    assert boonza.load(pdb).residues["parent"].tolist() == ["", "", "MET", "", ""]
+    cif = tmp_path / "mse.cif"
+    boonza.save(s, cif)
+    cif.write_text(cif.read_text().rstrip("\n") + "\nloop_\n"
+                   + "".join(f"_pdbx_struct_mod_residue.{k}\n" for k in (
+                       "id", "auth_asym_id", "auth_seq_id", "PDB_ins_code", "auth_comp_id",
+                       "parent_comp_id"))
+                   + "1 A 3 ? MSE MET\n")  # fmt: skip
+    assert boonza.load(cif).residues["parent"].tolist() == ["", "", "MET", "", ""]
+
+
 # ---- with AmberTools --------------------------------------------------------------
 
 

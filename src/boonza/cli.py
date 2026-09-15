@@ -263,18 +263,29 @@ def _parameterize(args) -> int:
             if not res or not q.lstrip("+-").isdigit():
                 raise SystemExit(f"--charge {item}: give RESNAME=CHARGE, e.g. LIG=-1")
             charges[res] = int(q)
-        patch = gaff.gaff2_patch(system, ffs, charges=charges,
+        parents = {}
+        for item in args.parent:
+            res, _, parent = item.partition("=")
+            if not res or not parent:
+                raise SystemExit(f"--parent {item}: give RESNAME=PARENT, e.g. MSE=MET")
+            parents[res] = parent
+        patch = gaff.gaff2_patch(system, ffs, charges=charges, parents=parents,
                                  protein_extent=args.protein_extent, draw=args.draw)  # fmt: skip
         if args.save_patch:
             viparr.write_forcefield(patch, args.save_patch)
         names = ", ".join(t.name for t in patch.templates) or "none needed"
         print(f"GAFF2 templates: {names}")
-        if ffs:
-            ffs[0] = viparr.merge_forcefields(ffs[0], patch)
+        for p in patch.parents:
+            print(f"  {p['residue']} ({p['chain']}): parent {p['parent']} ({p['source']}); "
+                  f"{p['protein_heavy_atoms']} of {p['heavy_atoms']} heavy atoms keep "
+                  "protein types")  # fmt: skip
+        if ffs:  # onto the protein force field, wherever it is listed
+            host = gaff.host_index(ffs)
+            ffs[host] = viparr.merge_forcefields(ffs[host], patch)
         else:
             ffs = [patch]
-    elif args.charge or args.save_patch or args.draw:
-        raise SystemExit("--charge, --save-patch and --draw go with --gaff2")
+    elif args.charge or args.parent or args.save_patch or args.draw:
+        raise SystemExit("--charge, --parent, --save-patch and --draw go with --gaff2")
     s = viparr.parameterize(system, ffs, rename_atoms=args.rename_atoms,
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
@@ -458,6 +469,13 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         metavar="RES=Q",
         help="formal charge of a residue for --gaff2, where the input has none",
+    )
+    q.add_argument(
+        "--parent",
+        action="append",
+        default=[],
+        metavar="RES=PARENT",
+        help="the standard residue a modified residue comes from, e.g. MSE=MET (--gaff2)",
     )
     q.add_argument("--save-patch", metavar="DIR", help="write the --gaff2 templates as a viparr ff")
     q.add_argument(
