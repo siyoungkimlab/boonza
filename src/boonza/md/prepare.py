@@ -13,7 +13,7 @@ from .. import gaff, viparr
 from ..build import neutralize, repartition_hydrogen_masses, solvate
 from ..io import load, save
 from ..system import System
-from .config import HYDROGEN_MASS_AMU, XML_FAMILIES
+from .config import HYDROGEN_MASS_AMU, describe_forcefields, forcefield_kind, ion_water_mismatch
 
 
 def load_input(path) -> System:
@@ -29,11 +29,10 @@ def load_input(path) -> System:
 
 def forcefields(args):
     """("viparr", [force fields]) or ("xml", OpenMM force field)."""
-    if args.proteinff is not None:
+    if forcefield_kind(args.forcefields) == "xml":
         from ..ffxml import load_openmm_forcefield
 
-        protein, directory, models = XML_FAMILIES[args.proteinff]
-        return "xml", load_openmm_forcefield(protein, f"{directory}/{models[args.waterff]}")
+        return "xml", load_openmm_forcefield(*(entry[0] for entry in args.forcefields))
     ffs = []
     for base, *patches in args.forcefields:
         ff = viparr.load_forcefield(base)
@@ -186,6 +185,10 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
     """
     s = load_input(args.input_structure)
     kind, ff = forcefields(args)
+    log(f"Force fields: {describe_forcefields(args.forcefields)}")
+    note = ion_water_mismatch(args.forcefields)
+    if note:
+        log(f"Warning: {note}")
     groups = _groups(s, kind, ff)
     info = components(s, groups)
     if getattr(args, "monitor_selection", None) is not None:
@@ -264,11 +267,7 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
 
 def write_components(path, info: dict, args) -> None:
     doc = {
-        "forcefields": (
-            [list(x) for x in args.forcefields]
-            if args.proteinff is None
-            else {"proteinff": args.proteinff, "waterff": args.waterff}
-        ),
+        "forcefields": [list(x) for x in args.forcefields],
         "ligand_mode": args.ligand_mode,
         "ligandff": args.ligandff,
         **info,

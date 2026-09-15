@@ -2,8 +2,9 @@
 what a restart restores.
 
 Precedence: built-in defaults < the TOML file (``--config``) < options on
-the command line. Keys and options are ommflow's, plus ``forcefields``
-(``-f``/``-m``) for viparr force fields and ``ligand_charges`` (``--charge``).
+the command line. Keys and options are ommflow's, except that force fields
+are ``forcefields`` (``-f``/``-m``: viparr force fields, or OpenMM XML files),
+plus ``ligand_charges`` (``--charge``).
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import tomllib
 from pathlib import Path
 
@@ -35,41 +37,10 @@ DEFAULT_FORCEFIELDS = (
     ("ions.amber1234lm_anton.tip3p",),
 )
 
-# OpenMM XML families as ommflow names them: protein file, water directory, water files
-AMBER_WATER_MODELS = {
-    "opc": "opc.xml",
-    "opc3": "opc3.xml",
-    "spce": "spce.xml",
-    "tip3p": "tip3p.xml",
-    "tip3pfb": "tip3pfb.xml",
-    "tip4pew": "tip4pew.xml",
-    "tip4pfb": "tip4pfb.xml",
-}
-CHARMM_WATER_MODELS = {
-    "tip3p": "water.xml",
-    "tip3p-pme-b": "tip3p-pme-b.xml",
-    "tip3p-pme-f": "tip3p-pme-f.xml",
-    "spce": "spce.xml",
-    "tip4p2005": "tip4p2005.xml",
-    "tip4pew": "tip4pew.xml",
-    "tip5p": "tip5p.xml",
-    "tip5pew": "tip5pew.xml",
-}
-XML_FAMILIES = {
-    "amber14sb": ("amber14/protein.ff14SB.xml", "amber14", AMBER_WATER_MODELS),
-    "amber15ipq": ("amber14/protein.ff15ipq.xml", "amber14", AMBER_WATER_MODELS),
-    "amber19sb": ("amber19/protein.ff19SB.xml", "amber19", AMBER_WATER_MODELS),
-    "charmm36": ("charmm36.xml", "charmm36", CHARMM_WATER_MODELS),
-    "charmm36_2024": ("charmm36_2024.xml", "charmm36_2024", CHARMM_WATER_MODELS),
-}
-WATER_MODELS = tuple(sorted(AMBER_WATER_MODELS.keys() | CHARMM_WATER_MODELS.keys()))
-
 DEFAULTS: dict = {
     "input_structure": None,
     "workdir": "openmm_md",
     "forcefields": None,
-    "proteinff": None,
-    "waterff": None,
     "ligand_mode": "auto",
     "ligandff": "gaff-2.11",
     "ligand_charges": None,
@@ -140,8 +111,6 @@ _CHOICES = {
     "dihedral_restraint": DIHEDRAL_RESTRAINTS,
     "precision": PRECISIONS,
     "platform": PLATFORMS,
-    "proteinff": tuple(XML_FAMILIES),
-    "waterff": WATER_MODELS,
 }
 MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component", "monitor_selection")
 #: Settings a restart takes from ``final.toml`` unless they are given again.
@@ -186,8 +155,53 @@ def forcefield_spec(value) -> tuple[tuple[str, ...], ...]:
     return tuple(out)
 
 
+def is_xml(name: str) -> bool:
+    """An OpenMM XML force field file, rather than a viparr force field."""
+    return name.lower().endswith(".xml")
+
+
+def forcefield_kind(spec) -> str:
+    """The route: "xml" when every force field is an OpenMM XML file, "viparr" when none is."""
+    xml = [is_xml(n) for entry in spec for n in entry]
+    if not any(xml):
+        return "viparr"
+    if not all(xml):
+        raise ValueError("give viparr force fields or OpenMM XML files, not both")
+    if any(len(entry) > 1 for entry in spec):
+        raise ValueError("OpenMM XML force fields take no patches (-m): list each file with -f")
+    return "xml"
+
+
+def describe_forcefields(spec) -> str:
+    """``a + patch, b, c``: the force fields in priority order."""
+    return ", ".join(" + ".join(entry) for entry in spec)
+
+
+def ion_water_mismatch(spec) -> str | None:
+    """A note when an ion set was fitted for another water model than the
+    water force field's, by viparr's names: ``ions.<set>.<water>`` and
+    ``water.<model>`` (``tip3p_charmm`` and ``tip3p-fb`` count as TIP3P)."""
+    names = [Path(n).name for entry in spec for n in entry]
+    waters = [n.split(".", 1)[1] for n in names if n.startswith("water.")]
+    if len(waters) != 1:
+        return None
+    model = re.split(r"[_-]", waters[0])[0]
+    odd = [n for n in names if n.startswith("ions.") and n.count(".") == 2
+           and n.rsplit(".", 1)[1] not in ("all", model)]  # fmt: skip
+    if not odd:
+        return None
+    return f"{', '.join(odd)}: fitted for another water model than water.{waters[0]}"
+
+
 def check_settings(values: dict, where: str) -> dict:
     """Validate the types and choices of settings read from a file."""
+    legacy = sorted({"proteinff", "waterff"} & set(values))
+    if legacy:
+        raise ValueError(
+            f"{where}: {' and '.join(legacy)} are gone; list OpenMM XML files in "
+            'forcefields instead, e.g. forcefields = ["amber19/protein.ff19SB.xml", '
+            '"amber19/opc.xml"]'
+        )
     unknown = set(values) - set(DEFAULTS)
     if unknown:
         raise ValueError(f"{where}: unknown setting(s): {', '.join(sorted(unknown))}")
@@ -256,8 +270,10 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         dest="ff_options",
         action="append",
         type=lambda v: ("f", v),
-        help="viparr force field, in priority order (default: ff19SB + phosaa19SB, "
-        "TIP3P, Joung-Cheatham and Li/Merz ions)",
+        metavar="FF",
+        help="force field, in priority order: a viparr force field, or OpenMM XML "
+        "files (e.g. -f amber19/protein.ff19SB.xml -f amber19/opc.xml), not both "
+        "(default: ff19SB + phosaa19SB, TIP3P, Joung-Cheatham and Li/Merz ions)",
     )
     p.add_argument(
         "-m",
@@ -265,14 +281,11 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         dest="ff_options",
         action="append",
         type=lambda v: ("m", v),
-        help="patch the previous -f force field",
+        metavar="PATCH",
+        help="patch the previous -f viparr force field",
     )
-    p.add_argument(
-        "--proteinff",
-        choices=tuple(XML_FAMILIES),
-        help="OpenMM XML protein family, as ommflow (with --waterff), instead of -f",
-    )
-    p.add_argument("--waterff", choices=WATER_MODELS, help="OpenMM XML water model")
+    for old in ("--proteinff", "--waterff"):  # ommflow's, replaced by -f XML files
+        p.add_argument(old, help=argparse.SUPPRESS)
     p.add_argument(
         "--ligand-mode",
         dest="ligand_mode",
@@ -379,6 +392,10 @@ def parse_arguments(argv=None, parser=None) -> argparse.Namespace:
     ``parser`` built on :func:`build_parser` that are not settings."""
     parser = build_parser() if parser is None else parser
     given = vars(parser.parse_args(argv))
+    legacy = [f"--{k}" for k in ("proteinff", "waterff") if k in given]
+    if legacy:
+        parser.error(f"{' and '.join(legacy)} are gone: give OpenMM XML files with -f, e.g. "
+                     "-f amber19/protein.ff19SB.xml -f amber19/opc.xml")  # fmt: skip
     from_file: dict = {}
     if "config" in given:
         try:
@@ -471,24 +488,10 @@ def finish(args) -> None:
         raise ValueError("'dihedral_restraint_kJ' must be a nonzero number")
     if args.confirmation_checks < 1:
         raise ValueError("'confirmation_checks' must be at least 1")
-    if (args.proteinff is None) != (args.waterff is None):
-        raise ValueError("'proteinff' and 'waterff' (OpenMM XML force fields) go together")
-    if args.proteinff is not None:
-        if args.forcefields is not None:
-            raise ValueError(
-                "give viparr force fields (forcefields, -f) or OpenMM XML "
-                "families (proteinff, waterff), not both"
-            )
-        models = XML_FAMILIES[args.proteinff][2]
-        if args.waterff not in models:
-            raise ValueError(
-                f"water model '{args.waterff}' does not go with "
-                f"{args.proteinff}; choose one of: {', '.join(models)}"
-            )
-    elif args.forcefields is None:
+    if args.forcefields is None:
         args.forcefields = DEFAULT_FORCEFIELDS
-    if args.forcefields is not None:
-        args.forcefields = forcefield_spec(args.forcefields)
+    args.forcefields = forcefield_spec(args.forcefields)
+    forcefield_kind(args.forcefields)  # viparr or XML, not a mixture
     if args.cutoff_nm is None:
         args.cutoff_nm = default_cutoff_nm(args)
     if args.hmr and "integration_fs" not in args.specified:
@@ -502,8 +505,6 @@ def finish(args) -> None:
 
 def default_cutoff_nm(args) -> float:
     """0.9 nm for Amber force fields and 1.2 nm for CHARMM, as ommflow."""
-    if args.proteinff is not None:
-        return 0.9 if args.proteinff.startswith("amber") else 1.2
     names = [n.lower() for entry in args.forcefields for n in entry]
     return 1.2 if any("charmm" in n for n in names) else 0.9
 
@@ -571,7 +572,8 @@ workdir = "openmm_md"
 # list is a force field with patches merged onto it. The default:
 # forcefields = [["aa.amber.ff19SB", "aa.amber.phosaa19SB"], "water.tip3p",
 #                "ions.amber1jc.tip3p", "ions.amber1234lm_anton.tip3p"]
-# Or OpenMM XML families, as ommflow: proteinff = "amber19sb" and waterff = "opc".
+# Or OpenMM XML files, in OpenMM's data directories or by path (no GAFF2 ligands):
+# forcefields = ["amber19/protein.ff19SB.xml", "amber19/opc.xml"]
 
 # GAFF2 (AM1-BCC, AmberTools) templates for ligands and covalent adducts.
 ligand_mode = "auto"
