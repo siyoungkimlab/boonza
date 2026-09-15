@@ -101,7 +101,13 @@ def _knots(args) -> int:
 def _diff(args) -> int:
     from .diff import diff
 
-    found = diff(_load(args.a), _load(args.b), rtol=args.rtol, positions=not args.no_positions)
+    found = diff(
+        _load(args.a),
+        _load(args.b),
+        rtol=args.rtol,
+        positions=not args.no_positions,
+        canonical=args.canonical,
+    )
     for d in found:
         print(d)
     if not found:
@@ -227,6 +233,17 @@ def _parameterize(args) -> int:
     import boonza
     from boonza import viparr
 
+    if args.xml:
+        if args.forcefields:
+            raise SystemExit(
+                "give viparr force fields (-f/-m/-a) or OpenMM XML files (-x), not both"
+            )
+        cons = None if args.without_constraints else "hbonds"
+        s = boonza.parameterize_openmm(_load(args.input), args.xml, constraints=cons)
+        boonza.save(s, args.output)
+        tables = ", ".join(f"{n} {len(s.table(n))}" for n in s.table_names)
+        print(f"wrote {args.output}: {s.natoms} atoms; {tables}")
+        return 0
     ffs = []
     for kind, name in args.forcefields:
         if kind == "f":
@@ -287,6 +304,11 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("b")
     q.add_argument("--rtol", type=float, default=1e-6)
     q.add_argument("--no-positions", action="store_true", help="ignore coordinates and cell")
+    q.add_argument(
+        "--canonical",
+        action="store_true",
+        help="compare force fields made by different programs (energy-equivalent forms)",
+    )
     q.set_defaults(run=_diff)
 
     q = sub.add_parser("describe", help="force-field parameters of selected atoms")
@@ -369,6 +391,13 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         type=lambda v: ("a", v),
         help="like -m, but refuse to replace anything",
+    )
+    q.add_argument(
+        "-x",
+        "--xml",
+        action="append",
+        default=[],
+        help="OpenMM force field XML file (e.g. amber19-all.xml), instead of -f",
     )
     q.add_argument("--ffpath", help="directories of named force fields (default $VIPARR_FFPATH)")
     q.add_argument("--rename-atoms", action="store_true", help="copy atom names from templates")
