@@ -79,6 +79,30 @@ of these checks wins. So the Cys above takes its own template rather than
 CYX, while real disulfides still take CYX, even when the ligand is bound
 through a sulfur (a mixed disulfide).
 
+## How far protein types reach
+
+`protein_extent` (`--protein-extent`) chooses how much of an amino acid
+carrying GAFF2 atoms keeps the protein force field:
+
+- `"matched"` (the default): every atom that matches its parent residue
+  with all its bonded neighbours, as described above. On a Lys acetylated at
+  NZ, CG, CD and CE keep ff19SB types and only NZ is GAFF2.
+- `"cb"`: only the backbone (N, H, CA, HA, C, O, and OXT or H1-H3 at the
+  termini), CB and the hydrogens on CB, and only those that match. On the
+  same Lys, CG, CD, CE and NZ are GAFF2. The residue's charge correction is
+  then spread over more atoms.
+
+## Drawings of covalent adducts
+
+When a ligand is bound to an amino acid other than by a peptide bond,
+`gaff2_patch(..., draw=directory)` (`boonza parameterize --gaff2 --draw
+DIR`; `boonza md` does it in its work directory) writes
+`covalent_<residues>.png`: a 2D drawing of the ligand and the residue it is
+bound to. Heavy atoms that keep protein types are blue and GAFF2 atoms
+orange; the residue's atoms and the ligand atom bound to it are labelled
+with their names, and `*` marks where the chain goes on. Free ligands and
+non-standard residues without a ligand are not drawn.
+
 ## What the input needs
 
 - All hydrogens, and bonds.
@@ -86,8 +110,9 @@ through a sulfur (a mixed disulfide).
   bonds of a group are all single (PDB, GRO, mmCIF), boonza perceives bond
   orders and charges with RDKit (`boonza.assign_bond_orders`) for a total
   charge taken from `charges={"LIG": -1}` (`--charge LIG=-1`), or 0.
-- An Amber protein force field first in the list (12-6 Lennard-Jones,
-  Lorentz-Berthelot, 1-4 scales 1/1.2 and 1/2, like GAFF2). With no force
+- An Amber protein force field in the list (12-6 Lennard-Jones,
+  Lorentz-Berthelot, 1-4 scales 1/1.2 and 1/2, like GAFF2): the patch is for
+  the first force field with amino-acid templates, wherever it is listed. With no force
   fields, `gaff2_patch` returns a complete GAFF2 force field.
 
 ## How it is checked
