@@ -309,3 +309,12 @@ Large tables are decoded straight from the SQLite file bytes by a numba
 scanner (`boonza/io/_sqlite_scan.py`); small tables, and anything the
 scanner does not handle, go through Python's `sqlite3`.  Saving still uses
 `sqlite3`.
+
+## License
+
+boonza is released under the [MIT License](LICENSE), except three modules
+that port LGPL-2.1 code and stay under the [GNU LGPL 2.1](LICENSES/LGPL-2.1.txt):
+`secondary.py` (DSSP from MDTraj, Kabsch-Sander from UCSF ChimeraX),
+`matchmaker.py` (from ChimeraX) and `shrake_rupley.py` (SASA from MDTraj).
+The code boonza ports from other projects, and the data it bundles, are
+listed with their notices in [NOTICE](NOTICE).

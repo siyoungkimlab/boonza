@@ -1,3 +1,16 @@
+boonza is distributed under the MIT License (LICENSE), except three modules
+that port code distributed under the GNU Lesser General Public License
+version 2.1, which are distributed under that license instead
+(LICENSES/LGPL-2.1.txt) and say so at their top:
+
+  src/boonza/secondary.py      DSSP from MDTraj; Kabsch-Sander from UCSF ChimeraX
+  src/boonza/matchmaker.py     Needleman-Wunsch from UCSF ChimeraX
+  src/boonza/shrake_rupley.py  solvent accessible surface area from MDTraj
+
+The other code that boonza ports or includes, listed below, is under
+permissive licenses whose notices follow.
+
+------------------------------------------------------------------------
 boonza includes the DMS term-table schema list from msys
 (src/schema/schema.cxx, reproduced in src/boonza/schemas.py) and follows the
 DMS layout implemented by msys.  msys is distributed under this license:
@@ -70,11 +83,34 @@ Reference: Shindyalov, I.N., Bourne P.E. (1998). Protein Engineering 11(9),
 739-747.
 
 ------------------------------------------------------------------------
+src/boonza/secondary.py (dssp, backbone_hbonds) ports MDTraj's DSSP
+(mdtraj/geometry/src/dssp.cpp), adapted by MDTraj from DSSP-2.2.0 by
+Maarten L. Hekkelman (Boost Software License 1.0), and
+src/boonza/shrake_rupley.py ports MDTraj's Shrake-Rupley surface area
+(mdtraj/geometry/src/sasa.cpp and sasa.py).  Both files are distributed
+under the GNU LGPL version 2.1 (LICENSES/LGPL-2.1.txt).  MDTraj's notices:
+
+  DSSP secondary structure assignment
+  Copyright [2014] Stanford University and the Authors
+  Authors: Robert T. McGibbon, Maarten L. Hekkelman
+
+  MDTraj: A Python Library for Loading, Saving, and Manipulating
+          Molecular Dynamics Trajectories.
+  Copyright 2012-2016 Stanford University and the Authors
+  Authors: Robert McGibbon, Peter Eastman
+
+  MDTraj is free software: you can redistribute it and/or modify it under
+  the terms of the GNU Lesser General Public License as published by the
+  Free Software Foundation, either version 2.1 of the License, or (at your
+  option) any later version.
+
+------------------------------------------------------------------------
 src/boonza/matchmaker.py and secondary.chimerax_ss port UCSF ChimeraX code:
 the Needleman-Wunsch alignment (alignment_algs/_nw/nw.cpp, support.cpp) and
 the Kabsch-Sander secondary-structure assignment (atomstruct CompSS.cpp),
 Copyright 2022 Regents of the University of California, which ChimeraX
-distributes under the GNU Lesser General Public License version 2.1.  The
+distributes under the GNU Lesser General Public License version 2.1; the two
+files carry ChimeraX's notice and are distributed under that license.  The
 default parameters, pairing and pruning rules follow ChimeraX matchmaker
 (match_maker, std_commands/align.py), which is covered by the ChimeraX
 license (https://www.rbvi.ucsf.edu/chimerax/docs/licensing.html).  The
