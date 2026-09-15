@@ -3,7 +3,8 @@
 `boonza md` prepares and runs explicit-solvent MD with OpenMM, and resumes it
 after a wall-time limit. It replaces ommflow: its options, settings keys and
 output files are ommflow's, so configuration files and job scripts carry
-over.
+over, except for the force fields (`-f` replaces `--proteinff` and
+`--waterff`; see below).
 
 ```bash
 boonza md protein.pdb --workdir protein_md                  # a new 100 ns run
@@ -40,15 +41,41 @@ order (the first one whose templates match a molecule parameterizes it):
    Ca²⁺, ...). It also has the monovalent ions; listed after 1jc, it does not
    supply them.
 
-Give your own with `-f` (and `-m` to patch the one before), or in the file:
+Give your own with `-f`, once per force field in priority order, and `-m` to
+patch the one before; or in the file:
+
+```bash
+boonza md complex.pdb -f aa.amber.ff14SB -m aa.amber.phosaa10 -f water.tip3p -f ions.amber1jc.tip3p
+```
 
 ```toml
 forcefields = [["aa.amber.ff14SB", "aa.amber.phosaa10"], "water.tip3p", "ions.amber1jc.tip3p"]
 ```
 
-ommflow's OpenMM XML families still work, applied by boonza's own XML reader
-(`proteinff = "amber19sb"`, `waterff = "opc"`; `--proteinff`, `--waterff`).
-GAFF2 ligands need viparr force fields.
+`-f` replaces the whole default list, so give every force field the system
+needs. A run prints the force fields it uses, and warns when an ion set was
+fitted for another water model than the water's (`ions.amber1jc.tip3p` with
+`water.opc`, say).
+
+OpenMM XML force fields are `-f` files too: names in OpenMM's data
+directories, as `openmm.app.ForceField` takes them, or paths. boonza applies
+them with its own XML reader. The files of one run are all XML or all viparr,
+and GAFF2 ligands need viparr force fields.
+
+```bash
+boonza md protein.pdb -f amber19/protein.ff19SB.xml -f amber19/opc.xml
+boonza md protein.pdb -f charmm36_2024.xml -f charmm36_2024/water.xml
+boonza md protein.pdb -f my_protein.xml -f my_water.xml
+```
+
+ommflow's `--proteinff`/`--waterff` pairs are these files:
+
+| ommflow | `-f` files |
+|---|---|
+| `amber14sb`, `amber15ipq`, `amber19sb` | `amber14/protein.ff14SB.xml`, `amber14/protein.ff15ipq.xml`, `amber19/protein.ff19SB.xml` |
+| their water: `opc`, `tip3p`, `tip4pew`, ... | `amber14/<water>.xml` (`amber19/<water>.xml` for amber19sb) |
+| `charmm36`, `charmm36_2024` | `charmm36.xml`, `charmm36_2024.xml` |
+| their water: `tip3p`, others | `charmm36/water.xml`, `charmm36/<water>.xml` (`charmm36_2024/...`) |
 
 The nonbonded cutoff defaults to 0.9 nm for Amber and 1.2 nm for CHARMM, with
 PME; bonds to hydrogen and water are rigid.
@@ -66,8 +93,7 @@ Modeller also counts against the waters but rounds to the nearest pair (with
 
 | Setting | Default | |
 |---|---|---|
-| `forcefields` (`-f`, `-m`) | see above | viparr force fields |
-| `proteinff`, `waterff` | none | OpenMM XML families instead |
+| `forcefields` (`-f`, `-m`) | see above | viparr force fields, or OpenMM XML files |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
