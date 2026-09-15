@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,10 @@ name = "boonza"
 dynamic = ["version"]
 description = "A molecular reader, editor and writer that helps humans and AI understand how atoms and molecules are arranged in space"
 readme = "README.md"
+# MIT, except the three modules that port LGPL-2.1 code (secondary.py,
+# matchmaker.py, shrake_rupley.py); see NOTICE
+license = "MIT AND LGPL-2.1-only"
+license-files = ["LICENSE", "LICENSES/*", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = [
     # 2.4 and later need x86-64-v2 CPUs, which older HPC nodes lack

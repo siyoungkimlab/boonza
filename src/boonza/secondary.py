@@ -1,3 +1,43 @@
+# SPDX-License-Identifier: LGPL-2.1-only
+#
+# Not under boonza's MIT license: this file ports LGPL code, so it is
+# distributed under the GNU Lesser General Public License version 2.1
+# (LICENSES/LGPL-2.1.txt; see NOTICE).
+#
+# dssp and backbone_hbonds port MDTraj's DSSP (mdtraj/geometry/src/dssp.cpp):
+#
+#   DSSP secondary structure assignment
+#   Copyright [2014] Stanford University and the Authors
+#   Authors: Robert T. McGibbon, Maarten L. Hekkelman
+#
+#   This code is adapted from DSSP-2.2.0, written by Maarten L. Hekkelman,
+#   and ported to MDTraj by Robert T. McGibbon. DSSP-2.2.0 is distributed
+#   under the Boost Software License, Version 1.0. This code, as part of
+#   MDTraj, is distributed under the GNU LGPL.
+#
+# chimerax_ss ports UCSF ChimeraX's Kabsch-Sander assignment (atomstruct CompSS.cpp):
+#
+#   === UCSF ChimeraX Copyright ===
+#   Copyright 2022 Regents of the University of California. All rights reserved.
+#   The ChimeraX application is provided pursuant to the ChimeraX license
+#   agreement, which covers academic and commercial uses. For more details, see
+#   <https://www.rbvi.ucsf.edu/chimerax/docs/licensing.html>
+#
+#   This particular file is part of the ChimeraX library. You can also
+#   redistribute and/or modify it under the terms of the GNU Lesser General
+#   Public License version 2.1 as published by the Free Software Foundation.
+#   For more details, see
+#   <https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>
+#
+#   THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER
+#   EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+#   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. ADDITIONAL LIABILITY
+#   LIMITATIONS ARE DESCRIBED IN THE GNU LESSER GENERAL PUBLIC LICENSE
+#   VERSION 2.1
+#
+#   This notice must be embedded in or attached to all copies, including partial
+#   copies, of the software or any revisions or derivations thereof.
+#   === UCSF ChimeraX Copyright ===
 """DSSP secondary structure (Kabsch & Sander), following DSSP 2.2 as ported by mdtraj.
 
     codes = boonza.dssp(system)                    # (1, nresidues) for the current positions
