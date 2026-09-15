@@ -94,12 +94,13 @@ trajectory, periodic boxes, RDKit, validation and the command line.
 4. [Force fields](guide/forcefield.md)
 5. [viparr force fields](guide/viparr.md)
 6. [OpenMM force fields, and comparing force fields](guide/openmm_forcefields.md)
-7. [Checking systems: validate, knots, diff](guide/checking.md)
-8. [Geometry and periodic boundaries](guide/geometry.md)
-9. [Alignment: superposition and sequences](guide/alignment.md)
-10. [Analysis](guide/analysis.md)
-11. [RDKit and OpenMM](guide/bridges.md)
-12. [Command line](guide/cli.md)
+7. [Ligands and covalent adducts (GAFF2)](guide/ligands.md)
+8. [Checking systems: validate, knots, diff](guide/checking.md)
+9. [Geometry and periodic boundaries](guide/geometry.md)
+10. [Alignment: superposition and sequences](guide/alignment.md)
+11. [Analysis](guide/analysis.md)
+12. [RDKit and OpenMM](guide/bridges.md)
+13. [Command line](guide/cli.md)
 
 [API reference](reference.md) · [Verification and benchmarks](verification.md)
 
@@ -114,6 +115,7 @@ guide/io
 guide/forcefield
 guide/viparr
 guide/openmm_forcefields
+guide/ligands
 guide/building
 guide/checking
 guide/geometry
