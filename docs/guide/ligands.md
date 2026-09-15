@@ -86,8 +86,9 @@ through a sulfur (a mixed disulfide).
   bonds of a group are all single (PDB, GRO, mmCIF), boonza perceives bond
   orders and charges with RDKit (`boonza.assign_bond_orders`) for a total
   charge taken from `charges={"LIG": -1}` (`--charge LIG=-1`), or 0.
-- An Amber protein force field first in the list (12-6 Lennard-Jones,
-  Lorentz-Berthelot, 1-4 scales 1/1.2 and 1/2, like GAFF2). With no force
+- An Amber protein force field in the list (12-6 Lennard-Jones,
+  Lorentz-Berthelot, 1-4 scales 1/1.2 and 1/2, like GAFF2): the patch is for
+  the first force field with amino-acid templates, wherever it is listed. With no force
   fields, `gaff2_patch` returns a complete GAFF2 force field.
 
 ## How it is checked

@@ -141,7 +141,8 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     """A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
 
     ``forcefields`` is the list to be given to :func:`boonza.parameterize`;
-    the first, an Amber force field, is the one to merge the patch onto::
+    the patch is for the Amber protein force field among them (the first with
+    amino-acid templates, see :func:`host_index`) and is merged onto it::
 
         patch = boonza.gaff2_patch(system, ["aa.amber.ff14SB", "water.tip3p"])
         ff = boonza.merge_forcefields("aa.amber.ff14SB", patch)
@@ -170,6 +171,15 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     return b.patch()
 
 
+def host_index(forcefields) -> int:
+    """The index of the force field GAFF2 patches join: the first one with
+    amino-acid templates (N, CA and C), else the first."""
+    for k, ff in enumerate(forcefields):
+        if any({"N", "CA", "C"} <= set(t.names) for t in ff.templates):
+            return k
+    return 0
+
+
 def _load(forcefields, path) -> list[ViparrForcefield]:
     if isinstance(forcefields, str | os.PathLike | ViparrForcefield):
         forcefields = [forcefields]
@@ -192,7 +202,8 @@ def _check_host(ff: ViparrForcefield) -> None:
 class _Builder:
     def __init__(self, system, ffs, charges=None, parents=None, run=None, workdir=None):
         self.P = P = _Parameterizer(system, ffs, False, False, True)
-        self.ffs, self.host = ffs, (ffs[0] if ffs else None)
+        self.ffs = ffs
+        self.host = ffs[host_index(ffs)] if ffs else None
         if self.host is not None:
             _check_host(self.host)
         self.charges, self.parents = charges or {}, parents or {}

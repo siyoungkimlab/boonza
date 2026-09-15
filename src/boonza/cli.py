@@ -289,6 +289,7 @@ def _parameterize(args) -> int:
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boonza", description="Molecular system tools.")
     sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
 
     q = sub.add_parser("info", help="summarize a structure file")
     q.add_argument("file")
@@ -476,6 +477,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "md":  # its own parser: settings files, restarts
+        from .md.cli import main as md_main
+
+        return md_main(argv[1:])
     args = _parser().parse_args(argv)
     return args.run(args)
 
