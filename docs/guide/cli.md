@@ -20,6 +20,8 @@ boonza summarize complex.pdb [--focus SEL] [--json]   # a text summary for peopl
 boonza build --sequence ACDEF [--conformation helix] -o out.pdb   # a peptide
 boonza parameterize in.dms out.dms -f aa.charmm.c36m -f water.tip3p_charmm   # viparr force fields
 boonza parameterize in.dms out.dms -f aa.amber.ff99SB -m aa.amber.ff99SB-ILDN   # with a patch
+boonza parameterize in.dms out.dms -x amber19-all.xml -x amber19/opc.xml   # OpenMM XML force fields
+boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two force fields
 ```
 
 `parameterize` takes force fields in priority order (`-f`, names in

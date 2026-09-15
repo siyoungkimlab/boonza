@@ -138,12 +138,13 @@ system shifted by half a box to catch knots across periodic boundaries.
 ``ignore_excluded_knots`` skips bonds whose atoms are excluded from every
 ring atom (needs an exclusion table).
 
-### `boonza.diff(a, b, atom_map=None, rtol: 'float' = 1e-06, atol: 'float' = 1e-09, positions: 'bool' = True, tables=None) -> 'list[Difference]'`
+### `boonza.diff(a, b, atom_map=None, rtol: 'float' = 1e-06, atol: 'float' = 1e-09, positions: 'bool' = True, tables=None, canonical: 'bool' = False) -> 'list[Difference]'`
 
 Differences between systems ``a`` and ``b`` (empty when they match).
 
 ``positions=False`` ignores coordinates, velocities and the cell;
-``tables`` limits the force-field tables compared.
+``tables`` limits the force-field tables compared.  ``canonical``
+compares force fields made by different programs: see :func:`canonical_forcefield`.
 
 ### `class boonza.Difference(kind: 'str', message: 'str') -> None`
 
@@ -618,6 +619,10 @@ Outcome of ``ligand_rmsd``: the protein fit and the ligand RMSD in that frame.
 
 One 3Dmol.js viewer: shown by Jupyter, or written as a page with ``save``.
 
+### `class boonza.OpenMMForcefield()`
+
+OpenMM XML force field files, read into boonza (see :func:`load_openmm_forcefield`).
+
 ### `class boonza.PCA(atoms: 'np.ndarray', mean: 'np.ndarray', variance: 'np.ndarray', components: 'np.ndarray', projections: 'np.ndarray', reference: 'np.ndarray | None') -> None`
 
 Principal components of atomic fluctuations (see ``pca``).
@@ -660,6 +665,21 @@ replace get ``constrained = 1``, so :func:`boonza.to_openmm` turns them
 into OpenMM constraints (``keep=True`` leaves them unconstrained).
 ``atoms`` limits the atoms considered; ``exclude`` skips kinds such as
 ``"hoh"`` or ``"ah1"``. Existing constraints of those atoms are replaced.
+
+### `boonza.canonical_forcefield(system)`
+
+A copy of ``system`` whose force field has one form for each interaction.
+
+Programs write the same force field differently: one periodic torsion
+term per periodicity or several per row, k with phase 0 or -k with phase
+180, 1-4 electrostatics and Lennard-Jones in one term or two, a sigma for
+atoms without Lennard-Jones or not.  Here every ``dihedral_trig`` and
+``improper_trig`` term of an atom tuple (read in either direction) is
+summed into the Fourier coefficients of table ``dihedral_fourier``
+(E = c0 + sum_n a_n cos(n phi) + b_n sin(n phi)), ``pair_12_6_es`` terms
+are summed per atom pair, sigma is 0 where epsilon is 0, and terms whose
+energy is zero are dropped, so :func:`diff` sees only differences that
+change the energy.
 
 ### `boonza.contact_frequency(system, sel1, sel2=None, positions=None, cutoff: 'float' = 4.5, level: 'str' = 'residue', periodic: 'bool' = True)`
 
@@ -737,6 +757,14 @@ boonza (see :func:`bundled_version`).
 ``require_rules=False`` reads a patch that has no ``rules`` file (for
 :func:`merge_forcefields`).
 
+### `boonza.load_openmm_forcefield(*files) -> 'OpenMMForcefield'`
+
+Read OpenMM force field XML files, as ``openmm.app.ForceField(*files)`` does.
+
+Names that are not paths are looked up in OpenMM's data directories, so
+``load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")`` works;
+``<Include>`` files are followed.
+
 ### `boonza.merge_forcefields(base, patch, append_only: 'bool' = False, path=None) -> 'ViparrForcefield'`
 
 ``base`` with ``patch`` merged in, as viparr's ``-m`` (or ``-a`` with
@@ -797,6 +825,19 @@ OpenMM requires (viparr's ``--reorder-ids``); ``reorder_ids=False``
 appends them after all real atoms, as viparr does by default.
 ``constraints`` adds viparr's constraints (see :func:`build_constraints`),
 as viparr does by default.
+
+### `boonza.parameterize_openmm(system: 'System', forcefield, *, constraints=None, rigid_water=None, hydrogen_mass=None, residue_templates=None, ignore_external_bonds: 'bool' = False) -> 'System'`
+
+A copy of ``system`` with the force field OpenMM's ``createSystem`` would build.
+
+``forcefield`` is an :class:`OpenMMForcefield` or XML file names (as for
+``openmm.app.ForceField``).  ``constraints`` is None, ``"hbonds"``,
+``"allbonds"`` or ``"hangles"``; ``rigid_water`` (default: the templates'
+choice, rigid) makes residues named HOH rigid; ``hydrogen_mass`` (amu)
+repartitions mass onto hydrogens.  Constrained bonds and angles stay in
+their tables, marked ``constrained``, and the constraints go to
+``constraint_ahN``/``constraint_hoh`` tables.  ``residue_templates`` maps
+residue indices to template names.
 
 ### `boonza.pca(system, positions=None, sel='name CA', align: 'bool' = True, n_components=None) -> 'PCA'`
 

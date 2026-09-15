@@ -38,8 +38,9 @@ from .build import (  # noqa: E402
 from .ce import CEResult, ce_align, cealign  # noqa: E402
 from .chem import assign_bond_orders, fragments_to_rdkit, from_rdkit, to_rdkit  # noqa: E402
 from .describe import ForceFieldReport, describe, topological_distances  # noqa: E402
-from .diff import Difference, diff  # noqa: E402
+from .diff import Difference, canonical_forcefield, diff  # noqa: E402
 from .exclusions import update_exclusions  # noqa: E402
+from .ffxml import OpenMMForcefield, load_openmm_forcefield, parameterize_openmm  # noqa: E402
 from .glue import Glue, make_whole  # noqa: E402
 from .handles import Atom, AtomSel, Bond, Chain, Ct, Residue, StaleHandleError  # noqa: E402
 from .hbonds import HBonds, baker_hubbard, hbonds, wernet_nilsson  # noqa: E402
@@ -92,6 +93,9 @@ __all__ = [
     "load_forcefield",
     "merge_forcefields",
     "parameterize",
+    "OpenMMForcefield",
+    "load_openmm_forcefield",
+    "parameterize_openmm",
     "PCA",
     "BlockAverage",
     "MoleculeView",
@@ -114,6 +118,7 @@ __all__ = [
     "describe",
     "Difference",
     "diff",
+    "canonical_forcefield",
     "assign_bond_orders",
     "fragments_to_rdkit",
     "from_rdkit",

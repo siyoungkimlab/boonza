@@ -29,6 +29,7 @@ The structures in `examples/data` come from the RCSB PDB.
 - [20_analysis_extras.py](#example-20-analysis-extras) — More analysis: native contacts, contact frequencies, principal components,
 - [21_summaries_for_ai.py](#example-21-summaries-for-ai) — From 3D back to text: a summary for people and language models, a table, and a view
 - [22_viparr_forcefields.py](#example-22-viparr-forcefields) — viparr force fields: parameterize, set priorities, patch, and handle D residues
+- [23_compare_forcefields.py](#example-23-compare-forcefields) — Compare two force fields term by term: viparr's ff19SB and OpenMM's amber19
 
 (example-01-load-and-inspect)=
 
@@ -792,15 +793,15 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.34 0.55 0.57 0.63]
-radius of gyration: 13.27 +- 0.06 A
-most flexible residues: [(879, 0.72), (844, 0.65), (855, 0.6), (880, 0.53), (843, 0.5)]
+C-alpha RMSD to frame 0 (A): [0.   0.3  0.46 0.53 0.59]
+radius of gyration: 13.27 +- 0.05 A
+most flexible residues: [(879, 0.74), (844, 0.62), (805, 0.47), (845, 0.46), (878, 0.45)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-142. -145. -125. -143.] / [157. 149. 160. 164.]
-hydrogen bonds per frame: [51, 43, 42, 37, 32]
-    THR852:OG1 -> ASP854:OD1   present in 100% of frames
-      TYR869:N -> PHE889:O     present in 100% of frames
-    ARG876:NH1 -> GLU834:OE2   present in 100% of frames
+residue 830 phi/psi over time: [-148. -137. -142. -133.] / [156. 170. 173. 168.]
+hydrogen bonds per frame: [53, 49, 37, 32, 31]
+      LYS812:N -> LEU820:O     present in 100% of frames
+    ARG846:NH1 -> ASP845:O     present in 100% of frames
+      ILE849:N -> LEU835:O     present in 100% of frames
 ```
 
 (example-10-periodic-boxes)=
@@ -1832,4 +1833,80 @@ aa.amber.ff99SB then aa.amber.ff14SB: dihedral energy -5602.12; warning: fragmen
 ff99SB patched with ILDN: dihedral energy -5671.27
 CMAP energy: L peptide -1.490, D peptide with mirrored CMAP for D residues -1.490
 CMAP energy: L peptide -1.490, D peptide with L CMAP for D residues (viparr) -18.812
+```
+
+(example-23-compare-forcefields)=
+
+## 23_compare_forcefields.py: Compare two force fields term by term: viparr's ff19SB and OpenMM's amber19
+
+boonza parameterizes one structure with a viparr force field and with an
+OpenMM XML force field, then compares the two systems.  ``canonical=True``
+brings both to one form per interaction first, so only differences that
+change the energy remain.
+
+    python examples/23_compare_forcefields.py
+
+```python
+import warnings
+
+from _common import amber_system
+
+import boonza
+
+warnings.simplefilter("ignore", boonza.viparr.ViparrWarning)
+protein = amber_system("1TEN.pdb")  # 1TEN with hydrogens, prepared with OpenMM
+
+viparr_ff = boonza.parameterize(protein, ["aa.amber.ff19SB"], constraints=False)
+openmm_ff = boonza.parameterize_openmm(protein, ["amber19-all.xml"], rigid_water=False)
+print(boonza.load_openmm_forcefield("amber19-all.xml"))
+
+# 1. Table by table, in canonical form
+print("\nviparr ff19SB vs OpenMM amber19, table by table:")
+for d in boonza.diff(viparr_ff, openmm_ff, positions=False, canonical=True):
+    print(" ", str(d)[:150])
+
+# 2. Energy per term, through OpenMM
+a, b = boonza.openmm_energies(viparr_ff), boonza.openmm_energies(openmm_ff)
+dih = {
+    k: v.get("dihedral_trig", 0.0) + v.get("dihedral_trig_constant", 0.0)
+    for k, v in (("a", a), ("b", b))
+}
+print("\nenergy differences (kcal/mol):")
+for term in ("stretch_harm", "angle_harm", "torsiontorsion_cmap", "nonbonded"):
+    print(f"  {term:20s} {a[term] - b[term]:+.4f}")
+print(f"  {'dihedrals':20s} {dih['a'] - dih['b']:+.4f}")
+
+# 3. The 1-4 difference is viparr's rounded scale factor (0.8333 for 1/1.2)
+ff = boonza.load_forcefield("aa.amber.ff19SB")
+ff.rules.es_scale = [0.0, 0.0, 1 / 1.2]
+exact = boonza.parameterize(protein, [ff], constraints=False)
+left = [
+    str(d).split(":")[1].strip()
+    for d in boonza.diff(exact, openmm_ff, positions=False, canonical=True)
+]
+print("\nwith viparr's 1-4 scale set to exactly 1/1.2, what still differs:", "; ".join(left))
+gap = boonza.openmm_energies(exact)["nonbonded"] - b["nonbonded"]
+print(f"nonbonded difference: {gap:+.4f} kcal/mol")
+```
+
+Output:
+
+```text
+<OpenMMForcefield amber19-all.xml, protein.ff19SB.xml, DNA.OL21.xml ...: 152 templates; 0 patches; 275 bonds; 764 angles; 591 propers, 119 impropers; 16 CMAP maps>
+
+viparr ff19SB vs OpenMM amber19, table by table:
+  atoms: charge differs for 2 atoms: 12: -0.4105 != -0.4106, 16: -0.4105 != -0.4104
+  terms: dihedral_fourier: 111 terms only in the first system: (22, 5, 21, 32), (35, 24, 34, 43), (59, 47, 58, 67), (70, 61, 69, 83), (80, 85, 82, 84), 
+  terms: dihedral_fourier: 111 terms only in the second system: (5, 32, 21, 22), (24, 43, 34, 35), (47, 67, 58, 59), (61, 83, 69, 70), (72, 104, 86, 87)
+  terms: pair_12_6_es: 3646 of 3647 terms differ (max deviation qij=1.79634e-05): (0, 6) qij -0.0480825!=-0.0480844, (0, 8) qij 0.00215458!=0.00215467, 
+
+energy differences (kcal/mol):
+  stretch_harm         +0.0000
+  angle_harm           -0.0000
+  torsiontorsion_cmap  +0.0000
+  nonbonded            -0.1675
+  dihedrals            +0.0231
+
+with viparr's 1-4 scale set to exactly 1/1.2, what still differs: charge differs for 2 atoms; dihedral_fourier; dihedral_fourier; pair_12_6_es
+nonbonded difference: -0.0028 kcal/mol
 ```
