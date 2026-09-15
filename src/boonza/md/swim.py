@@ -442,12 +442,11 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
             clearance: float = 3.0, log=print, repel: bool = True) -> list[Path]:  # fmt: skip
     """Write one ``boonza md`` simulation per group of ligands into
     ``args.workdir``; returns their directories."""
-    from .config import settings_of, write_settings
+    from .config import forcefield_kind, settings_of, write_settings
     from .prepare import forcefields, load_input
 
-    if args.proteinff is not None:
-        raise ValueError("boonza swim needs viparr force fields (forcefields, -f), not "
-                         "proteinff/waterff")  # fmt: skip
+    if forcefield_kind(args.forcefields) == "xml":
+        raise ValueError("boonza swim needs viparr force fields (-f), not OpenMM XML files")
     if args.input_structure is None:
         raise ValueError("give the protein structure")
     root = Path(args.workdir)

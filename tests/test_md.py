@@ -67,8 +67,10 @@ def test_settings_precedence(tmp_path):
     assert m.forcefields == (("aa.amber.ff19SB", "aa.amber.phosaa19SB"), ("water.tip3p",))
     assert parse_arguments(["x", "--hmr"]).integration_fs == 4.0
     assert parse_arguments(["x", "--hmr", "--integration-fs", "3"]).integration_fs == 3.0
-    x = parse_arguments(["x", "--proteinff", "amber19sb", "--waterff", "opc"])
-    assert x.forcefields is None and x.cutoff_nm == 0.9
+    x = parse_arguments(["x", "-f", "amber19/protein.ff19SB.xml", "-f", "amber19/opc.xml"])
+    assert config.forcefield_kind(x.forcefields) == "xml" and x.cutoff_nm == 0.9
+    x = parse_arguments(["x", "-f", "charmm36_2024.xml", "-f", "charmm36_2024/water.xml"])
+    assert x.cutoff_nm == 1.2
     assert parse_arguments(["x", "--charge", "LIG=-1"]).ligand_charges == {"LIG": -1}
     assert parse_arguments(["x", "--parent", "MSE=MET"]).parents == {"MSE": "MET"}
     r = parse_arguments(["x", "--repulsion-selection", "chain L", "--repulsion-kJ", "800"])
@@ -76,9 +78,9 @@ def test_settings_precedence(tmp_path):
 
 
 @pytest.mark.parametrize("argv", [
-    ["x", "--proteinff", "amber19sb"],
-    ["x", "--proteinff", "amber19sb", "--waterff", "tip5p"],
-    ["x", "--proteinff", "amber19sb", "--waterff", "opc", "-f", "water.tip3p"],
+    ["x", "--proteinff", "amber19sb", "--waterff", "opc"],
+    ["x", "-f", "amber19/protein.ff19SB.xml", "-f", "water.tip3p"],
+    ["x", "-f", "amber19/protein.ff19SB.xml", "-m", "extra.xml"],
     ["x", "--monitor-chain", "A", "--monitor-ligand", "ligand-0"],
     ["x", "--monitor-selection", "chain A", "--monitor-component", "component-0"],
     ["x", "-m", "aa.amber.phosaa19SB"],
@@ -98,6 +100,19 @@ def test_settings_file_errors(tmp_path):
         p.write_text(text)
         with pytest.raises(ValueError):
             config.load_configuration(p)
+    p.write_text('proteinff = "amber19sb"\nwaterff = "opc"\n')  # ommflow's, replaced
+    with pytest.raises(ValueError, match="list OpenMM XML files in forcefields"):
+        config.load_configuration(p)
+
+
+def test_ion_water_mismatch():
+    default = config.DEFAULT_FORCEFIELDS
+    assert config.ion_water_mismatch(default) is None
+    assert config.ion_water_mismatch([["water.tip3p-fb"], ["ions.amber1jc.tip3p"]]) is None
+    assert config.ion_water_mismatch([["water.tip3p_charmm"], ["ions.charmm36"]]) is None
+    note = config.ion_water_mismatch([["water.opc"], ["ions.amber1jc.tip3p"],
+                                      ["ions.amber1lm_iod.all"]])  # fmt: skip
+    assert note == "ions.amber1jc.tip3p: fitted for another water model than water.opc"
 
 
 def test_final_settings_round_trip(tmp_path):
@@ -334,9 +349,11 @@ def test_early_stop_confirms_detachment(tmp_path, two_peptides):
 
 
 def test_openmm_xml_route_builds(tmp_path, dipeptide):
-    args = parse_arguments([str(dipeptide), "--proteinff", "amber19sb", "--waterff", "tip3p",
-                            "--padding-nm", "0.8"])  # fmt: skip
-    s, info = build_system(args, tmp_path, log=quiet)
+    args = parse_arguments([str(dipeptide), "-f", "amber19/protein.ff19SB.xml", "-f",
+                            "amber19/tip3p.xml", "--padding-nm", "0.8"])  # fmt: skip
+    lines = []
+    s, info = build_system(args, tmp_path, log=lines.append)
+    assert lines[0] == "Force fields: amber19/protein.ff19SB.xml, amber19/tip3p.xml"
     assert info["components"][0]["classification"] == "standard"
     assert {"stretch_harm", "angle_harm", "dihedral_trig", "nonbonded"} <= set(s.table_names)
     assert abs(s.atoms["charge"].sum()) < 1e-6
