@@ -112,14 +112,15 @@ p = boonza.parameterize(s, [ildn, "water.tip3p", "ions.amber1jc.tip3p"])
 ## What the checks found in the force fields
 
 - The Amber force fields store the 1-4 electrostatic scale as 0.8333
-  instead of 1/1.2. On a 1,375-atom protein that is 0.17 kcal/mol of 1-4
-  electrostatics compared with OpenMM's ff14SB.
+  instead of 1/1.2. On a 1,375-atom protein that is about 0.17 kcal/mol of
+  1-4 electrostatics compared with OpenMM's Amber force fields.
 - Impropers on equivalent atoms (Arg NH2, Asn/Gln amide H, Asp OD1/OD2) list
   them in a different order from OpenMM's templates, a few hundredths of a
   kcal/mol.
 - Proper dihedrals, backbone ones included, agree exactly with CHARMM's
-  `par_all36m_prot.prm`, with Amber's `parm10.dat` + `frcmod.ff14SB`, and
-  with OpenMM's `charmm36_2024.xml` and `amber14-all.xml` on 1TEN.
+  `par_all36m_prot.prm` and with Amber's `parm10.dat` + `frcmod.ff14SB`. On
+  1TEN, c36m matches OpenMM's `charmm36_2024.xml` and ff19SB matches
+  `amber19-all.xml`, residue-specific CMAPs included.
 
 ## Command line
 

@@ -4,7 +4,7 @@ Synthetic force fields test the rules (template matching across residues,
 exact before wildcard parameters, multi-term dihedrals, virtual sites,
 first-match priority, merging).  With viparr-ffpublic (``$VIPARR_FFPATH``,
 default ~/viparr-ffpublic/ff) the public force fields are checked against
-OpenMM's own Amber and CHARMM force fields; with a viparr build
+OpenMM's own amber19 and CHARMM36 force fields; with a viparr build
 (``$BOONZA_VIPARR``: a command that runs the viparr CLI) whole systems are
 compared term by term with viparr's output.
 """
@@ -347,14 +347,16 @@ def _dihedrals(e):
     return e.get("dihedral_trig", 0.0) + e.get("dihedral_trig_constant", 0.0)
 
 
-def test_ff14sb_matches_openmm_amber14():
-    ff = _public("aa.amber.ff14SB")
+def test_ff19sb_matches_openmm_amber19():
+    ff = _public("aa.amber.ff19SB")
     ff.rules.es_scale = [0.0, 0.0, 1 / 1.2]  # the file rounds 1/1.2 to 0.8333
-    ref = _openmm_protein("amber14-all.xml")
+    ref = _openmm_protein("amber19-all.xml")
     ours = viparr.parameterize(ref, [ff], constraints=False)
     a, b = boonza.openmm_energies(ref), boonza.openmm_energies(ours)
-    for term in ("stretch_harm", "angle_harm"):
+    for term in ("stretch_harm", "angle_harm", "torsiontorsion_cmap"):
         assert b[term] == pytest.approx(a[term], abs=1e-6)
+    # residue-specific CMAPs on the same residues
+    assert len(ours.table("torsiontorsion_cmap")) == len(ref.table("torsiontorsion_cmap"))
     # impropers on equivalent atoms (Arg NH2, Asn ND2) are listed in another order
     assert _dihedrals(b) == pytest.approx(_dihedrals(a), abs=0.1)
     assert b["nonbonded"] == pytest.approx(a["nonbonded"], abs=0.01)
