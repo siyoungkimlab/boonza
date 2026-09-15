@@ -193,6 +193,26 @@ def ion_water_mismatch(spec) -> str | None:
     return f"{', '.join(odd)}: fitted for another water model than water.{waters[0]}"
 
 
+def water_model_mismatch(spec) -> str | None:
+    """Why the force fields do not pair the protein force field with one of
+    its own water models, or None. OpenMM XML files: by
+    :func:`boonza.ffxml.water_mismatch`. viparr: TIP3P, which CHARMM
+    (``water.tip3p_charmm``, with Lennard-Jones hydrogens) and Amber
+    (``water.tip3p``) define differently; other water models are not checked."""
+    if forcefield_kind(spec) == "xml":
+        from ..ffxml import water_mismatch
+
+        return water_mismatch(entry[0] for entry in spec)
+    names = [Path(n).name for entry in spec for n in entry]
+    charmm = [n for n in names if n.startswith("aa.charmm.")]
+    amber = [n for n in names if n.startswith(("aa.amber.", "aa.DES-Amber"))]
+    if charmm and "water.tip3p" in names:
+        return f"{charmm[0]} takes CHARMM's TIP3P, water.tip3p_charmm, not water.tip3p"
+    if amber and "water.tip3p_charmm" in names:
+        return f"{amber[0]} takes water.tip3p, not CHARMM's water.tip3p_charmm"
+    return None
+
+
 def check_settings(values: dict, where: str) -> dict:
     """Validate the types and choices of settings read from a file."""
     legacy = sorted({"proteinff", "waterff"} & set(values))
@@ -492,6 +512,9 @@ def finish(args) -> None:
         args.forcefields = DEFAULT_FORCEFIELDS
     args.forcefields = forcefield_spec(args.forcefields)
     forcefield_kind(args.forcefields)  # viparr or XML, not a mixture
+    problem = water_model_mismatch(args.forcefields)
+    if problem:
+        raise ValueError(problem)
     if args.cutoff_nm is None:
         args.cutoff_nm = default_cutoff_nm(args)
     if args.hmr and "integration_fs" not in args.specified:

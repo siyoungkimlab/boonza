@@ -81,6 +81,10 @@ def test_settings_precedence(tmp_path):
     ["x", "--proteinff", "amber19sb", "--waterff", "opc"],
     ["x", "-f", "amber19/protein.ff19SB.xml", "-f", "water.tip3p"],
     ["x", "-f", "amber19/protein.ff19SB.xml", "-m", "extra.xml"],
+    ["x", "-f", "charmm36.xml", "-f", "amber14/tip3p.xml"],  # Amber's TIP3P for CHARMM
+    ["x", "-f", "amber19-all.xml"],  # no water model
+    ["x", "-f", "aa.charmm.c36m", "-f", "water.tip3p"],
+    ["x", "-f", "aa.amber.ff14SB", "-f", "water.tip3p_charmm"],
     ["x", "--monitor-chain", "A", "--monitor-ligand", "ligand-0"],
     ["x", "--monitor-selection", "chain A", "--monitor-component", "component-0"],
     ["x", "-m", "aa.amber.phosaa19SB"],
@@ -113,6 +117,31 @@ def test_ion_water_mismatch():
     note = config.ion_water_mismatch([["water.opc"], ["ions.amber1jc.tip3p"],
                                       ["ions.amber1lm_iod.all"]])  # fmt: skip
     assert note == "ions.amber1jc.tip3p: fitted for another water model than water.opc"
+
+
+def test_water_model_mismatch():
+    fits = [
+        config.DEFAULT_FORCEFIELDS,
+        [["aa.charmm.c36m"], ["water.tip3p_charmm"]],
+        [["aa.charmm.c36m"], ["water.tip4p2005"]],  # only TIP3P differs by family
+        [["amber14-all.xml"], ["amber14/opc.xml"]],
+        [["amber19/protein.ff19SB.xml"], ["amber19/tip3p.xml"]],
+        [["charmm36_2024.xml"], ["charmm36_2024/water.xml"]],
+        [["amber99sbildn.xml"], ["tip3p.xml"]],  # the older Amber files: top-level water
+        [["my_protein.xml"], ["my_water.xml"]],  # your own files are not checked
+    ]
+    for spec in fits:
+        assert config.water_model_mismatch(spec) is None, spec
+    wrong = config.water_model_mismatch([["charmm36.xml"], ["amber14/tip3p.xml"]])
+    assert wrong.startswith("amber14/tip3p.xml is not a water model of charmm36.xml; use one "
+                            "of: charmm36/water.xml, ")  # fmt: skip
+    none = config.water_model_mismatch([["amber19-all.xml"], ["amber19/lipid21.xml"]])
+    assert none.startswith("amber19-all.xml needs one of its water models: amber19/tip3p.xml, ")
+    assert config.water_model_mismatch([["charmm36.xml"], ["amber14-all.xml"], ["tip3p.xml"]])
+    charmm = "aa.charmm.c36m takes CHARMM's TIP3P, water.tip3p_charmm, not water.tip3p"
+    assert config.water_model_mismatch([["aa.charmm.c36m"], ["water.tip3p"]]) == charmm
+    assert (config.water_model_mismatch([["aa.amber.ff14SB"], ["water.tip3p_charmm"]])
+            == "aa.amber.ff14SB takes water.tip3p, not CHARMM's water.tip3p_charmm")  # fmt: skip
 
 
 def test_final_settings_round_trip(tmp_path):
