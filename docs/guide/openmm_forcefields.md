@@ -37,8 +37,9 @@ constraints with rigid water:
 - two force fields ship Python `<Script>`s: CHARMM36 (2024)'s impropers and
   Amber lipid21's per-torsion 1-4 scale factors. boonza reads their tables as
   literals (it never runs the script) and applies them the same way. The
-  CHARMM impropers are keyed by atom names, so for those the structure needs
-  CHARMM names, exactly as in OpenMM.
+  CHARMM impropers are keyed by the atom names of the matched templates (not
+  the structure's names, which do not matter) and by the neighbouring
+  residues in chain order, as in OpenMM.
 
 Where the output differs from `createSystem`, on purpose:
 

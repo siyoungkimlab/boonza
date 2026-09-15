@@ -18,10 +18,12 @@ with ``createSystem``:
 - 1-4 pairs are scaled by the force field's ``coulomb14scale``/``lj14scale``;
   CHARMM's ``LennardJonesForce`` gives per-type Lennard-Jones with NBFIX
   overrides and its own 1-4 terms; Urey-Bradley terms join ``stretch_harm``;
-- CHARMM36 (2024)'s impropers come from a ``<Script>`` in the XML that works
-  on residue and atom names.  boonza reads the script's tables (as literals,
-  without running it) and applies them the same way, so for those impropers
-  the structure needs CHARMM atom names.  Other scripts are not supported.
+- CHARMM36 (2024)'s impropers come from a ``<Script>`` in the XML, keyed by
+  the atom names of the matched templates and by neighbouring residues in
+  chain order.  boonza reads the script's tables (as literals, without
+  running it) and applies them the same way; the structure's own atom names
+  do not matter.  Amber lipid21's 1-4 scale script is read the same way;
+  other scripts are not supported.
 
 The output uses the same tables, units and conventions as
 :func:`boonza.from_openmm` (one ``dihedral_trig`` term per periodicity,

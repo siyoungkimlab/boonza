@@ -156,3 +156,19 @@ def test_viparr_and_openmm_compared_table_by_table():
     assert changed and all(k[0] in odd or k[1] in odd for k in changed)
     a, b = boonza.openmm_energies(vp), boonza.openmm_energies(om)
     assert abs(a["total"] - b["total"]) < 0.05
+
+
+def test_charmm_script_impropers_ignore_the_structures_names():
+    """CHARMM36's script keys impropers by the matched templates' atom names."""
+    from boonza._columns import STR
+
+    ref = _openmm(["charmm36_2024.xml"], "1LYZ.pdb")
+    s = ref.clone(structure_only=True)
+    renamed = s.copy()
+    renamed.atoms["name"] = np.array([f"X{i}" for i in range(s.natoms)], dtype=STR)
+    renamed.residues["name"] = np.array(["RES"] * s.nresidues, dtype=STR)
+    a = ffxml.parameterize_openmm(s, ["charmm36_2024.xml"], rigid_water=False)
+    b = ffxml.parameterize_openmm(renamed, ["charmm36_2024.xml"], rigid_water=False)
+    assert len(b.table("improper_harm")) == len(a.table("improper_harm")) > 300
+    names = ("atoms: name", "residues: residue name")
+    assert not [d for d in boonza.diff(a, b) if not str(d).startswith(names)]
