@@ -26,13 +26,32 @@ checks them against that tool (see [Verification](verification.md)).
 
 ## Install
 
-With conda, which also brings AmberTools for GAFF2 ligands:
+`install.sh` makes a conda environment with everything boonza uses,
+AmberTools for GAFF2 ligands included, and installs boonza into it:
+
+```bash
+bash install.sh                            # conda environment "boonza"
+bash install.sh --cuda 12.6                # OpenMM for GPU nodes whose driver supports CUDA 12.6
+bash install.sh --cuda none --openmm 8.2   # OpenMM 8.2 without CUDA: CPU and OpenCL
+bash install.sh --dev                      # + pytest, ruff and MDAnalysis, for the tests
+conda activate boonza
+```
+
+On a cluster, give `--cuda` the CUDA release the GPU nodes' driver supports
+(`CUDA Version` in `nvidia-smi` on one of them). Without it, conda picks one
+from the machine running the installer, and GPU nodes with an older driver
+then fail with `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`. boonza needs NumPy 2,
+and conda-forge builds OpenMM for CUDA before 12.6 against NumPy 1 only, so
+with an older driver use `--cuda none` and run on the OpenCL platform
+(`boonza md ... --platform OpenCL`). `--dry-run` shows what would be
+installed, and `bash install.sh --help` lists the options.
+
+By hand, the installer does this:
 
 ```bash
 conda env create -f environment.yml   # Python 3.12, NumPy, numba, RDKit, OpenMM, AmberTools, ...
 conda activate boonza
 pip install -e . --no-deps            # boonza itself; conda has the dependencies
-pip install -e ".[dev]"               # + pytest, ruff and MDAnalysis (a reference in the tests)
 ```
 
 With pip alone (`pip install -e .`) you get NumPy, numba, RDKit, OpenMM,
