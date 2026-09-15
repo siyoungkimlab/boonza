@@ -134,13 +134,51 @@ def _current_steps(simulation, dt) -> int:
     return steps
 
 
+def _new_run(args, paths: RunPaths, src: Path, log):
+    """Build a new run's system, OpenMM system and integrator, and write
+    its files up to ``final.toml``."""
+    import openmm as mm
+    from openmm import unit
+
+    from ..io import save
+    from ..omm import to_openmm
+
+    shutil.copy2(src, paths.workdir / f"input{''.join(src.suffixes).lower()}")
+    # a wrong or missing early-stop target fails before anything is built
+    check = (lambda found: mon.select_target(found, args)) if args.early_stop else None
+    s, info = build_system(args, paths.workdir, log, check=check)
+    write_components(paths.components_json, info, args)
+    save(s, paths.solvated_dms)
+    for p in (paths.solvated_pdb, paths.solvated_mae):
+        save_structure(s, p)
+    topology, system, positions = to_openmm(s, nonbonded_method="PME", cutoff=10.0 * args.cutoff_nm)
+    if args.dihedral_restraint != "none":
+        from .restraints import add_dihedral_restraints, plot_well, write_records
+
+        records, what = add_dihedral_restraints(
+            system, s, args.dihedral_restraint, args.dihedral_restraint_kJ
+        )
+        write_records(paths.dihedral_restraints_csv, records)
+        plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
+        log(
+            f"Dihedral restraints: {len(records)} backbone torsions over {what}, "
+            f"K = {-abs(args.dihedral_restraint_kJ):g} kJ/mol"
+        )
+    integrator = mm.LangevinMiddleIntegrator(
+        args.temperature * unit.kelvin, 1 / unit.picosecond, args.integration_fs * unit.femtoseconds
+    )
+    integrator.setRandomNumberSeed(args.seed)
+    write_settings(paths.final_configuration, settings_of(args))
+    return s, info, topology, system, positions, integrator
+
+
 def run_workflow(args, log=print) -> None:
     """A new run in an empty work directory, else a restart of the one there."""
     import openmm as mm
     from openmm import app, unit
 
     from ..io import load
-    from ..omm import _topology, to_openmm
+    from ..omm import _topology
 
     paths = RunPaths(Path(args.workdir))
     resume = is_restart(paths.workdir)
@@ -155,39 +193,18 @@ def run_workflow(args, log=print) -> None:
             raise FileNotFoundError(f"{src} does not exist")
         if not args.early_stop and any(getattr(args, k) is not None for k in mon.MONITOR_SELECTORS):
             raise ValueError("an early-stop target is chosen but early_stop is off")
+        created = not paths.workdir.exists()
         paths.workdir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, paths.workdir / f"input{''.join(src.suffixes).lower()}")
-        s, info = build_system(args, paths.workdir, log)
-        write_components(paths.components_json, info, args)
-        if args.early_stop:
-            mon.select_target(info, args)  # a wrong selector fails before any MD
-        from ..io import save
-
-        save(s, paths.solvated_dms)
-        for p in (paths.solvated_pdb, paths.solvated_mae):
-            save_structure(s, p)
-        topology, system, positions = to_openmm(
-            s, nonbonded_method="PME", cutoff=10.0 * args.cutoff_nm
-        )
-        if args.dihedral_restraint != "none":
-            from .restraints import add_dihedral_restraints, plot_well, write_records
-
-            records, what = add_dihedral_restraints(
-                system, s, args.dihedral_restraint, args.dihedral_restraint_kJ
-            )
-            write_records(paths.dihedral_restraints_csv, records)
-            plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
-            log(
-                f"Dihedral restraints: {len(records)} backbone torsions over {what}, "
-                f"K = {-abs(args.dihedral_restraint_kJ):g} kJ/mol"
-            )
-        integrator = mm.LangevinMiddleIntegrator(
-            args.temperature * unit.kelvin,
-            1 / unit.picosecond,
-            args.integration_fs * unit.femtoseconds,
-        )
-        integrator.setRandomNumberSeed(args.seed)
-        write_settings(paths.final_configuration, settings_of(args))
+        try:
+            s, info, topology, system, positions, integrator = _new_run(args, paths, src, log)
+        except BaseException:
+            # the directory was new or empty: leave it so, and the fixed command starts afresh
+            if created:
+                shutil.rmtree(paths.workdir, ignore_errors=True)
+            else:
+                for child in paths.workdir.iterdir():
+                    shutil.rmtree(child) if child.is_dir() else child.unlink()
+            raise
     else:
         for p in (
             paths.solvated_dms,

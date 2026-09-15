@@ -103,9 +103,19 @@ reference angles are in `dihedral_restraints.csv`.
 
 ## Stopping when a binder leaves
 
-With `early_stop`, the target (the only GAFF2 ligand, or the one chosen with
-`monitor_ligand`, `monitor_chain` or `monitor_component`; see
-`--list-components`) is watched every `monitor_interval_ns`. Its pocket is the
+With `early_stop`, a target is watched every `monitor_interval_ns`. It is the
+only GAFF2 ligand, or, when there are several (then one must be chosen), the
+one named by one of:
+
+- `monitor_ligand = "ligand-1"`, `monitor_chain = "B"` or
+  `monitor_component = "component-2"`: the IDs `--list-components` prints,
+  numbered by lowest atom index, so stable for a given input file;
+- `monitor_selection = "resname LIG and chain L"`: atoms of the input
+  structure in boonza's selection language (msys's), with its atom and
+  residue names; the selected atoms are the target.
+
+A missing or wrong choice stops a new run before anything is built, and
+leaves the work directory as it was. The pocket is the
 receptor's heavy atoms within `pocket_cutoff_nm` at the start of production
 (`pocket.json`). Production stops after `confirmation_checks` checks in a row
 with no target-pocket pair within `contact_cutoff_nm` and a minimum distance

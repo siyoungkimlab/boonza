@@ -77,6 +77,7 @@ def test_settings_precedence(tmp_path):
     ["x", "--proteinff", "amber19sb", "--waterff", "tip5p"],
     ["x", "--proteinff", "amber19sb", "--waterff", "opc", "-f", "water.tip3p"],
     ["x", "--monitor-chain", "A", "--monitor-ligand", "ligand-0"],
+    ["x", "--monitor-selection", "chain A", "--monitor-component", "component-0"],
     ["x", "-m", "aa.amber.phosaa19SB"],
     ["x", "--saltM", "-1"],
     ["x", "--charge", "LIG"],
@@ -164,6 +165,63 @@ def test_restraints_bb_and_ss_on_a_helix():
     assert ctx.getState(getEnergy=True).getPotentialEnergy()._value > e0 + 10
 
 
+@pytest.fixture(scope="module")
+def two_ligands(tmp_path_factory):
+    """The dipeptide with a benzene (chain L) and a toluene (chain M) beside it."""
+    s = _mapped(*DIPEPTIDE, "A")
+    for smiles, name, chain, dx in (("c1ccccc1", "BNZ", "L", 6.5), ("Cc1ccccc1", "TOL", "M", -6.5)):
+        lig = boonza.from_smiles(smiles, name=name)
+        lig.chains["name"] = np.array([chain])
+        lig.positions = lig.positions - lig.positions.mean(0) + s.positions.mean(0) + [dx, 0, 0]
+        s.append(lig)
+    path = tmp_path_factory.mktemp("in") / "two_ligands.dms"
+    boonza.save(s, path)
+    return path
+
+
+def test_early_stop_target_with_several_ligands(tmp_path, two_ligands):
+    from boonza.gaff import find_unmatched
+    from boonza.md.prepare import component_table, load_input
+
+    s = load_input(two_ligands)
+    info = components(s, find_unmatched(s, [boonza.load_forcefield("aa.amber.ff19SB")]))
+    table = component_table(info)
+    assert "--monitor-ligand ligand-0" in table and "--monitor-ligand ligand-1" in table
+    assert [c["ligand_id"] for c in info["components"]] == [None, "ligand-0", "ligand-1"]
+
+    def pick(*argv):
+        return monitor.select_target(info, parse_arguments(["x", "--early-stop", *argv]))["id"]
+
+    assert pick("--monitor-ligand", "ligand-1") == "component-2"
+    assert pick("--monitor-chain", "M") == "component-2"
+    assert pick("--monitor-component", "component-1") == "component-1"
+    from boonza.md.prepare import select_atoms
+
+    info["selection"] = select_atoms(s, "resname TOL and not hydrogen")
+    got = monitor.select_target(
+        info, parse_arguments(["x", "--early-stop", "--monitor-selection", "resname TOL"])
+    )
+    assert got["_kind"] == "selection" and len(got["input_atom_indices"]) == 7
+    assert got["chains"] == ["M"]
+    for bad in ("resname XYZ", "hydrogen and resname TOL"):
+        with pytest.raises(ValueError, match="no heavy atoms"):
+            select_atoms(s, bad)
+    for bad in ((), ("--monitor-ligand", "ligand-5"), ("--monitor-chain", "Z")):
+        with pytest.raises(ValueError):
+            pick(*bad)
+    # a missing choice stops the run before anything is built (no AmberTools needed)
+    work = tmp_path / "run"
+    with pytest.raises(ValueError, match="2 ligands"):
+        run_workflow(parse_arguments([str(two_ligands), "--workdir", str(work), *SHORT,
+                                      "--early-stop"]), log=quiet)  # fmt: skip
+    assert not work.exists()  # a refused new run leaves nothing, so the fixed command starts afresh
+    work.mkdir()  # an empty directory (as batch schedulers make) is left empty
+    with pytest.raises(ValueError, match="2 ligands"):
+        run_workflow(parse_arguments([str(two_ligands), "--workdir", str(work), *SHORT,
+                                      "--early-stop"]), log=quiet)  # fmt: skip
+    assert work.is_dir() and not any(work.iterdir())
+
+
 def test_monitor_measures_across_the_box(tmp_path):
     box = np.eye(3) * 3.0
     pos = np.array([[0.1, 0.0, 0.0], [2.9, 0.0, 0.0], [1.5, 1.5, 1.5]])
@@ -223,14 +281,19 @@ def test_new_run_and_restarts(tmp_path, dipeptide):
 def test_early_stop_confirms_detachment(tmp_path, two_peptides):
     work = tmp_path / "es"
     argv = [str(two_peptides), "--workdir", str(work), *SHORT, "--production-ns", "0.004",
-            "--early-stop", "--monitor-chain", "B", "--monitor-interval-ns", "0.001",
+            "--early-stop", "--monitor-selection", "chain B", "--monitor-interval-ns", "0.001",
             "--pocket-cutoff-nm", "1.5", "--contact-cutoff-nm", "0.05",
             "--detach-cutoff-nm", "0.1"]  # fmt: skip
     run_workflow(parse_arguments(argv), log=quiet)
     p = RunPaths(work)
     status = json.loads(p.status_json.read_text())
     assert status["outcome"] == "detached" and status["final_production_step"] == 1000
-    assert json.loads(p.pocket_json.read_text())["component_id"] == "component-1"
+    pocket = json.loads(p.pocket_json.read_text())
+    assert (pocket["selector_kind"], pocket["selector_value"]) == ("selection", "chain B")
+    assert len(pocket["ligand_atom_indices"]) == 22  # the whole second dipeptide
+    with pytest.raises(ValueError, match="differs from the saved target"):
+        run_workflow(parse_arguments(["--workdir", str(work), "--monitor-selection", "chain A"]),
+                     log=quiet)  # fmt: skip
     rows = p.monitor_csv.read_text().splitlines()
     assert len(rows) == 3 and rows[-1].endswith("true")
     run_workflow(parse_arguments(["--workdir", str(work)]), log=quiet)  # stays stopped

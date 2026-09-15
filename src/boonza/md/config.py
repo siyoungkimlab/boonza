@@ -94,6 +94,7 @@ DEFAULTS: dict = {
     "monitor_ligand": None,
     "monitor_chain": None,
     "monitor_component": None,
+    "monitor_selection": None,
     "monitor_interval_ns": 0.1,
     "pocket_cutoff_nm": 0.5,
     "contact_cutoff_nm": 0.5,
@@ -130,7 +131,7 @@ _CHOICES = {
     "proteinff": tuple(XML_FAMILIES),
     "waterff": WATER_MODELS,
 }
-MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component")
+MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component", "monitor_selection")
 #: Settings a restart takes from ``final.toml`` unless they are given again.
 RESTARTABLE = (
     "production_ns",
@@ -325,6 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("--monitor-ligand", "a ligand-N ID"),
         ("--monitor-chain", "an input chain ID"),
         ("--monitor-component", "a component-N ID"),
+        ("--monitor-selection", "atoms of the input, e.g. 'resname LIG and chain L'"),
     ):
         p.add_argument(sel, dest=sel[2:].replace("-", "_"), help=f"early-stop target: {text}")
     return p
@@ -549,6 +551,8 @@ early_stop = false
 # monitor_ligand = "ligand-0"
 # monitor_chain = "B"
 # monitor_component = "component-2"
+# Or atoms of the input structure, in boonza's (msys) selection language:
+# monitor_selection = "resname LIG and chain L"
 monitor_interval_ns = 0.1
 pocket_cutoff_nm = 0.5
 contact_cutoff_nm = 0.5

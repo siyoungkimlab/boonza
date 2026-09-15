@@ -153,6 +153,19 @@ def describe_components(args) -> str:
     )
 
 
+def select_atoms(s: System, text: str) -> dict:
+    """The atoms of the input a selection names (an early-stop target)."""
+    try:
+        ids = s.select(text).ids
+    except Exception as e:  # noqa: BLE001 - report any selection error the same way
+        raise ValueError(f"monitor_selection {text!r}: {e}") from None
+    if not len(ids) or not (s.atoms["anum"][ids] > 1).any():
+        raise ValueError(f"monitor_selection {text!r} selects no heavy atoms of the input")
+    res = sorted(set(s.atoms["residue"][ids].tolist()))
+    chains = sorted({str(s.chains["name"][s.residues["chain"][r]]) for r in res})
+    return {"selection": text, "chains": chains, "input_atom_indices": ids.tolist()}
+
+
 def _solute_charge(p: System) -> float:
     """Net charge of a parameterized input, without Na+/Cl- ions (which
     ``neutralize`` counts itself)."""
@@ -162,7 +175,7 @@ def _solute_charge(p: System) -> float:
     return float(p.atoms["charge"][~ion].sum())
 
 
-def build_system(args, workdir: Path, log=print) -> tuple[System, dict]:
+def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, dict]:
     """The solvated, neutralized, parameterized system and the input's components.
 
     GAFF2 templates are made for what the force fields cannot match
@@ -174,6 +187,11 @@ def build_system(args, workdir: Path, log=print) -> tuple[System, dict]:
     s = load_input(args.input_structure)
     kind, ff = forcefields(args)
     groups = _groups(s, kind, ff)
+    info = components(s, groups)
+    if getattr(args, "monitor_selection", None) is not None:
+        info["selection"] = select_atoms(s, args.monitor_selection)
+    if check is not None:
+        check(info)  # e.g. the early-stop target, before AmberTools spends minutes
     if groups:
         if args.ligand_mode == "disabled":
             raise ValueError(
@@ -185,7 +203,6 @@ def build_system(args, workdir: Path, log=print) -> tuple[System, dict]:
         viparr.write_forcefield(patch, workdir / "gaff2_patch")
         host = gaff.host_index(ff)
         ff[host] = viparr.merge_forcefields(ff[host], patch)
-    info = components(s, groups)
 
     def parameterize(system: System) -> System:
         if kind == "viparr":
@@ -215,7 +232,7 @@ def build_system(args, workdir: Path, log=print) -> tuple[System, dict]:
     box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
     out = parameterize(box)
     where = {int(k) - 1: i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}
-    for c in info["components"]:
+    for c in [*info["components"], *([info["selection"]] if "selection" in info else [])]:
         c["production_atom_indices"] = [where[a] for a in c["input_atom_indices"]]
     nwater = len(set(out.atoms["residue"][out.select("water").ids].tolist()))
     log(

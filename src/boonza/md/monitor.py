@@ -70,13 +70,17 @@ def select_target(info: dict, args) -> dict:
     elif args.monitor_component is not None:
         found = [c for c in comps if c["id"] == args.monitor_component]
         kind, value = "component", args.monitor_component
+    elif getattr(args, "monitor_selection", None) is not None:
+        sel = info["selection"]  # the selected atoms themselves are the target
+        return {"id": "selection", "ligand_id": None, **sel, "_kind": "selection",
+                "_value": args.monitor_selection}  # fmt: skip
     else:
         found = [c for c in comps if c["ligand_id"]]
         kind, value = "automatic", None
         if len(found) != 1:
             raise ValueError(
                 f"early stop needs a target: {len(found)} ligands found; choose one "
-                "with monitor_ligand, monitor_chain or monitor_component "
+                "with monitor_ligand, monitor_chain, monitor_component or monitor_selection "
                 "(boonza md --list-components shows them)"
             )
     if not found:
