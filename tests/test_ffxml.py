@@ -4,6 +4,8 @@ Each system is parameterized twice, natively and by OpenMM (converted with
 from_openmm), and every table must agree.
 """
 
+import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -15,23 +17,23 @@ from boonza import ffxml
 app = pytest.importorskip("openmm.app")
 unit = pytest.importorskip("openmm.unit")
 DATA = Path(__file__).resolve().parents[1] / "examples" / "data"
+# OpenMM is given boonza's bundled files, so both read the same ones whatever OpenMM is installed
+_FILES = tempfile.TemporaryDirectory()
+zipfile.ZipFile(ffxml._BUNDLED).extractall(_FILES.name)
 
 
-def _have(xml):
-    return (Path(app.__file__).parent / "data" / xml).exists()
+def _bundled(xml):
+    return str(Path(_FILES.name) / "ffxml" / xml)
 
 
 def _openmm(xmls, pdb="1TEN.pdb", water=None, **kw):
     """Structure prepared by OpenMM, and OpenMM's own parameterization of it."""
-    for x in xmls:
-        if not _have(x):
-            pytest.skip(f"OpenMM has no {x}")
     p = app.PDBFile(str(DATA / pdb))
     model = app.Modeller(p.topology, p.positions)
     model.deleteWater()
     model.delete([r for r in model.topology.residues()
                   if not {"N", "CA", "C"} <= {a.name for a in r.atoms()}])  # fmt: skip
-    ff = app.ForceField(*xmls)
+    ff = app.ForceField(*map(_bundled, xmls))
     model.addHydrogens(ff)
     if water:
         model.addSolvent(
@@ -92,6 +94,19 @@ def test_load_and_errors(tmp_path):
         ffxml.load_openmm_forcefield("no-such-file.xml")
 
 
+def test_bundled_files_come_first(tmp_path, monkeypatch):
+    assert ffxml.bundled_version().startswith("OpenMM 8.6.1 ")
+    names = ffxml.list_openmm_forcefields()
+    assert {"amber19-all.xml", "amber19/opc.xml", "charmm36/water.xml"} <= set(names)
+    monkeypatch.setattr(ffxml, "_data_dirs", lambda: [])  # as if OpenMM had no files
+    ff = ffxml.load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")
+    assert ff.files[:2] == ["bundled:amber19-all.xml", "bundled:amber19/opc.xml"]
+    assert "bundled:amber19/protein.ff19SB.xml" in ff.files  # its includes, bundled too
+    (tmp_path / "tip3p.xml").write_text(Path(_bundled("tip3p.xml")).read_text())
+    monkeypatch.chdir(tmp_path)
+    assert ffxml.load_openmm_forcefield("tip3p.xml").files == ["tip3p.xml"]  # a path wins
+
+
 def _chain4():
     s = boonza.System("t")
     r = s.add_residue(s.add_chain())
@@ -123,14 +138,12 @@ def test_canonical_forms_are_energy_equivalent():
 
 def test_viparr_and_openmm_compared_table_by_table():
     """Method 2: the same structure through viparr ff19SB and OpenMM's amber19 XML."""
-    if not _have("amber19-all.xml"):
-        pytest.skip("OpenMM has no amber19-all.xml")
     p = app.PDBFile(str(DATA / "1TEN.pdb"))
     model = app.Modeller(p.topology, p.positions)
     model.deleteWater()
     model.delete([r for r in model.topology.residues()
                   if not {"N", "CA", "C"} <= {a.name for a in r.atoms()}])  # fmt: skip
-    model.addHydrogens(app.ForceField("amber19-all.xml"))
+    model.addHydrogens(app.ForceField(_bundled("amber19-all.xml")))
     s = boonza.from_openmm(model.topology, None, model.positions)
     ff = boonza.load_forcefield("aa.amber.ff19SB")
     ff.rules.es_scale = [0.0, 0.0, 1 / 1.2]  # viparr's file rounds 1/1.2 to 0.8333

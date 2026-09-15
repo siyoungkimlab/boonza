@@ -33,6 +33,10 @@ as :func:`boonza.parameterize` does.  Extra particles a template has but the
 structure lacks (TIP4P/OPC sites) are added after their residue's atoms and
 placed as OpenMM's ``Modeller.addExtraParticles`` would.
 
+OpenMM's own XML files, from its 8.6.1 release, are bundled with boonza, so a
+name such as ``amber19-all.xml`` or ``charmm36/water.xml`` gives the same file
+whatever OpenMM is installed (see :func:`load_openmm_forcefield`).
+
 Not supported: custom forces other than the ones above, implicit solvent,
 AMOEBA and Drude force fields, residue template generators (GAFF/SMIRNOFF)
 and templates spanning several residues.
@@ -45,9 +49,12 @@ import heapq
 import itertools
 import math
 import os
+import posixpath
 import xml.etree.ElementTree as etree
+import zipfile
 from collections import Counter, defaultdict
 from copy import deepcopy
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -57,7 +64,8 @@ from .elements import atomic_number
 from .system import NonbondedInfo, System
 from .terms import ParamTable
 
-__all__ = ["FFXMLError", "OpenMMForcefield", "load_openmm_forcefield", "parameterize_openmm"]
+__all__ = ["FFXMLError", "OpenMMForcefield", "bundled_version", "list_openmm_forcefields",
+           "load_openmm_forcefield", "parameterize_openmm", "water_mismatch"]  # fmt: skip
 
 KCAL = 4.184  # kJ per kcal
 NM = 0.1  # nm per Å
@@ -517,6 +525,55 @@ _UNSUPPORTED = {
 }  # fmt: skip
 
 
+#: Where each protein force field of OpenMM's files takes its water models
+#: from: its own directory (CHARMM's TIP3P, charmm36/water.xml, is not Amber's,
+#: amber14/tip3p.xml), or the top level for the older Amber files.
+_WATER_HOME = {
+    "amber14-all.xml": "amber14", "amber14/protein.ff14SB.xml": "amber14",
+    "amber14/protein.ff15ipq.xml": "amber14",
+    "amber19-all.xml": "amber19", "amber19/protein.ff19SB.xml": "amber19",
+    "charmm36.xml": "charmm36", "charmm36_2024.xml": "charmm36_2024",
+    **dict.fromkeys(("amber96.xml", "amber99sb.xml", "amber99sbildn.xml", "amber99sbnmr.xml",
+                     "amber03.xml", "amber10.xml", "amberfb15.xml"), ""),
+}  # fmt: skip
+_AMBER_WATERS = ("tip3p.xml", "tip3pfb.xml", "tip4pew.xml", "tip4pfb.xml", "spce.xml",
+                 "opc.xml", "opc3.xml")  # fmt: skip
+_CHARMM_WATERS = ("water.xml", "tip3p-pme-b.xml", "tip3p-pme-f.xml", "spce.xml",
+                  "tip4p2005.xml", "tip4pew.xml", "tip5p.xml", "tip5pew.xml")  # fmt: skip
+_WATERS = {"": (*_AMBER_WATERS, "tip5p.xml"), "amber14": _AMBER_WATERS,
+           "amber19": _AMBER_WATERS, "charmm36": _CHARMM_WATERS,
+           "charmm36_2024": _CHARMM_WATERS}  # fmt: skip
+
+
+def _water_home(name: str) -> str | None:
+    """The directory of a water model file of OpenMM's, or None for other files."""
+    home, base = posixpath.split(posixpath.normpath(name))
+    return home if base in _WATERS.get(home, ()) else None
+
+
+def water_mismatch(files) -> str | None:
+    """Why OpenMM XML ``files`` do not pair a protein force field with one of
+    its own water models, or None when they do (or name no protein force
+    field of OpenMM's). Only OpenMM's own file names are checked: files of
+    your own, given by path, are not."""
+    names = [posixpath.normpath(os.fspath(f)) for f in files]
+    proteins = [n for n in names if n in _WATER_HOME]
+    if not proteins:
+        return None
+    homes = {_WATER_HOME[n] for n in proteins}
+    if len(homes) > 1:
+        return f"{' and '.join(proteins)} are protein force fields of different families"
+    home = homes.pop()
+    choices = ", ".join(posixpath.join(home, w) for w in _WATERS[home])
+    waters = [n for n in names if _water_home(n) is not None]
+    if not waters:
+        return f"{proteins[0]} needs one of its water models: {choices}"
+    wrong = [w for w in waters if _water_home(w) != home]
+    if wrong:
+        return f"{', '.join(wrong)} is not a water model of {proteins[0]}; use one of: {choices}"
+    return None
+
+
 class OpenMMForcefield:
     """OpenMM XML force field files, read into boonza (see :func:`load_openmm_forcefield`)."""
 
@@ -599,41 +656,82 @@ def _data_dirs() -> list[str]:
         return []
 
 
+_BUNDLED = Path(__file__).resolve().parent / "data" / "openmm-ffxml.zip"
+_PREFIX = "bundled:"  # how ``OpenMMForcefield.files`` names a bundled file
+
+
+@cache
+def _bundled() -> zipfile.Path:
+    """The ``ffxml`` directory of the OpenMM XML files shipped with boonza."""
+    return zipfile.Path(zipfile.ZipFile(_BUNDLED), at="ffxml/")
+
+
+def bundled_version() -> str:
+    """Which OpenMM release the bundled XML force field files come from."""
+    return zipfile.Path(_bundled().root, at="VERSION").read_text().strip()
+
+
+def list_openmm_forcefields() -> list[str]:
+    """Names of the bundled OpenMM XML files, e.g. ``amber19-all.xml``, ``amber19/opc.xml``."""
+    return sorted(n[len("ffxml/"):] for n in _bundled().root.namelist()
+                  if n.startswith("ffxml/") and n.endswith(".xml"))  # fmt: skip
+
+
+def _label(where) -> str:
+    if isinstance(where, zipfile.Path):
+        return _PREFIX + where.at[len("ffxml/") :]
+    return str(where)
+
+
+def _locate(name: str, parent=None):
+    """Where an XML file is: beside the file that includes it (``parent``, its
+    directory), else a path, else the bundled files, else OpenMM's data
+    directories, as ``openmm.app.ForceField`` looks with the bundle first."""
+    if parent is not None:
+        joined = parent / name
+        if joined.is_file():
+            return joined
+    if Path(name).is_file():
+        return Path(name)
+    bundled = _bundled() / posixpath.normpath(name)
+    if bundled.is_file():
+        return bundled
+    for d in _data_dirs():
+        if (Path(d) / name).is_file():
+            return Path(d) / name
+    raise FFXMLError(f'Could not locate file "{name}"')
+
+
 def load_openmm_forcefield(*files) -> OpenMMForcefield:
     """Read OpenMM force field XML files, as ``openmm.app.ForceField(*files)`` does.
 
-    Names that are not paths are looked up in OpenMM's data directories, so
-    ``load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")`` works;
-    ``<Include>`` files are followed.
+    A name that is not a path is looked up in the OpenMM XML files bundled
+    with boonza (OpenMM 8.6.1, :func:`bundled_version`), then in the
+    installed OpenMM's data directories, so
+    ``load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")`` reads the
+    same files whatever OpenMM is installed. ``<Include>`` files are followed.
+    ``files`` of the result says where each came from (``bundled:`` names).
     """
     ff = OpenMMForcefield()
-    queue = [os.fspath(f) for f in files]
-    trees, k = [], 0
+    queue = [(os.fspath(f), None) for f in files]
+    trees, seen, k = [], set(), 0
     while k < len(queue):
-        f = queue[k]
-        path = f
-        if not os.path.isfile(path):
-            for d in _data_dirs():
-                if os.path.isfile(os.path.join(d, f)):
-                    path = os.path.join(d, f)
-                    break
-        if not os.path.isfile(path):
-            raise FFXMLError(f'Could not locate file "{f}"')
-        try:
-            tree = etree.parse(path)
-        except etree.ParseError as e:
-            raise FFXMLError(f'error reading "{path}": {e}') from e
-        trees.append(tree)
-        ff.files.append(path)
+        name, parent = queue[k]
         k += 1
-        parent = os.path.dirname(path)
+        where = _locate(name, parent)
+        label = _label(where)
+        if label in seen:
+            continue
+        seen.add(label)
+        try:
+            with where.open("rb") as fh:
+                tree = etree.parse(fh)
+        except etree.ParseError as e:
+            raise FFXMLError(f'error reading "{label}": {e}') from e
+        trees.append(tree)
+        ff.files.append(label)
         for inc in tree.getroot().findall("Include"):
-            name = inc.attrib["file"]
-            joined = os.path.join(parent, name)
-            if os.path.isfile(joined):
-                name = joined
-            if name not in queue:
-                queue.append(name)
+            queue.append((inc.attrib["file"], where.parent))
     roots = [t.getroot() for t in trees]
     for root in roots:
         types = root.find("AtomTypes")

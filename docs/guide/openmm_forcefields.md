@@ -12,10 +12,14 @@ p = boonza.parameterize_openmm(s, ["amber19-all.xml", "amber19/opc.xml"], constr
 boonza.save(p, "amber19.dms")
 ```
 
-File names that are not paths are looked up in OpenMM's data directory, as
-`openmm.app.ForceField` does, and `<Include>` files are followed; your own
-XML files work too. `boonza.load_openmm_forcefield(...)` reads them once
-for reuse.
+OpenMM's own XML files, from its 8.6.1 release, are bundled with boonza: a
+file name that is not a path is looked up there first, then in the installed
+OpenMM's data directory, so `amber19-all.xml` gives the same force field
+whatever OpenMM is installed (OpenMM 8.2, for one, has no amber19 files).
+`<Include>` files are followed, and your own XML files work too, by path.
+`boonza.load_openmm_forcefield(...)` reads them once for reuse; its `files`
+say where each came from, and `boonza.ffxml.list_openmm_forcefields()` lists
+the bundled names.
 
 ## What it follows
 

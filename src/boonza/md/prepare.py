@@ -186,6 +186,13 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
     s = load_input(args.input_structure)
     kind, ff = forcefields(args)
     log(f"Force fields: {describe_forcefields(args.forcefields)}")
+    if kind == "xml":
+        from ..ffxml import bundled_version
+
+        where = ""
+        if any(f.startswith("bundled:") for f in ff.files):
+            where = f" (bundled: {' '.join(bundled_version().split()[:2])})"
+        log(f"  read {', '.join(ff.files)}{where}")
     note = ion_water_mismatch(args.forcefields)
     if note:
         log(f"Warning: {note}")

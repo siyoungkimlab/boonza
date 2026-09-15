@@ -717,6 +717,14 @@ a Trajectory (read chunk by chunk, only pocket and ligand atoms).  With
 ``periodic=True`` distances use the minimum image of each frame's box (the
 system's cell for plain arrays).
 
+### `boonza.find_unmatched(system: 'System', forcefields, path=None) -> 'list[list[int]]'`
+
+Residue groups that ``forcefields`` cannot parameterize.
+
+A group is a set of bonded residues without a matching template, plus the
+residues bonded to them other than through a peptide bond or disulfide
+(the residue a covalent ligand is bound to).  Returns residue indices.
+
 ### `boonza.from_smiles(smiles: 'str', name: 'str' = 'LIG', seed: 'int' = 42, optimize: 'bool' = True, conformers: 'int' = 1) -> 'System'`
 
 A 3D molecule from a SMILES string (through RDKit).
@@ -726,6 +734,54 @@ reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
 (UFF when MMFF lacks parameters); the lowest-energy one is kept.  Bond
 orders and formal charges come from the SMILES.  The molecule is one
 residue named ``name`` with atoms named C1, C2, ..., H1, ...
+
+### `boonza.gaff`
+
+### `boonza.gaff2_patch(system: 'System', forcefields=(), *, charges=None, parents=None, gaff: 'str' = '2.11', charge_method: 'str' = 'bcc', amberhome=None, workdir=None, path=None, protein_extent: 'str' = 'matched', draw=None, tag=None) -> 'ViparrForcefield'`
+
+A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
+
+``forcefields`` is the list to be given to :func:`boonza.parameterize`;
+the patch is for the Amber protein force field among them (the first with
+amino-acid templates, see :func:`host_index`) and is merged onto it::
+
+    patch = boonza.gaff2_patch(system, ["aa.amber.ff14SB", "water.tip3p"])
+    ff = boonza.merge_forcefields("aa.amber.ff14SB", patch)
+    out = boonza.parameterize(system, [ff, "water.tip3p"])
+
+With no force fields, the patch is a complete GAFF2 force field.
+
+Each group from :func:`find_unmatched`, capped with ACE/NME where it is
+bonded to a protein, is typed and charged by :func:`run_gaff2`.  Atoms of
+an amino acid keep the types and charges of its parent residue's template
+as far as each atom and its bonded neighbours match it. The parent is the
+one ``parents`` gives (residue name to standard residue, as
+``{"MSE": "MET"}``), else the file's (PDB ``MODRES``, mmCIF
+``_pdbx_struct_mod_residue``), else the PDB dictionary's
+(:data:`KNOWN_PARENTS`), else the template that matches best; a guess
+that is ambiguous or misses the backbone and CB raises. Backbones are
+found by atom names or by structure and templates matched by bond graph,
+so names are not needed; only residues in a chain, or with a parent
+named, count as amino acids. The patch's ``parents`` attribute lists
+each choice.
+Each residue is brought to its formal charge (``charges`` maps residue
+names to charges where the input has none) by shifting its GAFF2 atoms
+evenly. GAFF2 types are suffixed per group (``c3~1``) so groups never
+share parameters; templates pin the elements (and, across bonds other than
+peptide bonds, the residue formulas) of their external atoms, so a Cys
+bound to a ligand takes its own template rather than CYX, even when the
+ligand is bound through a sulfur.
+``workdir`` keeps the AmberTools files, one directory per template.
+
+``protein_extent``: "matched" keeps protein types on every amino-acid
+atom that matches its parent with all its neighbours; "cb" only on the
+backbone (N, H, CA, HA, C, O, and OXT or H1-H3 at the termini), CB and
+the hydrogens on CB, so everything past CB is GAFF2. ``draw``: a
+directory for ``covalent_<residues>.png``, a 2D drawing of each covalent
+adduct (a ligand bound to an amino acid other than by a peptide bond)
+with heavy atoms colored by where their types come from. ``tag`` makes
+the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
+so patches made separately (one per ligand) can join one force field.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 
@@ -761,9 +817,12 @@ boonza (see :func:`bundled_version`).
 
 Read OpenMM force field XML files, as ``openmm.app.ForceField(*files)`` does.
 
-Names that are not paths are looked up in OpenMM's data directories, so
-``load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")`` works;
-``<Include>`` files are followed.
+A name that is not a path is looked up in the OpenMM XML files bundled
+with boonza (OpenMM 8.6.1, :func:`bundled_version`), then in the
+installed OpenMM's data directories, so
+``load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")`` reads the
+same files whatever OpenMM is installed. ``<Include>`` files are followed.
+``files`` of the result says where each came from (``bundled:`` names).
 
 ### `boonza.merge_forcefields(base, patch, append_only: 'bool' = False, path=None) -> 'ViparrForcefield'`
 
@@ -929,3 +988,9 @@ ions as spheres and hides water (``water=True`` shows it as lines);
 animated ``interval`` ms apart.
 
 ### `boonza.viparr`
+
+### `boonza.write_forcefield(ff: 'ViparrForcefield', directory) -> 'Path'`
+
+Write ``ff`` as a viparr force-field directory: ``rules`` (left out
+for a patch without rules), ``templates`` and one file per parameter
+table, which :func:`load_forcefield` and viparr read back.

@@ -57,16 +57,33 @@ needs. A run prints the force fields it uses, and warns when an ion set was
 fitted for another water model than the water's (`ions.amber1jc.tip3p` with
 `water.opc`, say).
 
-OpenMM XML force fields are `-f` files too: names in OpenMM's data
-directories, as `openmm.app.ForceField` takes them, or paths. boonza applies
-them with its own XML reader. The files of one run are all XML or all viparr,
-and GAFF2 ligands need viparr force fields.
+A protein force field must come with a water model of its own family, since
+the same name can mean different water: CHARMM's TIP3P has Lennard-Jones
+hydrogens and Amber's does not. A CHARMM protein (`aa.charmm.*`) takes
+`water.tip3p_charmm` rather than `water.tip3p`, and an Amber one the reverse;
+other water models are left to you.
+
+OpenMM XML force fields are `-f` files too, applied by boonza's own XML
+reader. OpenMM 8.6.1's files are bundled with boonza, so a name such as
+`amber19/opc.xml` gives the same file whatever OpenMM is installed; a name
+the bundle lacks is looked up in the installed OpenMM, and a path reads your
+own file. The files of one run are all XML or all viparr, and GAFF2 ligands
+need viparr force fields.
 
 ```bash
 boonza md protein.pdb -f amber19/protein.ff19SB.xml -f amber19/opc.xml
 boonza md protein.pdb -f charmm36_2024.xml -f charmm36_2024/water.xml
 boonza md protein.pdb -f my_protein.xml -f my_water.xml
 ```
+
+OpenMM keeps each family's water models beside its protein force field, and
+a run takes water only from there: `amber14/` for `amber14-all.xml` and
+ff14SB or ff15ipq, `amber19/` for `amber19-all.xml` and ff19SB, `charmm36/`
+for `charmm36.xml` (`water.xml` is CHARMM's TIP3P), `charmm36_2024/` for
+`charmm36_2024.xml`, and the top-level `tip3p.xml`, `opc.xml`, ... for the
+older Amber files such as `amber99sbildn.xml`. `-f charmm36.xml -f
+amber14/tip3p.xml` stops with the water models that fit. Files of your own,
+given by path, are not checked.
 
 ommflow's `--proteinff`/`--waterff` pairs are these files:
 
