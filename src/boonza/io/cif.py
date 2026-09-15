@@ -347,7 +347,38 @@ def load_cif(path, guess_bonds: bool = True, struct_conn: bool = True) -> System
         rows = np.flatnonzero(model == m)
         out.append(_model({k: v[rows] for k, v in fields.items()}, blk.name, props, cell,
                           guess_bonds, links))  # fmt: skip
+    from .pdb import set_parents
+
+    set_parents(out, _mod_residues(blk))
     out.name = path
+    return out
+
+
+def _mod_residues(blk: CifBlock) -> dict:
+    """{(chain, resid, insertion): (residue name, standard parent)} from
+    _pdbx_struct_mod_residue, as PDB MODRES records give them."""
+    mod = blk.category("_pdbx_struct_mod_residue")
+    if not mod or "parent_comp_id" not in mod:
+        return {}
+    m = len(mod["parent_comp_id"])
+
+    def col(*names):
+        for name in names:
+            if name in mod:
+                return ["" if v in ("?", ".") else str(v) for v in _text(mod[name]).tolist()]
+        return [""] * m
+
+    chain, seq = col("auth_asym_id", "label_asym_id"), col("auth_seq_id", "label_seq_id")
+    ins, comp = col("pdb_ins_code"), col("auth_comp_id", "label_comp_id")
+    parent = col("parent_comp_id")
+    out = {}
+    for k in range(m):
+        try:
+            resid = int(seq[k])
+        except ValueError:
+            continue
+        if parent[k]:
+            out[(chain[k], resid, ins[k])] = (comp[k], parent[k])
     return out
 
 

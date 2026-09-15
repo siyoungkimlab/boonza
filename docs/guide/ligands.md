@@ -55,11 +55,28 @@ templates, without running anything.
    group uses from GAFF 2.11 (`gaff="2.2"` takes AmberTools' newer
    `gaff2.dat`), and tleap builds the topology, as openmmforcefields does
    for its `gaff-2.11` generator.
-4. **Protein atoms.** For an amino acid, the parent template is the
-   protein force field's template that matches the most atoms, by atom name
-   and then through bonds (`parents={"MSE": "MET"}` chooses it). An atom keeps
-   the parent's type and charge when it and all its bonded neighbours match
-   the parent atom's neighbours. So backbone and CB terms, the protein
+4. **Protein atoms.** An amino acid (a residue in a chain, or one whose
+   parent is named) keeps the protein force field's types and charges from
+   its parent residue. The parent is, in order:
+   - the one you give (`parents={"MSE": "MET"}`, `--parent MSE=MET`, or
+     `parents = { MSE = "MET" }` in `boonza md`'s settings);
+   - the file's (PDB `MODRES`, mmCIF `_pdbx_struct_mod_residue`), kept as
+     the residue property `parent`;
+   - the PDB chemical component dictionary's for common modified residues
+     (`boonza.gaff.KNOWN_PARENTS`: MSE, SEP, TPO, PTR, CSO, HYP, MLY, ...);
+   - else a guess: the amino acid whose template matches the most atoms.
+     A guess must be unambiguous and cover the backbone and CB; otherwise
+     boonza stops and asks for the parent rather than risk a wrong type.
+
+   Among the parent's templates (termini, protonation states), the one
+   matching the most atoms is used. The backbone is found by atom names or,
+   without them, by structure (N-CA-C(=O) with its peptide bonds), and the
+   templates are matched by bond graph, so a residue whose atoms are named
+   C1, C2, ... works too. Each choice is logged, with how many heavy atoms
+   kept protein types (and listed in `components.json` by `boonza md`, and
+   in the patch's `parents`). An atom keeps the parent's type and charge
+   when it and all its bonded neighbours match the parent atom's
+   neighbours, and a hydrogen only with its heavy atom. So backbone and CB terms, the protein
    impropers and the residue's CMAP come from the protein force field,
    including the mirrored CMAP of a D residue.
 5. **Everything else** takes tleap's values: each bond, angle, dihedral and

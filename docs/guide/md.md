@@ -70,6 +70,7 @@ Modeller also counts against the waters but rounds to the nearest pair (with
 | `proteinff`, `waterff` | none | OpenMM XML families instead |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
+| `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |

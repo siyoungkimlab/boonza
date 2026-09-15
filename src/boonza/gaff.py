@@ -154,9 +154,17 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
 
     Each group from :func:`find_unmatched`, capped with ACE/NME where it is
     bonded to a protein, is typed and charged by :func:`run_gaff2`.  Atoms of
-    an amino acid keep the types and charges of the parent residue template
-    (the best match by atom names; ``parents`` maps residue names to
-    template names) as far as each atom and its bonded neighbours match it.
+    an amino acid keep the types and charges of its parent residue's template
+    as far as each atom and its bonded neighbours match it. The parent is the
+    one ``parents`` gives (residue name to standard residue, as
+    ``{"MSE": "MET"}``), else the file's (PDB ``MODRES``, mmCIF
+    ``_pdbx_struct_mod_residue``), else the PDB dictionary's
+    (:data:`KNOWN_PARENTS`), else the template that matches best; a guess
+    that is ambiguous or misses the backbone and CB raises. Backbones are
+    found by atom names or by structure and templates matched by bond graph,
+    so names are not needed; only residues in a chain, or with a parent
+    named, count as amino acids. The patch's ``parents`` attribute lists
+    each choice.
     Each residue is brought to its formal charge (``charges`` maps residue
     names to charges where the input has none) by shifting its GAFF2 atoms
     evenly. GAFF2 types are suffixed per group (``c3~1``) so groups never
@@ -182,6 +190,29 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
                  None if workdir is None else Path(workdir), protein_extent,
                  None if draw is None else Path(draw))  # fmt: skip
     return b.patch()
+
+
+#: Standard parents of common modified residues, from the PDB's chemical
+#: component dictionary (``mon_nstd_parent_comp_id``).
+KNOWN_PARENTS = {
+    "MSE": "MET", "SEP": "SER", "TPO": "THR", "PTR": "TYR", "CSO": "CYS", "CSD": "CYS",
+    "OCS": "CYS", "CME": "CYS", "SNC": "CYS", "CSS": "CYS", "HYP": "PRO", "MLY": "LYS",
+    "M3L": "LYS", "MLZ": "LYS", "ALY": "LYS", "KCX": "LYS", "LLP": "LYS", "NLE": "LEU",
+    "ABA": "ALA", "AIB": "ALA", "CGU": "GLU", "HIC": "HIS", "MHS": "HIS",
+}  # fmt: skip
+_VARIANTS = {"HID": "HIS", "HIE": "HIS", "HIP": "HIS", "HSD": "HIS", "HSE": "HIS", "HSP": "HIS",
+             "CYX": "CYS", "CYM": "CYS", "ASH": "ASP", "GLH": "GLU", "LYN": "LYS"}  # fmt: skip
+_STANDARD = {"ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE", "LEU", "LYS",
+             "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL", "HYP", *_VARIANTS}  # fmt: skip
+
+
+def _family(name: str) -> str:
+    """The residue a template or residue name stands for: ALA for NALA and
+    CALA, HIS for HID, HIE and HIP, and so on."""
+    n = str(name).upper()
+    if len(n) == 4 and n[0] in "NC" and n[1:] in _STANDARD:
+        n = n[1:]
+    return _VARIANTS.get(n, n)
 
 
 #: How far amino-acid atoms keep protein types (see :func:`gaff2_patch`).
@@ -236,6 +267,12 @@ class _Builder:
             _check_host(self.host)
         self.charges, self.parents = charges or {}, parents or {}
         self.run_opts, self.workdir = run or {}, workdir
+        # parents the file names (PDB MODRES, mmCIF _pdbx_struct_mod_residue)
+        res = P.s.residues
+        self.file_parents = ([str(x) for x in res["parent"].tolist()] if "parent" in res.props
+                             else [""] * P.s.nresidues)  # fmt: skip
+        self._bbs: dict[int, dict | None] = {}
+        self.chosen: list[dict] = []  # the parent each amino acid got, and why
         s = P.s
         self.anum, self.nbrs, self.names = P.anum, P.nbrs, P.names
         self.residue, self.resnames = P.residue, P.resnames
@@ -259,10 +296,12 @@ class _Builder:
         return f"{self.resnames[r]}{self.resid[r]}:{self.names[a]}"
 
     def _peptide(self, i: int, j: int) -> bool:
+        """A peptide bond: the backbone C of one residue to the backbone N of
+        another, found by name or by structure."""
         if {self.anum[i], self.anum[j]} != {6, 7}:
             return False
         n, c = (i, j) if self.anum[i] == 7 else (j, i)
-        return self.names[n] == "N" and self.names[c] == "C"
+        return self._backbone_atom(n, "N") and self._backbone_atom(c, "C")
 
     def _link(self, i: int, j: int) -> bool:
         """A peptide bond or a disulfide: the bonds protein templates expect."""
@@ -312,60 +351,211 @@ class _Builder:
         return list(out.values())
 
     # -- parent residue templates ------------------------------------------------
-    def _parent(self, r: int):
-        """(template, {atom: template atom}, atoms that keep the template's types)."""
+    def _bb(self, r: int) -> dict | None:
+        """The backbone atoms {"N", "CA", "C", "O"} of residue ``r``: by name,
+        else by structure (N-CA-C(=O) with a peptide bond to a neighbour)."""
+        if r in self._bbs:
+            return self._bbs[r]
         atoms = self.res_atoms[r]
-        if self.host is None or not {"N", "CA", "C"} <= {self.names[a] for a in atoms}:
-            return None, {}, set()
-        wanted = self.parents.get(self.resnames[r])
-        if wanted is not None:
-            candidates = [self.host.template(wanted)]
-        else:
-            candidates = [t for t in self.host.templates if {"N", "CA", "C"} <= set(t.names)]
-        best = None
-        for t in candidates:
-            m = self._map(atoms, t)
-            ok = self._fits(atoms, t, m)
-            key = (len(ok), t.name == self.resnames[r], -t.natoms)
-            if best is None or key > best[0]:
-                best = (key, t, m, ok)
-        if best is None or not best[3]:
-            return None, {}, set()
-        return best[1], best[2], best[3]
-
-    def _map(self, atoms, t: Template) -> dict[int, int]:
-        """Atoms to template atoms: heavy atoms by name, then grown through
-        bonds where an element is unique, and hydrogens after their atom."""
-        by_name: dict[str, int] = {}
-        for i, (nm, z) in enumerate(zip(t.names, t.anum, strict=True)):
-            if z > 0:
-                by_name.setdefault(nm, i)
-        m: dict[int, int] = {}
-        used: set[int] = set()
-        for a in atoms:
-            i = by_name.get(self.names[a])
-            if self.anum[a] > 1 and i is not None and t.anum[i] == self.anum[a] and i not in used:
-                m[a] = i
-                used.add(i)
         inside = set(atoms)
-        grew = True
-        while grew:
-            grew = False
-            for a, i in list(m.items()):
-                mine = [b for b in self.nbrs[a] if b in inside and b not in m and self.anum[b] > 1]
-                theirs = [j for j in t._nbrs[i] if t.anum[j] > 1 and j not in used]
-                for z in {self.anum[b] for b in mine}:
-                    bs = [b for b in mine if self.anum[b] == z]
-                    js = [j for j in theirs if t.anum[j] == z]
-                    if len(bs) == 1 and len(js) == 1:
-                        m[bs[0]] = js[0]
-                        used.add(js[0])
-                        grew = True
+        anum, nbrs = self.anum, self.nbrs
+        by: dict[str, int] = {}
+        for a in atoms:
+            by.setdefault(str(self.names[a]), a)
+        n, ca, c = by.get("N"), by.get("CA"), by.get("C")
+        found = None
+        if (n is not None and ca is not None and c is not None
+                and (anum[n], anum[ca], anum[c]) == (7, 6, 6)
+                and ca in nbrs[n] and c in nbrs[ca]):  # fmt: skip
+            found = (n, ca, c)
+        else:
+            options = []
+            for n in atoms:
+                if anum[n] != 7:
+                    continue
+                for ca in nbrs[n]:
+                    if ca not in inside or anum[ca] != 6:
+                        continue
+                    for c in nbrs[ca]:
+                        if (c == n or c not in inside or anum[c] != 6
+                                or self._carbonyl_o(c, inside) is None):  # fmt: skip
+                            continue
+                        links = sum(1 for x in nbrs[n] if x not in inside and anum[x] == 6)
+                        links += sum(1 for x in nbrs[c] if x not in inside and anum[x] == 7)
+                        if links:
+                            options.append((links, n, ca, c))
+            most = max((o[0] for o in options), default=0)
+            top = [o for o in options if o[0] == most]
+            if len(top) == 1:  # several: not an amino acid we can place
+                found = top[0][1:]
+        out = None
+        if found is not None:
+            n, ca, c = found
+            o = by.get("O")
+            if o is None or anum[o] != 8 or o not in nbrs[c]:
+                o = self._carbonyl_o(c, inside)
+            out = {"N": n, "CA": ca, "C": c, "O": o}
+        self._bbs[r] = out
+        return out
+
+    def _carbonyl_o(self, c: int, inside) -> int | None:
+        return next((o for o in self.nbrs[c] if o in inside and self.anum[o] == 8
+                     and sum(1 for x in self.nbrs[o] if self.anum[x] > 1) == 1), None)  # fmt: skip
+
+    def _backbone_atom(self, a: int, key: str) -> bool:
+        """Whether ``a`` is the backbone N or C (``key``) of its residue; caps
+        such as ACE and NME count by name."""
+        if self.names[a] == key:
+            return True
+        bb = self._bb(self.residue[a])
+        return bb is not None and bb[key] == a
+
+    def _in_chain(self, r: int) -> bool:
+        """Whether residue ``r`` has a peptide bond to a neighbour."""
+        bb = self._bb(r)
+        if bb is None:
+            return False
+        inside = set(self.res_atoms[r])
+        return any(self._peptide(a, b) for a in (bb["N"], bb["C"])
+                   for b in self.nbrs[a] if b not in inside and self.anum[b] > 0)  # fmt: skip
+
+    def _parent_source(self, r: int) -> tuple[str, str | None]:
+        """Where the parent of residue ``r`` comes from, and its name: given,
+        from the file (MODRES), known (the PDB's dictionary), or guessed."""
+        name = str(self.resnames[r])
+        for source, value in (("given", self.parents.get(name)), ("file", self.file_parents[r]),
+                              ("known", KNOWN_PARENTS.get(name))):  # fmt: skip
+            if value:
+                return source, str(value)
+        return "guessed", None
+
+    def _amino(self, r: int) -> bool:
+        """An amino acid: a backbone, and a place in a chain or a parent named for it."""
+        return self._bb(r) is not None and (
+            self._in_chain(r) or self._parent_source(r)[0] != "guessed"
+        )
+
+    def _cb(self, r: int, bb: dict) -> int | None:
+        inside = set(self.res_atoms[r])
+        side = [a for a in self.nbrs[bb["CA"]]
+                if a in inside and self.anum[a] > 1 and a not in (bb["N"], bb["C"])]  # fmt: skip
+        return side[0] if len(side) == 1 else None
+
+    def _parent(self, r: int):
+        """(template, {atom: template atom}, atoms that keep its types, source).
+
+        The parent is the one given, else the file's, else the PDB
+        dictionary's; among its templates (termini, protonation states) the
+        one matching most atoms wins. With none named, every amino-acid
+        template is tried, and the guess must be unambiguous and cover the
+        backbone and CB, or this raises.
+        """
+        if self.host is None or not self._amino(r):
+            return None, {}, set(), None
+        bb = self._bb(r)
+        name = str(self.resnames[r])
+        label = f"{name}{self.resid[r]}"
+        source, value = self._parent_source(r)
+        amino = [t for t in self.host.templates if {"N", "CA", "C"} <= set(t.names)]
+        if value is not None:
+            candidates = [t for t in amino if _family(t.name) == _family(value)]
+            if not candidates:
+                raise ViparrError(f"{label}: its parent {value!r} ({source}) is not an amino acid "
+                                  f"of {Path(self.host.name.split('__')[0]).name}")  # fmt: skip
+        else:
+            candidates = amino
+        atoms = self.res_atoms[r]
+        scored = []
+        for t in candidates:
+            m = self._map(r, t, bb)
+            ok = self._fits(atoms, t, m)
+            heavy = sum(1 for a in ok if self.anum[a] > 1)
+            agree = sum(1 for a, i in m.items() if self.names[a] == t.names[i])
+            key = (heavy, len(ok), t.name == name, _family(t.name) == name, agree, -t.natoms)
+            scored.append((key, t, m, ok))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        key, t, m, ok = scored[0]
+        if source == "guessed":
+            hint = (
+                f'give it: parents = {{ {name} = "..." }} in the settings, '
+                f"--parent {name}=... on the command line, or parents={{{name!r}: ...}}"
+            )
+            rivals = sorted({_family(x[1].name) for x in scored if x[0][0] == key[0]})
+            if len(rivals) > 1 and name not in rivals:
+                raise ViparrError(f"cannot tell the parent residue of {label}: {', '.join(rivals)} "
+                                  f"match it equally well; {hint}")  # fmt: skip
+            core = [bb["N"], bb["CA"], bb["C"], bb["O"], self._cb(r, bb)]
+            if any(a is not None and a not in ok for a in core):
+                raise ViparrError(
+                    f"cannot tell the parent residue of {label}: the best match, "
+                    f"{t.name}, does not cover its backbone and CB; {hint}"
+                )
+        if not ok:
+            return None, {}, set(), None
+        return t, m, ok, source
+
+    def _map(self, r: int, t: Template, bb: dict) -> dict[int, int]:
+        """Atoms of residue ``r`` to atoms of ``t``: the backbone, then the
+        most heavy atoms bonded as in ``t`` (equal names preferred; names are
+        not needed), and each hydrogen after its atom."""
+        atoms = self.res_atoms[r]
+        inside = set(atoms)
+        anum, nbrs, names = self.anum, self.nbrs, self.names
+        where = {nm: i for i, nm in enumerate(t.names) if t.anum[i] > 0}
+        m: dict[int, int] = {}
+        for key in ("N", "CA", "C", "O"):
+            a, i = bb.get(key), where.get(key)
+            if a is not None and i is not None and t.anum[i] == anum[a]:
+                m[a] = i
+        if len(m) < 3:
+            return {}
+        tadj = [set(x) for x in t._nbrs]
+        order, seen, queue = [], set(m), list(m)
+        while queue:  # heavy atoms outward from the backbone
+            a = queue.pop(0)
+            for b in nbrs[a]:
+                if b in inside and anum[b] > 1 and b not in seen:
+                    seen.add(b)
+                    order.append(b)
+                    queue.append(b)
+        used = set(m.values())
+        best = [dict(m), sum(names[a] == t.names[i] for a, i in m.items())]
+        budget = [20000]
+
+        def extend(k: int, agree: int) -> None:
+            budget[0] -= 1
+            if budget[0] < 0 or len(m) + len(order) - k < len(best[0]):
+                return
+            if k == len(order):
+                if (len(m), agree) > (len(best[0]), best[1]):
+                    best[0], best[1] = dict(m), agree
+                return
+            a = order[k]
+            mapped = [b for b in nbrs[a] if b in m]
+            if mapped:
+                bonded = set(mapped)
+                for i in sorted(tadj[m[mapped[0]]], key=lambda i: t.names[i] != names[a]):
+                    if i in used or t.anum[i] != anum[a]:
+                        continue
+                    if not all(m[b] in tadj[i] for b in mapped):
+                        continue
+                    if any(i in tadj[j] for b, j in m.items() if b not in bonded):
+                        continue
+                    m[a] = i
+                    used.add(i)
+                    extend(k + 1, agree + (t.names[i] == names[a]))
+                    del m[a]
+                    used.discard(i)
+            extend(k + 1, agree)  # or leave ``a`` out: a modification
+
+        extend(0, best[1])
+        m = best[0]
+        used = set(m.values())
         for a, i in list(m.items()):
-            hs = sorted(b for b in self.nbrs[a] if b in inside and self.anum[b] == 1)
+            hs = sorted(b for b in nbrs[a] if b in inside and anum[b] == 1)
             ths = [j for j in t._nbrs[i] if t.anum[j] == 1 and j not in used]
             for b in list(hs):
-                j = next((j for j in ths if t.names[j] == self.names[b]), None)
+                j = next((j for j in ths if t.names[j] == names[b]), None)
                 if j is not None:
                     m[b] = j
                     used.add(j)
@@ -377,7 +567,8 @@ class _Builder:
         return m
 
     def _fits(self, atoms, t: Template, m: dict[int, int]) -> set[int]:
-        """Mapped atoms whose bonded neighbours are exactly the template atom's."""
+        """Mapped atoms whose bonded neighbours are exactly the template atom's;
+        a hydrogen keeps its protein type only with its atom."""
         inside = set(atoms)
         ok = set()
         for a, i in m.items():
@@ -392,7 +583,8 @@ class _Builder:
             if any(not self._link(a, b) for b in mine_out):
                 continue
             ok.add(a)
-        return ok
+        with_atom = {a for a in ok if any(b in ok for b in self.nbrs[a] if b in inside)}
+        return {a for a in ok if self.anum[a] > 1 or a in with_atom}
 
     # -- one group ---------------------------------------------------------------
     def patch(self) -> ViparrForcefield:
@@ -411,7 +603,9 @@ class _Builder:
                           plugins=list(_PLUGINS))  # fmt: skip
         else:
             rules = Rules(es_scale=[], lj_scale=[])
-        return ViparrForcefield("gaff2-patch", rules, self.templates, params)
+        out = ViparrForcefield("gaff2-patch", rules, self.templates, params)
+        out.parents = self.chosen  # the parent each amino acid got, and why
+        return out
 
     def _known(self, residues) -> bool:
         """Whether templates made for an earlier group match every residue."""
@@ -426,10 +620,17 @@ class _Builder:
         protein: dict[int, tuple[Template, int]] = {}
         parents = {}
         for r in residues:
-            t, m, ok = self._parent(r)
+            t, m, ok, source = self._parent(r)
             if self.extent == "cb" and t is not None:
                 ok = {a for a in ok if _up_to_cb(t, m[a])}
             parents[r] = (t, m, ok)
+            if t is not None:
+                heavy = [a for a in self.res_atoms[r] if self.anum[a] > 1]
+                chain = self.P.s.chains["name"][self.P.s.residues["chain"][r]]
+                self.chosen.append({"residue": f"{self.resnames[r]}{self.resid[r]}",
+                                    "chain": str(chain), "parent": t.name, "source": source,
+                                    "protein_heavy_atoms": sum(a in ok for a in heavy),
+                                    "heavy_atoms": len(heavy)})  # fmt: skip
             for a in ok:
                 protein[a] = (t, m[a])
         frag, f = self._capped(atoms, residues)
@@ -482,8 +683,7 @@ class _Builder:
                                                  t, m, impropers))  # fmt: skip
 
     def _amino_acids(self, residues) -> set[int]:
-        return {r for r in residues
-                if {"N", "CA", "C"} <= {self.names[a] for a in self.res_atoms[r]}}  # fmt: skip
+        return {r for r in residues if self._amino(r)}
 
     def _covalent(self, residues) -> bool:
         """A ligand bound to an amino acid: a group with both kinds of residue."""

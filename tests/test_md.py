@@ -70,6 +70,7 @@ def test_settings_precedence(tmp_path):
     x = parse_arguments(["x", "--proteinff", "amber19sb", "--waterff", "opc"])
     assert x.forcefields is None and x.cutoff_nm == 0.9
     assert parse_arguments(["x", "--charge", "LIG=-1"]).ligand_charges == {"LIG": -1}
+    assert parse_arguments(["x", "--parent", "MSE=MET"]).parents == {"MSE": "MET"}
 
 
 @pytest.mark.parametrize("argv", [
@@ -81,6 +82,7 @@ def test_settings_precedence(tmp_path):
     ["x", "-m", "aa.amber.phosaa19SB"],
     ["x", "--saltM", "-1"],
     ["x", "--charge", "LIG"],
+    ["x", "--parent", "MSE"],
 ])  # fmt: skip
 def test_settings_errors(argv):
     with pytest.raises(SystemExit):
