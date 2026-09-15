@@ -28,6 +28,7 @@ The structures in `examples/data` come from the RCSB PDB.
 - [19_trajectory_formats.py](#example-19-trajectory-formats) — Trajectory formats: write and read DCD, Amber NetCDF, XTC and TRR
 - [20_analysis_extras.py](#example-20-analysis-extras) — More analysis: native contacts, contact frequencies, principal components,
 - [21_summaries_for_ai.py](#example-21-summaries-for-ai) — From 3D back to text: a summary for people and language models, a table, and a view
+- [22_viparr_forcefields.py](#example-22-viparr-forcefields) — viparr force fields: parameterize, set priorities, patch, and handle D residues
 
 (example-01-load-and-inspect)=
 
@@ -791,15 +792,15 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.33 0.48 0.52 0.61]
-radius of gyration: 13.26 +- 0.06 A
-most flexible residues: [(884, 0.61), (843, 0.6), (845, 0.58), (879, 0.55), (883, 0.54)]
+C-alpha RMSD to frame 0 (A): [0.   0.34 0.55 0.57 0.63]
+radius of gyration: 13.27 +- 0.06 A
+most flexible residues: [(879, 0.72), (844, 0.65), (855, 0.6), (880, 0.53), (843, 0.5)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-145. -148. -149. -140.] / [159. 161. 164. 161.]
-hydrogen bonds per frame: [53, 47, 39, 39, 38]
-    THR836:OG1 -> THR848:OG1   present in 100% of frames
+residue 830 phi/psi over time: [-142. -145. -125. -143.] / [157. 149. 160. 164.]
+hydrogen bonds per frame: [51, 43, 42, 37, 32]
+    THR852:OG1 -> ASP854:OD1   present in 100% of frames
+      TYR869:N -> PHE889:O     present in 100% of frames
     ARG876:NH1 -> GLU834:OE2   present in 100% of frames
-    THR891:OG1 -> LYS864:O     present in 100% of frames
 ```
 
 (example-10-periodic-boxes)=
@@ -1749,4 +1750,86 @@ as data: the heme's closest residue is HIS A87 at 1.94 Å; buried 80%
  2239   FE      Fe     HEM     A    143 40.513 29.278 15.451
 
 wrote examples/output/1HHO_summary.json and examples/output/1HHO_view.html
+```
+
+(example-22-viparr-forcefields)=
+
+## 22_viparr_forcefields.py: viparr force fields: parameterize, set priorities, patch, and handle D residues
+
+viparr force fields are directories of JSON files; DESRES's viparr-ffpublic
+has about 70 (Amber, CHARMM, DES-Amber, lipids, nucleic acids, ions, waters),
+and boonza ships a copy.  boonza parameterizes with them as viparr does:
+residues match templates by their bond graph, and every molecule takes the
+first force field that matches it.
+
+    python examples/22_viparr_forcefields.py
+
+```python
+import warnings
+
+import numpy as np
+from _common import OUT, amber_system, water_box
+
+import boonza
+
+# The viparr-ffpublic force fields ship with boonza; $VIPARR_FFPATH can add others
+names = boonza.viparr.list_forcefields()
+print(f"{len(names)} force fields, e.g. {', '.join(names[:3])}, ...")
+print("bundled:", boonza.viparr.bundled_version())
+
+# A peptide (RDKit lists hydrogens last; keep each residue's atoms together)
+pep = boonza.peptide("AVLSKEF", conformation="helix")
+pep = pep.clone(np.argsort(pep.atoms["residue"], kind="stable"))
+waters = water_box(3)
+waters.positions = waters.positions + [25.0, 0.0, 0.0]
+system = pep.copy()
+system.append(waters)
+
+# 1. Parameterize: the peptide with CHARMM36m, the waters with TIP3P
+c36m = boonza.load_forcefield("aa.charmm.c36m")
+print(c36m)
+p = boonza.parameterize(system, [c36m, "water.tip3p_charmm"])
+print(", ".join(f"{n} {len(p.table(n))}" for n in p.table_names))
+energy = boonza.openmm_energies(p)
+print(f"energy {energy['total']:.1f} kcal/mol, CMAP {energy['torsiontorsion_cmap']:.2f}")
+boonza.save(p, OUT / "peptide_c36m.dms")
+
+# 2. Priority: both Amber force fields match a protein; the first one listed wins.
+#    (Amber has charged termini only, so use 1TEN with hydrogens from OpenMM.)
+protein = amber_system("1TEN.pdb")
+for order in (["aa.amber.ff14SB", "aa.amber.ff99SB"], ["aa.amber.ff99SB", "aa.amber.ff14SB"]):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        q = boonza.parameterize(protein, order)
+    dih = boonza.openmm_energies(q)["dihedral_trig"]
+    print(f"{' then '.join(order)}: dihedral energy {dih:.2f}; warning: {caught[0].message}")
+
+# 3. Patching: ff99SB with ff99SB-ILDN's side-chain torsions (viparr's -m)
+ildn = boonza.merge_forcefields("aa.amber.ff99SB", "aa.amber.ff99SB-ILDN")
+e = boonza.openmm_energies(boonza.parameterize(protein, [ildn]))["dihedral_trig"]
+print(f"ff99SB patched with ILDN: dihedral energy {e:.2f}")
+
+# 4. D amino acids: the mirror image of the peptide should have the same energy
+mirror = pep.copy()
+mirror.positions = pep.positions * [-1.0, 1.0, 1.0]
+L = boonza.openmm_energies(boonza.parameterize(pep, [c36m]))["torsiontorsion_cmap"]
+for chiral in (True, False):
+    D = boonza.openmm_energies(boonza.parameterize(mirror, [c36m], cmap_chirality=chiral))
+    how = "mirrored CMAP for D residues" if chiral else "L CMAP for D residues (viparr)"
+    print(f"CMAP energy: L peptide {L:.3f}, D peptide with {how} {D['torsiontorsion_cmap']:.3f}")
+```
+
+Output:
+
+```text
+69 force fields, e.g. aa.DES-Amber, aa.DES-Amber-SF1.0, aa.DES-Amber_pe3.2, ...
+bundled: https://github.com/DEShawResearch/viparr-ffpublic commit c87d403ef9b176686fa95dd5ef51d78b92224b39 (2022-06-16)
+<ViparrForcefield aa.charmm.c36m: 426 templates; angle_harm 3260, dihedral_trig 6018, improper_harm 239, mass 383, stretch_harm 1099, torsiontorsion_cmap 8, ureybradley_harm 765, vdw1 383, vdw1_14 74, vdw2 74; plugins exclusions, mass, bonds, angles, ureybradley, propers, impropers, cmap, vdw1, vdw2>
+angle_harm 234, constraint_ah1 23, constraint_ah2 11, constraint_ah3 5, constraint_hoh 27, dihedral_trig 301, exclusion 702, improper_harm 14, nonbonded 197, pair_12_6_es 298, stretch_harm 279, torsiontorsion_cmap 5
+energy 79.3 kcal/mol, CMAP -1.49
+aa.amber.ff14SB then aa.amber.ff99SB: dihedral energy -5640.29; warning: fragment 0 (H679C434N109O152S) was matched by multiple force fields; the first match takes precedence
+aa.amber.ff99SB then aa.amber.ff14SB: dihedral energy -5602.12; warning: fragment 0 (H679C434N109O152S) was matched by multiple force fields; the first match takes precedence
+ff99SB patched with ILDN: dihedral energy -5671.27
+CMAP energy: L peptide -1.490, D peptide with mirrored CMAP for D residues -1.490
+CMAP energy: L peptide -1.490, D peptide with L CMAP for D residues (viparr) -18.812
 ```

@@ -114,3 +114,77 @@ xdrfile_trr.c).  Its notice:
   OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
    
+
+------------------------------------------------------------------------
+src/boonza/data/viparr-ffpublic.zip is the ff directory of viparr-ffpublic
+(https://github.com/DEShawResearch/viparr-ffpublic, commit c87d403), with its
+LICENSE.txt, which reads:
+
+  VIPARR-FF LICENSE AGREEMENT
+
+  Copyright 2018, D. E. Shaw Research. All rights reserved.
+
+  Redistribution and use of the VIPARR-FF chemical system data, with or without
+  modification, is permitted provided that the following conditions are met:
+
+      * Redistributions of the chemical system data must retain the
+      above copyright notice, this list of conditions, and the following
+      disclaimer.
+
+      * Redistributions in binary form must reproduce the above copyright 
+      notice, this list of conditions, and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+
+  Neither the name of D. E. Shaw Research nor the names of its contributors may
+  be used to endorse or promote products derived from this software without
+  specific prior written permission.
+
+  THIS SOFTWARE AND DATA ARE PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
+  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  OF THIS SOFTWARE AND/OR DATA, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------
+src/boonza/viparr.py reads viparr force fields and follows viparr's
+parameterization (template and parameter matching, plugins, force-field
+merging; src/*.cxx, src/plugins, src/postprocess of viparr) and msys's
+graph isomorphism (src/graph.cxx, under the msys license above).  viparr's
+notice:
+
+  VIPARR LICENSE AGREEMENT
+
+  Copyright 2018-2020, D. E. Shaw Research. All rights reserved.
+
+  Redistribution and use of (1) the VIPARR software in source and binary forms
+  and (2) the associated chemical system data released with the software,
+  with or without modification, is permitted provided that the following
+  conditions are met:
+
+      * Redistributions of source code and the associated data must retain the
+      above copyright notice, this list of conditions, and the following
+      disclaimer.
+
+      * Redistributions in binary form must reproduce the above copyright 
+      notice, this list of conditions, and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+
+  Neither the name of D. E. Shaw Research nor the names of its contributors may
+  be used to endorse or promote products derived from this software without
+  specific prior written permission.
+
+  THIS SOFTWARE AND DATA ARE PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
+  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  OF THIS SOFTWARE AND/OR DATA, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

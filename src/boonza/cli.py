@@ -14,6 +14,7 @@
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
     boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
+    boonza parameterize in.dms out.dms -f aa.charmm.c36m -f water.tip3p_charmm
 
 ``validate``, ``knots`` and ``diff`` exit with status 1 when they find
 something.
@@ -222,6 +223,31 @@ def _build(args) -> int:
     return 0
 
 
+def _parameterize(args) -> int:
+    import boonza
+    from boonza import viparr
+
+    ffs = []
+    for kind, name in args.forcefields:
+        if kind == "f":
+            ffs.append(viparr.load_forcefield(name, args.ffpath))
+        elif not ffs:
+            raise SystemExit(f"-{kind} {name}: give a force field with -f before patching it")
+        else:
+            ffs[-1] = viparr.merge_forcefields(ffs[-1], name, append_only=kind == "a",
+                                               path=args.ffpath)  # fmt: skip
+    s = viparr.parameterize(_load(args.input), ffs, rename_atoms=args.rename_atoms,
+                            rename_residues=args.rename_residues,
+                            fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
+                            cmap_chirality=not args.viparr_cmap,
+                            reorder_ids=not args.keep_ids,
+                            constraints=not args.without_constraints)  # fmt: skip
+    boonza.save(s, args.output)
+    tables = ", ".join(f"{n} {len(s.table(n))}" for n in s.table_names)
+    print(f"wrote {args.output}: {s.natoms} atoms; {tables}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boonza", description="Molecular system tools.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -315,6 +341,60 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--seed", type=int, default=42, help="random seed for the embedding")
     q.add_argument("--no-optimize", action="store_true", help="skip the MMFF minimization")
     q.set_defaults(run=_build)
+
+    q = sub.add_parser("parameterize", help="apply viparr force fields (first match wins)")
+    q.add_argument("input", help="structure with bonds and hydrogens")
+    q.add_argument("output", help="output file (.dms keeps the force field)")
+    q.add_argument(
+        "-f",
+        "--ff",
+        dest="forcefields",
+        action="append",
+        default=[],
+        type=lambda v: ("f", v),
+        help="force field name or directory, in priority order",
+    )
+    q.add_argument(
+        "-m",
+        "--merge",
+        dest="forcefields",
+        action="append",
+        type=lambda v: ("m", v),
+        help="patch the previous -f force field (replaces templates and types)",
+    )
+    q.add_argument(
+        "-a",
+        "--append",
+        dest="forcefields",
+        action="append",
+        type=lambda v: ("a", v),
+        help="like -m, but refuse to replace anything",
+    )
+    q.add_argument("--ffpath", help="directories of named force fields (default $VIPARR_FFPATH)")
+    q.add_argument("--rename-atoms", action="store_true", help="copy atom names from templates")
+    q.add_argument(
+        "--rename-residues", action="store_true", help="copy residue names from templates"
+    )
+    q.add_argument(
+        "--without-fix-masses",
+        action="store_true",
+        help="keep per-type masses (default: median mass per element, as viparr)",
+    )
+    q.add_argument("--non-fatal", action="store_true", help="warn about missing parameters")
+    q.add_argument(
+        "--viparr-cmap", action="store_true", help="give D residues the L CMAP grid, as viparr does"
+    )
+    q.add_argument(
+        "--keep-ids",
+        action="store_true",
+        help="append pseudos after all atoms (viparr's default order)",
+    )
+    q.add_argument(
+        "--without-constraints",
+        action="store_true",
+        help="no constraint_ahN/constraint_hoh tables (viparr adds them)",
+    )
+    q.set_defaults(run=_parameterize)  # fmt: skip
 
     q = sub.add_parser("drmsd", help="pocket-ligand distance RMSD, symmetry-corrected")
     q.add_argument("system", help="structure (topology of --traj)")
