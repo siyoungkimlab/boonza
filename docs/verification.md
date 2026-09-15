@@ -6,6 +6,7 @@ tool, running the real program where possible. The test suite has 463 tests.
 | Feature | Reference | How it is compared |
 |---|---|---|
 | DMS, MAE read/write; clone, append | msys | full canonical dump of structure and every table |
+| viparr force fields (`parameterize`, `merge_forcefields`) | viparr (built against msys) | every table term by term on 11 systems: CHARMM36m (solvated), ff14SB, ff19SB, ff99SB-ILDN, DES-Amber, lipid + ion NBFIX, TIP4P-Ew, TIP5P, a `-m` merge, first-match priority; energies of ff19SB and c36m against OpenMM's `amber19-all.xml` and `charmm36_2024.xml` |
 | selection language | msys | msys's own selection test suite plus extra selections |
 | PDB, SDF read/write, bond guessing | msys | canonical dump |
 | mmCIF | gemmi | atom records, models, cell |

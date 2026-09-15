@@ -304,19 +304,30 @@ def _compare_overrides(name, ta, tb, rtol, atol) -> list[Difference]:
     """Pair overrides keyed by the values of the two params they join."""
 
     def keyed(t):
+        # params with the same numbers (e.g. atom types that differ only in
+        # name) give the same key, so each key holds a list of overrides
         props = [p for p in t.params.props if p not in _IGNORED and _numeric(t.params[p])]
         row = {i: tuple(float(t.params[p][i]) for p in props) for i in range(len(t.params))}
-        return {tuple(sorted((row[p1], row[p2]))): vals for (p1, p2), vals in t.overrides.items()}
+        out: dict = {}
+        for (p1, p2), vals in t.overrides.items():
+            out.setdefault(tuple(sorted((row[p1], row[p2]))), []).append(vals)
+        for group in out.values():
+            group.sort(
+                key=lambda v: tuple(sorted((k, x) for k, x in v.items() if not isinstance(x, str)))
+            )
+        return out
 
     oa, ob = keyed(ta), keyed(tb)
     out = []
-    missing = len(oa.keys() ^ ob.keys())
+    missing = sum(len(oa.get(k, [])) + len(ob.get(k, [])) for k in oa.keys() ^ ob.keys())
+    missing += sum(abs(len(oa[k]) - len(ob[k])) for k in oa.keys() & ob.keys())
     if missing:
         out.append(Difference("overrides", f"{name}: {missing} pair overrides are in only one "
                               "system"))  # fmt: skip
-    changed = [k for k in oa.keys() & ob.keys()
-               if oa[k].keys() != ob[k].keys()
-               or not all(_same(oa[k][p], ob[k][p], rtol, atol) for p in oa[k])]  # fmt: skip
+    changed = sum(1 for k in oa.keys() & ob.keys() if len(oa[k]) == len(ob[k])
+                  for va, vb in zip(oa[k], ob[k], strict=True)
+                  if va.keys() != vb.keys()
+                  or not all(_same(va[p], vb[p], rtol, atol) for p in va))  # fmt: skip
     if changed:
-        out.append(Difference("overrides", f"{name}: {len(changed)} pair overrides differ"))
+        out.append(Difference("overrides", f"{name}: {changed} pair overrides differ"))
     return out
