@@ -302,6 +302,8 @@ def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boonza", description="Molecular system tools.")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
+    sub.add_parser("swim", help="ligands swimming around a protein, many simulations "
+                   "(boonza swim --help)")  # fmt: skip
 
     q = sub.add_parser("info", help="summarize a structure file")
     q.add_argument("file")
@@ -509,6 +511,10 @@ def main(argv=None) -> int:
         from .md.cli import main as md_main
 
         return md_main(argv[1:])
+    if argv and argv[0] == "swim":
+        from .md.swim import main as swim_main
+
+        return swim_main(argv[1:])
     args = _parser().parse_args(argv)
     return args.run(args)
 

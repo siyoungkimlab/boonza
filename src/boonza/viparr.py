@@ -54,6 +54,7 @@ Where boonza differs from viparr on purpose:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import warnings
@@ -846,6 +847,155 @@ def write_forcefield(ff: ViparrForcefield, directory) -> Path:
         if rows:
             _write_json(d / table, [_row_json(row) for row in rows])
     return d
+
+
+def patch_from_system(system: System, name: str, tag: str, rules: Rules | None = None):
+    """A viparr patch that gives one molecule the force field it already has.
+
+    ``system`` is one parameterized molecule. The patch has one template
+    (every atom, as one residue ``name``), a type per atom
+    (``<element><n>~<tag>``) and a parameter row per term, from the
+    ``stretch_harm``, ``angle_harm``, ``dihedral_trig`` (propers and
+    impropers, told apart by the bonds) and ``improper_harm`` tables and a
+    12-6 Lennard-Jones ``nonbonded`` table. Exclusions and 1-4 pairs are
+    made by the rules of the force field the patch joins: given ``rules``,
+    the molecule's own 1-4 pairs must be the ones they make, or this raises.
+    """
+    s = system
+    anum = s.atoms["anum"].tolist()
+    if any(z < 1 for z in anum):
+        raise ViparrError("virtual sites are not supported")
+    if s.nfragments != 1:
+        raise ViparrError(f"{name}: {s.nfragments} molecules; give one")
+    if "nonbonded" not in s.table_names:
+        raise ViparrError(f"{name}: no nonbonded table, so no force field to take")
+    funct, rule = s.nonbonded_info.vdw_funct or "vdw_12_6", s.nonbonded_info.vdw_rule
+    if funct != "vdw_12_6" or (rule or "arithmetic/geometric") != "arithmetic/geometric":
+        raise ViparrError(f"{name}: {funct} {rule} Lennard-Jones; only 12-6 with "
+                          "arithmetic/geometric combining joins Amber force fields")  # fmt: skip
+    known = {"stretch_harm", "angle_harm", "dihedral_trig", "improper_harm", "nonbonded",
+             "pair_12_6_es", "exclusion"}  # fmt: skip
+    other = [t for t in s.table_names if t not in known and not t.startswith("constraint_")]
+    if other:
+        raise ViparrError(f"{name}: tables a template cannot carry: {', '.join(sorted(other))}")
+    count: dict[str, int] = {}
+    types, names = [], []
+    for z in anum:
+        sym = symbol(z)
+        count[sym] = count.get(sym, 0) + 1
+        types.append(f"{sym}{count[sym]}~{tag}")
+        names.append(f"{sym}{count[sym]}")
+    bi, bj = s.bonds["i"].tolist(), s.bonds["j"].tolist()
+    bonds = sorted({(min(i, j), max(i, j)) for i, j in zip(bi, bj, strict=True)})
+    bonded = set(bonds) | {(j, i) for i, j in bonds}
+    params: dict[str, list[ParamRow]] = {}
+    memo = f"from {name}"
+
+    def rows_of(table):
+        if table not in s.table_names:
+            return
+        t = s.table(table)
+        cols = [c for c in t.params.props if t.params.prop_type(c) != "str"]
+        for atoms, pid in zip(t.atoms.tolist(), t.param_ids.tolist(), strict=True):
+            yield tuple(atoms), {c: float(t.params[c][pid]) for c in cols}
+
+    def add(table, atoms, row):
+        params.setdefault(table, []).append(ParamRow(" ".join(types[a] for a in atoms), row, memo))
+
+    for atoms, row in rows_of("stretch_harm"):
+        if atoms not in bonded:
+            raise ViparrError(f"{name}: a stretch term between atoms that are not bonded "
+                              "(Urey-Bradley) cannot be carried")  # fmt: skip
+        add("stretch_harm", atoms, row)
+    for atoms, row in rows_of("angle_harm"):
+        add("angle_harm", atoms, row)
+    propers: dict[tuple, list[dict]] = {}
+    impropers: list[tuple[int, ...]] = []
+    seen_improper: set[frozenset] = set()
+    for atoms, row in rows_of("dihedral_trig"):
+        a, b, c, d = atoms
+        if (a, b) in bonded and (b, c) in bonded and (c, d) in bonded:
+            key = atoms if atoms <= atoms[::-1] else atoms[::-1]
+            propers.setdefault(key, []).append(row)
+        else:
+            if frozenset(atoms) in seen_improper:
+                raise ViparrError(f"{name}: an improper with several terms cannot be carried")
+            seen_improper.add(frozenset(atoms))
+            add("improper_trig", atoms, row)
+            impropers.append(atoms)
+    for atoms, row in rows_of("improper_harm"):
+        add("improper_harm", atoms, row)
+        impropers.append(atoms)
+    zero = None
+    if propers:
+        zero = dict.fromkeys(next(iter(propers.values()))[0], 0.0)
+    nbrs: list[list[int]] = [[] for _ in anum]
+    for i, j in bonds:
+        nbrs[i].append(j)
+        nbrs[j].append(i)
+    for b, c in bonds:  # every proper dihedral needs a row, zero where the molecule has none
+        for a in nbrs[b]:
+            for d in nbrs[c]:
+                if a not in (b, c) and d not in (b, c) and a != d:
+                    key = min((a, b, c, d), (d, c, b, a))
+                    if key not in propers:
+                        propers[key] = [dict(zero or {"phi0": 0.0, "fc0": 0.0})]
+    for key in sorted(propers):  # the terms of one dihedral stay together
+        for row in propers[key]:
+            add("dihedral_trig", key, row)
+    nb = s.table("nonbonded")
+    sigma, epsilon = nb.params["sigma"], nb.params["epsilon"]
+    per_atom = dict(zip((t[0] for t in nb.atoms.tolist()), nb.param_ids.tolist(), strict=True))
+    mass, charge = s.atoms["mass"].tolist(), s.atoms["charge"].tolist()
+    for a in range(len(anum)):
+        p = per_atom[a]
+        add("vdw1", (a,), {"sigma": float(sigma[p]), "epsilon": float(epsilon[p])})
+        add("mass", (a,), {"amu": float(mass[a])})
+    if rules is not None and len(rules.es_scale) >= 3:
+        _check_pairs(s, name, nbrs, per_atom, sigma, epsilon, charge, rules)
+    tpl = Template(name, names, anum, [float(q) for q in charge], list(types), list(types),
+                   [""] * len(anum), bonds, impropers)  # fmt: skip
+    return ViparrForcefield(tag, Rules(es_scale=[], lj_scale=[]), [tpl], params)
+
+
+def _check_pairs(s, name, nbrs, per_atom, sigma, epsilon, charge, rules: Rules) -> None:
+    """The molecule's 1-4 pairs must be the ones ``rules`` make from its atoms."""
+    es, lj = rules.es_scale[2], rules.lj_scale[2]
+    n = len(nbrs)
+    want = {}
+    for a in range(n):  # atoms three bonds away and no closer
+        dist = {a: 0}
+        frontier = [a]
+        for step in (1, 2, 3):
+            nxt = []
+            for x in frontier:
+                for y in nbrs[x]:
+                    if y not in dist:
+                        dist[y] = step
+                        nxt.append(y)
+            frontier = nxt
+        for b, d in dist.items():
+            if d == 3 and a < b:
+                sa, sb = sigma[per_atom[a]], sigma[per_atom[b]]
+                ea, eb = epsilon[per_atom[a]], epsilon[per_atom[b]]
+                sij, eij = 0.5 * (sa + sb), math.sqrt(ea * eb)
+                want[(a, b)] = (lj * 4 * eij * sij**12, lj * 4 * eij * sij**6,
+                                es * charge[a] * charge[b])  # fmt: skip
+    have: dict[tuple[int, int], list[float]] = {}
+    if "pair_12_6_es" in s.table_names:
+        t = s.table("pair_12_6_es")
+        cols = [t.params[c] for c in ("aij", "bij", "qij")]
+        for (a, b), p in zip(t.atoms.tolist(), t.param_ids.tolist(), strict=True):
+            got = have.setdefault((min(a, b), max(a, b)), [0.0, 0.0, 0.0])
+            for k in range(3):
+                got[k] += float(cols[k][p])
+    for key in set(want) | set(have):
+        w, h = want.get(key, (0.0, 0.0, 0.0)), have.get(key, [0.0, 0.0, 0.0])
+        if any(abs(x - y) > 2e-3 * max(abs(x), abs(y)) + 1e-6 for x, y in zip(w, h, strict=True)):
+            raise ViparrError(
+                f"{name}: its 1-4 pairs are not those the force field it joins makes "
+                f"(1-4 scales {es:g} electrostatic, {lj:g} Lennard-Jones)"
+            )
 
 
 def _write_json(path: Path, obj) -> None:

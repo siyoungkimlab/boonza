@@ -125,6 +125,12 @@ Implemented:
   that resumes toward an absolute target; hydrogen mass repartitioning,
   backbone restraints, stopping when a binder leaves its pocket, and a
   wall-time breakdown.
+- Ligand swimming (`boonza swim`): a ligand library (SDF, or DMS with or
+  without a force field) split into many `boonza md` simulations of a few
+  ligand types each, similar ligands dealt apart deterministically (Morgan
+  fingerprints), copies placed at random around the protein; each ligand
+  parameterized once (its own force field, the protein force field for
+  peptides, else GAFF2 in parallel).
 - RDKit bridge (`boonza.to_rdkit`, `from_rdkit`, `fragments_to_rdkit`,
   `sel.to_rdkit()`): atom indices, names and residue info are carried both ways;
   `assign_bond_orders` perceives bond orders and charges for ligands read

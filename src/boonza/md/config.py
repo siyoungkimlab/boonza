@@ -76,6 +76,7 @@ DEFAULTS: dict = {
     "parents": None,
     "protein_extent": "matched",
     "padding_nm": 1.0,
+    "box_nm": None,
     "cutoff_nm": None,
     "saltM": 0.15,
     "temperature": 298.0,
@@ -90,6 +91,10 @@ DEFAULTS: dict = {
     "hmr": False,
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
+    "dihedral_restraint_selection": None,
+    "repulsion_selection": None,
+    "repulsion_distance_nm": 0.5,
+    "repulsion_kJ": 500.0,
     "seed": 0,
     "precision": "mixed",
     "platform": None,
@@ -106,6 +111,7 @@ DEFAULTS: dict = {
 }
 _NUMBERS = {
     "padding_nm",
+    "box_nm",
     "cutoff_nm",
     "saltM",
     "temperature",
@@ -122,6 +128,8 @@ _NUMBERS = {
     "pocket_cutoff_nm",
     "contact_cutoff_nm",
     "detach_cutoff_nm",
+    "repulsion_distance_nm",
+    "repulsion_kJ",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
 _BOOLEANS = {"hmr", "early_stop"}
@@ -215,11 +223,11 @@ def load_configuration(path) -> dict:
         return check_settings(tomllib.load(fh), str(path))
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     """The ``boonza md`` parser; an option left out is left out of the result."""
     d = DEFAULTS
     p = argparse.ArgumentParser(
-        prog="boonza md",
+        prog=prog,
         argument_default=argparse.SUPPRESS,
         description="Prepare and run explicit-solvent MD with OpenMM. Running the same "
         "command on a used work directory resumes it.",
@@ -312,11 +320,24 @@ def build_parser() -> argparse.ArgumentParser:
         ("--pocket-cutoff-nm", "pocket_cutoff_nm", "target-to-pocket cutoff (nm)"),
         ("--contact-cutoff-nm", "contact_cutoff_nm", "contact distance (nm)"),
         ("--detach-cutoff-nm", "detach_cutoff_nm", "detachment distance (nm)"),
+        ("--repulsion-distance-nm", "repulsion_distance_nm", "repulsion wall distance (nm)"),
+        ("--repulsion-kJ", "repulsion_kJ", "repulsion strength (kJ/mol/nm^2)"),
     ]
     for opt, dest, text in floats:
         default = f"; default: {d[dest]}" if d[dest] is not None else ""
         p.add_argument(opt, dest=dest, type=float, help=text + default)
     p.add_argument("--seed", type=int, help="random seed (default: 0)")
+    p.add_argument(
+        "--dihedral-restraint-selection",
+        dest="dihedral_restraint_selection",
+        help="restrain only torsions whose atoms this selects, e.g. 'protein' (default: all)",
+    )
+    p.add_argument(
+        "--repulsion-selection",
+        dest="repulsion_selection",
+        help="molecules kept from sticking together (heavy atoms of different ones repel), "
+        "e.g. 'chain L'",
+    )
     p.add_argument(
         "--confirmation-checks",
         dest="confirmation_checks",
@@ -352,10 +373,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def parse_arguments(argv=None) -> argparse.Namespace:
+def parse_arguments(argv=None, parser=None) -> argparse.Namespace:
     """The resolved settings; ``args.specified`` names those given in the
-    TOML file or on the command line."""
-    parser = build_parser()
+    TOML file or on the command line, and ``args.extra`` the options of a
+    ``parser`` built on :func:`build_parser` that are not settings."""
+    parser = build_parser() if parser is None else parser
     given = vars(parser.parse_args(argv))
     from_file: dict = {}
     if "config" in given:
@@ -379,6 +401,9 @@ def parse_arguments(argv=None) -> argparse.Namespace:
     args.write_default_config = given.get("write_default_config")
     args.list_components = given.get("list_components", False)
     args.specified = set(from_file) | set(cli)
+    own = {"config", "write_default_config", "list_components", "ff_options", "charge_options",
+           "parent_options"}  # fmt: skip
+    args.extra = {k: v for k, v in given.items() if k not in DEFAULTS and k not in own}
     try:
         finish(args)
     except ValueError as e:
@@ -436,7 +461,7 @@ def finish(args) -> None:
         "contact_cutoff_nm",
         "detach_cutoff_nm",
     ]
-    for key in positive + ["cutoff_nm"]:
+    for key in positive + ["cutoff_nm", "box_nm", "repulsion_distance_nm", "repulsion_kJ"]:
         v = getattr(args, key)
         if v is not None and (not math.isfinite(v) or v <= 0):
             raise ValueError(f"'{key}' must be positive")
@@ -581,7 +606,15 @@ hmr = false
 # Restrain backbone phi/psi to the input: none, bb, or ss (helices and sheets).
 dihedral_restraint = "none"
 dihedral_restraint_kJ = 20.0
+# Only torsions whose atoms this selects (boonza swim: not the ligands):
+# dihedral_restraint_selection = "not chain LIG"
 seed = 0
+
+# Keep the molecules a selection picks (ligand copies) from sticking together:
+# E = k (d0 - r)^2 between heavy atoms of different ones closer than d0.
+# repulsion_selection = "chain L"
+repulsion_distance_nm = 0.5
+repulsion_kJ = 500.0
 
 # GPU precision: mixed, single or double. Left out, a platform that cannot
 # honour mixed falls back to its own; set, it is an error.

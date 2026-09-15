@@ -71,6 +71,8 @@ def test_settings_precedence(tmp_path):
     assert x.forcefields is None and x.cutoff_nm == 0.9
     assert parse_arguments(["x", "--charge", "LIG=-1"]).ligand_charges == {"LIG": -1}
     assert parse_arguments(["x", "--parent", "MSE=MET"]).parents == {"MSE": "MET"}
+    r = parse_arguments(["x", "--repulsion-selection", "chain L", "--repulsion-kJ", "800"])
+    assert (r.repulsion_selection, r.repulsion_distance_nm, r.repulsion_kJ) == ("chain L", 0.5, 800)
 
 
 @pytest.mark.parametrize("argv", [
@@ -222,6 +224,35 @@ def test_early_stop_target_with_several_ligands(tmp_path, two_ligands):
         run_workflow(parse_arguments([str(two_ligands), "--workdir", str(work), *SHORT,
                                       "--early-stop"]), log=quiet)  # fmt: skip
     assert work.is_dir() and not any(work.iterdir())
+
+
+def test_repulsion_keeps_molecules_apart():
+    import openmm as mm
+
+    a, b = boonza.from_smiles("CC", name="ETH"), boonza.from_smiles("CC", name="ETH")
+    b.positions = b.positions - b.positions.mean(0) + a.positions.mean(0) + [3.0, 0.0, 0.0]
+    a.append(b)
+    system = mm.System()
+    for _ in range(a.natoms):
+        system.addParticle(12.0)
+    assert restraints.add_repulsion(system, a, "all", 0.5, 500.0) == 2
+    ctx = mm.Context(system, mm.VerletIntegrator(0.001), mm.Platform.getPlatformByName("Reference"))
+    ctx.setPositions(a.positions / 10)
+    energy = ctx.getState(getEnergy=True).getPotentialEnergy()._value
+    heavy = np.flatnonzero(a.atoms["anum"] > 1)
+    frag = np.asarray(a.fragids)
+    want = 0.0
+    for i in heavy:
+        for j in heavy:
+            if i < j and frag[i] != frag[j]:  # different molecules only: C-C inside is excluded
+                r = np.linalg.norm(a.positions[i] - a.positions[j]) / 10
+                want += 500.0 * max(0.0, 0.5 - r) ** 2
+    assert want > 0 and energy == pytest.approx(want, rel=1e-5)
+    one = mm.System()
+    for _ in range(a.natoms):
+        one.addParticle(12.0)
+    assert restraints.add_repulsion(one, a, "index 0 to 7", 0.5, 500.0) == 1  # one molecule
+    assert one.getNumForces() == 0
 
 
 def test_monitor_measures_across_the_box(tmp_path):
