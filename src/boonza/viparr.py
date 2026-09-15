@@ -57,8 +57,10 @@ import json
 import os
 import re
 import warnings
+import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +79,7 @@ __all__ = [
     "ViparrForcefield",
     "ViparrWarning",
     "build_constraints",
+    "bundled_version",
     "find_forcefield",
     "list_forcefields",
     "load_forcefield",
@@ -112,18 +115,35 @@ def _search_path(path=None) -> list[Path]:
     return [Path(p).expanduser() for p in path if str(p)]
 
 
-def list_forcefields(path=None) -> list[str]:
-    """Force field names found in ``path`` (default ``$VIPARR_FFPATH``, colon-separated)."""
+_BUNDLED = Path(__file__).resolve().parent / "data" / "viparr-ffpublic.zip"
+
+
+@cache
+def _bundled():
+    """The ``ff`` directory of the viparr-ffpublic copy shipped with boonza."""
+    return zipfile.Path(zipfile.ZipFile(_BUNDLED), at="ff/")
+
+
+def bundled_version() -> str:
+    """Which viparr-ffpublic commit is bundled with boonza."""
+    return zipfile.Path(_bundled().root, at="VERSION").read_text().strip()
+
+
+def list_forcefields(path=None, bundled: bool = True) -> list[str]:
+    """Force field names in ``path`` (default ``$VIPARR_FFPATH``, colon-separated)
+    and, with ``bundled``, in the viparr-ffpublic copy shipped with boonza."""
+    dirs = _search_path(path) + ([_bundled()] if bundled else [])
     names = set()
-    for d in _search_path(path):
+    for d in dirs:
         if d.is_dir():
             names.update(p.name for p in d.iterdir() if (p / "rules").is_file())
     return sorted(names)
 
 
-def find_forcefield(name, path=None) -> Path:
-    """The directory of force field ``name``: a directory path, or a name in
-    ``path`` (default ``$VIPARR_FFPATH``), searched in order."""
+def find_forcefield(name, path=None):
+    """The directory of force field ``name``: a directory path, a name in
+    ``path`` (default ``$VIPARR_FFPATH``, searched in order), or a name in the
+    viparr-ffpublic copy shipped with boonza."""
     p = Path(name).expanduser()
     if p.is_dir():
         return p
@@ -131,13 +151,16 @@ def find_forcefield(name, path=None) -> Path:
     for d in dirs:
         if (d / str(name)).is_dir():
             return d / str(name)
-    where = ", ".join(map(str, dirs)) or "nowhere (VIPARR_FFPATH is not set)"
+    bundled = _bundled() / str(name)
+    if bundled.is_dir():
+        return bundled
+    where = ", ".join([*map(str, dirs), "the bundled viparr-ffpublic"])
     raise ViparrError(f"force field {name!r} not found; looked in {where}")
 
 
-def _read_json(path: Path):
+def _read_json(path):
     try:
-        with open(path) as fh:
+        with path.open() as fh:
             return json.load(fh)
     except json.JSONDecodeError as e:
         raise ViparrError(f"Misformatted '{path}' file: {e}") from e
@@ -646,8 +669,9 @@ class ViparrForcefield:
 
 
 def load_forcefield(name, path=None, require_rules: bool = True) -> ViparrForcefield:
-    """Read a viparr force field directory, given as a path or as a name in
-    ``path`` (default ``$VIPARR_FFPATH``).
+    """Read a viparr force field: a directory, a name in ``path`` (default
+    ``$VIPARR_FFPATH``), or a name in the viparr-ffpublic copy bundled with
+    boonza (see :func:`bundled_version`).
 
     ``require_rules=False`` reads a patch that has no ``rules`` file (for
     :func:`merge_forcefields`).
@@ -660,7 +684,7 @@ def load_forcefield(name, path=None, require_rules: bool = True) -> ViparrForcef
     else:
         rules = Rules(es_scale=[], lj_scale=[])
     templates, params, cmaps = [], {}, []
-    for p in sorted(d.iterdir()):
+    for p in sorted(d.iterdir(), key=lambda q: q.name):
         n = p.name
         if n.endswith("~") or n.startswith(".") or p.is_dir() or n in ("README", "rules"):
             continue
@@ -678,7 +702,7 @@ def load_forcefield(name, path=None, require_rules: bool = True) -> ViparrForcef
             except ViparrError as e:
                 warnings.warn(f"failed to load {p}: {e}; continuing without it", ViparrWarning,
                               stacklevel=2)  # fmt: skip
-    return ViparrForcefield(str(d), rules, templates, params, cmaps)
+    return ViparrForcefield(str(d).rstrip("/"), rules, templates, params, cmaps)
 
 
 def merge_forcefields(base, patch, append_only: bool = False, path=None) -> ViparrForcefield:

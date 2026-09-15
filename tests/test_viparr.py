@@ -2,9 +2,9 @@
 
 Synthetic force fields test the rules (template matching across residues,
 exact before wildcard parameters, multi-term dihedrals, virtual sites,
-first-match priority, merging).  With viparr-ffpublic (``$VIPARR_FFPATH``,
-default ~/viparr-ffpublic/ff) the public force fields are checked against
-OpenMM's own amber19 and CHARMM36 force fields; with a viparr build
+first-match priority, merging).  The public force fields (bundled, or
+from ``$VIPARR_FFPATH``) are checked against OpenMM's own amber19 and
+CHARMM36 force fields; with a viparr build
 (``$BOONZA_VIPARR``: a command that runs the viparr CLI) whole systems are
 compared term by term with viparr's output.
 """
@@ -304,10 +304,20 @@ DATA = Path(__file__).resolve().parents[1] / "examples" / "data"
 
 
 def _public(name):
-    for d in FFPATH:
-        if (d / name).is_dir():
-            return viparr.load_forcefield(d / name)
-    pytest.skip(f"viparr force field {name} not found (set VIPARR_FFPATH)")
+    """A viparr-ffpublic force field: from $VIPARR_FFPATH if set, else the bundled copy."""
+    return viparr.load_forcefield(name)
+
+
+def test_bundled_forcefields(monkeypatch):
+    monkeypatch.delenv("VIPARR_FFPATH", raising=False)
+    names = viparr.list_forcefields()
+    assert len(names) == 69 and "aa.charmm.c36m" in names and "water.tip4pew" in names
+    assert "c87d403ef9b176686fa95dd5ef51d78b92224b39" in viparr.bundled_version()
+    ff = viparr.load_forcefield("aa.charmm.c36m")
+    assert len(ff.templates) == 426 and len(ff.params["dihedral_trig"]) == 6018
+    assert len(ff.cmaps) == 8 and "Huang et al. (2017)" in " ".join(ff.rules.info)
+    with pytest.raises(viparr.ViparrError, match="bundled"):
+        viparr.load_forcefield("no.such.forcefield")
 
 
 def test_d_residues_get_the_mirrored_cmap():
@@ -408,6 +418,8 @@ def _ours(inp, args):
 def test_matches_viparr(tmp_path, case):
     if not VIPARR or not shutil.which(VIPARR.split()[0]):
         pytest.skip("viparr not available; set BOONZA_VIPARR to a command running its CLI")
+    if not any(d.is_dir() for d in FFPATH):
+        pytest.skip("viparr needs viparr-ffpublic as a directory (set VIPARR_FFPATH)")
     name, args = CASES[case]
     inp = VIPARR_TESTS / name
     if not inp.exists():

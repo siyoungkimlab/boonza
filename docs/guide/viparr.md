@@ -8,13 +8,10 @@ about 70 of them: Amber (ff94 to ff19SB, DES-Amber, lipids, nucleic acids),
 CHARMM (c22 to c36m, lipids, carbohydrates, ethers), ions and water models.
 Together they cover many more residues than OpenMM's XML force fields.
 
-boonza reads them and parameterizes a system the way viparr does, with no
-viparr or msys installed:
-
-```bash
-git clone https://github.com/DEShawResearch/viparr-ffpublic
-export VIPARR_FFPATH=$PWD/viparr-ffpublic/ff
-```
+boonza ships a copy of viparr-ffpublic (commit `c87d403`, June 2022; see
+`boonza.viparr.bundled_version()`), read straight from a 2.8 MB zip, and
+parameterizes a system the way viparr does, with no viparr or msys installed
+and nothing to download:
 
 ```python
 import boonza
@@ -25,8 +22,16 @@ boonza.save(p, "parameterized.dms")
 boonza.openmm_energies(p)  # kcal/mol per table
 ```
 
-A force field can be a name in `$VIPARR_FFPATH` (or `path=`), a directory,
-or a loaded `boonza.load_forcefield(...)`. The output keeps the input's atoms
+A force field can be a name, a directory, or a loaded
+`boonza.load_forcefield(...)`. Names are looked up in `$VIPARR_FFPATH` (or
+`path=`; colon-separated directories, searched in order) and then in the
+bundled copy, so a newer checkout or your own force fields take precedence:
+
+```bash
+export VIPARR_FFPATH=$HOME/my-forcefields:$HOME/viparr-ffpublic/ff
+```
+
+`boonza.viparr.list_forcefields()` lists every name it can find. The output keeps the input's atoms
 and coordinates, takes charges from the templates, and has the force field as
 DMS tables. Each parameter row records the atom types it matched (`type`)
 and the force field's comment (`memo`), so `boonza.describe` shows where
