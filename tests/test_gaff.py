@@ -405,3 +405,22 @@ def test_covalent_cys_keeps_cmap_and_runs():
     state = ctx.getState(getEnergy=True, getPositions=True)
     assert np.isfinite(state.getPotentialEnergy().value_in_unit(unit.kilocalorie_per_mole))
     assert np.isfinite(state.getPositions(asNumpy=True).value_in_unit(unit.angstrom)).all()
+
+
+def test_gaff_parameters_by_version(tmp_path):
+    parm = tmp_path / "dat" / "leap" / "parm"
+    parm.mkdir(parents=True)
+    title = "AMBER General Force Field for organic molecules (Version {}, {})\n"
+    (parm / "gaff2.dat").write_text(title.format("2.11", "May 2016"))  # older AmberTools
+    assert gaff.gaff_parameters(tmp_path, "2.11") == parm / "gaff2.dat"
+    with pytest.raises(gaff.AmberToolsError, match="gaff2.dat is version 2.11"):
+        gaff.gaff_parameters(tmp_path, "2.2")
+    (parm / "gaff2.dat").write_text(title.format("2.2.30", "Oct 2025"))  # newer ones
+    (parm / "gaff211.dat").write_text(title.format("2.11", "May 2016"))
+    assert gaff.gaff_parameters(tmp_path, "2.11") == parm / "gaff211.dat"
+    assert gaff.gaff_parameters(tmp_path, "2.2") == parm / "gaff2.dat"
+    (parm / "gaff211.dat").unlink()
+    with pytest.raises(gaff.AmberToolsError, match="gaff2.dat is version 2.2.30"):
+        gaff.gaff_parameters(tmp_path, "2.11")
+    if AMBERHOME is not None:  # the installed AmberTools has 2.11 under one name or the other
+        assert gaff.gaff_parameters(AMBERHOME, "2.11").name in ("gaff211.dat", "gaff2.dat")
