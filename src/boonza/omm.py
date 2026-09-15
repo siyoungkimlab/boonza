@@ -933,11 +933,21 @@ def _constraints_from_openmm(s, omm_system, unit):
     nc = omm_system.getNumConstraints()
     if not nc:
         return
-    anum = s.atoms["anum"]
     cons = {}
     for k in range(nc):
         i, j, d = omm_system.getConstraintParameters(k)
         cons[(min(i, j), max(i, j))] = d.value_in_unit(unit.nanometer) / NM
+    _constraint_tables(s, cons)
+
+
+def _constraint_tables(s, cons):
+    """constraint_hoh and constraint_ahN tables from {(i, j): distance (Å)}.
+
+    A water oxygen constrained to two hydrogens that are constrained to each
+    other is a rigid water; other constraints are grouped by their heavier
+    atom.  Constrained stretch_harm terms are flagged.
+    """
+    anum = s.atoms["anum"]
     used = set()
     # rigid waters: three mutual constraints among O, H, H
     by_atom: dict[int, list] = {}

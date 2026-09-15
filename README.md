@@ -107,6 +107,11 @@ Implemented:
   the first listed force field wins for each molecule, `-m`/`-a` patches.
   Identical to viparr term by term on 11 systems; D residues get mirrored
   CMAP grids.
+- OpenMM XML force fields (`boonza.parameterize_openmm`, `boonza parameterize
+  -x`): amber14/amber19/CHARMM36 and water XML files applied natively, identical
+  term by term to OpenMM's `createSystem` (patches, disulfides, virtual sites,
+  NBFIX, CHARMM script impropers).  `boonza.diff(a, b, canonical=True)`
+  compares force fields made by different programs, e.g. viparr vs OpenMM.
 - RDKit bridge (`boonza.to_rdkit`, `from_rdkit`, `fragments_to_rdkit`,
   `sel.to_rdkit()`): atom indices, names and residue info are carried both ways;
   `assign_bond_orders` perceives bond orders and charges for ligands read

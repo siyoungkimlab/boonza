@@ -66,12 +66,15 @@ def _same(x, y, rtol, atol) -> np.ndarray:
 
 
 def diff(a, b, atom_map=None, rtol: float = 1e-6, atol: float = 1e-9, positions: bool = True,
-         tables=None) -> list[Difference]:  # fmt: skip
+         tables=None, canonical: bool = False) -> list[Difference]:  # fmt: skip
     """Differences between systems ``a`` and ``b`` (empty when they match).
 
     ``positions=False`` ignores coordinates, velocities and the cell;
-    ``tables`` limits the force-field tables compared.
+    ``tables`` limits the force-field tables compared.  ``canonical``
+    compares force fields made by different programs: see :func:`canonical_forcefield`.
     """
+    if canonical:
+        a, b = canonical_forcefield(a), canonical_forcefield(b)
     out: list[Difference] = []
     if atom_map is None:
         m = np.arange(a.natoms) if a.natoms == b.natoms else None
@@ -161,6 +164,74 @@ def _bonds(a, b, m) -> list[Difference]:
         detail = _quote(f"{i}-{j}: {ka[(i, j)]} != {kb[(i, j)]}" for i, j in changed)
         out.append(Difference("bonds", f"order differs for {len(changed)} bonds: {detail}"))
     return out
+
+
+def canonical_forcefield(system):
+    """A copy of ``system`` whose force field has one form for each interaction.
+
+    Programs write the same force field differently: one periodic torsion
+    term per periodicity or several per row, k with phase 0 or -k with phase
+    180, 1-4 electrostatics and Lennard-Jones in one term or two, a sigma for
+    atoms without Lennard-Jones or not.  Here every ``dihedral_trig`` and
+    ``improper_trig`` term of an atom tuple (read in either direction) is
+    summed into the Fourier coefficients of table ``dihedral_fourier``
+    (E = c0 + sum_n a_n cos(n phi) + b_n sin(n phi)), ``pair_12_6_es`` terms
+    are summed per atom pair, sigma is 0 where epsilon is 0, and terms whose
+    energy is zero are dropped, so :func:`diff` sees only differences that
+    change the energy.
+    """
+    c = system.copy()
+    fourier: dict[tuple, np.ndarray] = {}
+    for name in ("dihedral_trig", "improper_trig"):
+        t = c.tables.get(name)
+        if t is None:
+            continue
+        phase = np.radians(t.values("phi0"))
+        fcs = np.column_stack([t.values(f"fc{n}") for n in range(7)])
+        for atoms, p, row in zip(t.atoms.tolist(), phase.tolist(), fcs.tolist(), strict=True):
+            key = min(tuple(atoms), tuple(atoms[::-1]))
+            v = fourier.setdefault(key, np.zeros(13))
+            v[0] += row[0]
+            for n in range(1, 7):
+                v[n] += row[n] * np.cos(p)
+                v[6 + n] += row[n] * np.sin(p)
+        c.del_table(name)
+    if fourier:
+        props = ["c0", *[f"a{n}" for n in range(1, 7)], *[f"b{n}" for n in range(1, 7)]]
+        keys = [k for k, v in fourier.items() if np.abs(v).max() > 1e-10]
+        vals = np.array([fourier[k] for k in keys]).reshape(-1, 13)
+        vals[np.abs(vals) < 1e-10] = 0.0
+        t = c.add_table("dihedral_fourier", 4, "bond")
+        for p in props:
+            t.params.add_prop(p)
+        pids = t.params.add_params(len(keys), **{p: vals[:, k] for k, p in enumerate(props)})
+        t.add_terms(np.array(keys, np.int64).reshape(-1, 4), params=pids)
+    t = c.tables.get("pair_12_6_es")
+    if t is not None and len(t):
+        sums: dict[tuple, np.ndarray] = {}
+        vals = np.column_stack([t.values(p) for p in ("aij", "bij", "qij")])
+        for (i, j), v in zip(t.atoms.tolist(), vals, strict=True):
+            key = (min(i, j), max(i, j))
+            sums[key] = sums.get(key, 0.0) + v
+        keys = [k for k, v in sums.items() if np.abs(v).max() > 0]
+        c.del_table("pair_12_6_es")
+        t = c.add_table_from_schema("pair_12_6_es")
+        if keys:
+            v = np.array([sums[k] for k in keys])
+            pids = t.params.add_params(len(keys), aij=v[:, 0], bij=v[:, 1], qij=v[:, 2])
+            t.add_terms(np.array(keys, np.int64), params=pids)
+    for name in ("stretch_harm", "angle_harm", "improper_harm"):
+        t = c.tables.get(name)
+        if t is not None and len(t):
+            zero = np.flatnonzero(t.values("fc") == 0)
+            if len(zero):
+                t.delete_terms(zero)
+    nb = c.tables.get("nonbonded")
+    if nb is not None and {"sigma", "epsilon"} <= set(nb.params.props):
+        sigma = nb.params["sigma"].copy()
+        sigma[nb.params["epsilon"] == 0] = 0.0
+        nb.params["sigma"] = sigma
+    return c
 
 
 def _canonical(s, t, to_ref) -> np.ndarray:
@@ -307,7 +378,11 @@ def _compare_overrides(name, ta, tb, rtol, atol) -> list[Difference]:
         # params with the same numbers (e.g. atom types that differ only in
         # name) give the same key, so each key holds a list of overrides
         props = [p for p in t.params.props if p not in _IGNORED and _numeric(t.params[p])]
-        row = {i: tuple(float(t.params[p][i]) for p in props) for i in range(len(t.params))}
+        # round the keys: the same parameters computed two ways differ in the last bits
+        row = {
+            i: tuple(float(f"{float(t.params[p][i]):.9g}") for p in props)
+            for i in range(len(t.params))
+        }
         out: dict = {}
         for (p1, p2), vals in t.overrides.items():
             out.setdefault(tuple(sorted((row[p1], row[p2]))), []).append(vals)
