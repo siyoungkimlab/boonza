@@ -155,9 +155,18 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     assert len(lines) == 2 and lines[0].startswith("boonza md --config ")
     inp = boonza.load(sims[0] / "input.dms")
     assert int((inp.residues["name"] == "ACE").sum()) == 1 + 2 * 2  # protein + 2 x 2 copies
-    run_workflow(parse_arguments(["--config", str(sims[0] / "md.toml")]), log=quiet)
+    settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
+    assert settings.repulsion_selection == "chain LIG"  # the ligand copies' own chain
+    assert settings.dihedral_restraint_selection == "not chain LIG"  # the ligands swim
+    lig_rows = list(csv.DictReader((sims[0] / "ligands.csv").open()))
+    assert len(lig_rows) == 4 and lig_rows[0]["first_resid"] == "1"  # 2 types x 2 copies
+    assert set(inp.chains["name"].tolist()) == {"A", "LIG"}
+    run_workflow(settings, log=quiet)
     state = sims[0] / "md" / "state.csv"
     assert len(state.read_text().splitlines()) == 3
+    assert "LigandRepulsion" in (sims[0] / "md" / "system.xml").read_text()
+    restrained = list(csv.DictReader((sims[0] / "md" / "dihedral_restraints.csv").open()))
+    assert {r["chain_id"] for r in restrained} == {"A"}  # the peptide ligands are not held
     # prepared again, the started simulation is left alone
     swim.prepare(args, peptides, types=2, copies=2, log=quiet)
     assert len(state.read_text().splitlines()) == 3
@@ -172,6 +181,10 @@ def test_swim_with_a_parameterized_library(tmp_path, protein):
                             "aa.amber.ff14SB", "-f", "water.tip3p", "-f",
                             "ions.amber1jc.tip3p"])  # fmt: skip
     (sim,) = swim.prepare(args, lib, types=1, copies=2, log=quiet)
+    placed = boonza.load(sim / "input.dms")
+    lig = placed.residues["chain"] == int(np.flatnonzero(placed.chains["name"] == "LIG")[0])
+    assert set(placed.residues["name"][lig].tolist()) == {"LIG"}  # told apart by resid
+    assert parse_arguments(["--config", str(sim / "md.toml")]).dihedral_restraint == "ss"
     patch = tmp_path / "swim" / "ligands" / "L000" / "patch"
     assert (patch / "templates").is_file()
     from boonza.md.config import load_configuration

@@ -307,11 +307,11 @@ def load_library(path, forcefields) -> list[Ligand]:
         placed = None
         if not has_ff and shape.nresidues == 1:
             placed = split_peptide(shape, forcefields)
-        if placed is None:
+        if placed is None:  # residue LIG; the residue number tells ligands apart
             if has_ff or shape.nresidues == 1:
-                placed = _one_residue(shape, c)
+                placed = _one_residue(shape, "LIG")
             else:
-                res = [str(x) or c for x in shape.residues["name"].tolist()]
+                res = [str(x) or "LIG" for x in shape.residues["name"].tolist()]
                 per_atom = [res[r] for r in shape.atoms["residue"].tolist()]
                 placed = _rebuild(shape, per_atom, shape.atoms["residue"] + 1,
                                   [str(x) for x in shape.atoms["name"].tolist()])  # fmt: skip
@@ -401,7 +401,7 @@ def _rotation(rng) -> np.ndarray:
 
 
 def place(protein: System, ligands, copies: int, edge: float, rng, clearance: float = 3.0,
-          tries: int = 20000) -> System:  # fmt: skip
+          tries: int = 20000, chain: str = "LIG") -> System:  # fmt: skip
     """The protein with ``copies`` copies of each ligand, each at a random
     position and orientation in the cube of edge ``edge`` (Å) around the
     protein, its heavy atoms at least ``clearance`` Å from any other."""
@@ -427,6 +427,7 @@ def place(protein: System, ligands, copies: int, edge: float, rng, clearance: fl
                                  "larger padding_nm")  # fmt: skip
             copy = lig.copy()
             copy.positions = xyz
+            copy.chains["name"] = np.full(copy.nchains, chain)
             copy.residues["resid"] = np.arange(resid + 1, resid + 1 + copy.nresidues)
             resid += copy.nresidues
             out.append(copy)
@@ -438,7 +439,7 @@ def place(protein: System, ligands, copies: int, edge: float, rng, clearance: fl
 
 
 def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
-            clearance: float = 3.0, log=print) -> list[Path]:  # fmt: skip
+            clearance: float = 3.0, log=print, repel: bool = True) -> list[Path]:  # fmt: skip
     """Write one ``boonza md`` simulation per group of ligands into
     ``args.workdir``; returns their directories."""
     from .config import settings_of, write_settings
@@ -466,6 +467,8 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
     patches = ligand_patches(ligands, args, ffs, root / "ligands", jobs, log)
     host = gaff.host_index(ffs)
     extent = float((protein.positions.max(0) - protein.positions.min(0)).max())
+    used = set(protein.chains["name"].tolist())  # the ligands' own chain, for the repulsion
+    chain = next(c for c in ("LIG", *(f"LIG{k}" for k in range(2, 1000))) if c not in used)
     edge = extent + 20.0 * args.padding_nm
     with (root / "assignment.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
@@ -483,13 +486,29 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
         d.mkdir(exist_ok=True)
         rng = np.random.default_rng([int(args.seed), s])
         system = place(protein, [ligands[j].system for j in members], copies, edge, rng,
-                       clearance)  # fmt: skip
+                       clearance, chain=chain)  # fmt: skip
         save(system, d / "input.dms")
+        with (d / "ligands.csv").open("w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)  # which residues of chain LIG are which ligand
+            w.writerow(["chain", "first_resid", "last_resid", "ligand", "copy", "name", "smiles"])
+            resid = 0
+            for j in members:
+                for k in range(copies):
+                    n = ligands[j].system.nresidues
+                    w.writerow([chain, resid + 1, resid + n, ligands[j].code, k + 1,
+                                ligands[j].name, ligands[j].smiles])  # fmt: skip
+                    resid += n
         spec = [list(e) for e in args.forcefields]
         spec[host] += [str(patches[j].resolve()) for j in members if patches[j] is not None]
         settings = {**settings_of(args), "input_structure": str((d / "input.dms").resolve()),
                     "workdir": str((d / "md").resolve()), "forcefields": spec,
                     "box_nm": round(edge / 10.0, 4)}  # fmt: skip
+        if repel and "repulsion_selection" not in args.specified:
+            settings["repulsion_selection"] = f"chain {chain}"  # ligand copies apart
+        if "dihedral_restraint" not in args.specified:
+            settings["dihedral_restraint"] = "ss"  # the protein's helices and sheets hold
+        if "dihedral_restraint_selection" not in args.specified:
+            settings["dihedral_restraint_selection"] = f"not chain {chain}"  # ligands swim
         write_settings(d / "md.toml", settings)
     (root / "simulations.txt").write_text(
         "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims)
@@ -515,6 +534,8 @@ def main(argv=None) -> int:
         help="Å between a placed ligand's heavy atoms and any other (default: 3)",
     )
     g.add_argument("--run", action="store_true", help="run the simulations here, one by one")
+    g.add_argument("--no-repulsion", dest="no_repulsion", action="store_true",
+                   help="let ligand copies stick together (by default they repel)")  # fmt: skip
     args = parse_arguments(argv, parser)
     x = args.extra
     if "workdir" not in args.specified:
@@ -523,7 +544,8 @@ def main(argv=None) -> int:
         if "ligands" not in x:
             raise ValueError("give the ligands with --ligands")
         sims = prepare(args, x["ligands"], x.get("types", 5), x.get("copies", 3),
-                       x.get("jobs", 1), x.get("clearance", 3.0))  # fmt: skip
+                       x.get("jobs", 1), x.get("clearance", 3.0),
+                       repel=not x.get("no_repulsion", False))  # fmt: skip
         if x.get("run"):
             for d in sims:
                 print(f"== {d}")

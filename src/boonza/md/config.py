@@ -91,6 +91,10 @@ DEFAULTS: dict = {
     "hmr": False,
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
+    "dihedral_restraint_selection": None,
+    "repulsion_selection": None,
+    "repulsion_distance_nm": 0.5,
+    "repulsion_kJ": 500.0,
     "seed": 0,
     "precision": "mixed",
     "platform": None,
@@ -124,6 +128,8 @@ _NUMBERS = {
     "pocket_cutoff_nm",
     "contact_cutoff_nm",
     "detach_cutoff_nm",
+    "repulsion_distance_nm",
+    "repulsion_kJ",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
 _BOOLEANS = {"hmr", "early_stop"}
@@ -314,11 +320,24 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         ("--pocket-cutoff-nm", "pocket_cutoff_nm", "target-to-pocket cutoff (nm)"),
         ("--contact-cutoff-nm", "contact_cutoff_nm", "contact distance (nm)"),
         ("--detach-cutoff-nm", "detach_cutoff_nm", "detachment distance (nm)"),
+        ("--repulsion-distance-nm", "repulsion_distance_nm", "repulsion wall distance (nm)"),
+        ("--repulsion-kJ", "repulsion_kJ", "repulsion strength (kJ/mol/nm^2)"),
     ]
     for opt, dest, text in floats:
         default = f"; default: {d[dest]}" if d[dest] is not None else ""
         p.add_argument(opt, dest=dest, type=float, help=text + default)
     p.add_argument("--seed", type=int, help="random seed (default: 0)")
+    p.add_argument(
+        "--dihedral-restraint-selection",
+        dest="dihedral_restraint_selection",
+        help="restrain only torsions whose atoms this selects, e.g. 'protein' (default: all)",
+    )
+    p.add_argument(
+        "--repulsion-selection",
+        dest="repulsion_selection",
+        help="molecules kept from sticking together (heavy atoms of different ones repel), "
+        "e.g. 'chain L'",
+    )
     p.add_argument(
         "--confirmation-checks",
         dest="confirmation_checks",
@@ -442,7 +461,7 @@ def finish(args) -> None:
         "contact_cutoff_nm",
         "detach_cutoff_nm",
     ]
-    for key in positive + ["cutoff_nm", "box_nm"]:
+    for key in positive + ["cutoff_nm", "box_nm", "repulsion_distance_nm", "repulsion_kJ"]:
         v = getattr(args, key)
         if v is not None and (not math.isfinite(v) or v <= 0):
             raise ValueError(f"'{key}' must be positive")
@@ -587,7 +606,15 @@ hmr = false
 # Restrain backbone phi/psi to the input: none, bb, or ss (helices and sheets).
 dihedral_restraint = "none"
 dihedral_restraint_kJ = 20.0
+# Only torsions whose atoms this selects (boonza swim: not the ligands):
+# dihedral_restraint_selection = "not chain LIG"
 seed = 0
+
+# Keep the molecules a selection picks (ligand copies) from sticking together:
+# E = k (d0 - r)^2 between heavy atoms of different ones closer than d0.
+# repulsion_selection = "chain L"
+repulsion_distance_nm = 0.5
+repulsion_kJ = 500.0
 
 # GPU precision: mixed, single or double. Left out, a platform that cannot
 # honour mixed falls back to its own; set, it is an error.
