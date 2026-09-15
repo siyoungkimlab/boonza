@@ -200,7 +200,7 @@ def test_unmatched_molecules_and_missing_parameters(tmp_path):
     with pytest.raises(viparr.ViparrError, match="No match found for table 'stretch_harm'"):
         viparr.parameterize(s, [ff])
     with pytest.warns(viparr.ViparrWarning, match="stretch_harm"):
-        p = viparr.parameterize(s, [ff], fatal=False)
+        p = viparr.parameterize(s, [ff], fatal=False, constraints=False)
     assert len(p.table("stretch_harm")) == s.nbonds - 2
 
 
@@ -243,6 +243,29 @@ def test_virtual_sites(tmp_path):
     assert p.table("virtual_lc3").atoms.tolist() == [[3, 0, 1, 2]]
     assert len(p.table("exclusion")) == 6  # every pair of the four particles
     assert viparr.parameterize(w, [ff], reorder_ids=True).atoms["anum"].tolist() == [8, 0, 1, 1]
+
+
+def test_constraints(tmp_path):
+    s, ids = _butane_water()
+    p = viparr.parameterize(s, [_ff(tmp_path)])
+    tables = {n: p.table(n) for n in p.table_names if n.startswith("constraint")}
+    assert {n: len(t) for n, t in tables.items()} == {
+        "constraint_ah3": 2, "constraint_ah2": 2, "constraint_hoh": 1}  # fmt: skip
+    c1 = ids[(1, "C1")]
+    (row,) = [r for r in tables["constraint_ah3"].atoms.tolist() if r[0] == c1]
+    assert sorted(row[1:]) == sorted(ids[(1, h)] for h in ("H11", "H12", "H13"))
+    assert tables["constraint_ah3"].params.row(0) == {"r1": 1.11, "r2": 1.11, "r3": 1.11}
+    assert tables["constraint_hoh"].params.row(0) == {"theta": 104.52, "r1": 0.9572, "r2": 0.9572}
+    st, at = p.table("stretch_harm"), p.table("angle_harm")
+    assert st.values("constrained").sum() == 10 + 2  # every C-H and O-H bond
+    assert at.values("constrained").sum() == 1  # the water angle
+    _, omm, _ = boonza.to_openmm(p)
+    assert omm.getNumConstraints() == 10 + 3  # rigid water: O-H, O-H and H-H
+    bare = viparr.parameterize(s, [_ff(tmp_path)], constraints=False)
+    assert not any(n.startswith("constraint") for n in bare.table_names)
+    q = p.copy()
+    viparr.build_constraints(q, exclude=("hoh",))
+    assert "constraint_hoh" not in q.table_names or not len(q.table("constraint_hoh"))
 
 
 def test_mirrored_cmap_grid():
@@ -325,7 +348,7 @@ def test_ff14sb_matches_openmm_amber14():
     ff = _public("aa.amber.ff14SB")
     ff.rules.es_scale = [0.0, 0.0, 1 / 1.2]  # the file rounds 1/1.2 to 0.8333
     ref = _openmm_protein("amber14-all.xml")
-    ours = viparr.parameterize(ref, [ff])
+    ours = viparr.parameterize(ref, [ff], constraints=False)
     a, b = boonza.openmm_energies(ref), boonza.openmm_energies(ours)
     for term in ("stretch_harm", "angle_harm"):
         assert b[term] == pytest.approx(a[term], abs=1e-6)
@@ -337,7 +360,7 @@ def test_ff14sb_matches_openmm_amber14():
 def test_c36m_matches_openmm_charmm36_2024():
     ff = _public("aa.charmm.c36m")
     ref = _openmm_protein("charmm36_2024.xml")
-    ours = viparr.parameterize(ref, [ff])
+    ours = viparr.parameterize(ref, [ff], constraints=False)
     a, b = boonza.openmm_energies(ref), boonza.openmm_energies(ours)
     for term in ("stretch_harm", "angle_harm", "torsiontorsion_cmap", "nonbonded_vdw"):
         assert b[term] == pytest.approx(a[term], abs=1e-4)
@@ -386,7 +409,7 @@ def test_matches_viparr(tmp_path, case):
         pytest.skip(f"{inp} not found (set BOONZA_VIPARR_TESTS)")
     out = tmp_path / "viparr.dms"
     env = {**os.environ, "VIPARR_FFPATH": ":".join(map(str, FFPATH))}
-    subprocess.run([*VIPARR.split(), str(inp), str(out), *args, "--without-constraints"],
+    subprocess.run([*VIPARR.split(), str(inp), str(out), *args],
                    check=True, capture_output=True, env=env)  # fmt: skip
     with pytest.warns() if case == "priority" else _nothing():
         ours = _ours(inp, args)

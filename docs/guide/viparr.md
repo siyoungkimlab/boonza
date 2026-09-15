@@ -81,6 +81,12 @@ p = boonza.parameterize(s, [ildn, "water.tip3p", "ions.amber1jc.tip3p"])
   to `pair_12_6_es` (with `vdw1_14` types where the force field has them,
   as CHARMM does), `vdw2` rows become NBFIX overrides, and Urey-Bradley and
   `improper_trig` terms join `stretch_harm` and `dihedral_trig`.
+- Constraints, as viparr adds them by default: each heavy atom with its
+  hydrogens becomes a `constraint_ahN` term and each water a rigid
+  `constraint_hoh`, with the lengths and angle of the bonds and angle they
+  replace; those terms are marked `constrained`, and `to_openmm` makes them
+  OpenMM constraints. `constraints=False` (`--without-constraints`) leaves
+  them out; `boonza.build_constraints` adds them to any parameterized system.
 - Masses come from the atom types; then, as viparr does by default, all atoms
   of an element get the median of their masses (`fix_masses=False` keeps
   them). Virtual sites are appended after the real atoms
@@ -98,9 +104,8 @@ p = boonza.parameterize(s, [ildn, "water.tip3p", "ions.amber1jc.tip3p"])
 - **Two CMAP force fields.** When two force fields in one run both have CMAP
   tables, viparr re-points the first one's CMAP terms to the second one's
   grids. boonza keeps each force field's own grids.
-- Not done: building constraints (viparr's default; pass
-  `--without-constraints` to viparr to compare), parameterizing only a
-  selection, prochiral atom renaming, and ligand force fields.
+- Not done: parameterizing only a selection, prochiral atom renaming, and
+  ligand force fields.
 
 ## What the checks found in the force fields
 

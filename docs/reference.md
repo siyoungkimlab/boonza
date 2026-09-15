@@ -648,6 +648,19 @@ the spread of the block means.  It grows with the block size until blocks
 are longer than the correlation time, then levels off at the true error
 (``estimate``).
 
+### `boonza.build_constraints(system: 'System', atoms=None, keep: 'bool' = False, exclude=()) -> 'None'`
+
+Add viparr's constraints to a parameterized system, in place.
+
+A heavy atom and the hydrogens bonded to it become one ``constraint_ahN``
+term (heavy atom first, lengths from ``stretch_harm``); a water oxygen
+with two hydrogens becomes ``constraint_hoh`` (with the H-O-H angle from
+``angle_harm``). The ``stretch_harm`` and ``angle_harm`` terms they
+replace get ``constrained = 1``, so :func:`boonza.to_openmm` turns them
+into OpenMM constraints (``keep=True`` leaves them unconstrained).
+``atoms`` limits the atoms considered; ``exclude`` skips kinds such as
+``"hoh"`` or ``"ah1"``. Existing constraints of those atoms are replaced.
+
 ### `boonza.contact_frequency(system, sel1, sel2=None, positions=None, cutoff: 'float' = 4.5, level: 'str' = 'residue', periodic: 'bool' = True)`
 
 How often each pair is in contact: (rows, cols, fraction of frames).
@@ -762,7 +775,7 @@ replaced water's mass-weighted center, in a new ct: counterions in chain
 ``chain`` and the others in ``chain2``, numbered from 1.  Unlike msys,
 ions get their element mass.
 
-### `boonza.parameterize(system: 'System', forcefields, *, rename_atoms: 'bool' = False, rename_residues: 'bool' = False, fix_masses: 'bool' = True, fatal: 'bool' = True, cmap_chirality: 'bool' = True, reorder_ids: 'bool' = False, path=None) -> 'System'`
+### `boonza.parameterize(system: 'System', forcefields, *, rename_atoms: 'bool' = False, rename_residues: 'bool' = False, fix_masses: 'bool' = True, fatal: 'bool' = True, cmap_chirality: 'bool' = True, reorder_ids: 'bool' = False, constraints: 'bool' = True, path=None) -> 'System'`
 
 A copy of ``system`` with a force field from viparr force fields.
 
@@ -779,7 +792,8 @@ the median of their masses, as viparr does by default. ``fatal=False``
 turns missing parameters into warnings. ``cmap_chirality=False`` applies
 L CMAP grids to D residues as viparr does. ``reorder_ids`` puts pseudo
 particles right after their parent atoms (they are appended otherwise).
-Constraints are not added.
+``constraints`` adds viparr's constraints (see :func:`build_constraints`),
+as viparr does by default.
 
 ### `boonza.pca(system, positions=None, sel='name CA', align: 'bool' = True, n_components=None) -> 'PCA'`
 

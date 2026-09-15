@@ -240,7 +240,8 @@ def _parameterize(args) -> int:
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
                             cmap_chirality=not args.viparr_cmap,
-                            reorder_ids=args.reorder_ids)  # fmt: skip
+                            reorder_ids=args.reorder_ids,
+                            constraints=not args.without_constraints)  # fmt: skip
     boonza.save(s, args.output)
     tables = ", ".join(f"{n} {len(s.table(n))}" for n in s.table_names)
     print(f"wrote {args.output}: {s.natoms} atoms; {tables}")
@@ -384,6 +385,11 @@ def _parser() -> argparse.ArgumentParser:
         "--viparr-cmap", action="store_true", help="give D residues the L CMAP grid, as viparr does"
     )
     q.add_argument("--reorder-ids", action="store_true", help="put pseudos after their parents")
+    q.add_argument(
+        "--without-constraints",
+        action="store_true",
+        help="no constraint_ahN/constraint_hoh tables (viparr adds them)",
+    )
     q.set_defaults(run=_parameterize)  # fmt: skip
 
     q = sub.add_parser("drmsd", help="pocket-ligand distance RMSD, symmetry-corrected")

@@ -72,6 +72,7 @@ from .validate import Problem, find_knots, validate  # noqa: E402
 from .view import MoleculeView, view  # noqa: E402
 from .viparr import (  # noqa: E402
     ViparrForcefield,
+    build_constraints,
     load_forcefield,
     merge_forcefields,
     parameterize,
@@ -87,6 +88,7 @@ __all__ = [
     "solvate",
     "viparr",
     "ViparrForcefield",
+    "build_constraints",
     "load_forcefield",
     "merge_forcefields",
     "parameterize",

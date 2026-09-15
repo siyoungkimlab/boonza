@@ -76,6 +76,7 @@ __all__ = [
     "ViparrError",
     "ViparrForcefield",
     "ViparrWarning",
+    "build_constraints",
     "find_forcefield",
     "list_forcefields",
     "load_forcefield",
@@ -1657,10 +1658,134 @@ def _reorder_ids(s: System) -> System:
     return s
 
 
+def build_constraints(system: System, atoms=None, keep: bool = False, exclude=()) -> None:
+    """Add viparr's constraints to a parameterized system, in place.
+
+    A heavy atom and the hydrogens bonded to it become one ``constraint_ahN``
+    term (heavy atom first, lengths from ``stretch_harm``); a water oxygen
+    with two hydrogens becomes ``constraint_hoh`` (with the H-O-H angle from
+    ``angle_harm``). The ``stretch_harm`` and ``angle_harm`` terms they
+    replace get ``constrained = 1``, so :func:`boonza.to_openmm` turns them
+    into OpenMM constraints (``keep=True`` leaves them unconstrained).
+    ``atoms`` limits the atoms considered; ``exclude`` skips kinds such as
+    ``"hoh"`` or ``"ah1"``. Existing constraints of those atoms are replaced.
+    """
+    s = system
+    n = s.natoms
+    sel = np.arange(n) if atoms is None else np.unique(np.asarray(getattr(atoms, "ids", atoms)))
+    insel = np.zeros(n, bool)
+    insel[sel] = True
+    for name in list(s.table_names):
+        t = s.table(name)
+        if t.category == "constraint" and len(t):
+            hit = np.flatnonzero(insel[t.atoms].any(axis=1))
+            if len(hit):
+                t.delete_terms(hit)
+    taken = np.zeros(n, bool)
+    for name in s.table_names:
+        t = s.table(name)
+        if t.category == "constraint" and len(t):
+            a = t.atoms.ravel()
+            if len(np.unique(a)) != len(a) or taken[a].any():
+                raise ViparrError("Existing constraints in system overlap")
+            taken[a] = True
+    anum = s.atoms["anum"].tolist()
+    nbrs: list[list[int]] = [[] for _ in range(n)]
+    for i, j in zip(s.bonds["i"].tolist(), s.bonds["j"].tolist(), strict=True):
+        nbrs[i].append(j)
+        nbrs[j].append(i)
+    st, at = s.tables.get("stretch_harm"), s.tables.get("angle_harm")
+    bond_terms: dict[tuple[int, int], list[int]] = {}
+    angle_terms: dict[frozenset, list[int]] = {}
+    if st is not None:
+        for k, (i, j) in enumerate(st.atoms.tolist()):
+            bond_terms.setdefault((min(i, j), max(i, j)), []).append(k)
+        r0 = st.values("r0")
+    if at is not None:
+        for k, a in enumerate(at.atoms.tolist()):
+            angle_terms.setdefault(frozenset(a), []).append(k)
+        theta0 = at.values("theta0")
+
+    def one(found, what):
+        if len(found) != 1:
+            many = "Multiple" if found else "No"
+            raise ViparrError(f"Cannot build constraint: {many} {what}")
+        return found[0]
+
+    groups: dict[str, list] = {}
+    cbonds: list[int] = []
+    cangles: list[int] = []
+    done = np.zeros(n, bool)
+    for a in sel.tolist():
+        if anum[a] == 0:
+            continue
+        if anum[a] == 1:  # a hydrogen stands for its heavy atom
+            a = next((b for b in nbrs[a] if anum[b] > 1), -1)
+            if a < 0:
+                continue
+        if done[a]:
+            continue
+        done[a] = True
+        hs = [b for b in nbrs[a] if anum[b] == 1]
+        if not hs:
+            continue
+        hoh = anum[a] == 8 and len(hs) == 2 and sum(1 for b in nbrs[a] if anum[b] > 0) == 2
+        kind = "hoh" if hoh else f"ah{len(hs)}"
+        if kind in exclude:
+            continue
+        group = [a, *(sorted(hs) if hoh else hs)]
+        if taken[group].any():
+            raise ViparrError(f"Constraint with heavy atom {a} would overlap other constraints")
+        taken[group] = True
+        if st is None or (hoh and at is None):
+            raise ViparrError(
+                "Must have stretch_harm and angle_harm terms before adding constraints"
+            )
+        values = []
+        if hoh:
+            k = one(angle_terms.get(frozenset(group), []),
+                    f"angle_harm terms for water ({group[1]}, {a}, {group[2]})")  # fmt: skip
+            cangles.append(k)
+            values.append(float(theta0[k]))
+        for h in group[1:]:
+            k = one(
+                bond_terms.get((min(a, h), max(a, h)), []),
+                f"stretch_harm terms for bond ({a}, {h})",
+            )
+            cbonds.append(k)
+            values.append(float(r0[k]))
+        groups.setdefault(f"constraint_{kind}", []).append((group, tuple(values)))
+    for name, items in groups.items():
+        if name in TERM_SCHEMAS:
+            t = s.add_table_from_schema(name)
+        else:
+            t = s.add_table(name, len(items[0][0]), "constraint")
+            for k in range(1, len(items[0][0])):
+                t.params.add_prop(f"r{k}")
+        uniq = list(dict.fromkeys(v for _, v in items))
+        where = {v: k for k, v in enumerate(uniq)}
+        arr = np.array(uniq, np.float64)
+        pids = t.params.add_params(
+            len(uniq), **{c: arr[:, k] for k, c in enumerate(t.params.props)}
+        )
+        t.add_terms(np.array([g for g, _ in items], np.int64),
+                    params=pids[[where[v] for _, v in items]])  # fmt: skip
+    for table, rows in ((st, cbonds), (at, cangles)):
+        if not rows:
+            continue
+        if "constrained" not in table.term_props:
+            table.add_term_prop("constrained", "int")
+        flag = table.values("constrained")
+        flag[insel[table.atoms].any(axis=1)] = 0
+        if not keep:
+            flag[rows] = 1
+        table._t.set("constrained", flag)
+
+
 def parameterize(system: System, forcefields, *, rename_atoms: bool = False,
                  rename_residues: bool = False, fix_masses: bool = True, fatal: bool = True,
                  cmap_chirality: bool = True, reorder_ids: bool = False,
-                 path=None) -> System:  # fmt: skip
+                 constraints: bool = True, path=None) -> System:  # fmt: skip
     """A copy of ``system`` with a force field from viparr force fields.
 
     ``forcefields`` is a list of :class:`ViparrForcefield` objects, names in
@@ -1676,7 +1801,8 @@ def parameterize(system: System, forcefields, *, rename_atoms: bool = False,
     turns missing parameters into warnings. ``cmap_chirality=False`` applies
     L CMAP grids to D residues as viparr does. ``reorder_ids`` puts pseudo
     particles right after their parent atoms (they are appended otherwise).
-    Constraints are not added.
+    ``constraints`` adds viparr's constraints (see :func:`build_constraints`),
+    as viparr does by default.
     """
     ffs = [ff if isinstance(ff, ViparrForcefield) else load_forcefield(ff, path)
            for ff in ([forcefields] if isinstance(forcefields, str | os.PathLike | ViparrForcefield)
@@ -1685,6 +1811,8 @@ def parameterize(system: System, forcefields, *, rename_atoms: bool = False,
         raise ViparrError("no force fields given")
     run = _Parameterizer(system, ffs, rename_atoms, rename_residues, fatal)
     s = run.run(cmap_chirality)
+    if constraints:
+        build_constraints(s)
     if fix_masses:
         _fix_masses(s)
     if reorder_ids:

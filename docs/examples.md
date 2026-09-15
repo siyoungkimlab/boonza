@@ -792,15 +792,15 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.34 0.53 0.52 0.62]
-radius of gyration: 13.22 +- 0.03 A
-most flexible residues: [(879, 0.62), (844, 0.58), (808, 0.57), (807, 0.53), (843, 0.53)]
+C-alpha RMSD to frame 0 (A): [0.   0.37 0.56 0.63 0.57]
+radius of gyration: 13.24 +- 0.03 A
+most flexible residues: [(879, 0.63), (886, 0.54), (887, 0.54), (883, 0.47), (880, 0.46)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-149. -152. -143. -157.] / [159. 149. 146. 158.]
-hydrogen bonds per frame: [50, 44, 41, 38, 40]
+residue 830 phi/psi over time: [-145. -144. -138. -135.] / [160. 151. 157. 157.]
+hydrogen bonds per frame: [53, 46, 38, 40, 32]
     THR836:OG1 -> THR848:OG1   present in 100% of frames
     THR852:OG1 -> ASP854:OD1   present in 100% of frames
-    THR891:OG1 -> LYS864:O     present in 100% of frames
+     SER875:OG -> ASP804:O     present in 100% of frames
 ```
 
 (example-10-periodic-boxes)=
@@ -1829,8 +1829,8 @@ Output:
 ```text
 69 force fields, e.g. aa.DES-Amber, aa.DES-Amber-SF1.0, aa.DES-Amber_pe3.2, ...
 <ViparrForcefield aa.charmm.c36m: 426 templates; angle_harm 3260, dihedral_trig 6018, improper_harm 239, mass 383, stretch_harm 1099, torsiontorsion_cmap 8, ureybradley_harm 765, vdw1 383, vdw1_14 74, vdw2 74; plugins exclusions, mass, bonds, angles, ureybradley, propers, impropers, cmap, vdw1, vdw2>
-angle_harm 234, dihedral_trig 301, exclusion 702, improper_harm 14, nonbonded 197, pair_12_6_es 298, stretch_harm 279, torsiontorsion_cmap 5
-energy 85.1 kcal/mol, CMAP -1.49
+angle_harm 234, constraint_ah1 23, constraint_ah2 11, constraint_ah3 5, constraint_hoh 27, dihedral_trig 301, exclusion 702, improper_harm 14, nonbonded 197, pair_12_6_es 298, stretch_harm 279, torsiontorsion_cmap 5
+energy 79.3 kcal/mol, CMAP -1.49
 aa.amber.ff14SB then aa.amber.ff99SB: dihedral energy -5640.29; warning: fragment 0 (H679C434N109O152S) was matched by multiple force fields; the first match takes precedence
 aa.amber.ff99SB then aa.amber.ff14SB: dihedral energy -5602.12; warning: fragment 0 (H679C434N109O152S) was matched by multiple force fields; the first match takes precedence
 ff99SB patched with ILDN: dihedral energy -5671.27
