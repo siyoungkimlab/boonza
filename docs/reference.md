@@ -730,8 +730,9 @@ residue pairing comes from the first frame.  ``apply`` moves ``mobile``
 
 ### `boonza.load_forcefield(name, path=None, require_rules: 'bool' = True) -> 'ViparrForcefield'`
 
-Read a viparr force field directory, given as a path or as a name in
-``path`` (default ``$VIPARR_FFPATH``).
+Read a viparr force field: a directory, a name in ``path`` (default
+``$VIPARR_FFPATH``), or a name in the viparr-ffpublic copy bundled with
+boonza (see :func:`bundled_version`).
 
 ``require_rules=False`` reads a patch that has no ``rules`` file (for
 :func:`merge_forcefields`).

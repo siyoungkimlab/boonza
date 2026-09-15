@@ -792,15 +792,15 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.37 0.56 0.63 0.57]
-radius of gyration: 13.24 +- 0.03 A
-most flexible residues: [(879, 0.63), (886, 0.54), (887, 0.54), (883, 0.47), (880, 0.46)]
+C-alpha RMSD to frame 0 (A): [0.   0.34 0.55 0.57 0.63]
+radius of gyration: 13.27 +- 0.06 A
+most flexible residues: [(879, 0.72), (844, 0.65), (855, 0.6), (880, 0.53), (843, 0.5)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-145. -144. -138. -135.] / [160. 151. 157. 157.]
-hydrogen bonds per frame: [53, 46, 38, 40, 32]
-    THR836:OG1 -> THR848:OG1   present in 100% of frames
+residue 830 phi/psi over time: [-142. -145. -125. -143.] / [157. 149. 160. 164.]
+hydrogen bonds per frame: [51, 43, 42, 37, 32]
     THR852:OG1 -> ASP854:OD1   present in 100% of frames
-     SER875:OG -> ASP804:O     present in 100% of frames
+      TYR869:N -> PHE889:O     present in 100% of frames
+    ARG876:NH1 -> GLU834:OE2   present in 100% of frames
 ```
 
 (example-10-periodic-boxes)=
@@ -1757,30 +1757,25 @@ wrote examples/output/1HHO_summary.json and examples/output/1HHO_view.html
 ## 22_viparr_forcefields.py: viparr force fields: parameterize, set priorities, patch, and handle D residues
 
 viparr force fields are directories of JSON files; DESRES's viparr-ffpublic
-has about 70 (Amber, CHARMM, DES-Amber, lipids, nucleic acids, ions, waters).
-boonza parameterizes with them as viparr does: residues match templates by
-their bond graph, and every molecule takes the first force field that
-matches it.  Set VIPARR_FFPATH to viparr-ffpublic's ff directory.
+has about 70 (Amber, CHARMM, DES-Amber, lipids, nucleic acids, ions, waters),
+and boonza ships a copy.  boonza parameterizes with them as viparr does:
+residues match templates by their bond graph, and every molecule takes the
+first force field that matches it.
 
     python examples/22_viparr_forcefields.py
 
 ```python
-import os
 import warnings
-from pathlib import Path
 
 import numpy as np
 from _common import OUT, amber_system, water_box
 
 import boonza
 
-path = os.environ.get("VIPARR_FFPATH") or str(Path("~/viparr-ffpublic/ff").expanduser())
-names = boonza.viparr.list_forcefields(path)
-if not names:
-    print("skipped: set VIPARR_FFPATH to the ff directory of "
-          "https://github.com/DEShawResearch/viparr-ffpublic")  # fmt: skip
-    raise SystemExit(0)
+# The viparr-ffpublic force fields ship with boonza; $VIPARR_FFPATH can add others
+names = boonza.viparr.list_forcefields()
 print(f"{len(names)} force fields, e.g. {', '.join(names[:3])}, ...")
+print("bundled:", boonza.viparr.bundled_version())
 
 # A peptide (RDKit lists hydrogens last; keep each residue's atoms together)
 pep = boonza.peptide("AVLSKEF", conformation="helix")
@@ -1791,9 +1786,9 @@ system = pep.copy()
 system.append(waters)
 
 # 1. Parameterize: the peptide with CHARMM36m, the waters with TIP3P
-c36m = boonza.load_forcefield("aa.charmm.c36m", path)
+c36m = boonza.load_forcefield("aa.charmm.c36m")
 print(c36m)
-p = boonza.parameterize(system, [c36m, "water.tip3p_charmm"], path=path)
+p = boonza.parameterize(system, [c36m, "water.tip3p_charmm"])
 print(", ".join(f"{n} {len(p.table(n))}" for n in p.table_names))
 energy = boonza.openmm_energies(p)
 print(f"energy {energy['total']:.1f} kcal/mol, CMAP {energy['torsiontorsion_cmap']:.2f}")
@@ -1805,12 +1800,12 @@ protein = amber_system("1TEN.pdb")
 for order in (["aa.amber.ff14SB", "aa.amber.ff99SB"], ["aa.amber.ff99SB", "aa.amber.ff14SB"]):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        q = boonza.parameterize(protein, order, path=path)
+        q = boonza.parameterize(protein, order)
     dih = boonza.openmm_energies(q)["dihedral_trig"]
     print(f"{' then '.join(order)}: dihedral energy {dih:.2f}; warning: {caught[0].message}")
 
 # 3. Patching: ff99SB with ff99SB-ILDN's side-chain torsions (viparr's -m)
-ildn = boonza.merge_forcefields("aa.amber.ff99SB", "aa.amber.ff99SB-ILDN", path=path)
+ildn = boonza.merge_forcefields("aa.amber.ff99SB", "aa.amber.ff99SB-ILDN")
 e = boonza.openmm_energies(boonza.parameterize(protein, [ildn]))["dihedral_trig"]
 print(f"ff99SB patched with ILDN: dihedral energy {e:.2f}")
 
@@ -1828,6 +1823,7 @@ Output:
 
 ```text
 69 force fields, e.g. aa.DES-Amber, aa.DES-Amber-SF1.0, aa.DES-Amber_pe3.2, ...
+bundled: https://github.com/DEShawResearch/viparr-ffpublic commit c87d403ef9b176686fa95dd5ef51d78b92224b39 (2022-06-16)
 <ViparrForcefield aa.charmm.c36m: 426 templates; angle_harm 3260, dihedral_trig 6018, improper_harm 239, mass 383, stretch_harm 1099, torsiontorsion_cmap 8, ureybradley_harm 765, vdw1 383, vdw1_14 74, vdw2 74; plugins exclusions, mass, bonds, angles, ureybradley, propers, impropers, cmap, vdw1, vdw2>
 angle_harm 234, constraint_ah1 23, constraint_ah2 11, constraint_ah3 5, constraint_hoh 27, dihedral_trig 301, exclusion 702, improper_harm 14, nonbonded 197, pair_12_6_es 298, stretch_harm 279, torsiontorsion_cmap 5
 energy 79.3 kcal/mol, CMAP -1.49
