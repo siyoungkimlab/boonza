@@ -112,6 +112,12 @@ Implemented:
   term by term to OpenMM's `createSystem` (patches, disulfides, virtual sites,
   NBFIX, CHARMM script impropers).  `boonza.diff(a, b, canonical=True)`
   compares force fields made by different programs, e.g. viparr vs OpenMM.
+- Ligands, non-standard residues and covalent adducts (`boonza.gaff2_patch`,
+  `boonza parameterize --gaff2`): GAFF2 types and AM1-BCC charges from
+  AmberTools (no OpenFF), as a viparr patch merged onto an Amber protein force
+  field. Protein atoms keep the protein's types, charges and CMAP as far as
+  they match the parent residue; each residue gets its formal charge. A free
+  ligand reproduces tleap's prmtop term for term.
 - RDKit bridge (`boonza.to_rdkit`, `from_rdkit`, `fragments_to_rdkit`,
   `sel.to_rdkit()`): atom indices, names and residue info are carried both ways;
   `assign_bond_orders` perceives bond orders and charges for ligands read
