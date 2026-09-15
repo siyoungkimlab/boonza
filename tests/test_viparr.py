@@ -237,12 +237,15 @@ def test_virtual_sites(tmp_path):
     o = w.add_atom(r, name="O", anum=8, pos=(0.0, 0.0, 0.0)).id
     for x in (1.0, -1.0):
         w.add_bond(o, w.add_atom(r, name="H", anum=1, pos=(x, 0.5, 0.0)).id)
-    p = viparr.parameterize(w, [ff])
-    assert p.natoms == 4 and p.atoms["anum"][3] == 0 and p.atoms["name"][3] == "M"
-    assert p.atoms["charge"].tolist() == [0.0, 0.5, 0.5, -1.0]
-    assert p.table("virtual_lc3").atoms.tolist() == [[3, 0, 1, 2]]
+    p = viparr.parameterize(w, [ff])  # the pseudo follows its parent atom
+    assert p.atoms["anum"].tolist() == [8, 0, 1, 1] and p.atoms["name"][1] == "M"
+    assert p.atoms["charge"].tolist() == [0.0, -1.0, 0.5, 0.5]
+    assert p.table("virtual_lc3").atoms.tolist() == [[1, 0, 2, 3]]
     assert len(p.table("exclusion")) == 6  # every pair of the four particles
-    assert viparr.parameterize(w, [ff], reorder_ids=True).atoms["anum"].tolist() == [8, 0, 1, 1]
+    q = viparr.parameterize(w, [ff], reorder_ids=False)  # viparr's default: pseudos last
+    assert q.atoms["anum"].tolist() == [8, 1, 1, 0]
+    assert q.table("virtual_lc3").atoms.tolist() == [[3, 0, 1, 2]]
+    boonza.to_openmm(p)  # OpenMM needs each residue's atoms together
 
 
 def test_constraints(tmp_path):
@@ -409,7 +412,7 @@ def test_matches_viparr(tmp_path, case):
         pytest.skip(f"{inp} not found (set BOONZA_VIPARR_TESTS)")
     out = tmp_path / "viparr.dms"
     env = {**os.environ, "VIPARR_FFPATH": ":".join(map(str, FFPATH))}
-    subprocess.run([*VIPARR.split(), str(inp), str(out), *args],
+    subprocess.run([*VIPARR.split(), str(inp), str(out), *args, "--reorder-ids"],
                    check=True, capture_output=True, env=env)  # fmt: skip
     with pytest.warns() if case == "priority" else _nothing():
         ours = _ours(inp, args)

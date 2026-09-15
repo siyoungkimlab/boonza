@@ -89,8 +89,10 @@ p = boonza.parameterize(s, [ildn, "water.tip3p", "ions.amber1jc.tip3p"])
   them out; `boonza.build_constraints` adds them to any parameterized system.
 - Masses come from the atom types; then, as viparr does by default, all atoms
   of an element get the median of their masses (`fix_masses=False` keeps
-  them). Virtual sites are appended after the real atoms
-  (`reorder_ids=True` puts them after their parents).
+  them). Virtual sites go right after their parent atoms, so every residue's
+  atoms stay together as OpenMM requires (viparr's `--reorder-ids`);
+  `reorder_ids=False` (`--keep-ids`) appends them after all real atoms,
+  viparr's default.
 
 ## Where boonza differs from viparr
 

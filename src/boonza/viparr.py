@@ -1784,7 +1784,7 @@ def build_constraints(system: System, atoms=None, keep: bool = False, exclude=()
 
 def parameterize(system: System, forcefields, *, rename_atoms: bool = False,
                  rename_residues: bool = False, fix_masses: bool = True, fatal: bool = True,
-                 cmap_chirality: bool = True, reorder_ids: bool = False,
+                 cmap_chirality: bool = True, reorder_ids: bool = True,
                  constraints: bool = True, path=None) -> System:  # fmt: skip
     """A copy of ``system`` with a force field from viparr force fields.
 
@@ -1799,8 +1799,10 @@ def parameterize(system: System, forcefields, *, rename_atoms: bool = False,
     from the matched templates. ``fix_masses`` gives all atoms of an element
     the median of their masses, as viparr does by default. ``fatal=False``
     turns missing parameters into warnings. ``cmap_chirality=False`` applies
-    L CMAP grids to D residues as viparr does. ``reorder_ids`` puts pseudo
-    particles right after their parent atoms (they are appended otherwise).
+    L CMAP grids to D residues as viparr does. Pseudo particles go
+    right after their parent atoms, so every residue's atoms stay together as
+    OpenMM requires (viparr's ``--reorder-ids``); ``reorder_ids=False``
+    appends them after all real atoms, as viparr does by default.
     ``constraints`` adds viparr's constraints (see :func:`build_constraints`),
     as viparr does by default.
     """
