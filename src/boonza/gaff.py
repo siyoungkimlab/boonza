@@ -157,8 +157,10 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     Each residue is brought to its formal charge (``charges`` maps residue
     names to charges where the input has none) by shifting its GAFF2 atoms
     evenly. GAFF2 types are suffixed per group (``c3~1``) so groups never
-    share parameters; templates pin the elements of their external atoms, so
-    a Cys bound to a ligand takes its own template rather than CYX.
+    share parameters; templates pin the elements (and, across bonds other than
+    peptide bonds, the residue formulas) of their external atoms, so a Cys
+    bound to a ligand takes its own template rather than CYX, even when the
+    ligand is bound through a sulfur.
     ``workdir`` keeps the AmberTools files, one directory per template.
     """
     ffs = _load(forcefields, path)
@@ -586,7 +588,7 @@ class _Builder:
         nbtype = [types[index[a]][1] for a in ratoms]
         charge = [protein[a][0].charge[protein[a][1]] if a in protein else float(gcharge[index[a]])
                   for a in ratoms]  # fmt: skip
-        bonds, ext, pinned = [], {}, {}
+        bonds, ext, pinned, formulas = [], {}, {}, {}
         for a in ratoms:
             for b in self.nbrs[a]:
                 if self.anum[b] == 0:
@@ -603,6 +605,8 @@ class _Builder:
                     btype.append("")
                     nbtype.append("")
                     pinned[ext[b]] = self.anum[b]
+                    if not self._link(a, b):  # the partner's residue too: a ligand's S is no SG
+                        formulas[ext[b]] = self.P._formula_of(b)
                 bonds.append((local[a], ext[b]))
         where = {**local, **ext}
 
@@ -651,7 +655,7 @@ class _Builder:
             if atoms[2] in local and all(a in where for a in atoms):
                 tuples["impropers"].append(tuple(where[a] for a in atoms))
         return Template(name, names, anum, charge, btype, nbtype, [""] * len(names), bonds,
-                        tuples["impropers"], tuples["cmap"], [], [], pinned)  # fmt: skip
+                        tuples["impropers"], tuples["cmap"], [], [], pinned, formulas)  # fmt: skip
 
 
 def _unique_names(names: list[str], anum: list[int]) -> list[str]:

@@ -388,7 +388,10 @@ class Template:
     particles (atomic number 0). Tuples hold indices into that list.
     ``external_anum`` pins the element of external atoms: the atom of the
     neighbouring residue must have that atomic number (``external_elements``
-    in the template file, a boonza extension that viparr ignores).
+    in the template file, a boonza extension that viparr ignores), and
+    ``external_formula`` the chemical formula of that atom's residue
+    (``external_residues``), so that, say, a Cys bound to a ligand's sulfur
+    is told apart from a Cys in a disulfide.
     """
 
     name: str
@@ -404,6 +407,7 @@ class Template:
     exclusions: list[tuple[int, ...]] = field(default_factory=list)
     pseudos: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
     external_anum: dict[int, int] = field(default_factory=dict)
+    external_formula: dict[int, str] = field(default_factory=dict)
 
     def __post_init__(self):
         self._nbrs = [[] for _ in self.names]
@@ -522,8 +526,14 @@ def _template(name: str, js: dict) -> Template:
         if k is None or anum[k] != -1:
             raise ViparrError(f"external_elements: '{ext}' is not an external atom")
         pinned[k] = element if isinstance(element, int) else atomic_number(str(element))
+    formulas = {}
+    for ext, formula in (js.get("external_residues") or {}).items():
+        k = index.get(ext)
+        if k is None or anum[k] != -1:
+            raise ViparrError(f"external_residues: '{ext}' is not an external atom")
+        formulas[k] = str(formula)
     return Template(name, names, anum, charge, btype, nbtype, pset, bonds, tuples["impropers"],
-                    tuples["cmap"], tuples["exclusions"], pseudos, pinned)  # fmt: skip
+                    tuples["cmap"], tuples["exclusions"], pseudos, pinned, formulas)  # fmt: skip
 
 
 def _check_connected(name, names, bonds) -> None:
@@ -862,6 +872,8 @@ def _template_json(t: Template) -> dict:
                          for kind, (pid, *sites) in t.pseudos]  # fmt: skip
     if t.external_anum:
         js["external_elements"] = {t.names[k]: symbol(z) for k, z in t.external_anum.items()}
+    if t.external_formula:
+        js["external_residues"] = {t.names[k]: f for k, f in t.external_formula.items()}
     return js
 
 
@@ -1024,21 +1036,39 @@ def _mapped(t, tmap, ambiguous, tpl, what) -> tuple:
     return tuple(tmap[x] for x in t)
 
 
-def _externals_fit(t: Template, perm, atoms, anum, nbrs) -> bool:
-    """Whether the atoms bonded to a match's pinned external atoms have their elements."""
-    if not t.external_anum:
+def _externals_fit(t: Template, perm, atoms, anum, nbrs, formula_of) -> bool:
+    """Whether the atoms bonded to a match's pinned external atoms have their
+    elements and belong to residues with their formulas."""
+    if not t.external_anum and not t.external_formula:
         return True
     to_system = dict(perm)
     inside = set(atoms)
-    need: dict[int, Counter] = {}
-    for ext, z in t.external_anum.items():
+    need: dict[int, list[tuple]] = {}
+    for ext in sorted(set(t.external_anum) | set(t.external_formula)):
+        want = (t.external_anum.get(ext), t.external_formula.get(ext))
         for ti in t._nbrs[ext]:
-            need.setdefault(ti, Counter())[z] += 1
-    for ti, want in need.items():
-        have = Counter(anum[o] for o in nbrs[to_system[ti]] if o not in inside and anum[o] != 0)
-        if any(have[z] < k for z, k in want.items()):
+            need.setdefault(ti, []).append(want)
+    for ti, wants in need.items():
+        have = [o for o in nbrs[to_system[ti]] if o not in inside and anum[o] != 0]
+        if not _take_externals(wants, have, anum, formula_of):
             return False
     return True
+
+
+def _npins(t: Template) -> int:
+    return len(t.external_anum) + len(t.external_formula)
+
+
+def _take_externals(wants, have, anum, formula_of) -> bool:
+    """Whether each wanted (element, formula) gets a different atom of ``have``."""
+    if not wants:
+        return True
+    (z, f), rest = wants[0], wants[1:]
+    for k, o in enumerate(have):
+        if (z is None or anum[o] == z) and (f is None or formula_of(o) == f):
+            if _take_externals(rest, have[:k] + have[k + 1 :], anum, formula_of):
+                return True
+    return False
 
 
 class _Parameterizer:
@@ -1081,17 +1111,41 @@ class _Parameterizer:
         self.exclusion_params: dict[tuple, tuple[int, float, float]] = {}
         self.plugins: set[str] = set()
         self.match_cache: dict = {}
+        self._formulas: dict[int, str] = {}
+        self._res_atoms: dict[int, list[int]] | None = None
+        self._pins_formula: dict[int, bool] = {}
 
     # -- matching residues to templates ----------------------------------------
-    def _residue_key(self, atoms):
+    def _formula_of(self, atom: int) -> str:
+        """The chemical formula of the residue of ``atom``."""
+        r = self.residue[atom]
+        f = self._formulas.get(r)
+        if f is None:
+            if self._res_atoms is None:
+                self._res_atoms = {}
+                for a, rr in enumerate(self.residue):
+                    self._res_atoms.setdefault(rr, []).append(a)
+            f = self._formulas[r] = _formula(self.anum[a] for a in self._res_atoms[r])
+        return f
+
+    def _residue_key(self, atoms, formulas: bool = False):
         local = {a: k for k, a in enumerate(atoms)}
-        # atoms of other residues are keyed by element, which templates may pin
+        # atoms of other residues are keyed by what templates may pin: the
+        # element, and the residue's formula where a template pins that
+        if formulas:
+            return tuple((self.anum[a], tuple(local[o] if o in local
+                                              else (self.anum[o], self._formula_of(o))
+                                              for o in self.nbrs[a]))
+                         for a in atoms)  # fmt: skip
         return tuple((self.anum[a], tuple(local.get(o, -1 - self.anum[o]) for o in self.nbrs[a]))
                      for a in atoms)  # fmt: skip
 
     def _find(self, ff: ViparrForcefield, ffi: int, atoms: list[int]):
         """(template, [(template atom, system atom)]) or (None, reason)."""
-        key = (ffi, self._residue_key(atoms))
+        formulas = self._pins_formula.get(ffi)
+        if formulas is None:
+            formulas = self._pins_formula[ffi] = any(t.external_formula for t in ff.templates)
+        key = (ffi, self._residue_key(atoms, formulas))
         hit = self.match_cache.get(key)
         if hit is None:
             hit = self.match_cache[key] = self._find_uncached(ff, atoms)
@@ -1109,11 +1163,12 @@ class _Parameterizer:
         found = []
         for t in candidates:
             perm = t.graph.match(target)
-            if perm is not None and _externals_fit(t, perm, atoms, self.anum, self.nbrs):
+            if perm is not None and _externals_fit(t, perm, atoms, self.anum, self.nbrs,
+                                                   self._formula_of):  # fmt: skip
                 found.append((t, perm))
-        if len(found) > 1:  # templates that pin their external elements win (viparr: an error)
-            most = max(len(t.external_anum) for t, _ in found)
-            found = [f for f in found if len(f[0].external_anum) == most]
+        if len(found) > 1:  # templates that pin their external atoms win (viparr: an error)
+            most = max(_npins(t) for t, _ in found)
+            found = [f for f in found if _npins(f[0]) == most]
         if len(found) > 1:
             raise ViparrError(
                 f"Multiple templates {found[1][0].name} and {found[0][0].name} from a single "

@@ -72,10 +72,12 @@ templates, without running anything.
    on all atoms but SG, so SG alone takes the correction.
 
 The templates also record the element of the atom across each external bond
-(`external_elements` in the template file, which viparr ignores). When two
-templates match a residue, the one whose elements are checked wins, so the
-Cys above takes its own template rather than CYX, while the real disulfides
-still take CYX.
+and, across bonds other than peptide bonds, the formula of that atom's
+residue (`external_elements` and `external_residues` in the template file,
+which viparr ignores). When two templates match a residue, the one with more
+of these checks wins. So the Cys above takes its own template rather than
+CYX, while real disulfides still take CYX, even when the ligand is bound
+through a sulfur (a mixed disulfide).
 
 ## What the input needs
 
