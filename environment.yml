@@ -1,0 +1,21 @@
+# boonza with OpenMM and AmberTools (GAFF2 ligands), from conda-forge:
+#   conda env create -f environment.yml && conda activate boonza && pip install -e .
+name: boonza
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  # 2.4 and later need x86-64-v2 CPUs, which older HPC nodes lack
+  - numpy>=2.0,<2.4
+  - numba
+  - rdkit
+  - openmm>=8.1
+  - pandas
+  - networkx
+  - ambertools
+  - matplotlib
+  # only so the Python tools bundled with AmberTools find what they declare
+  - netcdf4
+  - pdb2pqr
+  - requests
+  - pip

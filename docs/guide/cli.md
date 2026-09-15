@@ -22,6 +22,7 @@ boonza parameterize in.dms out.dms -f aa.charmm.c36m -f water.tip3p_charmm   # v
 boonza parameterize in.dms out.dms -f aa.amber.ff99SB -m aa.amber.ff99SB-ILDN   # with a patch
 boonza parameterize in.dms out.dms -x amber19-all.xml -x amber19/opc.xml   # OpenMM XML force fields
 boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --gaff2   # + GAFF2 ligands
+boonza md protein.pdb --workdir run   # prepare and run MD; the same command resumes it
 boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two force fields
 ```
 

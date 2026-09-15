@@ -198,6 +198,38 @@ def test_pinned_residue_formula_tells_ligand_sulfur_from_disulfide(mixed):
 # ---- with AmberTools --------------------------------------------------------------
 
 
+LYS_ACETYL = (
+    "[CH3:1][C:2](=[O:3])[NH:4][C@@H:5]([CH3:6])[C:7](=[O:8])[NH:9][C@@H:10]([CH2:11][CH2:12]"
+    "[CH2:13][CH2:14][NH:15][C:20](=[O:21])[CH3:22])[C:16](=[O:17])[NH:18][CH3:19]",
+    ["ACE 1 CH3", "ACE 1 C", "ACE 1 O", "ALA 2 N", "ALA 2 CA", "ALA 2 CB", "ALA 2 C", "ALA 2 O",
+     "LYS 3 N", "LYS 3 CA", "LYS 3 CB", "LYS 3 CG", "LYS 3 CD", "LYS 3 CE", "LYS 3 NZ",
+     "LYS 3 C", "LYS 3 O", "NME 5 N", "NME 5 CH3", "LIG 4 C1", "LIG 4 O1", "LIG 4 C2"],
+)  # fmt: skip
+
+
+@needs_amber
+def test_protein_extent_and_drawing(tmp_path):
+    # an acetyl on Lys NZ: CG, CD and CE still look like lysine
+    s = _mapped(*LYS_ACETYL, "A")
+    got = {}
+    for extent in ("matched", "cb"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", viparr.ViparrWarning)
+            patch = gaff.gaff2_patch(s, ["aa.amber.ff19SB"], amberhome=AMBERHOME,
+                                     protein_extent=extent, draw=tmp_path / extent)  # fmt: skip
+        lys = next(t for t in patch.templates if t.name.endswith("_LYS"))
+        got[extent] = sorted(n for n, b, z in zip(lys.names, lys.btype, lys.anum, strict=True)
+                             if z > 1 and "~" in b)  # fmt: skip
+        out = boonza.parameterize(s, [viparr.merge_forcefields("aa.amber.ff19SB", patch)])
+        q, res = out.atoms["charge"], out.atoms["residue"]
+        assert np.allclose([q[res == r].sum() for r in range(out.nresidues)], 0, atol=1e-6)
+        png = tmp_path / extent / "covalent_LYS3+LIG4.png"
+        assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert got == {"matched": ["NZ"], "cb": ["CD", "CE", "CG", "NZ"]}
+    with pytest.raises(ValueError, match="protein_extent"):
+        gaff.gaff2_patch(s, ["aa.amber.ff19SB"], protein_extent="all")
+
+
 @needs_amber
 def test_sulfur_bound_ligand_leaves_disulfides_alone(mixed, tmp_path):
     host = viparr.load_forcefield("aa.amber.ff14SB")
@@ -221,10 +253,11 @@ def test_sulfur_bound_ligand_leaves_disulfides_alone(mixed, tmp_path):
 @needs_amber
 def test_free_ligand_reproduces_tleap(tmp_path):
     s = boonza.from_smiles("CC(=O)Oc1ccccc1C(=O)O", name="AIN")
-    b = gaff._Builder(s, [], run=dict(amberhome=AMBERHOME))
+    b = gaff._Builder(s, [], run=dict(amberhome=AMBERHOME), draw=tmp_path / "draw")
     patch = b.patch()
     ((frag, prmtop),) = b.runs
     assert frag == list(range(s.natoms))
+    assert b.drawings == [] and not (tmp_path / "draw").exists()  # not a covalent adduct
     out = boonza.parameterize(s, [patch], constraints=False)
     assert [d for d in boonza.diff(out, prmtop, canonical=True) if d.kind not in METADATA] == []
     assert np.allclose(out.atoms["charge"], prmtop.atoms["charge"], atol=1e-6)

@@ -118,6 +118,13 @@ Implemented:
   field. Protein atoms keep the protein's types, charges and CMAP as far as
   they match the parent residue; each residue gets its formal charge. A free
   ligand reproduces tleap's prmtop term for term.
+- Simulations (`boonza md`, replacing ommflow with its options and files):
+  viparr force fields (ff19SB with phosphorylated residues, TIP3P and Amber
+  ions by default) plus GAFF2 ligands, solvation and msys-style ions,
+  minimization, NVT and NPT equilibration, and production with checkpoints
+  that resumes toward an absolute target; hydrogen mass repartitioning,
+  backbone restraints, stopping when a binder leaves its pocket, and a
+  wall-time breakdown.
 - RDKit bridge (`boonza.to_rdkit`, `from_rdkit`, `fragments_to_rdkit`,
   `sel.to_rdkit()`): atom indices, names and residue info are carried both ways;
   `assign_bond_orders` perceives bond orders and charges for ligands read
