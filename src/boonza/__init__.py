@@ -10,6 +10,7 @@ __version__ = "0.1.0.dev0"
 
 from . import (  # noqa: E402
     analysis,
+    gaff,
     pbc,
     viparr,  # noqa: E402
 )
@@ -41,6 +42,7 @@ from .describe import ForceFieldReport, describe, topological_distances  # noqa:
 from .diff import Difference, canonical_forcefield, diff  # noqa: E402
 from .exclusions import update_exclusions  # noqa: E402
 from .ffxml import OpenMMForcefield, load_openmm_forcefield, parameterize_openmm  # noqa: E402
+from .gaff import find_unmatched, gaff2_patch  # noqa: E402
 from .glue import Glue, make_whole  # noqa: E402
 from .handles import Atom, AtomSel, Bond, Chain, Ct, Residue, StaleHandleError  # noqa: E402
 from .hbonds import HBonds, baker_hubbard, hbonds, wernet_nilsson  # noqa: E402
@@ -77,6 +79,7 @@ from .viparr import (  # noqa: E402
     load_forcefield,
     merge_forcefields,
     parameterize,
+    write_forcefield,
 )
 
 __all__ = [
@@ -93,6 +96,10 @@ __all__ = [
     "load_forcefield",
     "merge_forcefields",
     "parameterize",
+    "write_forcefield",
+    "gaff",
+    "find_unmatched",
+    "gaff2_patch",
     "OpenMMForcefield",
     "load_openmm_forcefield",
     "parameterize_openmm",

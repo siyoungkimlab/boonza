@@ -253,7 +253,28 @@ def _parameterize(args) -> int:
         else:
             ffs[-1] = viparr.merge_forcefields(ffs[-1], name, append_only=kind == "a",
                                                path=args.ffpath)  # fmt: skip
-    s = viparr.parameterize(_load(args.input), ffs, rename_atoms=args.rename_atoms,
+    system = _load(args.input)
+    if args.gaff2:
+        from boonza import gaff
+
+        charges = {}
+        for item in args.charge:
+            res, _, q = item.partition("=")
+            if not res or not q.lstrip("+-").isdigit():
+                raise SystemExit(f"--charge {item}: give RESNAME=CHARGE, e.g. LIG=-1")
+            charges[res] = int(q)
+        patch = gaff.gaff2_patch(system, ffs, charges=charges)
+        if args.save_patch:
+            viparr.write_forcefield(patch, args.save_patch)
+        names = ", ".join(t.name for t in patch.templates) or "none needed"
+        print(f"GAFF2 templates: {names}")
+        if ffs:
+            ffs[0] = viparr.merge_forcefields(ffs[0], patch)
+        else:
+            ffs = [patch]
+    elif args.charge or args.save_patch:
+        raise SystemExit("--charge and --save-patch go with --gaff2")
+    s = viparr.parameterize(system, ffs, rename_atoms=args.rename_atoms,
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
                             cmap_chirality=not args.viparr_cmap,
@@ -423,6 +444,20 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="no constraint_ahN/constraint_hoh tables (viparr adds them)",
     )
+    q.add_argument(
+        "--gaff2",
+        action="store_true",
+        help="GAFF2/AM1-BCC templates (AmberTools) for what the force fields cannot "
+        "match, ligands and covalent adducts included, merged onto the first -f",
+    )
+    q.add_argument(
+        "--charge",
+        action="append",
+        default=[],
+        metavar="RES=Q",
+        help="formal charge of a residue for --gaff2, where the input has none",
+    )
+    q.add_argument("--save-patch", metavar="DIR", help="write the --gaff2 templates as a viparr ff")
     q.set_defaults(run=_parameterize)  # fmt: skip
 
     q = sub.add_parser("drmsd", help="pocket-ligand distance RMSD, symmetry-corrected")
