@@ -8,6 +8,7 @@ tool, running the real program where possible. The test suite has 463 tests.
 | DMS, MAE read/write; clone, append | msys | full canonical dump of structure and every table |
 | OpenMM XML force fields (`parameterize_openmm`) | OpenMM `ForceField.createSystem` (via `from_openmm`) | every table term by term: amber14, amber19 (residue CMAPs, lipid21 1-4 script) and CHARMM36 2024 (patches, disulfides, script impropers, NBFIX, Urey-Bradley) on 1TEN and lysozyme; TIP4P-Ew and OPC water with ions and virtual sites; H-bond constraints and rigid water |
 | viparr force fields (`parameterize`, `merge_forcefields`) | viparr (built against msys) | every table term by term on 11 systems: CHARMM36m (solvated), ff14SB, ff19SB, ff99SB-ILDN, DES-Amber, lipid + ion NBFIX, TIP4P-Ew, TIP5P, a `-m` merge, first-match priority; energies of ff19SB and c36m against OpenMM's `amber19-all.xml` and `charmm36_2024.xml` |
+| GAFF2 templates (`gaff2_patch`) | AmberTools tleap prmtop; openmmforcefields `GAFFTemplateGenerator` (`gaff-2.11`) | a free ligand term by term against tleap's prmtop, before and after writing the patch; aspirin against openmmforcefields (the same charges and terms, one improper listed in another order); a Cys-acrylamide adduct: ff14SB types and charges kept on the Cys backbone, every GAFF2 term equal to tleap's, integer residue charges, ff19SB CMAP kept, stable MD; KRAS G12C-sotorasib (6OIM) with ff19SB: Cys12 keeps its ff19SB types and CMAP, integer residue charges, stable MD |
 | selection language | msys | msys's own selection test suite plus extra selections |
 | PDB, SDF read/write, bond guessing | msys | canonical dump |
 | mmCIF | gemmi | atom records, models, cell |
@@ -57,6 +58,7 @@ Their locations are set with environment variables:
 | `BOONZA_BIOPYTHON` | same | Biopython |
 | `BOONZA_CHIMERAX` | `/Applications/ChimeraX-1.11.app/Contents/bin/ChimeraX` | ChimeraX |
 | `BOONZA_CHARMM_GUI` | two folders in `~/Downloads` | CHARMM-GUI PSF systems |
+| `AMBERHOME` | the `antechamber` on `PATH` | AmberTools, for GAFF2 templates |
 
 ## Benchmarks
 

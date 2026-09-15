@@ -111,8 +111,14 @@ p = boonza.parameterize(s, [ildn, "water.tip3p", "ions.amber1jc.tip3p"])
 - **Two CMAP force fields.** When two force fields in one run both have CMAP
   tables, viparr re-points the first one's CMAP terms to the second one's
   grids. boonza keeps each force field's own grids.
-- Not done: parameterizing only a selection, prochiral atom renaming, and
-  ligand force fields.
+- **Templates that check their neighbours.** A template may record the
+  element of the atom across each external bond (`external_elements`, which
+  viparr ignores); when two templates of one force field match a residue, the
+  one that checks wins, where viparr stops with an error. The GAFF2 patches
+  of [Ligands and covalent adducts](ligands.md) use this.
+- Not done: parameterizing only a selection, and prochiral atom renaming.
+  Ligands get GAFF2 templates from AmberTools, see
+  [Ligands and covalent adducts](ligands.md).
 
 ## What the checks found in the force fields
 
@@ -136,7 +142,8 @@ boonza parameterize in.dms out.dms -f aa.amber.ff99SB -m aa.amber.ff99SB-ILDN -f
 
 `-f` adds a force field (in priority order), `-m`/`-a` patch the previous
 one, `--ffpath` sets where names are looked up, and `--viparr-cmap` keeps
-viparr's CMAP behaviour.
+viparr's CMAP behaviour. `--gaff2` adds GAFF2 templates for ligands and
+covalent adducts ([Ligands and covalent adducts](ligands.md)).
 
 ## Running simulations
 
