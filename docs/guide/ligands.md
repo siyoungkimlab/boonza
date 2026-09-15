@@ -54,7 +54,9 @@ templates, without running anything.
    computes AM1-BCC charges with sqm; parmchk2 writes every parameter the
    group uses from GAFF 2.11 (`gaff="2.2"` takes AmberTools' newer
    `gaff2.dat`), and tleap builds the topology, as openmmforcefields does
-   for its `gaff-2.11` generator.
+   for its `gaff-2.11` generator. GAFF 2.11 is `gaff211.dat` in newer
+   AmberTools and `gaff2.dat` in older ones; boonza tells them apart by the
+   version on the file's first line.
 4. **Protein atoms.** An amino acid (a residue in a chain, or one whose
    parent is named) keeps the protein force field's types and charges from
    its parent residue. The parent is, in order:

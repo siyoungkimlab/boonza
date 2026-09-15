@@ -42,8 +42,10 @@ from .viparr import (
 
 __all__ = ["AmberToolsError", "find_amber_tools", "find_unmatched", "gaff2_patch", "run_gaff2"]
 
-#: GAFF2 releases and their AmberTools parameter files.
-GAFF_FILES = {"2.11": "gaff211.dat", "2.2": "gaff2.dat"}
+#: GAFF2 releases and the AmberTools parameter files that may hold them, in
+#: order: newer AmberTools ship 2.11 as gaff211.dat and a later GAFF2 as
+#: gaff2.dat; older ones have only gaff2.dat, which is 2.11.
+GAFF_FILES = {"2.11": ("gaff211.dat", "gaff2.dat"), "2.2": ("gaff2.dat",)}
 _TOOLS = ("antechamber", "sqm", "parmchk2", "tleap")
 _PLUGINS = ["exclusions", "mass", "bonds", "angles", "vdw1", "propers", "impropers"]
 _VALENCE = {5: 3, 6: 4, 7: 3, 8: 2, 9: 1, 14: 4, 15: 3, 16: 2, 17: 1, 35: 1, 53: 1}
@@ -73,6 +75,35 @@ def find_amber_tools(amberhome=None) -> Path:
     )
 
 
+def _gaff_version(path: Path) -> str:
+    """The version on a GAFF parameter file's title line, e.g. "2.11"."""
+    with path.open(errors="replace") as fh:
+        title = fh.readline()
+    words = title.split("Version", 1)[1].split() if "Version" in title else []
+    return words[0].rstrip(",)") if words else "unknown"
+
+
+def gaff_parameters(home, gaff: str = "2.11") -> Path:
+    """The parameter file of the ``gaff`` release in the AmberTools at
+    ``home``, recognized by the version on its title line."""
+    if gaff not in GAFF_FILES:
+        raise ValueError(f"gaff must be one of {sorted(GAFF_FILES)}")
+    parm = Path(home) / "dat" / "leap" / "parm"
+    found = []
+    for name in GAFF_FILES[gaff]:
+        path = parm / name
+        if path.is_file():
+            version = _gaff_version(path)
+            if version == gaff or version.startswith(gaff + "."):
+                return path
+            found.append(f"{name} is version {version}")
+    have = "; ".join(found) if found else f"no {' or '.join(GAFF_FILES[gaff])}"
+    raise AmberToolsError(
+        f"GAFF {gaff} parameters are not in {parm} ({have}): use an AmberTools that has "
+        "them ('conda install -c conda-forge ambertools')"
+    )
+
+
 def _run(cmd: list[str], cwd: Path, env: dict, output: str) -> str:
     proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     log = proc.stdout + proc.stderr
@@ -98,9 +129,7 @@ def run_gaff2(fragment: System, net_charge: int, *, gaff: str = "2.11",
     if gaff not in GAFF_FILES:
         raise ValueError(f"gaff must be one of {sorted(GAFF_FILES)}")
     home = find_amber_tools(amberhome)
-    parm = home / "dat" / "leap" / "parm" / GAFF_FILES[gaff]
-    if not parm.exists():
-        raise AmberToolsError(f"{parm} is missing")
+    parm = gaff_parameters(home, gaff)
     env = {**os.environ, "AMBERHOME": str(home)}
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(workdir) if workdir is not None else Path(tmp)
