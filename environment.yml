@@ -1,5 +1,7 @@
 # boonza with OpenMM and AmberTools (GAFF2 ligands), from conda-forge:
-#   conda env create -f environment.yml && conda activate boonza && pip install -e .
+#   conda env create -f environment.yml && conda activate boonza && pip install -e . --no-deps
+# install.sh does the same, and pins OpenMM's CUDA release or version on request
+# (bash install.sh --help).
 name: boonza
 channels:
   - conda-forge
