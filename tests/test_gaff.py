@@ -122,7 +122,100 @@ def test_missing_amber_tools_is_reported(tmp_path):
         gaff.find_amber_tools(tmp_path)
 
 
+def _mapped(smi: str, spec: list[str], chain: str) -> boonza.System:
+    """A molecule from a SMILES whose atom map k names atom ``spec[k - 1]``
+    ("RES resid NAME"); hydrogens are named after their atom."""
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+
+    by_map = {k + 1: s.split() for k, s in enumerate(spec)}
+    mol = Chem.AddHs(Chem.MolFromSmiles(smi))
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 7
+    assert AllChem.EmbedMolecule(mol, params) >= 0
+    maps = [a.GetAtomMapNum() for a in mol.GetAtoms()]
+    count: dict = {}
+    for a in mol.GetAtoms():
+        if a.GetAtomicNum() > 1:
+            res, rid, nm = by_map[maps[a.GetIdx()]]
+        else:
+            res, rid, heavy = by_map[maps[a.GetNeighbors()[0].GetIdx()]]
+            k = count[(rid, heavy)] = count.get((rid, heavy), 0) + 1
+            nm = "H" if heavy == "N" and res != "LIG" else f"H{heavy}{k}"
+        a.SetMonomerInfo(Chem.AtomPDBResidueInfo(nm, residueName=res, residueNumber=int(rid),
+                                                 chainId=chain))  # fmt: skip
+    for a in mol.GetAtoms():
+        a.SetAtomMapNum(0)
+    s = boonza.from_rdkit(mol)
+    s.reorder_atoms(np.argsort(s.atoms["residue"], kind="stable"))
+    return s
+
+
+@pytest.fixture(scope="module")
+def mixed():
+    """ACE-ALA-CYS-ALA-NME whose Cys is bound to methanethiol (residue LIG, a
+    mixed disulfide), next to two ACE-CYS-NME joined by a real disulfide
+    (residues 7 and 8)."""
+    adduct = _mapped(
+        "[CH3:1][C:2](=[O:3])[NH:4][C@@H:5]([CH3:6])[C:7](=[O:8])[NH:9][C@@H:10]([CH2:11][S:12]"
+        "[S:15][CH3:16])[C:13](=[O:14])[NH:17][C@@H:18]([CH3:19])[C:20](=[O:21])[NH:22][CH3:23]",
+        ["ACE 1 CH3", "ACE 1 C", "ACE 1 O", "ALA 2 N", "ALA 2 CA", "ALA 2 CB", "ALA 2 C",
+         "ALA 2 O", "CYS 3 N", "CYS 3 CA", "CYS 3 CB", "CYS 3 SG", "CYS 3 C", "CYS 3 O",
+         "LIG 4 S1", "LIG 4 C1", "ALA 5 N", "ALA 5 CA", "ALA 5 CB", "ALA 5 C", "ALA 5 O",
+         "NME 6 N", "NME 6 CH3"], "A")  # fmt: skip
+    dimer = _mapped(
+        "[CH3:1][C:2](=[O:3])[NH:4][C@@H:5]([CH2:6][S:7][S:18][CH2:17][C@H:16]([NH:15][C:13]"
+        "(=[O:14])[CH3:12])[C:19](=[O:20])[NH:21][CH3:22])[C:8](=[O:9])[NH:10][CH3:11]",
+        ["ACE 1 CH3", "ACE 1 C", "ACE 1 O", "CYS 2 N", "CYS 2 CA", "CYS 2 CB", "CYS 2 SG",
+         "CYS 2 C", "CYS 2 O", "NME 3 N", "NME 3 CH3", "ACE 4 CH3", "ACE 4 C", "ACE 4 O",
+         "CYS 5 N", "CYS 5 CA", "CYS 5 CB", "CYS 5 SG", "CYS 5 C", "CYS 5 O", "NME 6 N",
+         "NME 6 CH3"], "B")  # fmt: skip
+    adduct.append(dimer)
+    names = adduct.residues["name"].tolist()
+    assert [names[r] for r in (2, 3, 7, 8)] == ["CYS", "LIG", "CYS", "CYS"]
+    return adduct
+
+
+def test_pinned_residue_formula_tells_ligand_sulfur_from_disulfide(mixed):
+    ff = viparr.load_forcefield("aa.amber.ff14SB")
+    cyx = ff.template("CYX")
+    sg_ext = next(i for i in cyx._nbrs[cyx.names.index("SG")] if cyx.anum[i] == -1)
+    lig = viparr._formula(mixed.atoms["anum"][mixed.residue_atoms(3)].tolist())
+
+    def found(formulas, residue):
+        t = viparr.Template("CYL", cyx.names, cyx.anum, cyx.charge, cyx.btype, cyx.nbtype,
+                            cyx.pset, cyx.bonds, cyx.impropers, external_anum={sg_ext: 16},
+                            external_formula=formulas)  # fmt: skip
+        both = viparr.ViparrForcefield("t", ff.rules, [*ff.templates, t], ff.params)
+        P = viparr._Parameterizer(mixed, [both], False, False, True)
+        return P._find(both, 0, mixed.residue_atoms(residue).tolist())[0].name
+
+    assert found({sg_ext: lig}, 2) == "CYL"  # the Cys bound to the ligand's sulfur
+    assert found({sg_ext: lig}, 7) == "CYX"  # a real disulfide
+    assert found({}, 7) == "CYL"  # the element alone cannot tell them apart
+
+
 # ---- with AmberTools --------------------------------------------------------------
+
+
+@needs_amber
+def test_sulfur_bound_ligand_leaves_disulfides_alone(mixed, tmp_path):
+    host = viparr.load_forcefield("aa.amber.ff14SB")
+    assert gaff.find_unmatched(mixed, [host]) == [[2, 3]]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", viparr.ViparrWarning)
+        patch = gaff.gaff2_patch(mixed, [host], amberhome=AMBERHOME)
+    patch = viparr.load_forcefield(viparr.write_forcefield(patch, tmp_path / "p"),
+                                   require_rules=False)  # fmt: skip
+    cys = next(t for t in patch.templates if t.name.endswith("_CYS"))
+    assert sorted(cys.external_formula.values()) == [viparr._formula([1, 1, 1, 6, 16])]
+    out = boonza.parameterize(mixed, [viparr.merge_forcefields(host, patch)])
+    nb = out.table("nonbonded")
+    nbtype = nb.params["type"][nb.param_ids[np.argsort(nb.atoms[:, 0])]]
+    sg = {int(out.atoms["residue"][a]): nbtype[a] for a in range(out.natoms)
+          if out.atoms["name"][a] == "SG"}  # fmt: skip
+    assert sg[2].endswith("~1")
+    assert sg[7] == sg[8] == host.template("CYX").nbtype[host.template("CYX").names.index("SG")]
 
 
 @needs_amber
