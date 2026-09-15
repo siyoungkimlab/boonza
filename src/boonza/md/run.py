@@ -156,14 +156,26 @@ def _new_run(args, paths: RunPaths, src: Path, log):
         from .restraints import add_dihedral_restraints, plot_well, write_records
 
         records, what = add_dihedral_restraints(
-            system, s, args.dihedral_restraint, args.dihedral_restraint_kJ
-        )
+            system, s, args.dihedral_restraint, args.dihedral_restraint_kJ,
+            getattr(args, "dihedral_restraint_selection", None),
+        )  # fmt: skip
         write_records(paths.dihedral_restraints_csv, records)
         plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
         log(
             f"Dihedral restraints: {len(records)} backbone torsions over {what}, "
             f"K = {-abs(args.dihedral_restraint_kJ):g} kJ/mol"
         )
+    if args.repulsion_selection:
+        from .restraints import add_repulsion
+
+        n = add_repulsion(system, s, args.repulsion_selection, args.repulsion_distance_nm,
+                          args.repulsion_kJ)  # fmt: skip
+        if n < 2:
+            raise ValueError(f"repulsion_selection {args.repulsion_selection!r} picks {n} "
+                             "molecules; it needs at least two")  # fmt: skip
+        log(f"Repulsion between {n} molecules ({args.repulsion_selection}): heavy atoms of "
+            f"different ones closer than {args.repulsion_distance_nm:g} nm, "
+            f"k = {args.repulsion_kJ:g} kJ/mol/nm^2")  # fmt: skip
     integrator = mm.LangevinMiddleIntegrator(
         args.temperature * unit.kelvin, 1 / unit.picosecond, args.integration_fs * unit.femtoseconds
     )

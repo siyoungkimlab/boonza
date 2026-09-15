@@ -243,7 +243,10 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
         )
 
     charge = _solute_charge(parameterize(s))
-    box = solvate(s, thickness=10.0 * args.padding_nm)
+    if getattr(args, "box_nm", None) is not None:  # a fixed cubic box (boonza swim)
+        box = solvate(s, box=10.0 * args.box_nm)
+    else:
+        box = solvate(s, thickness=10.0 * args.padding_nm)
     box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
     out = parameterize(box)
     where = {int(k) - 1: i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}

@@ -57,12 +57,17 @@ def dihedral(pos, atoms) -> float:
     return math.atan2(float(np.dot(np.cross(b1, v), w)), float(np.dot(v, w)))
 
 
-def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float):
+def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, selection=None):
     """Restrain phi/psi of ``s`` (``mode`` "bb" or "ss") to their values in
-    its positions; returns (records, description)."""
+    its positions, only torsions whose atoms ``selection`` picks when given;
+    returns (records, description)."""
     import openmm as mm
 
     torsions = backbone_torsions(s)
+    if selection:
+        picked = np.zeros(s.natoms, bool)
+        picked[s.select(selection).ids] = True
+        torsions = [t for t in torsions if picked[list(t[2])].all()]
     if mode == "ss":
         from ..secondary import dssp
 
@@ -98,6 +103,55 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float):
         )
     omm_system.addForce(force)
     return records, description
+
+
+def add_repulsion(omm_system, s, selection: str, distance_nm: float, k_kj: float) -> int:
+    """Keep the molecules ``selection`` picks from sticking together.
+
+    A flat-bottom wall, E = k (d0 - r)^2 for r < d0, acts between the heavy
+    atoms of different selected molecules; not within a molecule, and not
+    with the rest of the system. ``k`` in kJ/mol/nm^2, ``d0`` in nm. It is a
+    force of the OpenMM system, so ``system.xml`` carries it into restarts.
+    Returns the number of molecules.
+    """
+    import openmm as mm
+
+    anum = s.atoms["anum"]
+    frag = np.asarray(s.fragids)
+    molecules: dict[int, list[int]] = {}
+    for a in s.select(selection).ids.tolist():
+        if anum[a] > 1:
+            molecules.setdefault(int(frag[a]), []).append(int(a))
+    if len(molecules) < 2:
+        return len(molecules)
+    # atoms of one molecule share a number, and the wall vanishes between them
+    # (not by exclusions: OpenMM needs every nonbonded force to exclude alike)
+    force = mm.CustomNonbondedForce(
+        "repulsion_k*step(repulsion_d0-r)*(repulsion_d0-r)^2*(1-delta(mol1-mol2))"
+    )
+    force.addGlobalParameter("repulsion_k", float(k_kj))
+    force.addGlobalParameter("repulsion_d0", float(distance_nm))
+    force.addPerParticleParameter("mol")
+    number = np.zeros(omm_system.getNumParticles())
+    for k, atoms in enumerate(molecules.values(), start=1):
+        number[atoms] = k
+    for x in number.tolist():
+        force.addParticle([x])
+    periodic = omm_system.usesPeriodicBoundaryConditions()
+    force.setNonbondedMethod(mm.CustomNonbondedForce.CutoffPeriodic if periodic
+                             else mm.CustomNonbondedForce.CutoffNonPeriodic)  # fmt: skip
+    force.setCutoffDistance(float(distance_nm))
+    heavy = [a for atoms in molecules.values() for a in atoms]
+    force.addInteractionGroup(heavy, heavy)
+    for other in omm_system.getForces():  # the same exclusions as the NonbondedForce
+        if isinstance(other, mm.NonbondedForce):
+            for e in range(other.getNumExceptions()):
+                i, j = other.getExceptionParameters(e)[:2]
+                force.addExclusion(i, j)
+            break
+    force.setName("LigandRepulsion")
+    omm_system.addForce(force)
+    return len(molecules)
 
 
 def write_records(path, records) -> None:
