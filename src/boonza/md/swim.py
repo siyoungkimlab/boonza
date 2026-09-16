@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -224,6 +225,18 @@ def _rebuild(s: System, resnames, resids, names) -> System:
     return out
 
 
+def _resname(title: str) -> str:
+    """An SDF record's own name (its ``_Name``, the title line) as the residue
+    name, or ``LIG`` when there is none: ``_entries`` makes up ``ligand N`` for
+    a library whose entries are unnamed.  DMS and MAE keep a name of any
+    length; a PDB written later cuts it to four characters, so
+    ``ligands.csv`` remains what says which residue is which ligand."""
+    name = " ".join(str(title).split())
+    if not name or re.fullmatch(r"ligand \d+", name):
+        return "LIG"
+    return name.replace(" ", "_")
+
+
 def _one_residue(s: System, name: str) -> System:
     names = gaff._unique_names([str(x) for x in s.atoms["name"].tolist()],
                                s.atoms["anum"].tolist())  # fmt: skip
@@ -308,11 +321,11 @@ def load_library(path, forcefields) -> list[Ligand]:
         placed = None
         if not has_ff and shape.nresidues == 1:
             placed = split_peptide(shape, forcefields)
-        if placed is None:  # residue LIG; the residue number tells ligands apart
+        if placed is None:  # the record's own name, else LIG; the resid tells copies apart
             if has_ff or shape.nresidues == 1:
-                placed = _one_residue(shape, "LIG")
+                placed = _one_residue(shape, _resname(title))
             else:
-                res = [str(x) or "LIG" for x in shape.residues["name"].tolist()]
+                res = [str(x) or _resname(title) for x in shape.residues["name"].tolist()]
                 per_atom = [res[r] for r in shape.atoms["residue"].tolist()]
                 placed = _rebuild(shape, per_atom, shape.atoms["residue"] + 1,
                                   [str(x) for x in shape.atoms["name"].tolist()])  # fmt: skip

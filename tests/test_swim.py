@@ -115,6 +115,26 @@ def test_a_ligand_keeps_its_own_force_field():
         viparr.patch_from_system(cmap, "L002", "L002")
 
 
+def test_sdf_records_keep_their_own_name(tmp_path):
+    lib = None
+    for name, smi in (("Z359510198", "CCO"), ("Z104476730", "c1ccccc1"), ("", "CC(=O)N")):
+        s = boonza.from_smiles(smi, name=name)
+        if lib is None:
+            lib = s
+        else:
+            lib.append(s)
+    path = tmp_path / "frags.sdf"
+    boonza.save(lib, path)
+    ligands = swim.load_library(path, [viparr.load_forcefield("aa.amber.ff14SB")])
+    assert [x.name for x in ligands[:2]] == ["Z359510198", "Z104476730"]
+    # the record's own name becomes the residue name, whatever its length
+    assert [x.system.residues["name"].tolist()[0] for x in ligands] == [
+        "Z359510198", "Z104476730", "LIG",  # an unnamed record falls back to LIG
+    ]  # fmt: skip
+    assert swim._resname("ligand 7") == "LIG"  # the placeholder _entries makes up
+    assert swim._resname("  two words ") == "two_words"
+
+
 def test_place_keeps_copies_apart(protein):
     prot = boonza.load(protein)
     ligs = [
