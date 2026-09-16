@@ -23,6 +23,23 @@ protein's helices and sheets but sets
 `dihedral_restraint_selection = "not chain LIG"`, so peptide ligands swim
 free, and `--repulsion` keeps the ligand copies apart (see below).
 
+`--ligands` takes a file of your own, or the name of a library boonza
+ships:
+
+| name | |
+|---|---|
+| `AstexMiniFrag` | 63 very small fragments, for crystallographic screening (Astex's MiniFrag approach) |
+| `Essential320` | 307 fragments of the Essential Fragment Library |
+
+```bash
+boonza swim protein.pdb --ligands AstexMiniFrag --types 5 --copies 3
+boonza swim protein.pdb --ligands ~/my_fragments.sdf
+```
+
+Both come from Enamine's fragment libraries and keep its catalogue
+identifiers as residue names; see [NOTICE](https://github.com/siyoungkimlab/boonza/blob/main/NOTICE)
+for where they came from.
+
 The ligands are chain `LIG`. A ligand of one residue takes its own name as
 the residue name — an SDF record's title line, its `_Name`, so a fragment
 library keeps its catalogue IDs (`Z359510198`) — and each copy has its own

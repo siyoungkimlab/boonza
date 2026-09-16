@@ -135,6 +135,21 @@ def test_sdf_records_keep_their_own_name(tmp_path):
     assert swim._resname("  two words ") == "two_words"
 
 
+def test_bundled_fragment_libraries():
+    assert set(swim.bundled_libraries()) >= {"AstexMiniFrag", "Essential320"}
+    found = swim.find_library("astexminifrag")  # by name, whatever its case
+    assert found.name == "AstexMiniFrag.sdf" and found.is_file()
+    ligands = swim.load_library(found, [viparr.load_forcefield("aa.amber.ff14SB")])
+    records = found.read_text().count("$$$$")  # every record becomes a ligand
+    assert len(ligands) == records > 50
+    assert all((x.system.atoms["anum"] == 1).any() for x in ligands)  # hydrogens, for GAFF2
+    names = [x.system.residues["name"].tolist()[0] for x in ligands]
+    assert all(n.startswith("Z") for n in names)  # Enamine's catalogue IDs, kept
+    assert len(set(names)) == len(names)  # and distinct, so a selection picks one
+    with pytest.raises(FileNotFoundError, match="AstexMiniFrag, Essential320"):
+        swim.find_library("no-such-library")
+
+
 def test_place_keeps_copies_apart(protein):
     prot = boonza.load(protein)
     ligs = [

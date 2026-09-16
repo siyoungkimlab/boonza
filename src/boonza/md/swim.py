@@ -309,6 +309,29 @@ def _rdkit(s: System):
     return Chem.RemoveHs(to_rdkit(t, implicit_hydrogens=False))
 
 
+#: Ligand libraries shipped with boonza, by the name of their file.
+FRAGMENTS = Path(__file__).resolve().parent.parent / "data" / "fragments"
+
+
+def bundled_libraries() -> list[str]:
+    """The ligand libraries shipped with boonza, by name."""
+    return sorted(p.stem for p in FRAGMENTS.glob("*.sdf"))
+
+
+def find_library(name):
+    """A ligand library: a file of your own, or the name of a bundled one."""
+    path = Path(name).expanduser()
+    if path.is_file():
+        return path
+    for candidate in sorted(FRAGMENTS.glob("*.sdf")):
+        if candidate.stem.lower() == str(name).lower():
+            return candidate
+    raise FileNotFoundError(
+        f"no ligand library {str(name)!r}: give the path to an SDF or DMS file, or one "
+        f"of the libraries boonza ships: {', '.join(bundled_libraries())}"
+    )
+
+
 def load_library(path, forcefields) -> list[Ligand]:
     """The ligands of an SDF or DMS file, each named ``code(k)``."""
     from rdkit import Chem
@@ -467,6 +490,7 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
     root.mkdir(parents=True, exist_ok=True)
     protein = load_input(args.input_structure)
     _, ffs = forcefields(args)
+    library = find_library(library)
     ligands = load_library(library, ffs)
     groups = deal([lig.mol for lig in ligands], types, keys=[lig.smiles for lig in ligands])
     sizes = [len(g) for g in groups]
@@ -538,7 +562,9 @@ def main(argv=None) -> int:
 
     parser = build_parser("boonza swim")
     g = parser.add_argument_group("swim")
-    g.add_argument("--ligands", help="SDF or DMS file of ligands (with or without a force field)")
+    g.add_argument("--ligands",
+                   help="SDF or DMS file of ligands (with or without a force field), or a "
+                        "library boonza ships: AstexMiniFrag, Essential320")  # fmt: skip
     g.add_argument("--types", type=int, help="ligand types per simulation (default: 5)")
     g.add_argument("--copies", type=int, help="copies of each ligand type (default: 3)")
     g.add_argument("--jobs", type=int, help="ligands parameterized at once (default: 1)")
