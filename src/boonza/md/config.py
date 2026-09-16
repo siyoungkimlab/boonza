@@ -46,6 +46,7 @@ DEFAULTS: dict = {
     "ligand_charges": None,
     "parents": None,
     "protein_extent": "matched",
+    "solvate": True,
     "padding_nm": 1.0,
     "box_nm": None,
     "cutoff_nm": None,
@@ -103,7 +104,7 @@ _NUMBERS = {
     "repulsion_kJ",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop"}
+_BOOLEANS = {"solvate", "hmr", "early_stop"}
 _CHOICES = {
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
@@ -378,6 +379,12 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         help="detached checks in a row that stop production (default: 2)",
     )
     p.add_argument(
+        "--solvate",
+        action=argparse.BooleanOptionalAction,
+        help="add water and ions (default: on); --no-solvate runs INPUT_STRUCTURE as it "
+        "is, with its own water, ions and periodic cell",
+    )
+    p.add_argument(
         "--hmr",
         action=argparse.BooleanOptionalAction,
         help="hydrogen mass repartitioning to 4 amu, water untouched (default: off)",
@@ -611,6 +618,9 @@ ligandff = "gaff-2.11"
 # match the parent residue; or "cb": on the backbone, CB and CB's hydrogens only.
 protein_extent = "matched"
 
+# solvate = false runs INPUT_STRUCTURE as it is, water, ions and box included
+# (it must have a periodic cell); padding_nm, box_nm and saltM are then unused.
+solvate = true
 padding_nm = 1.0
 # cutoff_nm defaults to 0.9 for Amber and 1.2 for CHARMM.
 # cutoff_nm = 0.9
