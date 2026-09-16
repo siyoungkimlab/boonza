@@ -165,7 +165,7 @@ ligands included.
 | `performance_interval_ns` | 1.0 | rows of `performance.csv` |
 | `integration_fs`, `hmr` | 2, off | `hmr` repartitions hydrogens to 4 amu (water untouched) and makes the step 4 fs |
 | `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets) |
-| `restrain_only` (`--restrain-only`) | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own. Once called `dihedral_restraint_selection`, which still works |
+| `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
 | `seed`, `precision`, `platform` | 0, mixed, fastest | |
 | `repulsion_selection`, `repulsion_distance_nm`, `repulsion_kJ` | none, 0.5, 500 | keep the molecules a selection picks from sticking together: E = k (d0 - r)^2 between heavy atoms of different ones closer than d0 (k in kJ/mol/nm^2); `boonza swim` sets it for its ligands |
 | `early_stop` and `monitor_*`, `*_cutoff_nm`, `confirmation_checks` | off | see below |

@@ -20,7 +20,7 @@ one resumes like any `boonza md` run. The defaults are `boonza md`'s too,
 so nothing is restrained and nothing repels unless you say so. What swim adds
 is the right selection when you do ask: `--dihedral-restraint ss` holds the
 protein's helices and sheets but sets
-`restrain_only = "not chain LIG"`, so peptide ligands swim
+`dihedral_restraint_selection = "not chain LIG"`, so peptide ligands swim
 free, and `--repulsion` keeps the ligand copies apart (see below).
 
 The ligands are chain `LIG`. A ligand of one residue is residue `LIG`, and

@@ -71,7 +71,7 @@ DEFAULTS: dict = {
     "hmr": False,
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
-    "restrain_only": None,
+    "dihedral_restraint_selection": None,
     "repulsion_selection": None,
     "repulsion_distance_nm": 0.5,
     "repulsion_kJ": 500.0,
@@ -234,12 +234,10 @@ def check_settings(values: dict, where: str) -> dict:
             'forcefields instead, e.g. forcefields = ["amber19/protein.ff19SB.xml", '
             '"amber19/opc.xml"]'
         )
-    out = dict(values)
-    if "dihedral_restraint_selection" in out:  # what restrain_only used to be called
-        out.setdefault("restrain_only", out.pop("dihedral_restraint_selection"))
-    unknown = set(out) - set(DEFAULTS)
+    unknown = set(values) - set(DEFAULTS)
     if unknown:
         raise ValueError(f"{where}: unknown setting(s): {', '.join(sorted(unknown))}")
+    out = dict(values)
     if isinstance(out.get("solvate"), bool):  # true/false, before fill was a mode
         out["solvate"] = "box" if out["solvate"] else "none"
     for key, v in out.items():
@@ -424,16 +422,13 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "helices and sheets)",
     )
     hold.add_argument(
-        "--restrain-only",
-        dest="restrain_only",
+        "--dihedral-restraint-selection",
+        dest="dihedral_restraint_selection",
         metavar="SELECTION",
         help="with --dihedral-restraint, hold only the torsions whose atoms this "
         "selects, e.g. 'chain A' or 'not chain LIG' (default: every peptide chain in "
         "the system, a bound peptide included); on its own it does nothing",
     )
-    # what --restrain-only was called before
-    hold.add_argument("--dihedral-restraint-selection", dest="restrain_only",
-                      help=argparse.SUPPRESS)  # fmt: skip
     numbers(hold, [("--dihedral-restraint-kJ", "dihedral_restraint_kJ",
                     "restraint strength (kJ/mol)")])  # fmt: skip
     hold.add_argument(
@@ -723,7 +718,7 @@ hmr = false
 dihedral_restraint = "none"
 dihedral_restraint_kJ = 20.0
 # Hold only the torsions whose atoms this selects (boonza swim: not the ligands):
-# restrain_only = "not chain LIG"
+# dihedral_restraint_selection = "not chain LIG"
 seed = 0
 
 # Keep the molecules a selection picks (ligand copies) from sticking together:

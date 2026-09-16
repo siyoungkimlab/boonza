@@ -508,8 +508,8 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
         if repel and "repulsion_selection" not in args.specified:
             settings["repulsion_selection"] = f"chain {chain}"  # ligand copies apart
         if (settings.get("dihedral_restraint", "none") != "none"
-                and "restrain_only" not in args.specified):  # fmt: skip
-            settings["restrain_only"] = f"not chain {chain}"  # ligands swim
+                and "dihedral_restraint_selection" not in args.specified):  # fmt: skip
+            settings["dihedral_restraint_selection"] = f"not chain {chain}"  # ligands swim
         write_settings(d / "md.toml", settings)
     (root / "simulations.txt").write_text(
         "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims)
