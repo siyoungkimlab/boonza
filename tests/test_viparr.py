@@ -320,6 +320,26 @@ def test_bundled_forcefields(monkeypatch):
         viparr.load_forcefield("no.such.forcefield")
 
 
+def _read_bundles(_):
+    """Read from both bundled zips, as a worker parameterizing a ligand does."""
+    from boonza import ffxml, viparr
+
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    return len(ff.templates), len(ffxml.load_openmm_forcefield("amber19-all.xml").templates)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="no fork on this platform")
+def test_bundled_zips_survive_forked_workers():
+    """A ZipFile holds one file descriptor, so children that inherited their
+    parent's would read through the same offset: 'Overlapped entries'."""
+    import multiprocessing
+
+    viparr.load_forcefield("aa.amber.ff19SB")  # the parent opens the zip first
+    with multiprocessing.get_context("fork").Pool(4) as pool:
+        got = pool.map(_read_bundles, range(8))
+    assert len(set(got)) == 1 and got[0][0] > 0 and got[0][1] > 0
+
+
 def test_d_residues_get_the_mirrored_cmap():
     ff = _public("aa.charmm.c36m")
     pep = boonza.peptide("AVLSKEF", conformation="helix")
