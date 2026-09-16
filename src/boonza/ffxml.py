@@ -661,9 +661,16 @@ _PREFIX = "bundled:"  # how ``OpenMMForcefield.files`` names a bundled file
 
 
 @cache
+def _bundled_of(pid: int) -> zipfile.Path:
+    """Keyed by process: a ZipFile holds one file descriptor, and a forked child
+    that inherited its parent's would read through the same offset, so entries
+    of concurrent reads interleave ("Overlapped entries")."""
+    return zipfile.Path(zipfile.ZipFile(_BUNDLED), at="ffxml/")
+
+
 def _bundled() -> zipfile.Path:
     """The ``ffxml`` directory of the OpenMM XML files shipped with boonza."""
-    return zipfile.Path(zipfile.ZipFile(_BUNDLED), at="ffxml/")
+    return _bundled_of(os.getpid())
 
 
 def bundled_version() -> str:
