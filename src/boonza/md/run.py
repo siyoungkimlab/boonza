@@ -113,6 +113,22 @@ def _state_reporter(path, steps, append=False):
     )
 
 
+def _barostat(args, mm, unit):
+    """The pressure coupling ``args.barostat`` asks for: one scale factor for
+    the whole box, or x and y together with z free (a planar membrane, held at
+    ``surface_tension`` in bar nm; 0 is tensionless)."""
+    if getattr(args, "barostat", "isotropic") == "membrane":
+        return mm.MonteCarloMembraneBarostat(
+            args.pressure * unit.bar,
+            args.surface_tension * unit.bar * unit.nanometer,
+            args.temperature * unit.kelvin,
+            mm.MonteCarloMembraneBarostat.XYIsotropic,
+            mm.MonteCarloMembraneBarostat.ZFree,
+            25,
+        )
+    return mm.MonteCarloBarostat(args.pressure * unit.bar, args.temperature * unit.kelvin, 25)
+
+
 def _save_frame(s, state, stem: Path, title: str) -> None:
     from openmm import unit
 
@@ -272,11 +288,13 @@ def run_workflow(args, log=print) -> None:
         )
         log(f"Running {args.equilibration_ns:g} ns NVT equilibration...")
         simulation.step(n["equilibration_ns"])
-        log(f"Running {args.equilibration_ns:g} ns NPT equilibration...")
-        system.addForce(
-            mm.MonteCarloBarostat(args.pressure * unit.bar, args.temperature * unit.kelvin, 25)
-        )
-        simulation.context.reinitialize(preserveState=True)
+        kind = getattr(args, "barostat", "isotropic")
+        if kind == "none":
+            log(f"Running {args.equilibration_ns:g} ns more NVT equilibration (no barostat)...")
+        else:
+            log(f"Running {args.equilibration_ns:g} ns NPT equilibration ({kind} barostat)...")
+            system.addForce(_barostat(args, mm, unit))
+            simulation.context.reinitialize(preserveState=True)
         simulation.step(n["equilibration_ns"])
         simulation.reporters.clear()
         state = simulation.context.getState(getPositions=True)

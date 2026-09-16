@@ -400,6 +400,23 @@ def test_solvate_false_runs_the_input_as_it_is(tmp_path, dipeptide):
         build_system(parse_arguments([str(dipeptide), "--no-solvate"]), tmp_path, log=quiet)
 
 
+def test_barostat_choices(tmp_path, dipeptide):
+    a = parse_arguments(["x", "--barostat", "membrane", "--surface-tension", "20"])
+    assert (a.barostat, a.surface_tension) == ("membrane", 20.0)
+    assert parse_arguments(["x"]).barostat == "isotropic"
+    with pytest.raises(SystemExit):  # a tension without the barostat that uses it
+        parse_arguments(["x", "--surface-tension", "20"])
+    work = tmp_path / "mb"
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT,
+                                  "--barostat", "membrane"]), log=quiet)  # fmt: skip
+    xml = RunPaths(work).system_xml.read_text()
+    assert "MonteCarloMembraneBarostat" in xml
+    dry = tmp_path / "nvt"
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(dry), *SHORT,
+                                  "--barostat", "none"]), log=quiet)  # fmt: skip
+    assert "Barostat" not in RunPaths(dry).system_xml.read_text()
+
+
 def test_openmm_xml_route_builds(tmp_path, dipeptide):
     args = parse_arguments([str(dipeptide), "-f", "amber19/protein.ff19SB.xml", "-f",
                             "amber19/tip3p.xml", "--padding-nm", "0.8"])  # fmt: skip

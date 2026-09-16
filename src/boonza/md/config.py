@@ -19,6 +19,9 @@ from pathlib import Path
 PLATFORMS = ("CUDA", "OpenCL", "Metal", "CPU", "Reference")
 PRECISIONS = ("mixed", "single", "double")
 DIHEDRAL_RESTRAINTS = ("none", "bb", "ss")
+#: Pressure coupling: one scale factor for the box, x and y together with z
+#: free (a planar membrane), or constant volume.
+BAROSTATS = ("isotropic", "membrane", "none")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
 PROTEIN_EXTENTS = ("matched", "cb")
@@ -53,6 +56,8 @@ DEFAULTS: dict = {
     "saltM": 0.15,
     "temperature": 298.0,
     "pressure": 1.0,
+    "barostat": "isotropic",
+    "surface_tension": 0.0,
     "equilibration_ns": 0.1,
     "equilibration_report_interval_ns": 0.01,
     "production_ns": 100.0,
@@ -88,6 +93,7 @@ _NUMBERS = {
     "saltM",
     "temperature",
     "pressure",
+    "surface_tension",
     "equilibration_ns",
     "equilibration_report_interval_ns",
     "production_ns",
@@ -112,6 +118,7 @@ _CHOICES = {
     "dihedral_restraint": DIHEDRAL_RESTRAINTS,
     "precision": PRECISIONS,
     "platform": PLATFORMS,
+    "barostat": BAROSTATS,
 }
 MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component", "monitor_selection")
 #: Settings a restart takes from ``final.toml`` unless they are given again.
@@ -342,6 +349,7 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         ("--saltM", "saltM", "NaCl added beyond neutralizing (mol/L, counted against waters)"),
         ("--temperature", "temperature", "K"),
         ("--pressure", "pressure", "bar"),
+        ("--surface-tension", "surface_tension", "membrane barostat only (bar nm)"),
         ("--equilibration-ns", "equilibration_ns", "NVT and NPT equilibration, each (ns)"),
         ("--equilibration-report-interval-ns", "equilibration_report_interval_ns", "ns"),
         ("--production-ns", "production_ns", "absolute production target (ns)"),
@@ -377,6 +385,12 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         dest="confirmation_checks",
         type=int,
         help="detached checks in a row that stop production (default: 2)",
+    )
+    p.add_argument(
+        "--barostat",
+        choices=BAROSTATS,
+        help="pressure coupling: isotropic (default), membrane (x and y together, z "
+        "free: planar bilayers), or none (constant volume)",
     )
     p.add_argument(
         "--solvate",
@@ -515,6 +529,8 @@ def finish(args) -> None:
         raise ValueError("'dihedral_restraint_kJ' must be a nonzero number")
     if args.confirmation_checks < 1:
         raise ValueError("'confirmation_checks' must be at least 1")
+    if args.surface_tension and args.barostat != "membrane":
+        raise ValueError("'surface_tension' needs barostat = 'membrane' (x and y coupled, z free)")
     if args.forcefields is None:
         args.forcefields = DEFAULT_FORCEFIELDS
     args.forcefields = forcefield_spec(args.forcefields)
@@ -628,6 +644,11 @@ padding_nm = 1.0
 saltM = 0.15
 temperature = 298.0
 pressure = 1.0
+# Pressure coupling: isotropic, membrane (x and y together and z free, for a
+# planar bilayer), or none (constant volume). surface_tension (bar nm, 0 for
+# a tensionless membrane) needs the membrane barostat.
+barostat = "isotropic"
+surface_tension = 0.0
 equilibration_ns = 0.1
 production_ns = 100.0
 equilibration_report_interval_ns = 0.01
