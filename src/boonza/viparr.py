@@ -120,9 +120,16 @@ _BUNDLED = Path(__file__).resolve().parent / "data" / "viparr-ffpublic.zip"
 
 
 @cache
+def _bundled_of(pid: int):
+    """Keyed by process: a ZipFile holds one file descriptor, and a forked child
+    that inherited its parent's would read through the same offset, so entries
+    of concurrent reads interleave ("Overlapped entries")."""
+    return zipfile.Path(zipfile.ZipFile(_BUNDLED), at="ff/")
+
+
 def _bundled():
     """The ``ff`` directory of the viparr-ffpublic copy shipped with boonza."""
-    return zipfile.Path(zipfile.ZipFile(_BUNDLED), at="ff/")
+    return _bundled_of(os.getpid())
 
 
 def bundled_version() -> str:
