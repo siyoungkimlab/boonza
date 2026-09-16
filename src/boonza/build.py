@@ -94,14 +94,20 @@ def solvate(solute: System, solvent=None, box=None, thickness: float = 5.0,
     if out.any():
         chosen = np.zeros(mol.natoms, bool)
         chosen[mol.select(solvent_selection).ids] = True
-        drop = []
-        for f in np.unique(frag[out]).tolist():
-            ids = np.flatnonzero(chosen & (frag == f))
-            if len(ids):
-                c = pos[ids].mean(0)
-                if (c < dmin).any() or (c > dmax).any():
-                    drop.append(f)
-        if drop:
+        chosen &= solvent  # solvent_selection ("oxygen") matches solute atoms too
+        # every solvent molecule's center at once: one pass each, rather than a
+        # scan of the whole system per molecule (quadratic in a big box)
+        nfrag = int(frag.max()) + 1 if mol.natoms else 0
+        counts = np.bincount(frag[chosen], minlength=nfrag)
+        center_of = np.zeros((nfrag, 3))
+        for d in range(3):
+            total = np.bincount(frag[chosen], weights=pos[chosen, d], minlength=nfrag)
+            np.divide(total, counts, out=center_of[:, d], where=counts > 0)
+        # a molecule whose atoms all sit in the box has its center there too, so
+        # only molecules with an atom outside can be dropped
+        outside = (counts > 0) & ((center_of < dmin) | (center_of > dmax)).any(1)
+        drop = np.flatnonzero(outside)
+        if len(drop):
             mol = mol.clone(np.flatnonzero(~np.isin(frag, drop)))
     if remove_buried:
         mol = remove_buried_water(mol, npro)
@@ -169,52 +175,52 @@ BURIED_APOLAR_R = 6.0
 BURIED_PROTEIN = 8.0
 
 
-def _apolar(mol: System, ids: np.ndarray) -> np.ndarray:
-    """Those of ``ids`` bonded only to carbon, hydrogen or sulfur: lipid tails,
+def _apolar(mol: System, mask: np.ndarray) -> np.ndarray:
+    """Atoms of ``mask`` bonded only to carbon, hydrogen or sulfur: lipid tails,
     cholesterol, the greasy parts of a protein."""
     anum = mol.atoms["anum"]
-    out = []
-    for a in ids.tolist():
-        if anum[a] not in (6, 16):
-            continue
-        nbr = mol.bonded_atoms(a)
-        if len(nbr) and bool(np.isin(anum[nbr], (1, 6, 16)).all()):
-            out.append(a)
-    return np.array(out, dtype=np.int64)
+    off, nbr, _ = mol._adjacency()
+    degree = np.diff(off)
+    src = np.repeat(np.arange(mol.natoms), degree)
+    greasy = np.bincount(src, weights=np.isin(anum[nbr], (1, 6, 16)),
+                         minlength=mol.natoms)  # fmt: skip
+    return np.flatnonzero(mask & np.isin(anum, (6, 16)) & (degree > 0) & (greasy == degree))
 
 
-def _cluster_sizes(pos: np.ndarray, cut: float, cell) -> np.ndarray:
-    """The size of each point's cluster, points linked within ``cut`` (union-find)."""
-    from .spatial import pairs_within
+def _small_cluster(pos: np.ndarray, candidates: np.ndarray, cut: float, limit: int,
+                   cell) -> np.ndarray:  # fmt: skip
+    """Which ``candidates`` sit in a cluster of fewer than ``limit`` points.
 
-    n = len(pos)
-    i, j, _ = pairs_within(pos, cut, cell)
-    parent = np.arange(n)
+    Only the candidates' own neighborhoods are walked, and each walk stops once
+    the cluster reaches ``limit``, so the cost follows the number of candidates
+    rather than the number of points.
+    """
+    from . import graph
+    from .spatial import min_dist2, pairs_within
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for a, b in zip(i.tolist(), j.tolist(), strict=True):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-    label = np.array([find(x) for x in range(n)], dtype=np.int64)
-    return np.bincount(label)[label]
-
-
-def _neighbor_counts(pos, query: np.ndarray, target: np.ndarray, r: float, cell) -> np.ndarray:
-    """For each ``query`` atom, how many ``target`` atoms lie within ``r``."""
-    from .spatial import pairs_within
-
-    n = len(query)
-    if not n or not len(target):
-        return np.zeros(n, np.int64)
-    i, j, _ = pairs_within(pos[np.concatenate([query, target])], r, cell)
-    cross = (i < n) != (j < n)
-    return np.bincount(np.where(i[cross] < n, i[cross], j[cross]), minlength=n)
+    if not len(candidates):
+        return np.zeros(0, bool)
+    reach = cut * limit  # a cluster of ``limit`` points cannot span farther
+    near = min_dist2(pos, pos[candidates], reach, cell) <= np.float32(reach) ** 2
+    ids = np.flatnonzero(near)
+    local = np.full(len(pos), -1, np.int64)
+    local[ids] = np.arange(len(ids))
+    i, j, _ = pairs_within(pos[ids], cut, cell)
+    off, order = graph.csr(len(ids), np.concatenate([i, j]))
+    nbr = np.concatenate([j, i])[order]
+    out = np.zeros(len(candidates), bool)
+    for k, a in enumerate(local[candidates].tolist()):
+        seen, stack = {a}, [a]
+        while stack and len(seen) < limit:
+            x = stack.pop()
+            for b in nbr[off[x] : off[x + 1]].tolist():
+                if b not in seen:
+                    seen.add(b)
+                    stack.append(b)
+                    if len(seen) >= limit:
+                        break
+        out[k] = len(seen) < limit
+    return out
 
 
 def remove_buried_water(mol: System, first: int) -> System:
@@ -224,28 +230,32 @@ def remove_buried_water(mol: System, first: int) -> System:
     say), where tiled water otherwise lands between the lipid tails.  See
     :data:`BURIED_CLUSTER` for the test and why each part of it is there.
     """
-    from .spatial import min_dist2
+    from .spatial import count_within, min_dist2
 
     anum = mol.atoms["anum"]
     added = np.arange(mol.natoms) >= first
     water = np.zeros(mol.natoms, bool)
     water[mol.select("water").ids] = True
     oxygen = np.flatnonzero(added & water & (anum == 8))
-    solute = np.flatnonzero(~added)
-    if not len(oxygen) or not len(solute):
+    if not len(oxygen) or added.all():
         return mol
     pos = mol.positions
     cell = np.asarray(mol.cell, dtype=np.float64)
     cell = cell if cell.any() else None
-    lonely = np.flatnonzero(_cluster_sizes(pos[oxygen], BURIED_LINK, cell) < BURIED_CLUSTER)
-    if not len(lonely):
+    apolar = _apolar(mol, ~added)
+    if not len(apolar):
         return mol
-    greasy = _neighbor_counts(pos, oxygen[lonely], _apolar(mol, solute), BURIED_APOLAR_R, cell)
-    drop = lonely[greasy >= BURIED_APOLAR]
+    # cheapest test first: counting needs no pair list, and what survives it is a
+    # handful of candidates, so the rest costs nothing however much water there is
+    greasy = count_within(pos[oxygen], pos[apolar], BURIED_APOLAR_R, cell) >= BURIED_APOLAR
+    candidates = np.flatnonzero(greasy)
     protein = mol.select("protein").ids
-    if len(protein) and len(drop):  # a protein's own cavities and channels are its business
-        d = min_dist2(pos[oxygen[drop]], pos[protein], BURIED_PROTEIN, cell)
-        drop = drop[d > np.float32(BURIED_PROTEIN) ** 2]
+    if len(protein) and len(candidates):  # a protein's cavities and channels are its business
+        d = min_dist2(pos[oxygen[candidates]], pos[protein], BURIED_PROTEIN, cell)
+        candidates = candidates[d > np.float32(BURIED_PROTEIN) ** 2]
+    if not len(candidates):
+        return mol
+    drop = candidates[_small_cluster(pos[oxygen], candidates, BURIED_LINK, BURIED_CLUSTER, cell)]
     if not len(drop):
         return mol
     frag = np.asarray(mol.fragids)
