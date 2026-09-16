@@ -75,6 +75,11 @@ def test_settings_precedence(tmp_path):
     assert parse_arguments(["x", "--parent", "MSE=MET"]).parents == {"MSE": "MET"}
     r = parse_arguments(["x", "--repulsion-selection", "chain L", "--repulsion-kJ", "800"])
     assert (r.repulsion_selection, r.repulsion_distance_nm, r.repulsion_kJ) == ("chain L", 0.5, 800)
+    assert parse_arguments(["x", "--restrain-only", "chain A"]).restrain_only == "chain A"
+    old = parse_arguments(["x", "--dihedral-restraint-selection", "chain A"])  # the old name
+    assert old.restrain_only == "chain A"
+    toml.write_text('dihedral_restraint_selection = "chain A"\n')  # and in a settings file
+    assert config.load_configuration(toml)["restrain_only"] == "chain A"
 
 
 @pytest.mark.parametrize("argv", [

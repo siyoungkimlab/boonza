@@ -157,7 +157,7 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     assert int((inp.residues["name"] == "ACE").sum()) == 1 + 2 * 2  # protein + 2 x 2 copies
     settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
     assert settings.repulsion_selection == "chain LIG"  # asked for, so on the ligands' chain
-    assert settings.dihedral_restraint_selection == "not chain LIG"  # the ligands swim
+    assert settings.restrain_only == "not chain LIG"  # the ligands swim
     lig_rows = list(csv.DictReader((sims[0] / "ligands.csv").open()))
     assert len(lig_rows) == 4 and lig_rows[0]["first_resid"] == "1"  # 2 types x 2 copies
     assert set(inp.chains["name"].tolist()) == {"A", "LIG"}

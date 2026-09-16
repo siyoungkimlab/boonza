@@ -173,7 +173,7 @@ def _new_run(args, paths: RunPaths, src: Path, log):
 
         records, what = add_dihedral_restraints(
             system, s, args.dihedral_restraint, args.dihedral_restraint_kJ,
-            getattr(args, "dihedral_restraint_selection", None),
+            getattr(args, "restrain_only", None),
         )  # fmt: skip
         write_records(paths.dihedral_restraints_csv, records)
         plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
