@@ -133,6 +133,7 @@ ligands included.
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |
 | `temperature`, `pressure` | 298 K, 1 bar | |
+| `barostat`, `surface_tension` | `isotropic`, 0 | `membrane` scales x and y together and z on its own (semi-isotropic, for a planar bilayer), held at `surface_tension` (bar nm; 0 is tensionless); `none` keeps the volume fixed |
 | `equilibration_ns` | 0.1 | NVT, then the same of NPT |
 | `production_ns` | 100 | absolute target |
 | `*_report_interval_ns`, `checkpoint_interval_ns` | 0.01 / 1.0, 0.01 | checkpoints must divide the production report interval |
