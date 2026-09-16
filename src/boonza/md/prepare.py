@@ -174,6 +174,18 @@ def _solute_charge(p: System) -> float:
     return float(p.atoms["charge"][~ion].sum())
 
 
+def _own_cell(s: System, mode: str, path) -> None:
+    """``solvate`` 'fill' and 'none' keep the input's own box, so it must have one."""
+    cell = np.asarray(s.cell, dtype=float)
+    if not cell.any():
+        raise ValueError(
+            f"solvate = '{mode}' needs a periodic cell, and {path} has none "
+            "(a DMS, MAE, GRO or CIF file of a built system carries one)"
+        )
+    if mode == "fill" and np.abs(cell - np.diag(np.diag(cell))).max() > 1e-6:
+        raise ValueError(f"solvate = 'fill' needs a rectangular cell; {path} has a triclinic one")
+
+
 def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, dict]:
     """The solvated, neutralized, parameterized system and the input's components.
 
@@ -252,35 +264,41 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
             hydrogen_mass=HYDROGEN_MASS_AMU if args.hmr else None,
         )
 
-    if getattr(args, "solvate", True):
-        charge = _solute_charge(parameterize(s))
-        if getattr(args, "box_nm", None) is not None:  # a fixed cubic box (boonza swim)
-            box = solvate(s, box=10.0 * args.box_nm)
-        else:
-            box = solvate(s, thickness=10.0 * args.padding_nm)
-        box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
-        out = parameterize(box)
-    else:  # the input is the system: its water, ions and box are taken as they are
-        if not np.asarray(s.cell, dtype=float).any():
-            raise ValueError(
-                f"solvate = false needs a periodic cell, and {args.input_structure} has none "
-                "(a DMS, MAE, GRO or CIF file of a built system carries one)"
-            )
+    mode = getattr(args, "solvate", "box")
+    mode = {True: "box", False: "none"}.get(mode, mode)
+    if mode != "box":
+        _own_cell(s, mode, args.input_structure)
         given = getattr(args, "specified", ())
-        unused = [k for k in ("padding_nm", "box_nm", "saltM") if k in given]
+        keys = ("padding_nm", "box_nm", "saltM") if mode == "none" else ("padding_nm", "box_nm")
+        unused = [k for k in keys if k in given]
         if unused:
-            log(f"Warning: solvate = false, so {', '.join(unused)} is not used")
+            log(f"Warning: solvate = '{mode}', so {', '.join(unused)} is not used")
+    if mode == "none":  # the input is the system: its water, ions and box, as they are
         out = parameterize(s)
         charge = float(out.atoms["charge"].sum())
         if abs(charge) > 1e-3:
             log(f"Warning: the system's charge is {charge:+.2f}, and nothing is added to "
                 "neutralize it; add the ions yourself, or solvate")  # fmt: skip
+    else:
+        charge = _solute_charge(parameterize(s))
+        if mode == "fill":  # the input's own cell, its empty space filled
+            before = s.natoms
+            box = solvate(s, box=np.diag(np.asarray(s.cell, dtype=float)).copy(),
+                          center_selection="none", remove_buried=True)  # fmt: skip
+            log(f"Filled the input's box with {box.natoms - before} solvent atoms "
+                "(hydrophobic voids left dry)")  # fmt: skip
+        elif getattr(args, "box_nm", None) is not None:  # a fixed cubic box (boonza swim)
+            box = solvate(s, box=10.0 * args.box_nm)
+        else:
+            box = solvate(s, thickness=10.0 * args.padding_nm)
+        box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
+        out = parameterize(box)
     where = {int(k) - 1: i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}
     for c in [*info["components"], *([info["selection"]] if "selection" in info else [])]:
         c["production_atom_indices"] = [where[a] for a in c["input_atom_indices"]]
     nwater = len(set(out.atoms["residue"][out.select("water").ids].tolist()))
     log(
-        f"{'Solvated' if getattr(args, 'solvate', True) else 'System'}: {out.natoms} particles, "
+        f"{'System' if mode == 'none' else 'Solvated'}: {out.natoms} particles, "
         f"{nwater} waters, box "
         + " x ".join(f"{x / 10:.2f}" for x in np.diag(out.cell))
         + f" nm; charge {charge:+.2f}"

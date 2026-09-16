@@ -145,7 +145,7 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     work = tmp_path / "swim"
     args = parse_arguments([str(protein), "--workdir", str(work), *SHORT,
                             "--dihedral-restraint", "bb"])  # fmt: skip
-    sims = swim.prepare(args, peptides, types=2, copies=2, log=quiet)
+    sims = swim.prepare(args, peptides, types=2, copies=2, log=quiet, repel=True)
     assert [d.name for d in sims] == ["sim_000", "sim_001"]
     rows = list(csv.DictReader((work / "assignment.csv").open()))
     assert sorted(r["name"] for r in rows) == ["ace-ala-nme", "ace-gly-nme", "ace-ser-nme",
@@ -156,7 +156,7 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     inp = boonza.load(sims[0] / "input.dms")
     assert int((inp.residues["name"] == "ACE").sum()) == 1 + 2 * 2  # protein + 2 x 2 copies
     settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
-    assert settings.repulsion_selection == "chain LIG"  # the ligand copies' own chain
+    assert settings.repulsion_selection == "chain LIG"  # asked for, so on the ligands' chain
     assert settings.dihedral_restraint_selection == "not chain LIG"  # the ligands swim
     lig_rows = list(csv.DictReader((sims[0] / "ligands.csv").open()))
     assert len(lig_rows) == 4 and lig_rows[0]["first_resid"] == "1"  # 2 types x 2 copies
@@ -184,7 +184,10 @@ def test_swim_with_a_parameterized_library(tmp_path, protein):
     placed = boonza.load(sim / "input.dms")
     lig = placed.residues["chain"] == int(np.flatnonzero(placed.chains["name"] == "LIG")[0])
     assert set(placed.residues["name"][lig].tolist()) == {"LIG"}  # told apart by resid
-    assert parse_arguments(["--config", str(sim / "md.toml")]).dihedral_restraint == "ss"
+    settings = parse_arguments(["--config", str(sim / "md.toml")])
+    # swim starts from boonza md's defaults: neither restraints nor repulsion
+    assert settings.dihedral_restraint == "none"
+    assert settings.repulsion_selection is None
     patch = tmp_path / "swim" / "ligands" / "L000" / "patch"
     assert (patch / "templates").is_file()
     from boonza.md.config import load_configuration

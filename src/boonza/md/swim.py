@@ -19,6 +19,7 @@ GAFF2 (AM1-BCC, AmberTools), in parallel with ``--jobs``.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -439,7 +440,7 @@ def place(protein: System, ligands, copies: int, edge: float, rng, clearance: fl
 
 
 def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
-            clearance: float = 3.0, log=print, repel: bool = True) -> list[Path]:  # fmt: skip
+            clearance: float = 3.0, log=print, repel: bool = False) -> list[Path]:  # fmt: skip
     """Write one ``boonza md`` simulation per group of ligands into
     ``args.workdir``; returns their directories."""
     from .config import forcefield_kind, settings_of, write_settings
@@ -502,11 +503,12 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
         settings = {**settings_of(args), "input_structure": str((d / "input.dms").resolve()),
                     "workdir": str((d / "md").resolve()), "forcefields": spec,
                     "box_nm": round(edge / 10.0, 4)}  # fmt: skip
+        # swim starts from boonza md's defaults, so neither is on unless asked
+        # for; what swim does add is the selection each one wants here
         if repel and "repulsion_selection" not in args.specified:
             settings["repulsion_selection"] = f"chain {chain}"  # ligand copies apart
-        if "dihedral_restraint" not in args.specified:
-            settings["dihedral_restraint"] = "ss"  # the protein's helices and sheets hold
-        if "dihedral_restraint_selection" not in args.specified:
+        if (settings.get("dihedral_restraint", "none") != "none"
+                and "dihedral_restraint_selection" not in args.specified):  # fmt: skip
             settings["dihedral_restraint_selection"] = f"not chain {chain}"  # ligands swim
         write_settings(d / "md.toml", settings)
     (root / "simulations.txt").write_text(
@@ -533,8 +535,13 @@ def main(argv=None) -> int:
         help="Å between a placed ligand's heavy atoms and any other (default: 3)",
     )
     g.add_argument("--run", action="store_true", help="run the simulations here, one by one")
+    g.add_argument("--repulsion", dest="repulsion", action="store_true",
+                   help="keep ligand copies from sticking together: a flat-bottom wall "
+                        "between the heavy atoms of different ligands (off by default, "
+                        "as in boonza md)")  # fmt: skip
+    # --no-repulsion was the way to turn off what swim once did by default
     g.add_argument("--no-repulsion", dest="no_repulsion", action="store_true",
-                   help="let ligand copies stick together (by default they repel)")  # fmt: skip
+                   help=argparse.SUPPRESS)  # fmt: skip
     args = parse_arguments(argv, parser)
     x = args.extra
     if "workdir" not in args.specified:
@@ -544,7 +551,7 @@ def main(argv=None) -> int:
             raise ValueError("give the ligands with --ligands")
         sims = prepare(args, x["ligands"], x.get("types", 5), x.get("copies", 3),
                        x.get("jobs", 1), x.get("clearance", 3.0),
-                       repel=not x.get("no_repulsion", False))  # fmt: skip
+                       repel=bool(x.get("repulsion")) and not x.get("no_repulsion"))  # fmt: skip
         if x.get("run"):
             for d in sims:
                 print(f"== {d}")

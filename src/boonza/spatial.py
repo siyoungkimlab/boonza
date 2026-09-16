@@ -92,6 +92,76 @@ def _query(qpos, lo, hi, size, dims, start, spos, r, box, nimg, first_hit):
     return out
 
 
+@njit(parallel=True, cache=True)
+def _count(qpos, lo, hi, size, dims, start, spos, r, box, nimg):
+    """How many targets lie within ``r`` of each query point."""
+    nq = qpos.shape[0]
+    out = np.zeros(nq, np.int64)
+    r2 = r * r
+    for q in prange(nq):
+        total = 0
+        for ii in range(-nimg, nimg + 1):
+            x = qpos[q, 0] + box[0] * np.float32(ii)
+            if x < lo[0] - r or x > hi[0] + r:
+                continue
+            for jj in range(-nimg, nimg + 1):
+                y = qpos[q, 1] + box[1] * np.float32(jj)
+                if y < lo[1] - r or y > hi[1] + r:
+                    continue
+                for kk in range(-nimg, nimg + 1):
+                    z = qpos[q, 2] + box[2] * np.float32(kk)
+                    if z < lo[2] - r or z > hi[2] + r:
+                        continue
+                    cx = int(np.floor((x - lo[0]) / size))
+                    cy = int(np.floor((y - lo[1]) / size))
+                    cz = int(np.floor((z - lo[2]) / size))
+                    for a in range(max(cx - 1, 0), min(cx + 2, dims[0])):
+                        for b in range(max(cy - 1, 0), min(cy + 2, dims[1])):
+                            for c in range(max(cz - 1, 0), min(cz + 2, dims[2])):
+                                key = (a * dims[1] + b) * dims[2] + c
+                                for t in range(start[key], start[key + 1]):
+                                    dx = x - spos[t, 0]
+                                    dy = y - spos[t, 1]
+                                    dz = z - spos[t, 2]
+                                    if dx * dx + dy * dy + dz * dz <= r2:
+                                        total += 1
+        out[q] = total
+    return out
+
+
+def _cell_list(target, r):
+    """The cell list a query walks: (lo, hi, size, dims, start, spos)."""
+    lo, hi = target.min(axis=0), target.max(axis=0)
+    extent = np.maximum(hi - lo, np.float32(1e-3))
+    size = max(float(r), float(np.prod(extent) / len(target)) ** (1 / 3), 1e-3)
+    while True:
+        dims = (extent / size).astype(np.int64) + 1
+        if dims.prod() <= 8 * len(target) + 1000:
+            break
+        size *= 1.5
+    start, spos, _ = _build(target, lo, np.float32(size), dims)
+    return lo, hi, np.float32(size), dims, start, spos
+
+
+def count_within(query, target, r, cell=None) -> np.ndarray:
+    """Per query point, how many target points lie within ``r``.
+
+    One integer per query point and no pair list, so memory does not grow with
+    the number of pairs found.  With ``cell``, the 27 nearest images are
+    searched, which counts a target twice if the box is narrower than ``2 r``.
+    """
+    query = np.ascontiguousarray(query, dtype=np.float32).reshape(-1, 3)
+    target = np.ascontiguousarray(target, dtype=np.float32).reshape(-1, 3)
+    if not len(query) or not len(target):
+        return np.zeros(len(query), np.int64)
+    lo, hi, size, dims, start, spos = _cell_list(target, float(r))
+    if cell is None:
+        box, nimg = np.zeros(3, np.float32), 0
+    else:
+        box, nimg = _box(cell), 1
+    return _count(query, lo, hi, size, dims, start, spos, np.float32(r), box, nimg)
+
+
 def _box(cell) -> np.ndarray:
     cell = np.asarray(cell, dtype=np.float64).reshape(3, 3)
     lengths = np.sqrt((cell * cell).sum(axis=1))
