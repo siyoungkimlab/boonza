@@ -281,3 +281,21 @@ matcher (openmm/app/internal/compiled.pyx), which carry this notice:
   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
   USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+src/boonza/data/fragments holds two fragment libraries for boonza swim, as
+SDF files of structures and their properties:
+
+  AstexMiniFrag.sdf   63 fragments, the MiniFrag approach of Astex
+                      Pharmaceuticals (O'Reilly et al., "Crystallographic
+                      screening using ultra-low-molecular-weight ligands
+                      (MiniFrags)", Drug Discovery Today 24 (2019) 1081)
+  Essential320.sdf    307 fragments, from the Essential Fragment Library
+
+Both files came from Enamine's fragment libraries
+(https://enamine.net/compound-libraries/fragment-libraries) and keep its
+catalogue identifiers (Z359510198, ...); each is a subset of the set
+published there.  Enamine states no licence with the files themselves; its
+site terms (https://enamine.net/terms-of-use) restrict redistributing
+catalogue content.  The structures themselves come from the published
+fragment sets cited above.

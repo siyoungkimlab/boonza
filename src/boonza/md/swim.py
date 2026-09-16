@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -224,6 +225,18 @@ def _rebuild(s: System, resnames, resids, names) -> System:
     return out
 
 
+def _resname(title: str) -> str:
+    """An SDF record's own name (its ``_Name``, the title line) as the residue
+    name, or ``LIG`` when there is none: ``_entries`` makes up ``ligand N`` for
+    a library whose entries are unnamed.  DMS and MAE keep a name of any
+    length; a PDB written later cuts it to four characters, so
+    ``ligands.csv`` remains what says which residue is which ligand."""
+    name = " ".join(str(title).split())
+    if not name or re.fullmatch(r"ligand \d+", name):
+        return "LIG"
+    return name.replace(" ", "_")
+
+
 def _one_residue(s: System, name: str) -> System:
     names = gaff._unique_names([str(x) for x in s.atoms["name"].tolist()],
                                s.atoms["anum"].tolist())  # fmt: skip
@@ -296,6 +309,29 @@ def _rdkit(s: System):
     return Chem.RemoveHs(to_rdkit(t, implicit_hydrogens=False))
 
 
+#: Ligand libraries shipped with boonza, by the name of their file.
+FRAGMENTS = Path(__file__).resolve().parent.parent / "data" / "fragments"
+
+
+def bundled_libraries() -> list[str]:
+    """The ligand libraries shipped with boonza, by name."""
+    return sorted(p.stem for p in FRAGMENTS.glob("*.sdf"))
+
+
+def find_library(name):
+    """A ligand library: a file of your own, or the name of a bundled one."""
+    path = Path(name).expanduser()
+    if path.is_file():
+        return path
+    for candidate in sorted(FRAGMENTS.glob("*.sdf")):
+        if candidate.stem.lower() == str(name).lower():
+            return candidate
+    raise FileNotFoundError(
+        f"no ligand library {str(name)!r}: give the path to an SDF or DMS file, or one "
+        f"of the libraries boonza ships: {', '.join(bundled_libraries())}"
+    )
+
+
 def load_library(path, forcefields) -> list[Ligand]:
     """The ligands of an SDF or DMS file, each named ``code(k)``."""
     from rdkit import Chem
@@ -308,11 +344,11 @@ def load_library(path, forcefields) -> list[Ligand]:
         placed = None
         if not has_ff and shape.nresidues == 1:
             placed = split_peptide(shape, forcefields)
-        if placed is None:  # residue LIG; the residue number tells ligands apart
+        if placed is None:  # the record's own name, else LIG; the resid tells copies apart
             if has_ff or shape.nresidues == 1:
-                placed = _one_residue(shape, "LIG")
+                placed = _one_residue(shape, _resname(title))
             else:
-                res = [str(x) or "LIG" for x in shape.residues["name"].tolist()]
+                res = [str(x) or _resname(title) for x in shape.residues["name"].tolist()]
                 per_atom = [res[r] for r in shape.atoms["residue"].tolist()]
                 placed = _rebuild(shape, per_atom, shape.atoms["residue"] + 1,
                                   [str(x) for x in shape.atoms["name"].tolist()])  # fmt: skip
@@ -454,6 +490,7 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
     root.mkdir(parents=True, exist_ok=True)
     protein = load_input(args.input_structure)
     _, ffs = forcefields(args)
+    library = find_library(library)
     ligands = load_library(library, ffs)
     groups = deal([lig.mol for lig in ligands], types, keys=[lig.smiles for lig in ligands])
     sizes = [len(g) for g in groups]
@@ -525,7 +562,9 @@ def main(argv=None) -> int:
 
     parser = build_parser("boonza swim")
     g = parser.add_argument_group("swim")
-    g.add_argument("--ligands", help="SDF or DMS file of ligands (with or without a force field)")
+    g.add_argument("--ligands",
+                   help="SDF or DMS file of ligands (with or without a force field), or a "
+                        "library boonza ships: AstexMiniFrag, Essential320")  # fmt: skip
     g.add_argument("--types", type=int, help="ligand types per simulation (default: 5)")
     g.add_argument("--copies", type=int, help="copies of each ligand type (default: 3)")
     g.add_argument("--jobs", type=int, help="ligands parameterized at once (default: 1)")
