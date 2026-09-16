@@ -37,6 +37,51 @@ def test_solvate_matches_msys(tmp_path):
     assert names[-1].startswith("W") and ours.residues["resid"][-1] >= 1
 
 
+def _cage(cavities, spacing=2.2, half_z=6.0, edge=28.0):
+    """A carbon lattice slab (bonded into rows, so every atom is apolar) with
+    spherical cavities carved out of it: the voids a membrane's tails leave."""
+    s = boonza.System("cage")
+    chain = s.add_chain()
+    residue = s.add_residue(chain, name="CAG")
+    axis = np.arange(-edge / 2 + spacing / 2, edge / 2, spacing)
+    zs = np.arange(-half_z, half_z + 1e-9, spacing)
+    for y in axis:
+        for z in zs:
+            previous = None
+            for x in axis:
+                p = np.array([x, y, z])
+                if any(np.linalg.norm(p - c) < r for c, r in cavities):
+                    previous = None
+                    continue
+                a = s.add_atom(residue, name="C", anum=6, pos=p)
+                if previous is not None:
+                    s.add_bond(previous, a)
+                previous = a
+    s.cell = np.diag([edge, edge, 40.0])
+    return s
+
+
+def test_buried_water_leaves_greasy_voids_dry():
+    bare, pocket = np.array([-7.0, 0.0, 0.0]), np.array([7.0, 0.0, 0.0])
+    peptide = boonza.peptide("AA")
+    peptide.positions = peptide.positions - peptide.positions.mean(0) + pocket
+    cage = _cage([(bare, 4.5), (pocket, 9.0)])
+    cage.append(peptide)  # a protein in the second cavity: its water is its business
+    box = np.diag(np.asarray(cage.cell, float)).copy()
+    wet = boonza.solvate(cage, box=box, center_selection="none")
+    dry = boonza.solvate(cage, box=box, center_selection="none", remove_buried=True)
+
+    def near(s, point, r):
+        o = s.positions[s.select("water and oxygen").ids]
+        return int((np.linalg.norm(o - point, axis=1) < r).sum())
+
+    assert near(wet, bare, 4.5) > 0  # water is tiled into the bare void ...
+    assert near(dry, bare, 4.5) == 0  # ... and taken out again
+    assert near(dry, pocket, 9.0) == near(wet, pocket, 9.0) > 0  # the peptide keeps its water
+    far = lambda s: (np.abs(s.positions[s.select("water and oxygen").ids][:, 2]) > 10).sum()  # noqa: E731
+    assert far(dry) == far(wet) > 100  # bulk water is untouched
+
+
 def test_solvate_box_from_thickness():
     protein = boonza.load(msys_file("ww.dms")).clone("protein")
     extent = np.ptp(protein.positions, axis=0).max()

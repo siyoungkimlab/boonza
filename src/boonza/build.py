@@ -41,8 +41,11 @@ def _load(what) -> System:
 def solvate(solute: System, solvent=None, box=None, thickness: float = 5.0,
             min_solute_dist: float = WATER_RADIUS,
             min_solvent_dist: float = WATER_CONTACT, solvent_selection: str = "oxygen",
-            center_selection: str = "all") -> System:  # fmt: skip
+            center_selection: str = "all", remove_buried: bool = False) -> System:  # fmt: skip
     """Tile a solvent box around ``solute`` and remove overlaps (msys ``dms-solvate``).
+
+    ``remove_buried`` also drops solvent that ends up in a hydrophobic void
+    (between lipid tails, say), by :func:`remove_buried_water`.
 
     ``box``: the box edge lengths (one value or three, Å); by default a cube
     of the solute's largest extent plus ``thickness`` on each side.  The
@@ -100,6 +103,8 @@ def solvate(solute: System, solvent=None, box=None, thickness: float = 5.0,
                     drop.append(f)
         if drop:
             mol = mol.clone(np.flatnonzero(~np.isin(frag, drop)))
+    if remove_buried:
+        mol = remove_buried_water(mol, npro)
     mol = _remove_periodic_contacts(mol, npro, min_solvent_dist)
 
     # name the water chains W1, W2, ... and number their residues from 1
@@ -147,6 +152,104 @@ def _tiled(wat: System, nrep, shift, watsize) -> System:
     block.chains["segid"] = np.array([s.rsplit("|", 1)[0] for s in block.chains["segid"].tolist()])
     block._ct_names[0] = "solvate"
     return block
+
+
+#: Added water is dropped where it sits in a hydrophobic void: fewer than
+#: ``BURIED_CLUSTER`` waters linked within ``BURIED_LINK`` A of each other, at
+#: least ``BURIED_APOLAR`` apolar heavy atoms within ``BURIED_APOLAR_R`` A, and
+#: no protein atom within ``BURIED_PROTEIN`` A.  Each test earns its place: the
+#: cluster finds water isolated in a pocket, the apolar count says the pocket is
+#: greasy rather than polar, and the protein clause leaves a protein's own
+#: cavities and channels (a porin's pore) alone.  All three are local, so a
+#: planar bilayer, a vesicle, a tube and a micelle are treated alike.
+BURIED_LINK = 4.5
+BURIED_CLUSTER = 5
+BURIED_APOLAR = 15
+BURIED_APOLAR_R = 6.0
+BURIED_PROTEIN = 8.0
+
+
+def _apolar(mol: System, ids: np.ndarray) -> np.ndarray:
+    """Those of ``ids`` bonded only to carbon, hydrogen or sulfur: lipid tails,
+    cholesterol, the greasy parts of a protein."""
+    anum = mol.atoms["anum"]
+    out = []
+    for a in ids.tolist():
+        if anum[a] not in (6, 16):
+            continue
+        nbr = mol.bonded_atoms(a)
+        if len(nbr) and bool(np.isin(anum[nbr], (1, 6, 16)).all()):
+            out.append(a)
+    return np.array(out, dtype=np.int64)
+
+
+def _cluster_sizes(pos: np.ndarray, cut: float, cell) -> np.ndarray:
+    """The size of each point's cluster, points linked within ``cut`` (union-find)."""
+    from .spatial import pairs_within
+
+    n = len(pos)
+    i, j, _ = pairs_within(pos, cut, cell)
+    parent = np.arange(n)
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in zip(i.tolist(), j.tolist(), strict=True):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+    label = np.array([find(x) for x in range(n)], dtype=np.int64)
+    return np.bincount(label)[label]
+
+
+def _neighbor_counts(pos, query: np.ndarray, target: np.ndarray, r: float, cell) -> np.ndarray:
+    """For each ``query`` atom, how many ``target`` atoms lie within ``r``."""
+    from .spatial import pairs_within
+
+    n = len(query)
+    if not n or not len(target):
+        return np.zeros(n, np.int64)
+    i, j, _ = pairs_within(pos[np.concatenate([query, target])], r, cell)
+    cross = (i < n) != (j < n)
+    return np.bincount(np.where(i[cross] < n, i[cross], j[cross]), minlength=n)
+
+
+def remove_buried_water(mol: System, first: int) -> System:
+    """Drop the water added from atom ``first`` on that sits in a hydrophobic void.
+
+    For filling the empty space of a system that is already built (a membrane,
+    say), where tiled water otherwise lands between the lipid tails.  See
+    :data:`BURIED_CLUSTER` for the test and why each part of it is there.
+    """
+    from .spatial import min_dist2
+
+    anum = mol.atoms["anum"]
+    added = np.arange(mol.natoms) >= first
+    water = np.zeros(mol.natoms, bool)
+    water[mol.select("water").ids] = True
+    oxygen = np.flatnonzero(added & water & (anum == 8))
+    solute = np.flatnonzero(~added)
+    if not len(oxygen) or not len(solute):
+        return mol
+    pos = mol.positions
+    cell = np.asarray(mol.cell, dtype=np.float64)
+    cell = cell if cell.any() else None
+    lonely = np.flatnonzero(_cluster_sizes(pos[oxygen], BURIED_LINK, cell) < BURIED_CLUSTER)
+    if not len(lonely):
+        return mol
+    greasy = _neighbor_counts(pos, oxygen[lonely], _apolar(mol, solute), BURIED_APOLAR_R, cell)
+    drop = lonely[greasy >= BURIED_APOLAR]
+    protein = mol.select("protein").ids
+    if len(protein) and len(drop):  # a protein's own cavities and channels are its business
+        d = min_dist2(pos[oxygen[drop]], pos[protein], BURIED_PROTEIN, cell)
+        drop = drop[d > np.float32(BURIED_PROTEIN) ** 2]
+    if not len(drop):
+        return mol
+    frag = np.asarray(mol.fragids)
+    return mol.clone(np.flatnonzero(~np.isin(frag, np.unique(frag[oxygen[drop]]))))
 
 
 def _remove_periodic_contacts(mol: System, npro: int, dist: float) -> System:

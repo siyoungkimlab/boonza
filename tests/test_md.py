@@ -384,7 +384,12 @@ def test_solvate_false_runs_the_input_as_it_is(tmp_path, dipeptide):
     path = tmp_path / "built.dms"
     boonza.save(built, path)
     args = parse_arguments([str(path), "--no-solvate"])
-    assert args.solvate is False
+    assert args.solvate == "none"  # --no-solvate is the alias
+    assert parse_arguments(["x"]).solvate == "box"
+    assert parse_arguments(["x", "--solvate", "fill"]).solvate == "fill"
+    toml = tmp_path / "old.toml"
+    toml.write_text("solvate = false\n")  # a boolean, from before fill was a mode
+    assert config.load_configuration(toml)["solvate"] == "none"
     lines = []
     out, info = build_system(args, tmp_path, log=lines.append)
     assert out.natoms == built.natoms  # no water or ions added
@@ -398,6 +403,30 @@ def test_solvate_false_runs_the_input_as_it_is(tmp_path, dipeptide):
     assert any("saltM is not used" in line for line in lines)
     with pytest.raises(ValueError, match="needs a periodic cell"):
         build_system(parse_arguments([str(dipeptide), "--no-solvate"]), tmp_path, log=quiet)
+
+
+def test_solvate_fill_uses_the_inputs_own_box(tmp_path, dipeptide):
+    s = boonza.load(dipeptide)
+    s.cell = np.diag([34.0, 34.0, 34.0])
+    s.positions = s.positions - s.positions.mean(0)
+    path = tmp_path / "boxed.dms"
+    boonza.save(s, path)
+    lines = []
+    out, _ = build_system(parse_arguments([str(path), "--solvate", "fill", "--saltM", "0"]),
+                          tmp_path, log=lines.append)  # fmt: skip
+    assert np.allclose(np.diag(out.cell), 34.0)  # the input's own box, not a new one
+    assert len(out.select("water").ids) > 300  # its empty space is filled
+    assert any("Filled the input's box" in line for line in lines)
+    lines.clear()  # padding does not apply, and is named
+    build_system(parse_arguments([str(path), "--solvate", "fill", "--padding-nm", "1.5"]),
+                 tmp_path, log=lines.append)  # fmt: skip
+    assert any("padding_nm is not used" in line for line in lines)
+    with pytest.raises(ValueError, match="needs a periodic cell"):
+        build_system(parse_arguments([str(dipeptide), "--solvate", "fill"]), tmp_path, log=quiet)
+    s.cell = np.array([[34.0, 0, 0], [3.0, 34.0, 0], [0, 0, 34.0]])
+    boonza.save(s, path)
+    with pytest.raises(ValueError, match="rectangular cell"):
+        build_system(parse_arguments([str(path), "--solvate", "fill"]), tmp_path, log=quiet)
 
 
 def test_barostat_choices(tmp_path, dipeptide):

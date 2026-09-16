@@ -106,8 +106,33 @@ pairs, the waters counted without those the counterions replace. OpenMM's
 Modeller also counts against the waters but rounds to the nearest pair (with
 55.4 M), so the two differ by at most about one pair.
 
-A system built elsewhere, already solvated and ionized, runs as it is with
-`solvate = false` (`--no-solvate`):
+A system that has its own box but no water — a membrane built elsewhere, say
+— is filled with `solvate = "fill"`, which keeps that box and adds water only
+where water belongs:
+
+```bash
+boonza md membrane.dms --solvate fill --barostat membrane --workdir run1
+```
+
+Water is tiled through the cell and then taken out again wherever it landed
+in a hydrophobic void: where fewer than 5 waters are linked within 4.5 Å of
+each other, at least 15 apolar heavy atoms lie within 6 Å, and no protein
+atom is within 8 Å. The three tests together separate a lipid void from the
+water-filled pore of a membrane protein, which looks the same to any one of
+them alone: the cluster finds water sitting on its own, the apolar count says
+its surroundings are greasy rather than polar, and the protein clause leaves
+a protein's own cavities and channels alone. Nothing uses a plane or an axis,
+so a vesicle, a tube or a micelle is treated like a flat bilayer. Ions follow
+as usual, with `saltM` counted against the water that remains; `padding_nm`
+and `box_nm` are unused, and the cell must be rectangular.
+
+On a 38k-atom OmpF bilayer (POPC/POPE/POPS and cholesterol, 94 x 94 x 151 Å),
+filling adds 30,405 waters in 2.0 s, and the void test removes 44 of them in
+a further 0.4 s: every water in the lipid core, none from the porin's pore,
+none from bulk.
+
+A system that is already solvated and ionized runs as it is with
+`solvate = "none"` (`--no-solvate`):
 
 ```bash
 boonza md built.dms --no-solvate --workdir run1
@@ -129,7 +154,7 @@ ligands included.
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
-| `solvate` (`--no-solvate`) | on | off runs the input as it is, with its own water, ions and box |
+| `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `none` (`--no-solvate`) runs the input as it is |
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |
 | `temperature`, `pressure` | 298 K, 1 bar | |

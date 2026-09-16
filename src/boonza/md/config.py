@@ -22,6 +22,9 @@ DIHEDRAL_RESTRAINTS = ("none", "bb", "ss")
 #: Pressure coupling: one scale factor for the box, x and y together with z
 #: free (a planar membrane), or constant volume.
 BAROSTATS = ("isotropic", "membrane", "none")
+#: What to do about water: pad the solute and make a box, fill the empty space
+#: of the input's own cell (a system built elsewhere, a membrane), or nothing.
+SOLVATE_MODES = ("box", "fill", "none")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
 PROTEIN_EXTENTS = ("matched", "cb")
@@ -49,7 +52,7 @@ DEFAULTS: dict = {
     "ligand_charges": None,
     "parents": None,
     "protein_extent": "matched",
-    "solvate": True,
+    "solvate": "box",
     "padding_nm": 1.0,
     "box_nm": None,
     "cutoff_nm": None,
@@ -110,7 +113,7 @@ _NUMBERS = {
     "repulsion_kJ",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"solvate", "hmr", "early_stop"}
+_BOOLEANS = {"hmr", "early_stop"}
 _CHOICES = {
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
@@ -119,6 +122,7 @@ _CHOICES = {
     "precision": PRECISIONS,
     "platform": PLATFORMS,
     "barostat": BAROSTATS,
+    "solvate": SOLVATE_MODES,
 }
 MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component", "monitor_selection")
 #: Settings a restart takes from ``final.toml`` unless they are given again.
@@ -234,7 +238,9 @@ def check_settings(values: dict, where: str) -> dict:
     if unknown:
         raise ValueError(f"{where}: unknown setting(s): {', '.join(sorted(unknown))}")
     out = dict(values)
-    for key, v in values.items():
+    if isinstance(out.get("solvate"), bool):  # true/false, before fill was a mode
+        out["solvate"] = "box" if out["solvate"] else "none"
+    for key, v in out.items():
         if key in _BOOLEANS:
             ok = isinstance(v, bool)
         elif key in _INTEGERS:
@@ -394,9 +400,17 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--solvate",
-        action=argparse.BooleanOptionalAction,
-        help="add water and ions (default: on); --no-solvate runs INPUT_STRUCTURE as it "
-        "is, with its own water, ions and periodic cell",
+        choices=SOLVATE_MODES,
+        help="box (default): water and ions around the solute, in a new box; fill: "
+        "keep INPUT_STRUCTURE's own cell and fill its empty space, keeping water out "
+        "of hydrophobic voids (a membrane); none: run it as it is",
+    )
+    p.add_argument(
+        "--no-solvate",
+        dest="solvate",
+        action="store_const",
+        const="none",
+        help="the same as --solvate none",
     )
     p.add_argument(
         "--hmr",
@@ -634,9 +648,12 @@ ligandff = "gaff-2.11"
 # match the parent residue; or "cb": on the backbone, CB and CB's hydrogens only.
 protein_extent = "matched"
 
-# solvate = false runs INPUT_STRUCTURE as it is, water, ions and box included
-# (it must have a periodic cell); padding_nm, box_nm and saltM are then unused.
-solvate = true
+# Water: "box" puts the solute in a new box with padding_nm around it; "fill"
+# keeps INPUT_STRUCTURE's own cell and fills its empty space, leaving hydrophobic
+# voids dry (a membrane built elsewhere); "none" runs it as it is, water, ions
+# and box included. "fill" and "none" need a periodic cell, and do not use
+# padding_nm or box_nm ("none" does not use saltM either).
+solvate = "box"
 padding_nm = 1.0
 # cutoff_nm defaults to 0.9 for Amber and 1.2 for CHARMM.
 # cutoff_nm = 0.9
