@@ -12,7 +12,7 @@ dependencies:
   - numba
   - rdkit
   - openmm>=8.1
-  - pandas
+  - pandas<3
   - networkx
   - ambertools
   - matplotlib
