@@ -327,7 +327,8 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         help="auto (default): GAFF2 templates for what the force fields cannot "
         "match; disabled: that is an error",
     )
-    p.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS, help="default: gaff-2.11")
+    p.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
+                   help="GAFF release for ligands: gaff-2.11 (default)")  # fmt: skip
     p.add_argument(
         "--protein-extent",
         dest="protein_extent",
@@ -378,13 +379,15 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     p.add_argument(
         "--dihedral-restraint-selection",
         dest="dihedral_restraint_selection",
-        help="restrain only torsions whose atoms this selects, e.g. 'protein' (default: all)",
+        help="with --dihedral-restraint, hold only the torsions whose atoms this "
+        "selects, e.g. 'chain A' or 'not chain LIG' (default: every peptide chain in "
+        "the system, a bound peptide included); on its own it does nothing",
     )
     p.add_argument(
         "--repulsion-selection",
         dest="repulsion_selection",
-        help="molecules kept from sticking together (heavy atoms of different ones repel), "
-        "e.g. 'chain L'",
+        help="molecules kept from sticking together, heavy atoms of different ones "
+        "repelling, e.g. 'chain L' or 'resname LIG' (default: none, nothing repels)",
     )
     p.add_argument(
         "--confirmation-checks",
@@ -427,10 +430,15 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "--dihedral-restraint",
         dest="dihedral_restraint",
         choices=DIHEDRAL_RESTRAINTS,
-        help="restrain phi/psi to the input: bb all, ss helices and sheets",
+        help="hold phi/psi at the input: none (default, nothing is restrained), "
+        "bb (every backbone torsion across a peptide bond), ss (only residues in "
+        "helices and sheets)",
     )
-    p.add_argument("--precision", choices=PRECISIONS, help="GPU precision (default: mixed)")
-    p.add_argument("--platform", choices=PLATFORMS, help="default: the fastest that works")
+    p.add_argument("--precision", choices=PRECISIONS,
+                   help="GPU precision: mixed (default), single, double")  # fmt: skip
+    p.add_argument("--platform", choices=PLATFORMS,
+                   help="CUDA, OpenCL, Metal, CPU or Reference "
+                        "(default: the fastest that works here)")  # fmt: skip
     for sel, text in (
         ("--monitor-ligand", "a ligand-N ID"),
         ("--monitor-chain", "an input chain ID"),
