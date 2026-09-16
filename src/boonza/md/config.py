@@ -22,6 +22,9 @@ DIHEDRAL_RESTRAINTS = ("none", "bb", "ss")
 #: Pressure coupling: one scale factor for the box, x and y together with z
 #: free (a planar membrane), or constant volume.
 BAROSTATS = ("isotropic", "membrane", "none")
+#: What to do about water: pad the solute and make a box, fill the empty space
+#: of the input's own cell (a system built elsewhere, a membrane), or nothing.
+SOLVATE_MODES = ("box", "fill", "none")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
 PROTEIN_EXTENTS = ("matched", "cb")
@@ -49,7 +52,7 @@ DEFAULTS: dict = {
     "ligand_charges": None,
     "parents": None,
     "protein_extent": "matched",
-    "solvate": True,
+    "solvate": "box",
     "padding_nm": 1.0,
     "box_nm": None,
     "cutoff_nm": None,
@@ -110,7 +113,7 @@ _NUMBERS = {
     "repulsion_kJ",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"solvate", "hmr", "early_stop"}
+_BOOLEANS = {"hmr", "early_stop"}
 _CHOICES = {
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
@@ -119,6 +122,7 @@ _CHOICES = {
     "precision": PRECISIONS,
     "platform": PLATFORMS,
     "barostat": BAROSTATS,
+    "solvate": SOLVATE_MODES,
 }
 MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component", "monitor_selection")
 #: Settings a restart takes from ``final.toml`` unless they are given again.
@@ -234,7 +238,9 @@ def check_settings(values: dict, where: str) -> dict:
     if unknown:
         raise ValueError(f"{where}: unknown setting(s): {', '.join(sorted(unknown))}")
     out = dict(values)
-    for key, v in values.items():
+    if isinstance(out.get("solvate"), bool):  # true/false, before fill was a mode
+        out["solvate"] = "box" if out["solvate"] else "none"
+    for key, v in out.items():
         if key in _BOOLEANS:
             ok = isinstance(v, bool)
         elif key in _INTEGERS:
@@ -280,19 +286,29 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         metavar="INPUT_STRUCTURE",
         help="structure with hydrogens (PDB, DMS, MAE, mmCIF, SDF, GRO, ...)",
     )
-    p.add_argument("--config", help="TOML settings; options given here override it")
-    p.add_argument(
+
+    def numbers(group, items) -> None:
+        """Float settings, each with its default, in the group they belong to."""
+        for opt, dest, text in items:
+            default = f"; default: {d[dest]}" if d[dest] is not None else ""
+            group.add_argument(opt, dest=dest, type=float, help=text + default)
+
+    files = p.add_argument_group("files and settings")
+    files.add_argument("--config", help="TOML settings; options given here override it")
+    files.add_argument("--workdir", help=f"output directory (default: {d['workdir']})")
+    files.add_argument(
         "--write-default-config",
         metavar="FILE",
         help="write a commented settings template and exit",
     )
-    p.add_argument(
+    files.add_argument(
         "--list-components",
         action="store_true",
         help="list the molecules of INPUT_STRUCTURE with their selectors and exit",
     )
-    p.add_argument("--workdir", help=f"output directory (default: {d['workdir']})")
-    p.add_argument(
+
+    ff = p.add_argument_group("force fields and ligands")
+    ff.add_argument(
         "-f",
         "--ff",
         dest="ff_options",
@@ -303,7 +319,7 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "files (e.g. -f amber19/protein.ff19SB.xml -f amber19/opc.xml), not both "
         "(default: ff19SB + phosaa19SB, TIP3P, Joung-Cheatham and Li/Merz ions)",
     )
-    p.add_argument(
+    ff.add_argument(
         "-m",
         "--merge",
         dest="ff_options",
@@ -313,117 +329,153 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         help="patch the previous -f viparr force field",
     )
     for old in ("--proteinff", "--waterff"):  # ommflow's, replaced by -f XML files
-        p.add_argument(old, help=argparse.SUPPRESS)
-    p.add_argument(
+        ff.add_argument(old, help=argparse.SUPPRESS)
+    ff.add_argument(
         "--ligand-mode",
         dest="ligand_mode",
         choices=LIGAND_MODES,
         help="auto (default): GAFF2 templates for what the force fields cannot "
         "match; disabled: that is an error",
     )
-    p.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS, help="default: gaff-2.11")
-    p.add_argument(
+    ff.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
+                    help="GAFF release for ligands: gaff-2.11 (default)")  # fmt: skip
+    ff.add_argument(
         "--protein-extent",
         dest="protein_extent",
         choices=PROTEIN_EXTENTS,
         help="amino acids with GAFF2 atoms keep protein types as far as they match "
         "(matched, the default) or on the backbone and CB only (cb)",
     )
-    p.add_argument(
+    ff.add_argument(
         "--charge",
         dest="charge_options",
         action="append",
         metavar="RES=Q",
         help="formal charge of a ligand residue whose file has none",
     )
-    p.add_argument(
+    ff.add_argument(
         "--parent",
         dest="parent_options",
         action="append",
         metavar="RES=PARENT",
         help="the standard residue a modified residue comes from, e.g. MSE=MET",
     )
-    floats = [
+
+    box = p.add_argument_group("the box: water and ions")
+    box.add_argument(
+        "--solvate",
+        choices=SOLVATE_MODES,
+        help="box (default): water and ions around the solute, in a new box; fill: "
+        "keep INPUT_STRUCTURE's own cell and fill its empty space, keeping water out "
+        "of hydrophobic voids (a membrane); none: run it as it is",
+    )
+    box.add_argument(
+        "--no-solvate",
+        dest="solvate",
+        action="store_const",
+        const="none",
+        help="the same as --solvate none",
+    )
+    numbers(box, [
         ("--padding-nm", "padding_nm", "solute to box edge (nm)"),
-        ("--cutoff-nm", "cutoff_nm", "nonbonded cutoff (nm; 0.9 Amber, 1.2 CHARMM)"),
         ("--saltM", "saltM", "NaCl added beyond neutralizing (mol/L, counted against waters)"),
+        ("--cutoff-nm", "cutoff_nm", "nonbonded cutoff (nm; 0.9 Amber, 1.2 CHARMM)"),
+    ])  # fmt: skip
+
+    run = p.add_argument_group("the simulation")
+    numbers(run, [
         ("--temperature", "temperature", "K"),
         ("--pressure", "pressure", "bar"),
-        ("--surface-tension", "surface_tension", "membrane barostat only (bar nm)"),
-        ("--equilibration-ns", "equilibration_ns", "NVT and NPT equilibration, each (ns)"),
-        ("--equilibration-report-interval-ns", "equilibration_report_interval_ns", "ns"),
-        ("--production-ns", "production_ns", "absolute production target (ns)"),
-        ("--production-report-interval-ns", "production_report_interval_ns", "ns"),
-        ("--checkpoint-interval-ns", "checkpoint_interval_ns", "ns"),
-        ("--performance-interval-ns", "performance_interval_ns", "rows of performance.csv"),
-        ("--integration-fs", "integration_fs", "time step (fs; 4 with --hmr)"),
-        ("--dihedral-restraint-kJ", "dihedral_restraint_kJ", "restraint strength (kJ/mol)"),
-        ("--monitor-interval-ns", "monitor_interval_ns", "ns between detachment checks"),
-        ("--pocket-cutoff-nm", "pocket_cutoff_nm", "target-to-pocket cutoff (nm)"),
-        ("--contact-cutoff-nm", "contact_cutoff_nm", "contact distance (nm)"),
-        ("--detach-cutoff-nm", "detach_cutoff_nm", "detachment distance (nm)"),
-        ("--repulsion-distance-nm", "repulsion_distance_nm", "repulsion wall distance (nm)"),
-        ("--repulsion-kJ", "repulsion_kJ", "repulsion strength (kJ/mol/nm^2)"),
-    ]
-    for opt, dest, text in floats:
-        default = f"; default: {d[dest]}" if d[dest] is not None else ""
-        p.add_argument(opt, dest=dest, type=float, help=text + default)
-    p.add_argument("--seed", type=int, help="random seed (default: 0)")
-    p.add_argument(
-        "--dihedral-restraint-selection",
-        dest="dihedral_restraint_selection",
-        help="restrain only torsions whose atoms this selects, e.g. 'protein' (default: all)",
-    )
-    p.add_argument(
-        "--repulsion-selection",
-        dest="repulsion_selection",
-        help="molecules kept from sticking together (heavy atoms of different ones repel), "
-        "e.g. 'chain L'",
-    )
-    p.add_argument(
-        "--confirmation-checks",
-        dest="confirmation_checks",
-        type=int,
-        help="detached checks in a row that stop production (default: 2)",
-    )
-    p.add_argument(
+    ])  # fmt: skip
+    run.add_argument(
         "--barostat",
         choices=BAROSTATS,
         help="pressure coupling: isotropic (default), membrane (x and y together, z "
         "free: planar bilayers), or none (constant volume)",
     )
-    p.add_argument(
-        "--solvate",
-        action=argparse.BooleanOptionalAction,
-        help="add water and ions (default: on); --no-solvate runs INPUT_STRUCTURE as it "
-        "is, with its own water, ions and periodic cell",
-    )
-    p.add_argument(
+    numbers(run, [("--surface-tension", "surface_tension", "membrane barostat only (bar nm)")])
+    numbers(run, [
+        ("--equilibration-ns", "equilibration_ns", "NVT and NPT equilibration, each (ns)"),
+        ("--production-ns", "production_ns", "absolute production target (ns)"),
+        ("--integration-fs", "integration_fs", "time step (fs; 4 with --hmr)"),
+    ])  # fmt: skip
+    run.add_argument(
         "--hmr",
         action=argparse.BooleanOptionalAction,
         help="hydrogen mass repartitioning to 4 amu, water untouched (default: off)",
     )
-    p.add_argument(
+    numbers(run, [
+        ("--equilibration-report-interval-ns", "equilibration_report_interval_ns", "ns"),
+        ("--production-report-interval-ns", "production_report_interval_ns", "ns"),
+        ("--checkpoint-interval-ns", "checkpoint_interval_ns", "ns"),
+        ("--performance-interval-ns", "performance_interval_ns", "rows of performance.csv"),
+    ])  # fmt: skip
+    run.add_argument("--seed", type=int, help="random seed (default: 0)")
+
+    hold = p.add_argument_group("restraints and repulsion")
+    hold.add_argument(
+        "--dihedral-restraint",
+        dest="dihedral_restraint",
+        choices=DIHEDRAL_RESTRAINTS,
+        help="hold phi/psi at the input: none (default, nothing is restrained), "
+        "bb (every backbone torsion across a peptide bond), ss (only residues in "
+        "helices and sheets)",
+    )
+    hold.add_argument(
+        "--dihedral-restraint-selection",
+        dest="dihedral_restraint_selection",
+        metavar="SELECTION",
+        help="with --dihedral-restraint, hold only the torsions whose atoms this "
+        "selects, e.g. 'chain A' or 'not chain LIG' (default: every peptide chain in "
+        "the system, a bound peptide included); on its own it does nothing",
+    )
+    numbers(hold, [("--dihedral-restraint-kJ", "dihedral_restraint_kJ",
+                    "restraint strength (kJ/mol)")])  # fmt: skip
+    hold.add_argument(
+        "--repulsion-selection",
+        dest="repulsion_selection",
+        help="molecules kept from sticking together, heavy atoms of different ones "
+        "repelling, e.g. 'chain L' or 'resname LIG' (default: none, nothing repels); "
+        "naming a selection is what turns the wall on",
+    )
+    numbers(hold, [
+        ("--repulsion-distance-nm", "repulsion_distance_nm", "repulsion wall distance (nm)"),
+        ("--repulsion-kJ", "repulsion_kJ", "repulsion strength (kJ/mol/nm^2)"),
+    ])  # fmt: skip
+
+    stop = p.add_argument_group("stopping when a binder leaves")
+    stop.add_argument(
         "--early-stop",
         dest="early_stop",
         action=argparse.BooleanOptionalAction,
         help="stop production once the target has detached (default: off)",
     )
-    p.add_argument(
-        "--dihedral-restraint",
-        dest="dihedral_restraint",
-        choices=DIHEDRAL_RESTRAINTS,
-        help="restrain phi/psi to the input: bb all, ss helices and sheets",
-    )
-    p.add_argument("--precision", choices=PRECISIONS, help="GPU precision (default: mixed)")
-    p.add_argument("--platform", choices=PLATFORMS, help="default: the fastest that works")
     for sel, text in (
         ("--monitor-ligand", "a ligand-N ID"),
         ("--monitor-chain", "an input chain ID"),
         ("--monitor-component", "a component-N ID"),
         ("--monitor-selection", "atoms of the input, e.g. 'resname LIG and chain L'"),
     ):
-        p.add_argument(sel, dest=sel[2:].replace("-", "_"), help=f"early-stop target: {text}")
+        stop.add_argument(sel, dest=sel[2:].replace("-", "_"), help=f"early-stop target: {text}")
+    numbers(stop, [
+        ("--monitor-interval-ns", "monitor_interval_ns", "ns between detachment checks"),
+        ("--pocket-cutoff-nm", "pocket_cutoff_nm", "target-to-pocket cutoff (nm)"),
+        ("--contact-cutoff-nm", "contact_cutoff_nm", "contact distance (nm)"),
+        ("--detach-cutoff-nm", "detach_cutoff_nm", "detachment distance (nm)"),
+    ])  # fmt: skip
+    stop.add_argument(
+        "--confirmation-checks",
+        dest="confirmation_checks",
+        type=int,
+        help="detached checks in a row that stop production (default: 2)",
+    )
+
+    where = p.add_argument_group("where it runs")
+    where.add_argument("--platform", choices=PLATFORMS,
+                       help="CUDA, OpenCL, Metal, CPU or Reference "
+                            "(default: the fastest that works here)")  # fmt: skip
+    where.add_argument("--precision", choices=PRECISIONS,
+                       help="GPU precision: mixed (default), single, double")  # fmt: skip
     return p
 
 
@@ -634,9 +686,12 @@ ligandff = "gaff-2.11"
 # match the parent residue; or "cb": on the backbone, CB and CB's hydrogens only.
 protein_extent = "matched"
 
-# solvate = false runs INPUT_STRUCTURE as it is, water, ions and box included
-# (it must have a periodic cell); padding_nm, box_nm and saltM are then unused.
-solvate = true
+# Water: "box" puts the solute in a new box with padding_nm around it; "fill"
+# keeps INPUT_STRUCTURE's own cell and fills its empty space, leaving hydrophobic
+# voids dry (a membrane built elsewhere); "none" runs it as it is, water, ions
+# and box included. "fill" and "none" need a periodic cell, and do not use
+# padding_nm or box_nm ("none" does not use saltM either).
+solvate = "box"
 padding_nm = 1.0
 # cutoff_nm defaults to 0.9 for Amber and 1.2 for CHARMM.
 # cutoff_nm = 0.9
@@ -662,7 +717,7 @@ hmr = false
 # Restrain backbone phi/psi to the input: none, bb, or ss (helices and sheets).
 dihedral_restraint = "none"
 dihedral_restraint_kJ = 20.0
-# Only torsions whose atoms this selects (boonza swim: not the ligands):
+# Hold only the torsions whose atoms this selects (boonza swim: not the ligands):
 # dihedral_restraint_selection = "not chain LIG"
 seed = 0
 

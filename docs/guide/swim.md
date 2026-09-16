@@ -5,7 +5,7 @@ water around a protein, from a ligand library too large for one simulation:
 
 ```bash
 boonza swim protein.pdb --ligands library.sdf --types 5 --copies 3 \
-    --workdir swim --dihedral-restraint ss --production-ns 100
+    --workdir swim --dihedral-restraint ss --repulsion --production-ns 100
 ```
 
 With N ligands and `--types` k, there are N // k simulations of k ligand
@@ -16,11 +16,12 @@ of its ligand types.
 
 Every simulation is a [`boonza md`](md.md) run, so all its options apply to
 all of them (force fields, HMR, lengths, intervals, platform, ...), and each
-one resumes like any `boonza md` run. Two differ by default: the protein's
-helices and sheets are held (`dihedral_restraint = "ss"`, with
-`dihedral_restraint_selection = "not chain LIG"` so peptide ligands swim
-free; `--dihedral-restraint none` turns it off), and the ligands repel each
-other (see below).
+one resumes like any `boonza md` run. The defaults are `boonza md`'s too,
+so nothing is restrained and nothing repels unless you say so. What swim adds
+is the right selection when you do ask: `--dihedral-restraint ss` holds the
+protein's helices and sheets but sets
+`dihedral_restraint_selection = "not chain LIG"`, so peptide ligands swim
+free, and `--repulsion` keeps the ligand copies apart (see below).
 
 The ligands are chain `LIG`. A ligand of one residue is residue `LIG`, and
 each copy has its own residue number; peptide ligands keep their residue
@@ -77,10 +78,10 @@ leaves simulations that have started alone.
 
 ## Keeping the ligands apart
 
-Ligand copies at these concentrations tend to stick together. By default the
-ligands of each simulation are kept apart: they get their own chain, `LIG`
+Ligand copies at these concentrations tend to stick together. `--repulsion`
+keeps the ligands of each simulation apart: they get their own chain, `LIG`
 (`LIG2`, ... if the protein uses `LIG`; PDB files, with one-letter chains,
-shorten it), and each simulation's settings say
+shorten it), and each simulation's settings then say
 `repulsion_selection = "chain LIG"`, a `boonza md` setting. Heavy atoms of
 different ligand molecules (copies of one ligand included) then feel a
 flat-bottom wall, E = k (d0 - r)^2 for r < d0, with d0 =
@@ -88,7 +89,7 @@ flat-bottom wall, E = k (d0 - r)^2 for r < d0, with d0 =
 k = `repulsion_kJ` (500 kJ/mol/nm^2, about 8 kJ/mol per heavy-atom pair at
 contact). Nothing changes within a molecule or between ligands and the
 protein or water. It is a force of the OpenMM system, so restarts keep it.
-`--no-repulsion` leaves it out.
+Without `--repulsion` nothing repels, as in `boonza md`.
 
 ## Placing the ligands
 
