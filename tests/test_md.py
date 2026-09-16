@@ -377,6 +377,29 @@ def test_early_stop_confirms_detachment(tmp_path, two_peptides):
     assert p.monitor_csv.read_text().splitlines() == rows
 
 
+def test_solvate_false_runs_the_input_as_it_is(tmp_path, dipeptide):
+    from boonza.build import neutralize, solvate
+
+    built = neutralize(solvate(boonza.load(dipeptide), thickness=8.0), concentration=0.15)
+    path = tmp_path / "built.dms"
+    boonza.save(built, path)
+    args = parse_arguments([str(path), "--no-solvate"])
+    assert args.solvate is False
+    lines = []
+    out, info = build_system(args, tmp_path, log=lines.append)
+    assert out.natoms == built.natoms  # no water or ions added
+    assert np.allclose(out.cell, built.cell)
+    assert abs(out.atoms["charge"].sum()) < 1e-6
+    assert any(line.startswith("System: ") for line in lines)
+    assert info["components"][0]["production_atom_indices"][:2] == [0, 1]
+    lines.clear()  # settings that no longer apply are named
+    build_system(parse_arguments([str(path), "--no-solvate", "--saltM", "0.2"]), tmp_path,
+                 log=lines.append)  # fmt: skip
+    assert any("saltM is not used" in line for line in lines)
+    with pytest.raises(ValueError, match="needs a periodic cell"):
+        build_system(parse_arguments([str(dipeptide), "--no-solvate"]), tmp_path, log=quiet)
+
+
 def test_openmm_xml_route_builds(tmp_path, dipeptide):
     args = parse_arguments([str(dipeptide), "-f", "amber19/protein.ff19SB.xml", "-f",
                             "amber19/tip3p.xml", "--padding-nm", "0.8"])  # fmt: skip
