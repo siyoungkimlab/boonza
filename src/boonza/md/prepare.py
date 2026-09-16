@@ -252,22 +252,38 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
             hydrogen_mass=HYDROGEN_MASS_AMU if args.hmr else None,
         )
 
-    charge = _solute_charge(parameterize(s))
-    if getattr(args, "box_nm", None) is not None:  # a fixed cubic box (boonza swim)
-        box = solvate(s, box=10.0 * args.box_nm)
-    else:
-        box = solvate(s, thickness=10.0 * args.padding_nm)
-    box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
-    out = parameterize(box)
+    if getattr(args, "solvate", True):
+        charge = _solute_charge(parameterize(s))
+        if getattr(args, "box_nm", None) is not None:  # a fixed cubic box (boonza swim)
+            box = solvate(s, box=10.0 * args.box_nm)
+        else:
+            box = solvate(s, thickness=10.0 * args.padding_nm)
+        box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
+        out = parameterize(box)
+    else:  # the input is the system: its water, ions and box are taken as they are
+        if not np.asarray(s.cell, dtype=float).any():
+            raise ValueError(
+                f"solvate = false needs a periodic cell, and {args.input_structure} has none "
+                "(a DMS, MAE, GRO or CIF file of a built system carries one)"
+            )
+        given = getattr(args, "specified", ())
+        unused = [k for k in ("padding_nm", "box_nm", "saltM") if k in given]
+        if unused:
+            log(f"Warning: solvate = false, so {', '.join(unused)} is not used")
+        out = parameterize(s)
+        charge = float(out.atoms["charge"].sum())
+        if abs(charge) > 1e-3:
+            log(f"Warning: the system's charge is {charge:+.2f}, and nothing is added to "
+                "neutralize it; add the ions yourself, or solvate")  # fmt: skip
     where = {int(k) - 1: i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}
     for c in [*info["components"], *([info["selection"]] if "selection" in info else [])]:
         c["production_atom_indices"] = [where[a] for a in c["input_atom_indices"]]
     nwater = len(set(out.atoms["residue"][out.select("water").ids].tolist()))
     log(
-        f"Solvated: {out.natoms} particles, {nwater} waters, box "
+        f"{'Solvated' if getattr(args, 'solvate', True) else 'System'}: {out.natoms} particles, "
+        f"{nwater} waters, box "
         + " x ".join(f"{x / 10:.2f}" for x in np.diag(out.cell))
-        + " nm; "
-        f"input charge {charge:+.2f}"
+        + f" nm; charge {charge:+.2f}"
     )
     return out, info
 

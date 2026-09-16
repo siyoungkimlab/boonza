@@ -106,6 +106,20 @@ pairs, the waters counted without those the counterions replace. OpenMM's
 Modeller also counts against the waters but rounds to the nearest pair (with
 55.4 M), so the two differ by at most about one pair.
 
+A system built elsewhere, already solvated and ionized, runs as it is with
+`solvate = false` (`--no-solvate`):
+
+```bash
+boonza md built.dms --no-solvate --workdir run1
+```
+
+Its water, ions and periodic cell are kept, so the file must have a cell (a
+DMS, MAE, GRO or mmCIF file of a built system does); `padding_nm`, `box_nm`
+and `saltM` are then unused, and a run says so if you give them. Nothing is
+added to neutralize the system either: a net charge is reported as a
+warning, not fixed. Everything else is unchanged, force fields and GAFF2
+ligands included.
+
 ## Options
 
 | Setting | Default | |
@@ -115,6 +129,7 @@ Modeller also counts against the waters but rounds to the nearest pair (with
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
+| `solvate` (`--no-solvate`) | on | off runs the input as it is, with its own water, ions and box |
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |
 | `temperature`, `pressure` | 298 K, 1 bar | |
