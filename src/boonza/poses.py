@@ -19,6 +19,7 @@ tightly they sit around it.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -68,6 +69,10 @@ class PoseSet:
 
         The tree is already built, so this costs nothing but the cutting: a
         pose that holds its share while the cutoff doubles is a real one.
+
+        The share only grows with the cutoff, but the count need not fall:
+        it counts poses that clear ``min_population``, and a wider cutoff can
+        gather scattered frames into a group that then clears it.
         """
         if cutoffs is None:
             top = float(self.merges[:, 2].max())
@@ -91,10 +96,71 @@ class PoseSet:
         return "\n".join(rows)
 
 
+def pocket_contacts(system, positions=None, ligand: str = DEFAULT_LIGAND,
+                    protein: str = "protein and name CA", cutoff: float = 5.0,
+                    periodic: bool = True) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
+    """``(protein atoms in contact per frame, share of frames each is in contact)``.
+
+    One chunked pass, reading only the ligand and the candidate protein
+    atoms.  The per-frame count says whether the ligand is bound at all,
+    without caring which pose it is in; the per-atom share says which atoms a
+    pocket is really made of, over the whole run rather than in one frame.
+    """
+    lig = _ids(system, ligand)
+    lig = lig[system.atoms["anum"][lig] > 1]
+    if not len(lig):
+        raise ValueError(f"ligand {ligand!r} selects no heavy atoms")
+    prot = _ids(system, protein)
+    if not len(prot):
+        raise ValueError(f"protein {protein!r} selects no atoms")
+    need = np.union1d(prot, lig)
+    pl, ll = np.searchsorted(need, prot), np.searchsorted(need, lig)
+    own = np.isin(prot, lig)
+    blocks, _ = _boxed_blocks(system, positions, need)
+    counts, hits = [], np.zeros(len(prot))
+    for xyz, boxes in blocks:
+        for X, box in zip(xyz, boxes, strict=True):
+            near = distances(X[pl], X[ll], box if periodic else None).min(1) <= cutoff
+            near &= ~own
+            counts.append(int(near.sum()))
+            hits += near
+    if not counts:
+        raise ValueError("no frames")
+    return np.array(counts), hits / len(counts)
+
+
+def bound_frame(counts) -> int:
+    """A typical bound frame: the median of the frames that touch the protein.
+
+    The *most* contacting frame is by construction an outlier -- the one where
+    a loop happened to close in -- and letting it decide the pocket lets one
+    frame speak for the run.
+    """
+    counts = np.asarray(counts)
+    bound = np.flatnonzero(counts > 0)
+    if not len(bound):
+        raise ValueError("the ligand never touches the protein: is it bound at all?")
+    return int(bound[np.abs(counts[bound] - np.median(counts[bound])).argmin()])
+
+
+def _check_pocket(pocket, positions) -> None:
+    """A pocket of three atoms cannot tell a pose from its mirror image."""
+    if len(pocket) < 4:
+        warnings.warn(f"the pocket has {len(pocket)} atoms: fewer than four cannot fix a "
+                      "position in space, so a pose and its mirror image measure the same. "
+                      "Widen pocket_cutoff or the protein selection.", stacklevel=3)  # fmt: skip
+        return
+    spread = np.linalg.svd(positions - positions.mean(0), compute_uv=False)
+    if spread[-1] < 0.5:
+        warnings.warn(f"the pocket is nearly flat (thickness {spread[-1]:.2f} A): poses on "
+                      "either side of it measure almost the same. Widen pocket_cutoff or "
+                      "the protein selection.", stacklevel=3)  # fmt: skip
+
+
 def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
                    protein: str = "protein and name CA", pocket_cutoff: float = 5.0,
-                   symmetry: bool = True, heavy_only: bool = True, bond_orders: bool = False,
-                   periodic: bool = True) -> np.ndarray:  # fmt: skip
+                   pocket=None, symmetry: bool = True, heavy_only: bool = True,
+                   bond_orders: bool = False, periodic: bool = True) -> np.ndarray:  # fmt: skip
     """The (nframes, nframes) dRMSD matrix of a trajectory, in A.
 
     Every frame becomes the matrix of distances between the pocket atoms --
@@ -105,8 +171,15 @@ def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT
     ``reference``: a System (a crystal structure, or a frame where the ligand
     is bound), or None for the first frame.  It decides which atoms the
     pocket is made of, so a run that starts with the ligand elsewhere -- out
-    in bulk, or not yet settled -- wants one rather than its own first
-    frame.  With ``symmetry`` each frame's ligand
+    in bulk, or not yet settled -- wants one rather than its own first frame.
+    :func:`pocket_contacts` and :func:`bound_frame` find a fair one.
+
+    ``pocket``: the pocket atoms themselves, as a selection or atom indices,
+    when you would rather say than have it worked out -- from the atoms a
+    site contacts over many runs, say.  ``protein``, ``pocket_cutoff`` and
+    the reference then do not enter into which atoms are used.
+
+    With ``symmetry`` each frame's ligand
     atoms are first matched to the first frame's, so equivalent atoms do not
     count as motion.  That mapping is chosen once per frame rather than once
     per pair, which is what keeps this quadratic in frames but linear in
@@ -115,16 +188,29 @@ def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT
     """
     ref_sys = system if reference is None else reference
     matcher, mids, rids, _ = _prepare(system, ref_sys, ligand, None, heavy_only, bond_orders)
-    prot, rprot = _ids(system, protein), _ids(ref_sys, protein)
-    if len(prot) != len(rprot):
-        raise ValueError(f"{protein!r} selects {len(prot)} atoms here and {len(rprot)} in the "
-                         "reference; they are paired in order")  # fmt: skip
+    if pocket is not None:  # given outright: protein and pocket_cutoff decide nothing
+        prot = _ids(system, pocket) if isinstance(pocket, str) else np.asarray(pocket, np.int64)
+        prot = np.setdiff1d(prot, mids)
+        if not len(prot):
+            raise ValueError("pocket selects no atoms outside the ligand")
+        rprot = prot
+    else:
+        prot, rprot = _ids(system, protein), _ids(ref_sys, protein)
+        if len(prot) != len(rprot):
+            raise ValueError(f"{protein!r} selects {len(prot)} atoms here and {len(rprot)} in "
+                             "the reference; they are paired in order")  # fmt: skip
     need = np.union1d(prot, mids)
     blocks, _ = _boxed_blocks(system, positions, need)
     pl, ll = np.searchsorted(need, prot), np.searchsorted(need, mids)
 
     rows, keep, dref = [], None, None
-    if reference is not None:
+    if pocket is not None:
+        keep = pl
+        if reference is not None:
+            rbox = np.asarray(reference.cell, np.float64) if periodic else None
+            dref = distances(reference.positions[prot], reference.positions[rids], rbox)
+            _check_pocket(prot, reference.positions[prot])
+    elif reference is not None:
         rpos = reference.positions
         rbox = np.asarray(reference.cell, np.float64) if periodic else None
         near = distances(rpos[rprot], rpos[rids], rbox).min(1) <= pocket_cutoff
@@ -133,6 +219,7 @@ def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT
             raise ValueError(f"no {protein!r} atoms within {pocket_cutoff} A of the "
                              "reference ligand")  # fmt: skip
         keep, dref = pl[near], distances(rpos[rprot[near]], rpos[rids], rbox)
+        _check_pocket(keep, rpos[rprot[near]])
     for xyz, boxes in blocks:
         for X, box in zip(xyz, boxes, strict=True):
             box = box if periodic else None
@@ -145,6 +232,7 @@ def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT
                 keep = pl[near]
             d = distances(X[keep], X[ll], box)
             if dref is None:
+                _check_pocket(keep, X[keep])
                 dref = d
             elif symmetry:
                 # cost[r, m]: the deviation if this frame's atom m plays reference atom r
@@ -236,8 +324,9 @@ def _cut(merges, n: int, height: float) -> np.ndarray:
 def poses(system, positions=None, reference=None, cutoff: float = 1.5,
           min_population: float = 0.02,
           ligand: str = DEFAULT_LIGAND, protein: str = "protein and name CA",
-          pocket_cutoff: float = 5.0, symmetry: bool = True, heavy_only: bool = True,
-          bond_orders: bool = False, periodic: bool = True) -> PoseSet:  # fmt: skip
+          pocket_cutoff: float = 5.0, pocket=None, symmetry: bool = True,
+          heavy_only: bool = True, bond_orders: bool = False,
+          periodic: bool = True) -> PoseSet:  # fmt: skip
     """The poses a trajectory holds, most populated first.
 
     Frames within ``cutoff`` A dRMSD of one another (average linkage) are one
@@ -248,7 +337,8 @@ def poses(system, positions=None, reference=None, cutoff: float = 1.5,
     simulated.
     """
     d = pose_distances(system, positions, reference, ligand=ligand, protein=protein,
-                       pocket_cutoff=pocket_cutoff, symmetry=symmetry, heavy_only=heavy_only,
+                       pocket_cutoff=pocket_cutoff, pocket=pocket, symmetry=symmetry,
+                       heavy_only=heavy_only,
                        bond_orders=bond_orders, periodic=periodic)  # fmt: skip
     merges = _nn_chain(d)
     groups = _cut(merges, len(d), float(cutoff))

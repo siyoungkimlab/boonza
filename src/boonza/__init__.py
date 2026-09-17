@@ -51,7 +51,7 @@ from .io import DMSError, load, save  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
-from .poses import Pose, PoseSet, pose_distances, poses  # noqa: E402
+from .poses import Pose, PoseSet, bound_frame, pocket_contacts, pose_distances, poses  # noqa: E402
 from .rings import ring_systems, sssr  # noqa: E402
 from .schemas import NONBONDED_SCHEMAS, TERM_SCHEMAS  # noqa: E402
 from .secondary import backbone_dihedrals, backbone_hbonds, chimerax_ss, dssp  # noqa: E402
@@ -61,6 +61,7 @@ from .sequence import (  # noqa: E402
     identity_matrix,
     sequence,
 )
+from .sites import Site, SiteSet, ligand_centroids, site_pocket, sites  # noqa: E402
 from .summary import Summary, summarize  # noqa: E402
 from .symmetry import (  # noqa: E402
     DRMSD,
@@ -155,7 +156,14 @@ __all__ = [
     "DRMSD",
     "symmetry_rmsd",
     "poses",
+    "sites",
+    "ligand_centroids",
+    "site_pocket",
+    "Site",
+    "SiteSet",
     "pose_distances",
+    "pocket_contacts",
+    "bound_frame",
     "Pose",
     "PoseSet",
     "align_sequences",

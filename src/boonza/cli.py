@@ -12,6 +12,7 @@
     boonza rmsd system.pdb crystal.pdb --traj md.xtc     (one RMSD per frame)
     boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]
     boonza poses system.dms --traj md.dcd [--cutoff 1.5] [-o poses/]   (representative frames)
+    boonza sites system.dms --traj a.dcd b.dcd [-o sites/]   (where a ligand goes, pooled)
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
     boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
@@ -206,34 +207,45 @@ def _drmsd(args) -> int:
     return 0
 
 
-def _bound_frame(system, traj, args):
-    """The frame whose ligand touches the most protein: the pocket comes from there.
+def _separate_sites(system, prot, share, cutoff: float = 8.0) -> int:
+    """How many spatially separate patches the contacted atoms fall into."""
+    from .graph import connected_components
 
-    A run may start with the ligand somewhere else -- out in bulk, or not yet
-    settled -- and its first frame then has no pocket to speak of.
+    touched = prot[share > 0.1]
+    if len(touched) < 2:
+        return len(touched)
+    xyz = system.positions[touched]
+    d = np.sqrt(((xyz[:, None] - xyz[None]) ** 2).sum(-1))
+    i, j = np.nonzero(np.triu(d <= cutoff, 1))
+    _, groups = connected_components(len(touched), i, j)
+    return groups
+
+
+def _reference_frame(system, traj, args):
+    """A typical bound frame, from one pass over the whole trajectory.
+
+    The first frame may have the ligand elsewhere -- out in bulk, or not yet
+    settled -- and the *most* contacting frame is an outlier by construction,
+    so neither should decide what the pocket is.
     """
-    from .pbc import distances
+    from .poses import bound_frame, pocket_contacts
 
-    lig = system.select(args.ligandsel).ids
-    lig = lig[system.atoms["anum"][lig] > 1]
-    prot = system.select(args.proteinsel).ids
-    look = np.unique(np.linspace(0, len(traj) - 1, min(len(traj), 50)).astype(int))
-    best, most = int(look[0]), -1
-    for k in look.tolist():
-        frame = traj[k]
-        box = frame.box if not args.no_pbc else None
-        near = int((distances(frame.positions[prot], frame.positions[lig], box).min(1)
-                    <= args.pocket_cutoff).sum())  # fmt: skip
-        if near > most:
-            best, most = k, near
-    if most < 1:
-        raise ValueError(f"the ligand never comes within {args.pocket_cutoff:g} A of "
-                         f"{args.proteinsel!r}: is it bound at all?")  # fmt: skip
+    counts, share = pocket_contacts(system, traj, ligand=args.ligandsel,
+                                    protein=args.proteinsel, cutoff=args.pocket_cutoff,
+                                    periodic=not args.no_pbc)  # fmt: skip
+    bound = int((counts > 0).sum())
+    print(f"the ligand touches {args.proteinsel!r} in {bound} of {len(counts)} frames "
+          f"({100 * bound / len(counts):.0f}%)")  # fmt: skip
+    best = bound_frame(counts)
+    print(f"pocket taken from frame {best}, a median one of those ({counts[best]} atoms within "
+          f"{args.pocket_cutoff:g} A)")  # fmt: skip
+    patches = _separate_sites(system, system.select(args.proteinsel).ids, share)
+    if patches > 1:
+        print(f"Warning: the ligand visits {patches} separate patches of the protein. This "
+              "groups poses against one of them; use 'boonza sites' to separate them first, "
+              "or --pocketsel to say which.")  # fmt: skip
     out = system.clone()
     out.positions = traj[best].positions
-    if best:
-        print(f"pocket taken from frame {best}, where {most} atoms are within "
-              f"{args.pocket_cutoff:g} A of the ligand")  # fmt: skip
     return out
 
 
@@ -249,7 +261,7 @@ def _poses(args) -> int:
 
     system = _load(args.system)
     traj = open_trajectory(args.traj, system)
-    reference = _load(args.reference) if args.reference else _bound_frame(system, traj, args)
+    reference = _load(args.reference) if args.reference else _reference_frame(system, traj, args)
     kept = np.arange(len(traj))
     if args.settle:
         drift = drmsd(system, reference, positions=traj, ligand=args.ligandsel,
@@ -267,6 +279,7 @@ def _poses(args) -> int:
                      cutoff=args.cutoff,
                      min_population=args.min_population, ligand=args.ligandsel,
                      protein=args.proteinsel, pocket_cutoff=args.pocket_cutoff,
+                     pocket=args.pocketsel,
                      symmetry=not args.no_symmetry, periodic=not args.no_pbc)  # fmt: skip
     print(f"{len(p)} poses of {len(kept)} frames, cut at {args.cutoff:g} A dRMSD")
     print(f"{'pose':>4} {'frame':>7} {'share':>7} {'spread':>7} {'frames':>7}")
@@ -294,6 +307,47 @@ def _poses(args) -> int:
                         "poses": count.tolist()}  # fmt: skip
         (out / "poses.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         print(f"\nwrote {len(p)} structures and poses.json to {out}")
+    return 0
+
+
+def _sites(args) -> int:
+    import json
+    from pathlib import Path
+
+    import boonza
+
+    from .trajectory import open_trajectory
+
+    system = _load(args.system)
+    reference = _load(args.reference) if args.reference else None
+    runs = [open_trajectory(path, system) for path in args.traj]
+    found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
+                         spacing=args.spacing, enrichment=args.enrichment,
+                         min_occupancy=args.min_occupancy, periodic=not args.no_pbc)  # fmt: skip
+    frames = len(found.centroids)
+    bulk = int((found.labels < 0).sum())
+    print(f"{len(runs)} runs, {frames} pooled frames; {100 * bulk / frames:.1f}% in bulk")
+    print(f"{'site':>4} {'occupied':>9} {'runs':>5} {'copies':>7} {'arrivals':>9} {'spread':>7}"
+          f"  centre")  # fmt: skip
+    for k, site in enumerate(found):
+        centre = " ".join(f"{x:7.1f}" for x in site.center)
+        print(f"{k:4d} {100 * site.occupancy:8.1f}% {site.runs:5d} {site.copies:7d} "
+              f"{site.arrivals:9d} {site.spread:6.1f} A  {centre}")  # fmt: skip
+    if not len(found):
+        print("no site is visited more than bulk solvent would explain")
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        doc = {"runs": [str(x) for x in args.traj], "frames": frames, "bulk": bulk,
+               "spacing": args.spacing, "enrichment": args.enrichment,
+               "ligand": args.ligandsel, "sites": []}  # fmt: skip
+        for k, site in enumerate(found):
+            doc["sites"].append({"center": site.center.tolist(), "occupancy": site.occupancy,
+                                 "runs": site.runs, "copies": site.copies,
+                                 "arrivals": site.arrivals, "spread": site.spread,
+                                 "frames": found.frames(k).tolist()})  # fmt: skip
+        (out / "sites.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        print(f"\nwrote sites.json to {out}")
     return 0
 
 
@@ -603,6 +657,9 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms")
     q.add_argument("--proteinsel", default="protein and name CA", help="pocket candidates")
     q.add_argument("--pocket-cutoff", type=float, default=5.0, help="pocket cutoff (A)")
+    q.add_argument("--pocketsel", default=None,
+                   help="the pocket atoms themselves; --proteinsel, --pocket-cutoff and the "
+                        "reference then decide nothing")  # fmt: skip
     q.add_argument("--cutoff", type=float, default=1.5, help="one pose, in dRMSD (A)")
     q.add_argument("--min-population", type=float, default=0.02,
                    help="share of frames a pose must hold to be listed")  # fmt: skip
@@ -616,6 +673,21 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("-o", "--out", help="write the representative structures here")
     q.add_argument("--format", default="dms", help="structure format to write (default: dms)")
     q.set_defaults(run=_poses)
+
+    q = sub.add_parser("sites", help="where a ligand goes, pooled over runs and copies")
+    q.add_argument("system", help="structure (topology of --traj)")
+    q.add_argument("--traj", required=True, nargs="+", help="one or more trajectories")
+    q.add_argument("--reference", help="structure the runs are superposed on (default: system)")
+    q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms, every copy")
+    q.add_argument("--alignsel", default="protein and name CA", help="atoms the runs align on")
+    q.add_argument("--spacing", type=float, default=1.0, help="grid spacing (A)")
+    q.add_argument("--enrichment", type=float, default=20.0,
+                   help="how many times more visited than bulk a site must be")  # fmt: skip
+    q.add_argument("--min-occupancy", type=float, default=0.005,
+                   help="share of pooled frames a site must hold")  # fmt: skip
+    q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
+    q.add_argument("-o", "--out", help="write sites.json here")
+    q.set_defaults(run=_sites)
     return p
 
 
@@ -630,7 +702,11 @@ def main(argv=None) -> int:
 
         return swim_main(argv[1:])
     args = _parser().parse_args(argv)
-    return args.run(args)
+    try:
+        return args.run(args)
+    except (ValueError, FileNotFoundError, NotADirectoryError) as e:
+        print(f"boonza {argv[0]}: error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

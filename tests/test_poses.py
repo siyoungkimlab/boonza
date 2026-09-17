@@ -7,6 +7,8 @@ import boonza
 from boonza.poses import _cut, _nn_chain
 from boonza.symmetry import DEFAULT_LIGAND
 
+WIDE = 8.0  # a pocket of four or more atoms, so poses and their mirrors differ
+
 
 def _partition(labels) -> set:
     groups: dict[int, list[int]] = {}
@@ -72,14 +74,13 @@ def test_average_linkage_matches_the_obvious_way():
 
 def test_distances_are_the_drmsd_of_every_pair(two_sites):
     s, frames = two_sites
-    # a pocket of four or more atoms, so the ligand's best mapping is not a tie
-    d = boonza.pose_distances(s, frames, pocket_cutoff=8.0)
+    d = boonza.pose_distances(s, frames, pocket_cutoff=WIDE)
     assert np.allclose(d, d.T) and np.allclose(np.diag(d), 0)
-    row0 = boonza.drmsd(s, positions=frames, cutoff=8.0).drmsd  # against frame 0, as here
+    row0 = boonza.drmsd(s, positions=frames, cutoff=WIDE).drmsd  # every frame against frame 0
     assert np.allclose(d[0], row0)
     middle = s.clone()
     middle.positions = frames[50]
-    row50 = boonza.drmsd(s, reference=middle, positions=frames, cutoff=8.0).drmsd
+    row50 = boonza.drmsd(s, reference=middle, positions=frames, cutoff=WIDE).drmsd
     # drmsd picks the ligand's mapping against frame 50; pose_distances picks it once, against
     # frame 0, so it can only be the larger of the two -- and here they are the same
     assert (d[50] >= row50 - 1e-9).all()
@@ -88,7 +89,7 @@ def test_distances_are_the_drmsd_of_every_pair(two_sites):
 
 def test_poses_are_the_two_sites(two_sites):
     s, frames = two_sites
-    p = boonza.poses(s, frames, cutoff=1.5)
+    p = boonza.poses(s, frames, cutoff=1.5, pocket_cutoff=WIDE)
     assert len(p) == 2
     assert [len(x) for x in p] == [60, 40]  # the sites, not the relabelled frames
     assert set(p[0].frames.tolist()) == set(range(60))
@@ -100,17 +101,18 @@ def test_poses_are_the_two_sites(two_sites):
 
 def test_symmetry_absorbs_a_relabelled_ring(two_sites):
     s, frames = two_sites
-    tight = boonza.poses(s, frames, cutoff=1.5)
-    loose = boonza.poses(s, frames, cutoff=1.5, symmetry=False)
+    tight = boonza.poses(s, frames, cutoff=1.5, pocket_cutoff=WIDE)
+    loose = boonza.poses(s, frames, cutoff=1.5, symmetry=False, pocket_cutoff=WIDE)
     assert [len(x) for x in loose] == [60, 40]  # the sites are far enough apart either way
     assert tight[0].spread < 0.5 * loose[0].spread  # but the ring stops looking like motion
 
 
 def test_sweep_reads_every_cutoff_off_the_one_tree(two_sites):
     s, frames = two_sites
-    p = boonza.poses(s, frames, cutoff=1.5)
+    p = boonza.poses(s, frames, cutoff=1.5, pocket_cutoff=WIDE)
     cutoffs, share, count = p.sweep(np.linspace(0.5, 6.0, 12))
-    assert np.all(np.diff(share) >= 0) and np.all(np.diff(count) <= 0)  # both are monotone
+    assert np.all(np.diff(share) >= 0)  # a wider cutoff can only grow the largest pose
+    assert count[0] > count[-1]  # here it falls; in general it need not, being filtered
     assert share[0] == 0.6 and share[-1] == 1.0  # the two sites hold up, then merge
     assert p.sweep()[1].shape == (12,)  # a default range of cutoffs
 
@@ -118,7 +120,7 @@ def test_sweep_reads_every_cutoff_off_the_one_tree(two_sites):
 def test_what_it_refuses(two_sites):
     s, frames = two_sites
     with pytest.raises(ValueError, match="at least two frames"):
-        boonza.poses(s, frames[0])
+        boonza.poses(s, frames[0], pocket_cutoff=WIDE)
     with pytest.raises(ValueError, match="within 0.1 A"):
         boonza.poses(s, frames, pocket_cutoff=0.1)
 
@@ -132,11 +134,13 @@ def test_a_trajectory_reads_the_same_as_an_array(two_sites, tmp_path):
             w.write(x, box=s.cell)
     traj = boonza.open_trajectory(path, s)
     assert len(traj) == len(frames)
-    assert np.allclose(boonza.pose_distances(s, traj), boonza.pose_distances(s, frames), atol=1e-3)
-    from_file, from_memory = boonza.poses(s, traj), boonza.poses(s, frames)
+    assert np.allclose(boonza.pose_distances(s, traj, pocket_cutoff=WIDE),
+                       boonza.pose_distances(s, frames, pocket_cutoff=WIDE), atol=1e-3)  # fmt: skip
+    from_file = boonza.poses(s, traj, pocket_cutoff=WIDE)
+    from_memory = boonza.poses(s, frames, pocket_cutoff=WIDE)
     assert [len(x) for x in from_file] == [len(x) for x in from_memory] == [60, 40]
     assert [x.center for x in from_file] == [x.center for x in from_memory]
-    every_fourth = boonza.poses(s, traj[::4])  # a slice, for a run too long to hold at once
+    every_fourth = boonza.poses(s, traj[::4], pocket_cutoff=WIDE)  # a slice, for a long run
     assert [len(x) for x in every_fourth] == [15, 10]
 
 
@@ -154,7 +158,7 @@ def test_a_single_frame_is_not_a_pose(two_sites):
     s, frames = two_sites
     odd = np.concatenate([frames[:40], frames[60:61] + 0.0])  # one visitor from the other site
     odd[-1, s.select(DEFAULT_LIGAND).ids] += 3.0
-    p = boonza.poses(s, odd, min_population=0.0)
+    p = boonza.poses(s, odd, min_population=0.0, pocket_cutoff=WIDE)
     assert all(len(pose) >= 2 for pose in p)
     assert p.labels[-1] == -1
 
@@ -178,7 +182,8 @@ def test_the_command(tmp_path, two_sites, capsys):
         for x in run:
             w.write(x, box=s.cell)
 
-    assert main(["poses", str(structure), "--traj", str(dcd), "-o", str(out)]) == 0
+    argv = ["poses", str(structure), "--traj", str(dcd), "--pocket-cutoff", "8"]
+    assert main([*argv, "-o", str(out)]) == 0
     printed = capsys.readouterr().out
     assert "pocket taken from frame" in printed  # frame 0 has the ligand out of reach
     assert "cutoff (A)" in printed and "largest" in printed  # the sweep is shown, not hidden
@@ -191,5 +196,41 @@ def test_the_command(tmp_path, two_sites, capsys):
     written = boonza.load(out / best["file"])
     assert np.allclose(written.positions, run[best["frame"]], atol=1e-3)  # the frame it names
 
-    assert main(["poses", str(structure), "--traj", str(dcd), "--settle"]) == 0
+    assert main([*argv, "--settle"]) == 0
     assert "settled at frame" in capsys.readouterr().out
+
+
+def test_a_thin_pocket_says_so(two_sites):
+    """Three atoms are always coplanar, and cannot tell a pose from its mirror image."""
+    s, frames = two_sites
+    with pytest.warns(UserWarning, match="fewer than four|nearly flat"):
+        boonza.poses(s, frames, pocket_cutoff=5.0)  # only three CA are that close
+
+
+def test_contacts_choose_a_fair_reference(two_sites):
+    """One pass says whether the ligand is bound at all, without caring which pose."""
+    s, frames = two_sites
+    counts, share = boonza.pocket_contacts(s, frames, cutoff=WIDE)
+    assert counts.shape == (len(frames),)
+    assert share.shape == s.select("protein and name CA").ids.shape
+    assert (counts > 0).all()  # this ligand is always near the peptide
+    best = boonza.bound_frame(counts)
+    assert counts[best] == int(np.median(counts[counts > 0]))  # a median frame, not the biggest
+    away = frames.copy()
+    away[:, s.select(DEFAULT_LIGAND).ids] += 500.0
+    with pytest.raises(ValueError, match="never touches the protein"):
+        boonza.bound_frame(boonza.pocket_contacts(s, away, cutoff=WIDE)[0])
+
+
+def test_a_pocket_can_be_given_outright(two_sites):
+    """With pocket=, neither the protein selection nor a reference decides anything."""
+    s, frames = two_sites
+    derived = boonza.poses(s, frames, pocket_cutoff=WIDE)
+    prot = s.select("protein and name CA").ids  # the same atoms, handed over instead
+    given = boonza.poses(s, frames, pocket=prot, protein="name CA and resid 1")
+    assert [len(x) for x in given] == [len(x) for x in derived]
+    assert [x.center for x in given] == [x.center for x in derived]
+    assert np.allclose(boonza.pose_distances(s, frames, pocket=prot),
+                       boonza.pose_distances(s, frames, pocket_cutoff=WIDE))  # fmt: skip
+    with pytest.raises(ValueError, match="no atoms outside the ligand"):
+        boonza.poses(s, frames, pocket=DEFAULT_LIGAND)

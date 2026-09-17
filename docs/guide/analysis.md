@@ -222,17 +222,93 @@ pose   frame   share  spread  frames
    1     388   32.0%   0.17 A     160
 ```
 
-The pocket comes from the frame whose ligand touches the most protein, not
-from frame 0, because a run may start with the ligand elsewhere; pass
-`--reference crystal.pdb` to fix it yourself. Each pose is written out as a
+The pocket comes from a *typical* bound frame, not from frame 0 and not
+from the most contacting one: one pass counts how often the ligand touches
+the protein, and the median of the frames that do is used. The most
+contacting frame is an outlier by construction, and frame 0 may have the
+ligand somewhere else entirely. `--reference crystal.pdb` fixes the choice,
+and `--pocketsel` skips it — the atoms you name are then the pocket, whatever
+any frame says. Each pose is written out as a
 structure, next to a `poses.json` of the populations, the members and the
 sweep.
+
+If the ligand visits several separate patches of the protein, it says so
+rather than grouping everything against one of them — `boonza sites` is what
+separates them.
+
+```python
+counts, share = boonza.pocket_contacts(s, traj)  # per frame, and per protein atom
+boonza.bound_frame(counts)  # a median bound frame
+```
 
 `--settle` drops the drift at the start of a run, by asking where the series
 becomes stationary (`boonza.settled`). It suits one ligand settling into one
 pose. It is off by default because a run that genuinely *changes* pose looks
 non-stationary too, and everything before the change would be thrown away --
 including, often, the most populated pose.
+
+## Binding sites across runs
+
+```python
+runs = [boonza.open_trajectory(p, s) for p in paths]
+found = boonza.sites(s, runs, ligand="resname LIG")
+found[0].occupancy  # share of all pooled frames
+found[0].runs  # how many independent runs visited it
+found[0].arrivals  # separate visits, not frames
+found.labels  # site of every pooled frame, -1 for bulk
+print(found.summary())
+```
+
+Where `boonza.poses` asks *how* a ligand sits in one pocket, `sites` asks
+*where* it goes at all. Every frame of every ligand copy of every run
+contributes one point — the ligand's heavy-atom centroid, with the protein
+superposed on a common reference so runs can be compared. The points are
+counted onto a grid, and a site is a connected region visited at least
+`enrichment` times more often than bulk solvent would explain. Everything
+else is labelled -1 rather than forced into a site.
+
+The threshold is an enrichment over bulk, not a number of frames, so it
+means the same thing whatever the box size, run length or copy count.
+
+The two levels compose: a site says which frames to look at, and those go to
+`poses` for the pose within it. Alignment is used only here, where pockets
+are many ångströms apart; the pose measure needs none.
+
+```python
+rows = found.frames(0, run=0)  # (run, copy, frame) of site 0 in run 0
+copy = rows[0, 1]
+frames = rows[rows[:, 1] == copy][:, 2]
+p = boonza.poses(s, runs[0][frames], ligand=f"fragid {copy} and noh")
+```
+
+Ligand copies usually share a residue name and number, so `fragid` is what
+tells them apart.
+
+A site's pocket is worth taking from the site rather than from any one
+frame:
+
+```python
+pocket = boonza.site_pocket(s, runs, found, 0, protein="protein and noh")
+p = boonza.poses(s, runs[0][frames], ligand=f"fragid {copy} and noh", pocket=pocket)
+```
+
+`site_pocket` keeps the atoms the ligand touches in at least `share` of that
+site's frames, counted across runs and copies. Given `pocket=`, the pose
+level uses those atoms and nothing else — no protein selection, no cutoff,
+no reference frame.
+
+From the command line:
+
+```
+boonza sites solvated.dms --traj run*.dcd -o sites/
+```
+
+```
+3 runs, 1350 pooled frames; 47.3% in bulk
+site  occupied  runs  copies  arrivals  spread  centre
+   0     26.4%     3       2         6    0.7 A     -2.0     7.0     1.0
+   1     26.3%     3       2         7    0.7 A      6.0    -0.0     0.0
+```
 
 ## Rings
 
