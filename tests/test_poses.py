@@ -72,12 +72,18 @@ def test_average_linkage_matches_the_obvious_way():
 
 def test_distances_are_the_drmsd_of_every_pair(two_sites):
     s, frames = two_sites
-    d = boonza.pose_distances(s, frames)
+    # a pocket of four or more atoms, so the ligand's best mapping is not a tie
+    d = boonza.pose_distances(s, frames, pocket_cutoff=8.0)
     assert np.allclose(d, d.T) and np.allclose(np.diag(d), 0)
-    assert np.allclose(d[0], boonza.drmsd(s, positions=frames).drmsd)  # row 0: against frame 0
+    row0 = boonza.drmsd(s, positions=frames, cutoff=8.0).drmsd  # against frame 0, as here
+    assert np.allclose(d[0], row0)
     middle = s.clone()
     middle.positions = frames[50]
-    assert np.allclose(d[50], boonza.drmsd(s, reference=middle, positions=frames).drmsd)
+    row50 = boonza.drmsd(s, reference=middle, positions=frames, cutoff=8.0).drmsd
+    # drmsd picks the ligand's mapping against frame 50; pose_distances picks it once, against
+    # frame 0, so it can only be the larger of the two -- and here they are the same
+    assert (d[50] >= row50 - 1e-9).all()
+    assert np.allclose(d[50], row50, atol=1e-6)
 
 
 def test_poses_are_the_two_sites(two_sites):
