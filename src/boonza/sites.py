@@ -24,7 +24,7 @@ import numpy as np
 
 from .align import kabsch
 from .graph import connected_components
-from .pbc import minimum_image
+from .pbc import distances, minimum_image
 from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids
 
 
@@ -243,3 +243,51 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
         out[s.points] = k
     return SiteSet(sites=found, labels=out, where=where, centroids=points,
                    spacing=float(spacing), enrichment=float(enrichment))  # fmt: skip
+
+
+def site_pocket(system, runs, found: SiteSet, k: int, protein: str = "protein and name CA",
+                ligand: str = DEFAULT_LIGAND, cutoff: float = 5.0, share: float = 0.5,
+                periodic: bool = True) -> np.ndarray:  # fmt: skip
+    """The atoms a site is made of: those the ligand touches in ``share`` of its frames.
+
+    A pocket from one frame is one frame's opinion.  This counts over every
+    frame assigned to the site, across runs and copies, so an atom earns its
+    place by being there for the ligand rather than by happening to be close
+    when the reference was taken.  Hand the result to :func:`boonza.poses` as
+    ``pocket=`` and the pose level stops depending on a reference at all.
+    """
+    if not isinstance(runs, (list, tuple)):
+        runs = [runs]
+    lig = _ids(system, ligand)
+    lig = lig[system.atoms["anum"][lig] > 1]
+    frag = np.asarray(system.fragids)[lig]
+    copies = [lig[frag == f] for f in np.unique(frag)]
+    prot = _ids(system, protein)
+    own = np.isin(prot, lig)
+
+    rows = found.frames(k)
+    hits, seen = np.zeros(len(prot)), 0
+    for r, run in enumerate(runs):
+        mine = rows[rows[:, 0] == r]
+        if not len(mine):
+            continue
+        wanted = np.unique(mine[:, 2])
+        need = np.union1d(prot, lig)
+        pl = np.searchsorted(need, prot)
+        blocks, _ = _boxed_blocks(system, run[wanted], need)
+        at = {int(f): i for i, f in enumerate(wanted.tolist())}
+        by_frame: dict[int, list[int]] = {}
+        for frame, copy in mine[:, [2, 1]].tolist():
+            by_frame.setdefault(at[frame], []).append(copy)
+        i = 0
+        for xyz, boxes in blocks:
+            for X, box in zip(xyz, boxes, strict=True):
+                for c in by_frame.get(i, ()):
+                    atoms = np.searchsorted(need, copies[c])
+                    near = distances(X[pl], X[atoms], box if periodic else None).min(1) <= cutoff
+                    hits += near & ~own
+                    seen += 1
+                i += 1
+    if not seen:
+        raise ValueError(f"site {k} has no frames")
+    return prot[hits / seen >= share]

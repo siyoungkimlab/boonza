@@ -96,3 +96,47 @@ def test_a_site_hands_its_frames_to_the_pose_level(swimming):
     p = boonza.poses(s, runs[0][frames], ligand=one, pocket_cutoff=12.0)
     assert len(p) >= 1 and p[0].center in p[0].frames
     assert p[0].population > 0.5  # the copy sat still in that site, so one pose dominates
+
+
+def test_a_sites_pocket_comes_from_its_frames(swimming):
+    """An atom earns its place by being there for the ligand, not by being close once."""
+    s, runs = swimming
+    found = boonza.sites(s, runs)
+    pocket = boonza.site_pocket(s, runs, found, 0, protein="protein and noh", share=0.3)
+    assert len(pocket) >= 4
+    assert not set(pocket.tolist()) & set(s.select(DEFAULT_LIGAND).ids.tolist())
+    strict = boonza.site_pocket(s, runs, found, 0, protein="protein and noh", share=0.99)
+    assert set(strict.tolist()) <= set(pocket.tolist())  # a harder test keeps fewer atoms
+
+    rows = found.frames(0, run=0)  # and it feeds the pose level with no reference at all
+    copy = int(np.bincount(rows[:, 1]).argmax())
+    frames = rows[rows[:, 1] == copy][:, 2]
+    lig = s.select(DEFAULT_LIGAND).ids
+    one = f"fragid {int(np.asarray(s.fragids)[lig][0]) + copy} and noh"
+    p = boonza.poses(s, runs[0][frames], ligand=one, pocket=pocket)
+    assert len(p) == 1 and p[0].population > 0.9
+
+
+def test_the_sites_command(tmp_path, swimming, capsys):
+    import json
+
+    from boonza.cli import main
+
+    s, runs = swimming
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    paths = []
+    for r, run in enumerate(runs[:2]):
+        path = tmp_path / f"run{r}.dcd"
+        with boonza.open_writer(path, s.natoms) as w:
+            for x in run:
+                w.write(x, box=s.cell)
+        paths.append(str(path))
+    out = tmp_path / "out"
+    assert main(["sites", str(structure), "--traj", *paths, "-o", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "in bulk" in printed and "arrivals" in printed
+    doc = json.loads((out / "sites.json").read_text())
+    assert len(doc["sites"]) == 2
+    assert all(site["runs"] == 2 for site in doc["sites"])  # both runs, pooled
+    assert doc["bulk"] > 0

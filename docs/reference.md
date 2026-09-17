@@ -669,6 +669,14 @@ the spread of the block means.  It grows with the block size until blocks
 are longer than the correlation time, then levels off at the true error
 (``estimate``).
 
+### `boonza.bound_frame(counts) -> 'int'`
+
+A typical bound frame: the median of the frames that touch the protein.
+
+The *most* contacting frame is by construction an outlier -- the one where
+a loop happened to close in -- and letting it decide the pocket lets one
+frame speak for the run.
+
 ### `boonza.build_constraints(system: 'System', atoms=None, keep: 'bool' = False, exclude=()) -> 'None'`
 
 Add viparr's constraints to a parameterized system, in place.
@@ -947,7 +955,16 @@ while phi/psi are held, so side chains relax without losing the
 backbone (omega included).  Termini are free amine and acid, as RDKit
 builds them.
 
-### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
+### `boonza.pocket_contacts(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray]'`
+
+``(protein atoms in contact per frame, share of frames each is in contact)``.
+
+One chunked pass, reading only the ligand and the candidate protein
+atoms.  The per-frame count says whether the ligand is bound at all,
+without caring which pose it is in; the per-atom share says which atoms a
+pocket is really made of, over the whole run rather than in one frame.
+
+### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
 
 The (nframes, nframes) dRMSD matrix of a trajectory, in A.
 
@@ -959,15 +976,22 @@ RMS difference of those distances.
 ``reference``: a System (a crystal structure, or a frame where the ligand
 is bound), or None for the first frame.  It decides which atoms the
 pocket is made of, so a run that starts with the ligand elsewhere -- out
-in bulk, or not yet settled -- wants one rather than its own first
-frame.  With ``symmetry`` each frame's ligand
+in bulk, or not yet settled -- wants one rather than its own first frame.
+:func:`pocket_contacts` and :func:`bound_frame` find a fair one.
+
+``pocket``: the pocket atoms themselves, as a selection or atom indices,
+when you would rather say than have it worked out -- from the atoms a
+site contacts over many runs, say.  ``protein``, ``pocket_cutoff`` and
+the reference then do not enter into which atoms are used.
+
+With ``symmetry`` each frame's ligand
 atoms are first matched to the first frame's, so equivalent atoms do not
 count as motion.  That mapping is chosen once per frame rather than once
 per pair, which is what keeps this quadratic in frames but linear in
 symmetry searches; when two frames would rather be compared through
 different mappings the distance between them is an upper bound.
 
-### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
+### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
 
 The poses a trajectory holds, most populated first.
 
@@ -997,6 +1021,16 @@ the best is returned.  Discarding too little leaves the drift in; too
 much throws away sampling, and this trades the two off rather than
 guessing a percentage (Chodera 2016).  A series shorter than
 ``min_frames``, or one with no drift to speak of, settles at 0.
+
+### `boonza.site_pocket(system, runs, found: 'SiteSet', k: 'int', protein: 'str' = 'protein and name CA', ligand: 'str' = 'not (polymer or water or ions) and noh', cutoff: 'float' = 5.0, share: 'float' = 0.5, periodic: 'bool' = True) -> 'np.ndarray'`
+
+The atoms a site is made of: those the ligand touches in ``share`` of its frames.
+
+A pocket from one frame is one frame's opinion.  This counts over every
+frame assigned to the site, across runs and copies, so an atom earns its
+place by being there for the ligand rather than by happening to be close
+when the reference was taken.  Hand the result to :func:`boonza.poses` as
+``pocket=`` and the pose level stops depending on a reference at all.
 
 ### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.005, periodic: 'bool' = True) -> 'SiteSet'`
 

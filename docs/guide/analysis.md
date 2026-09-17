@@ -222,11 +222,24 @@ pose   frame   share  spread  frames
    1     388   32.0%   0.17 A     160
 ```
 
-The pocket comes from the frame whose ligand touches the most protein, not
-from frame 0, because a run may start with the ligand elsewhere; pass
-`--reference crystal.pdb` to fix it yourself. Each pose is written out as a
+The pocket comes from a *typical* bound frame, not from frame 0 and not
+from the most contacting one: one pass counts how often the ligand touches
+the protein, and the median of the frames that do is used. The most
+contacting frame is an outlier by construction, and frame 0 may have the
+ligand somewhere else entirely. `--reference crystal.pdb` fixes the choice,
+and `--pocketsel` skips it — the atoms you name are then the pocket, whatever
+any frame says. Each pose is written out as a
 structure, next to a `poses.json` of the populations, the members and the
 sweep.
+
+If the ligand visits several separate patches of the protein, it says so
+rather than grouping everything against one of them — `boonza sites` is what
+separates them.
+
+```python
+counts, share = boonza.pocket_contacts(s, traj)  # per frame, and per protein atom
+boonza.bound_frame(counts)  # a median bound frame
+```
 
 `--settle` drops the drift at the start of a run, by asking where the series
 becomes stationary (`boonza.settled`). It suits one ligand settling into one
@@ -270,6 +283,32 @@ p = boonza.poses(s, runs[0][frames], ligand=f"fragid {copy} and noh")
 
 Ligand copies usually share a residue name and number, so `fragid` is what
 tells them apart.
+
+A site's pocket is worth taking from the site rather than from any one
+frame:
+
+```python
+pocket = boonza.site_pocket(s, runs, found, 0, protein="protein and noh")
+p = boonza.poses(s, runs[0][frames], ligand=f"fragid {copy} and noh", pocket=pocket)
+```
+
+`site_pocket` keeps the atoms the ligand touches in at least `share` of that
+site's frames, counted across runs and copies. Given `pocket=`, the pose
+level uses those atoms and nothing else — no protein selection, no cutoff,
+no reference frame.
+
+From the command line:
+
+```
+boonza sites solvated.dms --traj run*.dcd -o sites/
+```
+
+```
+3 runs, 1350 pooled frames; 47.3% in bulk
+site  occupied  runs  copies  arrivals  spread  centre
+   0     26.4%     3       2         6    0.7 A     -2.0     7.0     1.0
+   1     26.3%     3       2         7    0.7 A      6.0    -0.0     0.0
+```
 
 ## Rings
 
