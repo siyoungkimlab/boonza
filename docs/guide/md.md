@@ -18,7 +18,10 @@ boonza md complex.dms --list-components                     # molecules and sele
 A new run:
 
 1. reads the structure (PDB, DMS, MAE, mmCIF, SDF, GRO, ...), which must have
-   all hydrogens and the protonation states you want;
+   all hydrogens and the protonation states you want (a residue whose atoms
+   the file keeps in two pieces, as preparation tools do when they write the
+   hydrogens they added at the end, is gathered back together, and
+   `md_index` keeps pointing at the input file);
 2. applies the force fields, with GAFF2 templates for ligands, non-standard
    residues and covalent adducts ([Ligands](ligands.md));
 3. solvates it (`padding_nm` from solute to box edge) and adds counterions
