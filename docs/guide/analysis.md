@@ -174,11 +174,11 @@ correlation time, then levels off at the true error.
 
 ```python
 p = boonza.poses(s, frames, ligand="chain L")  # most populated first
-p[0].center       # the medoid: a frame that was simulated, never an average
-p[0].population   # its share of the frames
-p[0].spread       # how tightly its members sit around it (Å)
-p[0].frames       # the members, in time order
-p.labels          # the pose of every frame, -1 below min_population
+p[0].center  # the medoid: a frame that was simulated, never an average
+p[0].population  # its share of the frames
+p[0].spread  # how tightly its members sit around it (Å)
+p[0].frames  # the members, in time order
+p.labels  # the pose of every frame, -1 below min_population
 print(p.summary())
 ```
 
