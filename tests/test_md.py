@@ -476,3 +476,27 @@ def test_ligand_gets_gaff2_templates(tmp_path, dipeptide):
     assert (tmp_path / "gaff2_patch" / "templates").is_file()
     lig = info["components"][1]["production_atom_indices"]
     assert abs(out.atoms["charge"][lig].sum()) < 1e-6
+
+
+def test_load_input_gathers_split_residues(tmp_path):
+    """Preparation tools write the hydrogens they add at the end of the file,
+    which splits a residue in two; OpenMM refuses such a topology."""
+    from boonza.md.prepare import load_input
+
+    s = boonza.peptide("AAA")  # every heavy atom first, then every hydrogen
+    res = s.atoms["residue"]
+    assert 1 + np.count_nonzero(np.diff(res) != 0) > s.nresidues  # split as written
+    path = tmp_path / "split.mae"
+    boonza.save(s, path)
+    with pytest.raises(ValueError, match="contiguous"):
+        boonza.to_openmm(boonza.load(path))
+
+    said = []
+    got = load_input(path, log=said.append)
+    out = got.atoms["residue"]
+    assert 1 + np.count_nonzero(np.diff(out) != 0) == got.nresidues == s.nresidues
+    assert got.natoms == s.natoms and got.nbonds == s.nbonds
+    assert np.allclose(s.positions[got.atoms["md_index"] - 1], got.positions)
+    assert said and "3 residue(s)" in said[0]
+    top, _, _ = boonza.to_openmm(got)
+    assert top.getNumAtoms() == s.natoms and top.getNumResidues() == s.nresidues

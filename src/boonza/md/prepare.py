@@ -16,7 +16,7 @@ from ..system import System
 from .config import HYDROGEN_MASS_AMU, describe_forcefields, forcefield_kind, ion_water_mismatch
 
 
-def load_input(path) -> System:
+def load_input(path, log=None) -> System:
     """The input structure, with ``md_index`` (1-based) to follow its atoms."""
     s = load(path)
     if s.natoms == 0:
@@ -24,7 +24,32 @@ def load_input(path) -> System:
     if not (s.atoms["anum"] == 1).any():
         raise ValueError(f"{path} has no hydrogens: add them, with protonation states, first")
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
+    _gather_residues(s, path, log)
     return s
+
+
+def _gather_residues(s: System, path, log=None) -> None:
+    """Put the atoms of each residue back together.
+
+    Preparation tools often write the hydrogens they add at the end of the
+    file rather than beside the heavy atoms they belong to, which leaves a
+    residue's atoms in two pieces. OpenMM refuses such a topology ("All atoms
+    within a residue must be contiguous"), so sort the atoms by residue. The
+    sort is stable, so everything else keeps the order the file gave it, and
+    ``md_index`` still points into the input file.
+    """
+    res = s.atoms["residue"]
+    starts = np.concatenate([[0], np.flatnonzero(np.diff(res) != 0) + 1])
+    _, pieces = np.unique(res[starts], return_counts=True)
+    split = int(np.count_nonzero(pieces > 1))
+    if not split:
+        return
+    s.reorder_atoms(np.argsort(res, kind="stable"))
+    if log is not None:
+        log(
+            f"Gathered the atoms of {split} residue(s) that {path} keeps in "
+            "pieces (added hydrogens written at the end of the file, most likely)"
+        )
 
 
 def forcefields(args):
@@ -195,7 +220,7 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
     from their templates); counterions and NaCl follow msys, counting salt
     against the number of waters.
     """
-    s = load_input(args.input_structure)
+    s = load_input(args.input_structure, log)
     kind, ff = forcefields(args)
     log(f"Force fields: {describe_forcefields(args.forcefields)}")
     if kind == "xml":

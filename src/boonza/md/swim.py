@@ -488,7 +488,7 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
         raise ValueError("give the protein structure")
     root = Path(args.workdir)
     root.mkdir(parents=True, exist_ok=True)
-    protein = load_input(args.input_structure)
+    protein = load_input(args.input_structure, log)
     _, ffs = forcefields(args)
     library = find_library(library)
     ligands = load_library(library, ffs)
