@@ -234,6 +234,43 @@ pose. It is off by default because a run that genuinely *changes* pose looks
 non-stationary too, and everything before the change would be thrown away --
 including, often, the most populated pose.
 
+## Binding sites across runs
+
+```python
+runs = [boonza.open_trajectory(p, s) for p in paths]
+found = boonza.sites(s, runs, ligand="resname LIG")
+found[0].occupancy  # share of all pooled frames
+found[0].runs  # how many independent runs visited it
+found[0].arrivals  # separate visits, not frames
+found.labels  # site of every pooled frame, -1 for bulk
+print(found.summary())
+```
+
+Where `boonza.poses` asks *how* a ligand sits in one pocket, `sites` asks
+*where* it goes at all. Every frame of every ligand copy of every run
+contributes one point — the ligand's heavy-atom centroid, with the protein
+superposed on a common reference so runs can be compared. The points are
+counted onto a grid, and a site is a connected region visited at least
+`enrichment` times more often than bulk solvent would explain. Everything
+else is labelled -1 rather than forced into a site.
+
+The threshold is an enrichment over bulk, not a number of frames, so it
+means the same thing whatever the box size, run length or copy count.
+
+The two levels compose: a site says which frames to look at, and those go to
+`poses` for the pose within it. Alignment is used only here, where pockets
+are many ångströms apart; the pose measure needs none.
+
+```python
+rows = found.frames(0, run=0)  # (run, copy, frame) of site 0 in run 0
+copy = rows[0, 1]
+frames = rows[rows[:, 1] == copy][:, 2]
+p = boonza.poses(s, runs[0][frames], ligand=f"fragid {copy} and noh")
+```
+
+Ligand copies usually share a residue name and number, so `fragid` is what
+tells them apart.
+
 ## Rings
 
 ```python

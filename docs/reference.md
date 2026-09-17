@@ -635,6 +635,14 @@ One group of frames: its medoid, its share of the frames, its spread.
 
 The poses of a trajectory, most populated first.
 
+### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float') -> None`
+
+One place the ligand is found, and the evidence for it.
+
+### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float') -> None`
+
+The sites of a set of runs, most occupied first.
+
 ### `class boonza.Summary(title: 'str', sections: 'list[tuple[str, list[str]]]' = <factory>, data: 'dict' = <factory>) -> None`
 
 A structure summary: ``str()`` for text (Markdown), ``to_dict()`` for data.
@@ -790,6 +798,16 @@ adduct (a ligand bound to an amino acid other than by a peptide bond)
 with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
+
+### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray]'`
+
+``(centroids (nframes ncopies, 3), (frame, copy) of each)`` in the reference's frame.
+
+Each copy of the ligand -- one per molecule of the selection -- gives one
+centroid per frame, taken in the copy's own periodic image and then moved
+to the image nearest the protein.  The frame's ``align`` atoms are
+superposed on the reference's, and the same transform is applied to the
+centroid, so points from different runs live in one frame of reference.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 
@@ -979,6 +997,18 @@ the best is returned.  Discarding too little leaves the drift in; too
 much throws away sampling, and this trades the two off rather than
 guessing a percentage (Chodera 2016).  A series shorter than
 ``min_frames``, or one with no drift to speak of, settles at 0.
+
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.005, periodic: 'bool' = True) -> 'SiteSet'`
+
+Where the ligand is found across ``runs``, most occupied first.
+
+``runs`` is one trajectory (or array of frames) or a list of them; each is
+treated as independent evidence, and a site visited by several runs is a
+claim several simulations agree on.  A site is a connected group of grid
+cells the ligand visits at least ``enrichment`` times more often than
+bulk solvent would explain; everything else is bulk, and is labelled -1
+rather than forced into a site.  Sites below ``min_occupancy`` of the
+pooled frames are left out.
 
 ### `boonza.solvate(solute: 'System', solvent=None, box=None, thickness: 'float' = 5.0, min_solute_dist: 'float' = 2.4, min_solvent_dist: 'float' = 1.0, solvent_selection: 'str' = 'oxygen', center_selection: 'str' = 'all', remove_buried: 'bool' = False) -> 'System'`
 

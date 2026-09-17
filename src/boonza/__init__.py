@@ -61,6 +61,7 @@ from .sequence import (  # noqa: E402
     identity_matrix,
     sequence,
 )
+from .sites import Site, SiteSet, ligand_centroids, sites  # noqa: E402
 from .summary import Summary, summarize  # noqa: E402
 from .symmetry import (  # noqa: E402
     DRMSD,
@@ -155,6 +156,10 @@ __all__ = [
     "DRMSD",
     "symmetry_rmsd",
     "poses",
+    "sites",
+    "ligand_centroids",
+    "Site",
+    "SiteSet",
     "pose_distances",
     "Pose",
     "PoseSet",
