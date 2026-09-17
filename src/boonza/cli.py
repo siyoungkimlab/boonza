@@ -335,6 +335,19 @@ def _sites(args) -> int:
               f"{site.arrivals:9d} {site.spread:6.1f} A  {centre}")  # fmt: skip
     if not len(found):
         print("no site is visited more than bulk solvent would explain")
+    rates = []
+    if args.interval_ns:
+        print()
+        for k in range(len(found)):
+            try:
+                rate = boonza.kinetics(system, found, k, interval_ns=args.interval_ns,
+                                       temperature=args.temperature,
+                                       hysteresis=args.hysteresis)  # fmt: skip
+            except ValueError as e:
+                print(f"site {k}: no kinetics ({e})")
+                continue
+            print(rate.summary())
+            rates.append(rate)
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
@@ -346,6 +359,15 @@ def _sites(args) -> int:
                                  "runs": site.runs, "copies": site.copies,
                                  "arrivals": site.arrivals, "spread": site.spread,
                                  "frames": found.frames(k).tolist()})  # fmt: skip
+        for rate in rates:
+            doc["sites"][rate.site].update(
+                {"dG": rate.dG, "dG_interval": list(rate.dG_interval), "KD": rate.KD,
+                 "k_on": rate.k_on, "k_off": rate.k_off, "residence_ns": rate.residence_ns,
+                 "departures": rate.events, "arrivals_measured": rate.arrivals,
+                 "bound_ns": rate.bound_ns, "unbound_ns": rate.unbound_ns,
+                 "concentration_M": rate.concentration,
+                 "occupancy_from_rates": rate.occupancy_from_rates,
+                 "consistent": rate.consistent})  # fmt: skip
         (out / "sites.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         print(f"\nwrote sites.json to {out}")
     return 0
@@ -685,6 +707,12 @@ def _parser() -> argparse.ArgumentParser:
                    help="how many times more visited than bulk a site must be")  # fmt: skip
     q.add_argument("--min-occupancy", type=float, default=0.005,
                    help="share of pooled frames a site must hold")  # fmt: skip
+    q.add_argument("--interval-ns", type=float, default=None,
+                   help="ns between frames; with it, rates, residence times and dG")  # fmt: skip
+    q.add_argument("--temperature", type=float, default=310.0, help="K, for dG")
+    q.add_argument("--hysteresis", type=float, default=2.0,
+                   help="leave a site at this many times the distance it is entered at. "
+                        "One boundary counts every recrossing as a departure")  # fmt: skip
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.add_argument("-o", "--out", help="write sites.json here")
     q.set_defaults(run=_sites)
