@@ -115,3 +115,20 @@ def test_what_it_refuses(two_sites):
         boonza.poses(s, frames[0])
     with pytest.raises(ValueError, match="within 0.1 A"):
         boonza.poses(s, frames, pocket_cutoff=0.1)
+
+
+def test_a_trajectory_reads_the_same_as_an_array(two_sites, tmp_path):
+    """Frames come from a file chunk by chunk, and only the atoms the pocket needs."""
+    s, frames = two_sites
+    path = tmp_path / "poses.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in frames:
+            w.write(x, box=s.cell)
+    traj = boonza.open_trajectory(path, s)
+    assert len(traj) == len(frames)
+    assert np.allclose(boonza.pose_distances(s, traj), boonza.pose_distances(s, frames), atol=1e-3)
+    from_file, from_memory = boonza.poses(s, traj), boonza.poses(s, frames)
+    assert [len(x) for x in from_file] == [len(x) for x in from_memory] == [60, 40]
+    assert [x.center for x in from_file] == [x.center for x in from_memory]
+    every_fourth = boonza.poses(s, traj[::4])  # a slice, for a run too long to hold at once
+    assert [len(x) for x in every_fourth] == [15, 10]
