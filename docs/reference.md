@@ -611,6 +611,15 @@ Standard error of the mean from blocks of increasing size (see ``block_average``
 
 Outcome of ``drmsd``: pocket-ligand distance RMSD (per frame with ``positions``).
 
+### `class boonza.Density(origin: 'np.ndarray', spacing: 'float', counts: 'np.ndarray', expected: 'float') -> None`
+
+How often the ligand's centroid was in each cell of a grid, and what bulk would give.
+
+``enrichment`` is the map worth looking at: one means as often as
+wandering through the box uniformly would explain, and a site is where it
+is large.  It is a check on the sites that does not come from clustering
+at all.
+
 ### `class boonza.Dwell(run: 'int', copy: 'int', first: 'int', frames: 'int', bound: 'bool', censored: 'bool') -> None`
 
 One stretch a copy spent in a state, and whether we saw it end.
@@ -647,7 +656,7 @@ The kinetics of one site, with what they rest on.
 
 One place the ligand is found, and the evidence for it.
 
-### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float') -> None`
+### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', density: 'Density | None' = None) -> None`
 
 The sites of a set of runs, most occupied first.
 
