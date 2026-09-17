@@ -170,6 +170,35 @@ This is Flyvbjerg-Petersen blocking. The standard error estimated from
 blocks grows with the block size until blocks are longer than the
 correlation time, then levels off at the true error.
 
+## Representative poses
+
+```python
+p = boonza.poses(s, frames, ligand="chain L")  # most populated first
+p[0].center       # the medoid: a frame that was simulated, never an average
+p[0].population   # its share of the frames
+p[0].spread       # how tightly its members sit around it (Å)
+p[0].frames       # the members, in time order
+p.labels          # the pose of every frame, -1 below min_population
+print(p.summary())
+```
+
+Frames are compared by the distances between pocket atoms and ligand atoms —
+the measure `boonza.drmsd` uses — so nothing is superposed and a protein
+that breathes or tumbles does not look like a ligand that moved. Ligand
+symmetry is taken out once per frame, so a rotated ring is not a second
+pose.
+
+The frames are grouped by average linkage, which builds the whole merge tree
+in one pass. `cutoff` only says where to cut it, and the other cutoffs come
+off the same tree for nothing:
+
+```python
+cutoffs, share, count = p.sweep()  # the largest pose's share, and how many poses
+```
+
+A pose whose share holds while the cutoff doubles is a real one, so the
+choice of cutoff can be shown rather than trusted.
+
 ## Rings
 
 ```python
