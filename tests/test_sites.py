@@ -140,3 +140,27 @@ def test_the_sites_command(tmp_path, swimming, capsys):
     assert len(doc["sites"]) == 2
     assert all(site["runs"] == 2 for site in doc["sites"])  # both runs, pooled
     assert doc["bulk"] > 0
+
+
+def test_the_density_map_agrees_with_the_clusters(tmp_path, swimming):
+    """The grid is a second opinion: it finds the sites without clustering at all."""
+    s, runs = swimming
+    found = boonza.sites(s, runs)
+    grid = found.density
+    assert grid.counts.sum() == len(found.centroids)  # every frame lands somewhere
+    assert grid.enrichment.max() > 100  # a site is far above what bulk explains
+
+    cells = np.array(np.nonzero(grid.enrichment > found.enrichment)).T
+    xyz = cells * grid.spacing + grid.origin + 0.5 * grid.spacing
+    for site in found:  # every site centre has a dense cell within one spacing
+        assert np.linalg.norm(xyz - site.center, axis=1).min() <= grid.spacing
+
+    path = tmp_path / "density.dx"
+    grid.write_dx(path)
+    head = path.read_text().splitlines()
+    nx, ny, nz = grid.counts.shape
+    assert head[0] == f"object 1 class gridpositions counts {nx} {ny} {nz}"
+    assert head[1].startswith("origin ")  # at cell centres, half a spacing in
+    written = np.array([float(x) for line in head[7:-1] for x in line.split()])
+    assert written.size == grid.counts.size
+    assert np.allclose(written.max(), grid.enrichment.max(), rtol=1e-3)

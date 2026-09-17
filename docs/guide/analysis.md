@@ -310,6 +310,22 @@ site  occupied  runs  copies  arrivals  spread  centre
    1     26.3%     3       2         7    0.7 A      6.0    -0.0     0.0
 ```
 
+### The density map
+
+`sites` counts the centroids onto a grid on its way to finding sites, and
+keeps it:
+
+```python
+grid = found.density
+grid.enrichment  # (nx, ny, nz), 1 = as often as bulk explains
+grid.write_dx("density.dx")  # ChimeraX, VMD and PyMOL read this
+```
+
+It is worth having because it finds the sites *without clustering*: the
+peaks of the map and the centres of the clusters are two different
+calculations, so when they agree you can believe both. `boonza sites -o`
+writes it beside `sites.json`.
+
 ## Kinetics of a site
 
 ```python

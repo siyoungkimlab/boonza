@@ -369,7 +369,9 @@ def _sites(args) -> int:
                  "occupancy_from_rates": rate.occupancy_from_rates,
                  "consistent": rate.consistent})  # fmt: skip
         (out / "sites.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-        print(f"\nwrote sites.json to {out}")
+        found.density.write_dx(out / "density.dx")
+        peak = float(found.density.enrichment.max())
+        print(f"\nwrote sites.json and density.dx to {out} (peak {peak:.0f}x bulk)")
     return 0
 
 
