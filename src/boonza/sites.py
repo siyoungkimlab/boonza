@@ -45,6 +45,46 @@ class Site:
 
 
 @dataclass
+class Density:
+    """How often the ligand's centroid was in each cell of a grid, and what bulk would give.
+
+    ``enrichment`` is the map worth looking at: one means as often as
+    wandering through the box uniformly would explain, and a site is where it
+    is large.  It is a check on the sites that does not come from clustering
+    at all.
+    """
+
+    origin: np.ndarray  # (3,) the low corner, A
+    spacing: float  # A
+    counts: np.ndarray  # (nx, ny, nz) frames whose centroid fell in each cell
+    expected: float  # what bulk would put in one cell
+
+    @property
+    def enrichment(self) -> np.ndarray:
+        return self.counts / max(self.expected, 1e-12)
+
+    def write_dx(self, path, values=None) -> None:
+        """Write an OpenDX map, as ChimeraX, VMD and PyMOL read."""
+        v = self.enrichment if values is None else np.asarray(values)
+        nx, ny, nz = v.shape
+        # a count belongs to a cell, a DX value belongs to a point: sample at cell centres
+        centre = np.asarray(self.origin, float) + 0.5 * self.spacing
+        with open(path, "w", encoding="utf-8") as out:
+            out.write(f"object 1 class gridpositions counts {nx} {ny} {nz}\n")
+            out.write("origin {:g} {:g} {:g}\n".format(*centre))
+            for axis in range(3):
+                d = [0.0, 0.0, 0.0]
+                d[axis] = self.spacing
+                out.write("delta {:g} {:g} {:g}\n".format(*d))
+            out.write(f"object 2 class gridconnections counts {nx} {ny} {nz}\n")
+            out.write(f"object 3 class array type double rank 0 items {v.size} data follows\n")
+            flat = v.reshape(-1)  # z fastest, as DX wants
+            for i in range(0, flat.size, 3):
+                out.write(" ".join(f"{x:.4g}" for x in flat[i:i + 3]) + "\n")  # fmt: skip
+            out.write('object "density" class field\n')
+
+
+@dataclass
 class SiteSet:
     """The sites of a set of runs, most occupied first."""
 
@@ -54,6 +94,7 @@ class SiteSet:
     centroids: np.ndarray  # (npoints, 3)
     spacing: float
     enrichment: float
+    density: Density | None = None
 
     def __len__(self) -> int:
         return len(self.sites)
@@ -147,7 +188,7 @@ def _dense_cells(points, spacing: float, threshold: float, volume: float):
     counts = np.bincount(flat, minlength=int(dims.prod()))
     expected = len(points) * spacing**3 / max(volume, 1e-9)
     dense = np.flatnonzero(counts >= max(threshold * expected, 2.0))
-    return flat, dense, counts, dims
+    return flat, dense, counts, dims, lo, expected
 
 
 def _join_neighbours(dense, dims):
@@ -218,7 +259,7 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
         hull = points.max(0) - points.min(0)
         volume = float(np.prod(np.maximum(hull, spacing)))
 
-    flat, dense, counts, dims = _dense_cells(points, spacing, enrichment, volume)
+    flat, dense, counts, dims, lo, expected = _dense_cells(points, spacing, enrichment, volume)
     group, ngroups = _join_neighbours(dense, dims)
     of_cell = np.full(int(dims.prod()) + 1, -1, np.int64)
     of_cell[dense] = group
@@ -242,7 +283,10 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     for k, s in enumerate(found):
         out[s.points] = k
     return SiteSet(sites=found, labels=out, where=where, centroids=points,
-                   spacing=float(spacing), enrichment=float(enrichment))  # fmt: skip
+                   spacing=float(spacing), enrichment=float(enrichment),
+                   density=Density(origin=lo, spacing=float(spacing),
+                                   counts=counts.reshape(dims).astype(np.int32),
+                                   expected=float(expected)))  # fmt: skip
 
 
 def site_pocket(system, runs, found: SiteSet, k: int, protein: str = "protein and name CA",
