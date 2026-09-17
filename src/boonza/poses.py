@@ -91,7 +91,7 @@ class PoseSet:
         return "\n".join(rows)
 
 
-def pose_distances(system, positions=None, ligand: str = DEFAULT_LIGAND,
+def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
                    protein: str = "protein and name CA", pocket_cutoff: float = 5.0,
                    symmetry: bool = True, heavy_only: bool = True, bond_orders: bool = False,
                    periodic: bool = True) -> np.ndarray:  # fmt: skip
@@ -99,21 +99,40 @@ def pose_distances(system, positions=None, ligand: str = DEFAULT_LIGAND,
 
     Every frame becomes the matrix of distances between the pocket atoms --
     the ``protein`` atoms within ``pocket_cutoff`` A of the ligand in the
-    first frame -- and the ligand atoms, and two frames are compared by the
-    RMS difference of those distances.  With ``symmetry`` each frame's ligand
+    reference -- and the ligand atoms, and two frames are compared by the
+    RMS difference of those distances.
+
+    ``reference``: a System (a crystal structure, or a frame where the ligand
+    is bound), or None for the first frame.  It decides which atoms the
+    pocket is made of, so a run that starts with the ligand elsewhere -- out
+    in bulk, or not yet settled -- wants one rather than its own first
+    frame.  With ``symmetry`` each frame's ligand
     atoms are first matched to the first frame's, so equivalent atoms do not
     count as motion.  That mapping is chosen once per frame rather than once
     per pair, which is what keeps this quadratic in frames but linear in
     symmetry searches; when two frames would rather be compared through
     different mappings the distance between them is an upper bound.
     """
-    matcher, mids, rids, _ = _prepare(system, system, ligand, None, heavy_only, bond_orders)
-    prot = _ids(system, protein)
+    ref_sys = system if reference is None else reference
+    matcher, mids, rids, _ = _prepare(system, ref_sys, ligand, None, heavy_only, bond_orders)
+    prot, rprot = _ids(system, protein), _ids(ref_sys, protein)
+    if len(prot) != len(rprot):
+        raise ValueError(f"{protein!r} selects {len(prot)} atoms here and {len(rprot)} in the "
+                         "reference; they are paired in order")  # fmt: skip
     need = np.union1d(prot, mids)
     blocks, _ = _boxed_blocks(system, positions, need)
     pl, ll = np.searchsorted(need, prot), np.searchsorted(need, mids)
 
     rows, keep, dref = [], None, None
+    if reference is not None:
+        rpos = reference.positions
+        rbox = np.asarray(reference.cell, np.float64) if periodic else None
+        near = distances(rpos[rprot], rpos[rids], rbox).min(1) <= pocket_cutoff
+        near &= ~np.isin(rprot, rids)
+        if not near.any():
+            raise ValueError(f"no {protein!r} atoms within {pocket_cutoff} A of the "
+                             "reference ligand")  # fmt: skip
+        keep, dref = pl[near], distances(rpos[rprot[near]], rpos[rids], rbox)
     for xyz, boxes in blocks:
         for X, box in zip(xyz, boxes, strict=True):
             box = box if periodic else None
@@ -214,24 +233,26 @@ def _cut(merges, n: int, height: float) -> np.ndarray:
     return labels.reshape(-1)
 
 
-def poses(system, positions=None, cutoff: float = 1.5, min_population: float = 0.02,
+def poses(system, positions=None, reference=None, cutoff: float = 1.5,
+          min_population: float = 0.02,
           ligand: str = DEFAULT_LIGAND, protein: str = "protein and name CA",
           pocket_cutoff: float = 5.0, symmetry: bool = True, heavy_only: bool = True,
           bond_orders: bool = False, periodic: bool = True) -> PoseSet:  # fmt: skip
     """The poses a trajectory holds, most populated first.
 
     Frames within ``cutoff`` A dRMSD of one another (average linkage) are one
-    pose; a pose holding less than ``min_population`` of the frames is left
-    out of the list and its frames are labelled -1.  Each pose is reported by
-    its medoid -- the member with the smallest mean distance to the others --
-    so what comes back is always a frame that was simulated.
+    pose; a pose holding less than ``min_population`` of the frames, or fewer
+    than two of them, is left out of the list and its frames are labelled -1.
+    Each pose is reported by its medoid -- the member with the smallest mean
+    distance to the others -- so what comes back is always a frame that was
+    simulated.
     """
-    d = pose_distances(system, positions, ligand=ligand, protein=protein,
+    d = pose_distances(system, positions, reference, ligand=ligand, protein=protein,
                        pocket_cutoff=pocket_cutoff, symmetry=symmetry, heavy_only=heavy_only,
                        bond_orders=bond_orders, periodic=periodic)  # fmt: skip
     merges = _nn_chain(d)
     groups = _cut(merges, len(d), float(cutoff))
-    smallest = max(1, round(min_population * len(d)))
+    smallest = max(2, round(min_population * len(d)))  # one frame is not a state
     found = []
     for g in range(groups.max() + 1):
         members = np.flatnonzero(groups == g)

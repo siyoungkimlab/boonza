@@ -28,6 +28,7 @@ from .analysis import (  # noqa: E402
     rmsd_trajectory,
     rmsf,
     sasa,
+    settled,
 )
 from .build import (  # noqa: E402
     from_smiles,
@@ -108,6 +109,7 @@ __all__ = [
     "BlockAverage",
     "MoleculeView",
     "block_average",
+    "settled",
     "contact_frequency",
     "native_contacts",
     "pca",

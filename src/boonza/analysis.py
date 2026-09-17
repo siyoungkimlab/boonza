@@ -399,6 +399,30 @@ class BlockAverage:
         return float((self.estimate / self.sem[0]) ** 2)
 
 
+def settled(values, min_frames: int = 20) -> int:
+    """The frame a time series settles at: where to start to keep the most signal.
+
+    Every start is scored by how many independent samples it leaves --
+    remaining frames over :attr:`BlockAverage.statistical_inefficiency` -- and
+    the best is returned.  Discarding too little leaves the drift in; too
+    much throws away sampling, and this trades the two off rather than
+    guessing a percentage (Chodera 2016).  A series shorter than
+    ``min_frames``, or one with no drift to speak of, settles at 0.
+    """
+    v = np.asarray(values, dtype=float).reshape(-1)
+    n = len(v)
+    if n < min_frames:
+        return 0
+    best, most = 0, -np.inf
+    for start in range(0, n - min_frames + 1, max(1, n // 100)):
+        tail = v[start:]
+        g = max(block_average(tail).statistical_inefficiency, 1.0)
+        independent = len(tail) / g
+        if independent > most:
+            best, most = start, independent
+    return int(best)
+
+
 def block_average(values, min_blocks: int = 4) -> BlockAverage:
     """Flyvbjerg-Petersen blocking of a time series (for example an RMSD or Q per frame).
 

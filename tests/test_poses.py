@@ -132,3 +132,58 @@ def test_a_trajectory_reads_the_same_as_an_array(two_sites, tmp_path):
     assert [x.center for x in from_file] == [x.center for x in from_memory]
     every_fourth = boonza.poses(s, traj[::4])  # a slice, for a run too long to hold at once
     assert [len(x) for x in every_fourth] == [15, 10]
+
+
+def test_settled_finds_where_a_series_stops_drifting():
+    rng = np.random.default_rng(0)
+    drift = 3.0 * np.exp(-np.arange(200) / 60) + rng.normal(scale=0.1, size=200)
+    flat = rng.normal(scale=0.1, size=800)
+    start = boonza.settled(np.concatenate([drift, flat]))
+    assert 100 < start < 400  # near the onset, trading bias against what is left
+    assert boonza.settled(rng.normal(size=1000)) == 0  # nothing to discard
+    assert boonza.settled(np.arange(10.0)) == 0  # too short to say
+
+
+def test_a_single_frame_is_not_a_pose(two_sites):
+    s, frames = two_sites
+    odd = np.concatenate([frames[:40], frames[60:61] + 0.0])  # one visitor from the other site
+    odd[-1, s.select(DEFAULT_LIGAND).ids] += 3.0
+    p = boonza.poses(s, odd, min_population=0.0)
+    assert all(len(pose) >= 2 for pose in p)
+    assert p.labels[-1] == -1
+
+
+def test_the_command(tmp_path, two_sites, capsys):
+    import json
+
+    from boonza.cli import main
+
+    s, frames = two_sites
+    lig = s.select(DEFAULT_LIGAND).ids
+    approach = []  # 25 frames of the ligand arriving, then the two sites
+    for k in range(25):
+        x = frames[0].copy()
+        x[lig] = x[lig] + np.array([6.0, 0.0, 0.0]) * np.exp(-k / 6)
+        approach.append(x)
+    run = np.concatenate([np.array(approach), frames])
+    structure, dcd, out = tmp_path / "s.dms", tmp_path / "run.dcd", tmp_path / "out"
+    boonza.save(s, structure)
+    with boonza.open_writer(dcd, s.natoms) as w:
+        for x in run:
+            w.write(x, box=s.cell)
+
+    assert main(["poses", str(structure), "--traj", str(dcd), "-o", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "pocket taken from frame" in printed  # frame 0 has the ligand out of reach
+    assert "cutoff (A)" in printed and "largest" in printed  # the sweep is shown, not hidden
+
+    doc = json.loads((out / "poses.json").read_text())
+    assert doc["frames"] == len(run) and doc["poses"]
+    best = doc["poses"][0]
+    assert best["population"] > 0.5 and best["frames"] >= 2
+    assert (out / best["file"]).is_file()
+    written = boonza.load(out / best["file"])
+    assert np.allclose(written.positions, run[best["frame"]], atol=1e-3)  # the frame it names
+
+    assert main(["poses", str(structure), "--traj", str(dcd), "--settle"]) == 0
+    assert "settled at frame" in capsys.readouterr().out

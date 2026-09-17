@@ -170,6 +170,15 @@ This is Flyvbjerg-Petersen blocking. The standard error estimated from
 blocks grows with the block size until blocks are longer than the
 correlation time, then levels off at the true error.
 
+```python
+start = boonza.settled(rmsd_per_frame)  # where to start: the drift before it is noise
+```
+
+`settled` scores every start by how many independent samples it leaves --
+remaining frames over the statistical inefficiency -- and returns the best,
+rather than discarding a guessed percentage. It assumes the series relaxes
+to one stationary distribution.
+
 ## Representative poses
 
 ```python
@@ -198,6 +207,32 @@ cutoffs, share, count = p.sweep()  # the largest pose's share, and how many pose
 
 A pose whose share holds while the cutoff doubles is a real one, so the
 choice of cutoff can be shown rather than trusted.
+
+From the command line, with the structures written out:
+
+```
+boonza poses solvated.dms --traj trajectory.dcd -o poses/
+```
+
+```
+pocket taken from frame 15, where 34 atoms are within 5 A of the ligand
+2 poses of 500 frames, cut at 1.5 A dRMSD
+pose   frame   share  spread  frames
+   0     109   60.8%   0.25 A     304
+   1     388   32.0%   0.17 A     160
+```
+
+The pocket comes from the frame whose ligand touches the most protein, not
+from frame 0, because a run may start with the ligand elsewhere; pass
+`--reference crystal.pdb` to fix it yourself. Each pose is written out as a
+structure, next to a `poses.json` of the populations, the members and the
+sweep.
+
+`--settle` drops the drift at the start of a run, by asking where the series
+becomes stationary (`boonza.settled`). It suits one ligand settling into one
+pose. It is off by default because a run that genuinely *changes* pose looks
+non-stationary too, and everything before the change would be thrown away --
+including, often, the most populated pose.
 
 ## Rings
 

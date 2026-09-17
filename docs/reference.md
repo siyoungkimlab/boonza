@@ -929,29 +929,36 @@ while phi/psi are held, so side chains relax without losing the
 backbone (omega included).  Termini are free amine and acid, as RDKit
 builds them.
 
-### `boonza.pose_distances(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
+### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
 
 The (nframes, nframes) dRMSD matrix of a trajectory, in A.
 
 Every frame becomes the matrix of distances between the pocket atoms --
 the ``protein`` atoms within ``pocket_cutoff`` A of the ligand in the
-first frame -- and the ligand atoms, and two frames are compared by the
-RMS difference of those distances.  With ``symmetry`` each frame's ligand
+reference -- and the ligand atoms, and two frames are compared by the
+RMS difference of those distances.
+
+``reference``: a System (a crystal structure, or a frame where the ligand
+is bound), or None for the first frame.  It decides which atoms the
+pocket is made of, so a run that starts with the ligand elsewhere -- out
+in bulk, or not yet settled -- wants one rather than its own first
+frame.  With ``symmetry`` each frame's ligand
 atoms are first matched to the first frame's, so equivalent atoms do not
 count as motion.  That mapping is chosen once per frame rather than once
 per pair, which is what keeps this quadratic in frames but linear in
 symmetry searches; when two frames would rather be compared through
 different mappings the distance between them is an upper bound.
 
-### `boonza.poses(system, positions=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
+### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
 
 The poses a trajectory holds, most populated first.
 
 Frames within ``cutoff`` A dRMSD of one another (average linkage) are one
-pose; a pose holding less than ``min_population`` of the frames is left
-out of the list and its frames are labelled -1.  Each pose is reported by
-its medoid -- the member with the smallest mean distance to the others --
-so what comes back is always a frame that was simulated.
+pose; a pose holding less than ``min_population`` of the frames, or fewer
+than two of them, is left out of the list and its frames are labelled -1.
+Each pose is reported by its medoid -- the member with the smallest mean
+distance to the others -- so what comes back is always a frame that was
+simulated.
 
 ### `boonza.repartition_hydrogen_masses(system: 'System', selection: 'str' = 'not water', mass: 'float' = 3.024, repartition: 'bool' = True) -> 'System'`
 
@@ -961,6 +968,17 @@ With ``repartition`` the added mass is taken from the heavy atom each
 hydrogen is bonded to, so the total mass is unchanged (hydrogen mass
 repartitioning, for 4 fs time steps); without it only the hydrogens
 change (for example deuterium, 2.014).
+
+### `boonza.settled(values, min_frames: 'int' = 20) -> 'int'`
+
+The frame a time series settles at: where to start to keep the most signal.
+
+Every start is scored by how many independent samples it leaves --
+remaining frames over :attr:`BlockAverage.statistical_inefficiency` -- and
+the best is returned.  Discarding too little leaves the drift in; too
+much throws away sampling, and this trades the two off rather than
+guessing a percentage (Chodera 2016).  A series shorter than
+``min_frames``, or one with no drift to speak of, settles at 0.
 
 ### `boonza.solvate(solute: 'System', solvent=None, box=None, thickness: 'float' = 5.0, min_solute_dist: 'float' = 2.4, min_solvent_dist: 'float' = 1.0, solvent_selection: 'str' = 'oxygen', center_selection: 'str' = 'all', remove_buried: 'bool' = False) -> 'System'`
 
