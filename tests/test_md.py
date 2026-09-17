@@ -500,3 +500,28 @@ def test_load_input_gathers_split_residues(tmp_path):
     assert said and "3 residue(s)" in said[0]
     top, _, _ = boonza.to_openmm(got)
     assert top.getNumAtoms() == s.natoms and top.getNumResidues() == s.nresidues
+
+
+def test_split_residue_input_keeps_its_recorded_indices(tmp_path, dipeptide):
+    """A file that keeps a residue in pieces is gathered, so the input's own
+    order is no longer its order in the file; what components.json records
+    must still point at the same atoms."""
+    from boonza.md.prepare import load_input
+
+    s = boonza.load(dipeptide)  # move the first residue's hydrogens to the end,
+    first = s.atoms["residue"] == 0  # the way preparation tools write added ones
+    moved = np.flatnonzero(first & (s.atoms["anum"] == 1))
+    s.reorder_atoms(np.concatenate([np.setdiff1d(np.arange(s.natoms), moved), moved]))
+    path = tmp_path / "split.mae"
+    boonza.save(s, path)
+
+    lines = []
+    out, info = build_system(parse_arguments([str(path), "--saltM", "0"]), tmp_path,
+                             log=lines.append)  # fmt: skip
+    assert any("Gathered the atoms of 1 residue(s)" in line for line in lines)
+    loaded = load_input(path)
+    for c in info["components"]:
+        a = np.asarray(c["input_atom_indices"])
+        b = np.asarray(c["production_atom_indices"])
+        assert (loaded.atoms["name"][a] == out.atoms["name"][b]).all()
+        assert (loaded.atoms["anum"][a] == out.atoms["anum"][b]).all()

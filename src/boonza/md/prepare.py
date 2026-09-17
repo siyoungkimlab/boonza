@@ -318,9 +318,12 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
             box = solvate(s, thickness=10.0 * args.padding_nm)
         box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
         out = parameterize(box)
-    where = {int(k) - 1: i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}
+    # md_index is the atom's line in the input file; the input's own order may
+    # differ from it, because load_input gathers residues the file split.
+    where = {int(k): i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}
+    md = s.atoms["md_index"]
     for c in [*info["components"], *([info["selection"]] if "selection" in info else [])]:
-        c["production_atom_indices"] = [where[a] for a in c["input_atom_indices"]]
+        c["production_atom_indices"] = [where[int(md[a])] for a in c["input_atom_indices"]]
     nwater = len(set(out.atoms["residue"][out.select("water").ids].tolist()))
     log(
         f"{'System' if mode == 'none' else 'Solvated'}: {out.natoms} particles, "
