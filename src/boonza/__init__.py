@@ -48,6 +48,7 @@ from .glue import Glue, make_whole  # noqa: E402
 from .handles import Atom, AtomSel, Bond, Chain, Ct, Residue, StaleHandleError  # noqa: E402
 from .hbonds import HBonds, baker_hubbard, hbonds, wernet_nilsson  # noqa: E402
 from .io import DMSError, load, save  # noqa: E402
+from .kinetics import Dwell, Rates, dwells, kinetics  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
@@ -157,6 +158,10 @@ __all__ = [
     "symmetry_rmsd",
     "poses",
     "sites",
+    "kinetics",
+    "dwells",
+    "Rates",
+    "Dwell",
     "ligand_centroids",
     "site_pocket",
     "Site",
