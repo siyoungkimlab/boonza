@@ -611,6 +611,10 @@ Standard error of the mean from blocks of increasing size (see ``block_average``
 
 Outcome of ``drmsd``: pocket-ligand distance RMSD (per frame with ``positions``).
 
+### `class boonza.Dwell(run: 'int', copy: 'int', first: 'int', frames: 'int', bound: 'bool', censored: 'bool') -> None`
+
+One stretch a copy spent in a state, and whether we saw it end.
+
 ### `class boonza.LigandRMSD(rmsd: 'float | np.ndarray', plain_rmsd: 'float | np.ndarray | None', fit_rmsd: 'float | np.ndarray', rotation: 'np.ndarray', translation: 'np.ndarray', mapping: 'np.ndarray', mobile_ligand: 'np.ndarray', reference_ligand: 'np.ndarray') -> None`
 
 Outcome of ``ligand_rmsd``: the protein fit and the ligand RMSD in that frame.
@@ -634,6 +638,10 @@ One group of frames: its medoid, its share of the frames, its spread.
 ### `class boonza.PoseSet(poses: 'list[Pose]', labels: 'np.ndarray', distances: 'np.ndarray', merges: 'np.ndarray', cutoff: 'float', min_population: 'float') -> None`
 
 The poses of a trajectory, most populated first.
+
+### `class boonza.Rates(site: 'int', k_off: 'float', k_on: 'float', KD: 'float', dG: 'float', residence_ns: 'float', events: 'int', arrivals: 'int', bound_ns: 'float', unbound_ns: 'float', concentration: 'float', occupancy: 'float', occupancy_from_rates: 'float', dG_interval: 'tuple[float, float]', censored: 'int', dwells: 'list[Dwell]' = <factory>) -> None`
+
+The kinetics of one site, with what they rest on.
 
 ### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float') -> None`
 
@@ -741,6 +749,15 @@ a Trajectory (read chunk by chunk, only pocket and ligand atoms).  With
 ``periodic=True`` distances use the minimum image of each frame's box (the
 system's cell for plain arrays).
 
+### `boonza.dwells(found, site: 'int', hysteresis: 'float' = 2.0, quantile: 'float' = 0.9) -> 'list[Dwell]'`
+
+The stretches each copy spent in ``site`` and out of it.
+
+A copy enters when its centroid comes within ``r_in`` -- the distance
+holding ``quantile`` of the site's own frames -- and leaves only past
+``hysteresis`` times that.  The first and last stretch of every copy are
+censored: they were cut by the trajectory, not by the ligand.
+
 ### `boonza.find_unmatched(system: 'System', forcefields, path=None) -> 'list[list[int]]'`
 
 Residue groups that ``forcefields`` cannot parameterize.
@@ -806,6 +823,21 @@ adduct (a ligand bound to an amino acid other than by a peptide bond)
 with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
+
+### `boonza.kinetics(system, found, site: 'int', interval_ns: 'float', temperature: 'float' = 310.0, hysteresis: 'float' = 2.0, quantile: 'float' = 0.9, bootstrap: 'int' = 400, seed: 'int' = 0, volume_A3: 'float | None' = None) -> 'Rates'`
+
+Rates, residence time and dG of one site, with an interval from resampling runs.
+
+``interval_ns`` is the time between frames.  The free-ligand
+concentration is counted per frame, from the copies not in the site and
+the box volume, so it falls as copies bind.  The interval comes from
+resampling whole runs with replacement, which carries run-to-run
+disagreement that a Poisson count cannot see; with one run it is the
+dwells that are resampled instead.
+
+Rates rest on completed events.  A dwell the trajectory cut short counts
+its time and not its ending, so a run stopped early -- by the wall clock
+or by ``--early-stop`` -- biases nothing.
 
 ### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray]'`
 

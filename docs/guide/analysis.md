@@ -310,6 +310,57 @@ site  occupied  runs  copies  arrivals  spread  centre
    1     26.3%     3       2         7    0.7 A      6.0    -0.0     0.0
 ```
 
+## Kinetics of a site
+
+```python
+found = boonza.sites(s, runs)
+rate = boonza.kinetics(s, found, 0, interval_ns=0.1)
+rate.residence_ns, rate.dG, rate.dG_interval, rate.events
+print(rate.summary())
+```
+
+```
+site 0: dG -1.65 kcal/mol [-1.75, -1.54] from 153 departures and 136 arrivals
+  residence 19.54 ns, KD 68.5 mM, [L] 25.9 mM, bound for 2989 of 10000 ns
+  occupancy 0.299 by frames, 0.275 by rates
+```
+
+A site's frames are a two-state series per copy, and the dwells between
+transitions give the rates: `k_off` from completed departures over bound
+time, `k_on` from completed arrivals over unbound time weighted by the free
+ligand concentration, which is counted per frame and falls as copies bind.
+
+Three things decide whether those numbers mean anything.
+
+**Hysteresis.** A copy arrives within `r_in` of the site and leaves only past
+`hysteresis` times that. With a single boundary the ligand recrosses it
+constantly and every crossing is counted as a departure. On a test process
+that really departs 138 times, one boundary finds 2949 and reports a
+residence time of 0.97 ns instead of 20 ns; two boundaries find 132.
+
+Worth knowing which way this bites: `dG` moved by 0.06 kcal/mol across that
+whole range, because `k_on` and `k_off` inflate together and the ratio
+survives. **The boundary hardly matters for thermodynamics and decides
+everything for kinetics.**
+
+**Censoring.** A run ends because the wall clock ran out or because
+`boonza md --early-stop` saw the ligand leave — not because the dwell ended.
+Such a stretch counts its time but not an ending, which is the
+maximum-likelihood treatment and the reason an early-stopped run biases
+nothing.
+
+**Evidence.** Every number carries the count it rests on. `dG_interval` comes
+from resampling whole runs with replacement, so it carries run-to-run
+disagreement that a Poisson count cannot see, and `consistent` checks the
+occupancy the rates imply against the occupancy the frames show — two routes
+to one number, so disagreement means the states are wrong.
+
+From the command line, add `--interval-ns` to `boonza sites`:
+
+```
+boonza sites solvated.dms --traj run*.dcd --interval-ns 0.1 -o sites/
+```
+
 ## Rings
 
 ```python
