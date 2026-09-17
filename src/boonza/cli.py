@@ -11,6 +11,7 @@
     boonza rmsd docked.pdb crystal.pdb [--ligandsel SEL] [--align order|sequence|none]
     boonza rmsd system.pdb crystal.pdb --traj md.xtc     (one RMSD per frame)
     boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]
+    boonza poses system.dms --traj md.dcd [--cutoff 1.5] [-o poses/]   (representative frames)
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
     boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
@@ -202,6 +203,97 @@ def _drmsd(args) -> int:
         print(f"{k:6d} {r.drmsd[k]:8.3f} {plain:>9}")
     print(f"dRMSD mean {r.drmsd.mean():.3f}, min {r.drmsd.min():.3f}, "
           f"max {r.drmsd.max():.3f} A")  # fmt: skip
+    return 0
+
+
+def _bound_frame(system, traj, args):
+    """The frame whose ligand touches the most protein: the pocket comes from there.
+
+    A run may start with the ligand somewhere else -- out in bulk, or not yet
+    settled -- and its first frame then has no pocket to speak of.
+    """
+    from .pbc import distances
+
+    lig = system.select(args.ligandsel).ids
+    lig = lig[system.atoms["anum"][lig] > 1]
+    prot = system.select(args.proteinsel).ids
+    look = np.unique(np.linspace(0, len(traj) - 1, min(len(traj), 50)).astype(int))
+    best, most = int(look[0]), -1
+    for k in look.tolist():
+        frame = traj[k]
+        box = frame.box if not args.no_pbc else None
+        near = int((distances(frame.positions[prot], frame.positions[lig], box).min(1)
+                    <= args.pocket_cutoff).sum())  # fmt: skip
+        if near > most:
+            best, most = k, near
+    if most < 1:
+        raise ValueError(f"the ligand never comes within {args.pocket_cutoff:g} A of "
+                         f"{args.proteinsel!r}: is it bound at all?")  # fmt: skip
+    out = system.clone()
+    out.positions = traj[best].positions
+    if best:
+        print(f"pocket taken from frame {best}, where {most} atoms are within "
+              f"{args.pocket_cutoff:g} A of the ligand")  # fmt: skip
+    return out
+
+
+def _poses(args) -> int:
+    import json
+    from pathlib import Path
+
+    import boonza
+
+    from .analysis import settled
+    from .symmetry import drmsd
+    from .trajectory import open_trajectory
+
+    system = _load(args.system)
+    traj = open_trajectory(args.traj, system)
+    reference = _load(args.reference) if args.reference else _bound_frame(system, traj, args)
+    kept = np.arange(len(traj))
+    if args.settle:
+        drift = drmsd(system, reference, positions=traj, ligand=args.ligandsel,
+                      protein=args.proteinsel, cutoff=args.pocket_cutoff,
+                      periodic=not args.no_pbc).drmsd  # fmt: skip
+        start = settled(drift)
+        if start:
+            print(f"settled at frame {start} of {len(traj)}: the {start} frames before it are "
+                  "left out")  # fmt: skip
+        kept = kept[start:]
+    kept = kept[:: args.stride]
+    if len(kept) < 2:
+        raise ValueError(f"{len(kept)} frames left to group: lower --stride")
+    p = boonza.poses(system, traj[kept[0] : kept[-1] + 1 : args.stride], reference,
+                     cutoff=args.cutoff,
+                     min_population=args.min_population, ligand=args.ligandsel,
+                     protein=args.proteinsel, pocket_cutoff=args.pocket_cutoff,
+                     symmetry=not args.no_symmetry, periodic=not args.no_pbc)  # fmt: skip
+    print(f"{len(p)} poses of {len(kept)} frames, cut at {args.cutoff:g} A dRMSD")
+    print(f"{'pose':>4} {'frame':>7} {'share':>7} {'spread':>7} {'frames':>7}")
+    for k, pose in enumerate(p):
+        print(f"{k:4d} {kept[pose.center]:7d} {100 * pose.population:6.1f}% "
+              f"{pose.spread:6.2f} A {len(pose):7d}")  # fmt: skip
+    cutoffs, share, count = p.sweep()
+    print("\ncutoff (A) " + " ".join(f"{c:5.2f}" for c in cutoffs))
+    print("largest    " + " ".join(f"{100 * s:4.0f}%" for s in share))
+    print("poses      " + " ".join(f"{c:5d}" for c in count))
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        doc = {"frames": len(kept), "cutoff": args.cutoff, "pocket_cutoff": args.pocket_cutoff,
+               "ligand": args.ligandsel, "stride": args.stride, "poses": []}  # fmt: skip
+        for k, pose in enumerate(p):
+            frame = int(kept[pose.center])
+            system.positions = traj[frame].positions
+            name = f"pose_{k:03d}.{args.format}"
+            boonza.save(system, out / name)
+            doc["poses"].append({"file": name, "frame": frame, "population": pose.population,
+                                 "spread": pose.spread, "frames": len(pose),
+                                 "members": kept[pose.frames].tolist()})  # fmt: skip
+        doc["sweep"] = {"cutoff": cutoffs.tolist(), "largest": share.tolist(),
+                        "poses": count.tolist()}  # fmt: skip
+        (out / "poses.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        print(f"\nwrote {len(p)} structures and poses.json to {out}")
     return 0
 
 
@@ -502,6 +594,28 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--no-symmetry", action="store_true", help="pair ligand atoms in order")
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.set_defaults(run=_drmsd)
+
+    q = sub.add_parser("poses", help="representative frames: which pose, and how much of the run")
+    q.add_argument("system", help="structure (topology of --traj)")
+    q.add_argument("--traj", required=True, help="trajectory (DCD/XTC)")
+    q.add_argument("--reference", help="structure the pocket comes from "
+                   "(default: the frame whose ligand touches the most protein)")  # fmt: skip
+    q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms")
+    q.add_argument("--proteinsel", default="protein and name CA", help="pocket candidates")
+    q.add_argument("--pocket-cutoff", type=float, default=5.0, help="pocket cutoff (A)")
+    q.add_argument("--cutoff", type=float, default=1.5, help="one pose, in dRMSD (A)")
+    q.add_argument("--min-population", type=float, default=0.02,
+                   help="share of frames a pose must hold to be listed")  # fmt: skip
+    q.add_argument("--stride", type=int, default=1, help="use every nth frame")
+    q.add_argument("--settle", action="store_true",
+                   help="drop the run's initial drift. This asks where the run becomes "
+                        "stationary, so it suits one ligand settling into one pose; a run "
+                        "that changes pose has everything before the change dropped")  # fmt: skip
+    q.add_argument("--no-symmetry", action="store_true", help="pair ligand atoms in order")
+    q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
+    q.add_argument("-o", "--out", help="write the representative structures here")
+    q.add_argument("--format", default="dms", help="structure format to write (default: dms)")
+    q.set_defaults(run=_poses)
     return p
 
 

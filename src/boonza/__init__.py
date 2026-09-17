@@ -28,6 +28,7 @@ from .analysis import (  # noqa: E402
     rmsd_trajectory,
     rmsf,
     sasa,
+    settled,
 )
 from .build import (  # noqa: E402
     from_smiles,
@@ -50,6 +51,7 @@ from .io import DMSError, load, save  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
+from .poses import Pose, PoseSet, pose_distances, poses  # noqa: E402
 from .rings import ring_systems, sssr  # noqa: E402
 from .schemas import NONBONDED_SCHEMAS, TERM_SCHEMAS  # noqa: E402
 from .secondary import backbone_dihedrals, backbone_hbonds, chimerax_ss, dssp  # noqa: E402
@@ -107,6 +109,7 @@ __all__ = [
     "BlockAverage",
     "MoleculeView",
     "block_average",
+    "settled",
     "contact_frequency",
     "native_contacts",
     "pca",
@@ -151,6 +154,10 @@ __all__ = [
     "drmsd",
     "DRMSD",
     "symmetry_rmsd",
+    "poses",
+    "pose_distances",
+    "Pose",
+    "PoseSet",
     "align_sequences",
     "identity_matrix",
     "sequence",

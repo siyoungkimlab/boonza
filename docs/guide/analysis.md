@@ -170,6 +170,70 @@ This is Flyvbjerg-Petersen blocking. The standard error estimated from
 blocks grows with the block size until blocks are longer than the
 correlation time, then levels off at the true error.
 
+```python
+start = boonza.settled(rmsd_per_frame)  # where to start: the drift before it is noise
+```
+
+`settled` scores every start by how many independent samples it leaves --
+remaining frames over the statistical inefficiency -- and returns the best,
+rather than discarding a guessed percentage. It assumes the series relaxes
+to one stationary distribution.
+
+## Representative poses
+
+```python
+p = boonza.poses(s, frames, ligand="chain L")  # most populated first
+p[0].center  # the medoid: a frame that was simulated, never an average
+p[0].population  # its share of the frames
+p[0].spread  # how tightly its members sit around it (Å)
+p[0].frames  # the members, in time order
+p.labels  # the pose of every frame, -1 below min_population
+print(p.summary())
+```
+
+Frames are compared by the distances between pocket atoms and ligand atoms —
+the measure `boonza.drmsd` uses — so nothing is superposed and a protein
+that breathes or tumbles does not look like a ligand that moved. Ligand
+symmetry is taken out once per frame, so a rotated ring is not a second
+pose.
+
+The frames are grouped by average linkage, which builds the whole merge tree
+in one pass. `cutoff` only says where to cut it, and the other cutoffs come
+off the same tree for nothing:
+
+```python
+cutoffs, share, count = p.sweep()  # the largest pose's share, and how many poses
+```
+
+A pose whose share holds while the cutoff doubles is a real one, so the
+choice of cutoff can be shown rather than trusted.
+
+From the command line, with the structures written out:
+
+```
+boonza poses solvated.dms --traj trajectory.dcd -o poses/
+```
+
+```
+pocket taken from frame 15, where 34 atoms are within 5 A of the ligand
+2 poses of 500 frames, cut at 1.5 A dRMSD
+pose   frame   share  spread  frames
+   0     109   60.8%   0.25 A     304
+   1     388   32.0%   0.17 A     160
+```
+
+The pocket comes from the frame whose ligand touches the most protein, not
+from frame 0, because a run may start with the ligand elsewhere; pass
+`--reference crystal.pdb` to fix it yourself. Each pose is written out as a
+structure, next to a `poses.json` of the populations, the members and the
+sweep.
+
+`--settle` drops the drift at the start of a run, by asking where the series
+becomes stationary (`boonza.settled`). It suits one ligand settling into one
+pose. It is off by default because a run that genuinely *changes* pose looks
+non-stationary too, and everything before the change would be thrown away --
+including, often, the most populated pose.
+
 ## Rings
 
 ```python
