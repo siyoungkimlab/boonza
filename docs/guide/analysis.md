@@ -268,7 +268,10 @@ counted onto a grid, and a site is a connected region visited at least
 else is labelled -1 rather than forced into a site.
 
 The threshold is an enrichment over bulk, not a number of frames, so it
-means the same thing whatever the box size, run length or copy count.
+means the same thing whatever the box size, run length or copy count. Bulk
+is worked out from the box the frames actually had, averaged over them, not
+from the cell the structure file carries — under a barostat those differ,
+and `found.volume` is the one that was used.
 
 The two levels compose: a site says which frames to look at, and those go to
 `poses` for the pose within it. Alignment is used only here, where pockets
@@ -344,7 +347,10 @@ site 0: dG -1.65 kcal/mol [-1.75, -1.54] from 153 departures and 136 arrivals
 A site's frames are a two-state series per copy, and the dwells between
 transitions give the rates: `k_off` from completed departures over bound
 time, `k_on` from completed arrivals over unbound time weighted by the free
-ligand concentration, which is counted per frame and falls as copies bind.
+ligand concentration, which is counted per frame and falls as copies bind. That concentration uses the mean box of the frames, because
+`K_D` goes as 1/V: a box 10% away from the one assumed shifts `dG` by
+`RT ln(1.1)`, about 0.06 kcal/mol — small, but a bias rather than noise.
+Pass `volume_A3` to override it.
 
 Three things decide whether those numbers mean anything.
 

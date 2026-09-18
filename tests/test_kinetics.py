@@ -124,3 +124,21 @@ def test_it_refuses_what_it_cannot_measure(box):
     everywhere.sites[0].points = np.arange(len(xyz))  # a boundary so loose nothing is outside
     with pytest.raises(ValueError, match="never entered or never left"):
         boonza.kinetics(box, everywhere, 0, interval_ns=DT, hysteresis=1e6)
+
+
+def test_the_concentration_follows_the_box_the_frames_had(box):
+    """K_D scales with 1/V, so the volume is a systematic shift in dG, not noise."""
+    xyz, where, flags = _process(seed=11)
+    found = _as_site(xyz, where, flags, 12)
+    stored = BOX**3
+    found.volume = 0.9 * stored  # as an equilibrated box is smaller than a built one
+
+    measured = boonza.kinetics(box, found, 0, interval_ns=DT, bootstrap=0)
+    assumed = boonza.kinetics(box, found, 0, interval_ns=DT, bootstrap=0, volume_A3=stored)
+    # a smaller box is a higher concentration, so k_on is smaller and K_D larger: K_D ~ 1/V
+    assert measured.concentration == pytest.approx(assumed.concentration / 0.9, rel=1e-6)
+    assert measured.k_on == pytest.approx(assumed.k_on * 0.9, rel=1e-6)
+    assert measured.KD == pytest.approx(assumed.KD / 0.9, rel=1e-6)
+    shift = -GAS * 310.0 * np.log(0.9)  # RT ln(1/ratio), and nothing else
+    assert measured.dG - assumed.dG == pytest.approx(shift, abs=1e-6)
+    assert 0 < shift < 0.1  # a tenth of the box is worth this much dG, and no more
