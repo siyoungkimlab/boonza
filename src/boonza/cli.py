@@ -222,7 +222,7 @@ def _separate_sites(system, prot, share, cutoff: float = 8.0) -> int:
 
 
 def _reference_frame(system, traj, args):
-    """A typical bound frame, from one pass over the whole trajectory.
+    """``(a typical bound frame, protein atoms touched per frame)``, in one pass.
 
     The first frame may have the ligand elsewhere -- out in bulk, or not yet
     settled -- and the *most* contacting frame is an outlier by construction,
@@ -246,7 +246,7 @@ def _reference_frame(system, traj, args):
               "or --pocketsel to say which.")  # fmt: skip
     out = system.clone()
     out.positions = traj[best].positions
-    return out
+    return out, counts  # the counts settle the run too, from this one pass
 
 
 def _poses(args) -> int:
@@ -256,22 +256,36 @@ def _poses(args) -> int:
     import boonza
 
     from .analysis import settled
-    from .symmetry import drmsd
+    from .poses import pocket_contacts
     from .trajectory import open_trajectory
 
     system = _load(args.system)
     traj = open_trajectory(args.traj, system)
-    reference = _load(args.reference) if args.reference else _reference_frame(system, traj, args)
+    counts = None
+    if args.reference:
+        reference = _load(args.reference)
+    else:
+        reference, counts = _reference_frame(system, traj, args)
     kept = np.arange(len(traj))
-    if args.settle:
-        drift = drmsd(system, reference, positions=traj, ligand=args.ligandsel,
-                      protein=args.proteinsel, cutoff=args.pocket_cutoff,
-                      periodic=not args.no_pbc).drmsd  # fmt: skip
-        start = settled(drift)
-        if start:
-            print(f"settled at frame {start} of {len(traj)}: the {start} frames before it are "
-                  "left out")  # fmt: skip
-        kept = kept[start:]
+    if not args.no_settle:
+        if counts is None:  # a reference was given, so nothing has counted yet
+            counts, _ = pocket_contacts(system, traj, ligand=args.ligandsel,
+                                        protein=args.proteinsel, cutoff=args.pocket_cutoff,
+                                        periodic=not args.no_pbc)  # fmt: skip
+        start = settled(counts.astype(float))
+        # settling may only drop an approach, never a state. A series is not stationary
+        # while the ligand arrives, and it is not stationary when the ligand moves from
+        # one place to another either; what tells them apart is that during an approach
+        # the ligand is not yet touching much.
+        if start and np.median(counts[:start]) < 0.5 * np.median(counts[start:]):
+            print(f"arrived by frame {start} of {len(traj)}: the {start} frames before it "
+                  "touch little of the protein and are left out")  # fmt: skip
+            kept = kept[start:]
+        elif start:
+            print(
+                f"not settling: the {start} frames before frame {start} touch as much "
+                "protein as the rest, so they are another state and not an approach"
+            )
     kept = kept[:: args.stride]
     if len(kept) < 2:
         raise ValueError(f"{len(kept)} frames left to group: lower --stride")
@@ -700,10 +714,10 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--min-population", type=float, default=0.02,
                    help="share of frames a pose must hold to be listed")  # fmt: skip
     q.add_argument("--stride", type=int, default=1, help="use every nth frame")
-    q.add_argument("--settle", action="store_true",
-                   help="drop the run's initial drift. This asks where the run becomes "
-                        "stationary, so it suits one ligand settling into one pose; a run "
-                        "that changes pose has everything before the change dropped")  # fmt: skip
+    q.add_argument("--no-settle", action="store_true",
+                   help="group the whole run, including the frames before the ligand arrived. "
+                        "Settling trims those by how much protein the ligand touches, which "
+                        "says when it arrived and not which pose it took")  # fmt: skip
     q.add_argument("--no-symmetry", action="store_true", help="pair ligand atoms in order")
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.add_argument("-o", "--out", help="write the representative structures here")

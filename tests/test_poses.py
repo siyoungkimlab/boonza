@@ -196,8 +196,34 @@ def test_the_command(tmp_path, two_sites, capsys):
     written = boonza.load(out / best["file"])
     assert np.allclose(written.positions, run[best["frame"]], atol=1e-3)  # the frame it names
 
-    assert main([*argv, "--settle"]) == 0
-    assert "settled at frame" in capsys.readouterr().out
+    # the run visits two sites, so the frames before the change are a state, not an approach
+    assert main(argv) == 0
+    assert "not settling" in capsys.readouterr().out
+
+
+def test_settling_trims_an_approach_and_not_a_state(tmp_path, two_sites, capsys):
+    """A ligand that has not arrived touches little; one that moved touches as much as before."""
+    from boonza.cli import main
+
+    s, frames = two_sites
+    lig = s.select(DEFAULT_LIGAND).ids
+    away = []  # 40 frames well out of reach, then the first site for the rest
+    for k in range(40):
+        x = frames[0].copy()
+        x[lig] = x[lig] + np.array([14.0, 0.0, 0.0]) * (1 - k / 40.0)
+        away.append(x)
+    run = np.concatenate([np.array(away), frames[:60]])
+    structure, dcd = tmp_path / "s.dms", tmp_path / "approach.dcd"
+    boonza.save(s, structure)
+    with boonza.open_writer(dcd, s.natoms) as w:
+        for x in run:
+            w.write(x, box=s.cell)
+    argv = ["poses", str(structure), "--traj", str(dcd), "--pocket-cutoff", "8"]
+    assert main(argv) == 0
+    printed = capsys.readouterr().out
+    assert "arrived by frame" in printed and "left out" in printed
+    assert main([*argv, "--no-settle"]) == 0
+    assert "arrived by frame" not in capsys.readouterr().out
 
 
 def test_a_thin_pocket_says_so(two_sites):

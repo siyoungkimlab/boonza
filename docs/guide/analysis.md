@@ -241,11 +241,19 @@ counts, share = boonza.pocket_contacts(s, traj)  # per frame, and per protein at
 boonza.bound_frame(counts)  # a median bound frame
 ```
 
-`--settle` drops the drift at the start of a run, by asking where the series
-becomes stationary (`boonza.settled`). It suits one ligand settling into one
-pose. It is off by default because a run that genuinely *changes* pose looks
-non-stationary too, and everything before the change would be thrown away --
-including, often, the most populated pose.
+Settling drops the frames before the ligand arrived, and is on; `--no-settle`
+keeps them. It asks where the series of *contacts* becomes stationary
+(`boonza.settled` over `pocket_contacts`), because a run is not stationary
+while a ligand arrives -- and it is not stationary when a ligand moves from
+one place to another either. What tells those apart is that during an
+approach the ligand is not yet touching much, so a cut is only taken when the
+frames before it touch less than half as much protein as the frames after.
+Otherwise it says so and keeps everything:
+
+```
+not settling: the 82 frames before frame 82 touch as much protein as the
+rest, so they are another state and not an approach
+```
 
 ## Binding sites across runs
 
