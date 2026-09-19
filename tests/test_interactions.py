@@ -99,3 +99,49 @@ def test_a_sites_ligands_can_be_compared(swimming):  # noqa: F811
     between = boonza.similarity(f.values.mean(0), other.values.mean(0))
     iu = np.triu_indices(len(f), 1)
     assert within[iu].mean() > between  # a site agrees with itself more than with another
+
+
+def test_it_paints_the_structure(tmp_path, unlike):
+    """The fingerprint in the B-factor column: what it touches, on the structure."""
+    s, frames, frag, _ = unlike
+    f = boonza.interaction_fingerprints(s, frames, ligand=f"fragid {frag[0]} and noh")
+    path = tmp_path / "touched.pdb"
+    f.write_structure(s, path)
+    back = boonza.load(path)
+    assert back.natoms == s.natoms
+    painted = back.atoms["bfactor"]
+    for residue, value in zip(f.residues.tolist(), f.mean().tolist(), strict=True):
+        atoms = np.flatnonzero(back.atoms["residue"] == residue)
+        assert np.allclose(painted[atoms], value, atol=1e-2)  # the PDB column is 2 decimals
+    ligand = back.select(DEFAULT_LIGAND).ids  # the ligand itself is not a residue it touches
+    assert np.allclose(painted[ligand], 0.0)
+    with pytest.raises(ValueError, match="not one per residue"):
+        f.write_structure(s, path, values=f.mean()[:-1])
+
+
+def test_the_table_is_named(unlike):
+    s, frames, frag, _ = unlike
+    f = boonza.interaction_fingerprints(s, frames[:5], ligand=f"fragid {frag[0]} and noh")
+    table = f.table(s)
+    assert table.shape == (5, len(f.residues))
+    assert list(table.columns) == f.names(s) and "ALA5" in table.columns
+    assert table.index.names == ["frame", "copy"]
+
+
+def test_the_heatmap_puts_like_beside_like(tmp_path, unlike):
+    from boonza.interactions import _like_beside_like
+
+    s, frames, frag, _ = unlike
+    rng = np.random.default_rng(0)
+    a = np.tile([1.0, 1.0, 0.0, 0.0], (4, 1)) + rng.normal(scale=0.01, size=(4, 4))
+    b = np.tile([0.0, 0.0, 1.0, 1.0], (4, 1)) + rng.normal(scale=0.01, size=(4, 4))
+    order = _like_beside_like(np.vstack([a[0], b[0], a[1], b[1], a[2], b[2]]))
+    kinds = [i % 2 for i in order.tolist()]  # the two kinds were interleaved
+    assert kinds in ([0, 0, 0, 1, 1, 1], [1, 1, 1, 0, 0, 0])  # and come back apart
+
+    f = boonza.interaction_fingerprints(s, frames[:6], ligand=f"fragid {frag[0]} and noh")
+    path = tmp_path / "fingerprints.png"
+    drawn = boonza.plot_interactions(f, s, path)
+    if drawn:  # matplotlib is optional, as for the restraint plot
+        assert path.stat().st_size > 1000
+    assert boonza.plot_interactions(f, s, path, share=2.0) is False  # nothing that close

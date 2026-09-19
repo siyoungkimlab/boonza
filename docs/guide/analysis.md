@@ -387,6 +387,22 @@ molecules agree at 0.8–0.9, while the average fingerprints of different sites
 score 0.0–0.3 against each other. Two sites that score higher than the rest
 turn out to be the two that are adjacent and share a residue.
 
+Three ways to look at one:
+
+```python
+f.table(s)  # a DataFrame: rows x named residues
+f.write_structure(s, "touched.pdb")  # the fingerprint in the B-factor column
+boonza.plot_interactions(f, s, "fingerprints.png", labels=names)
+```
+
+`write_structure` is the one to reach for first: open the file and colour by
+B-factor, and what the ligand touches is on the structure rather than in a
+table. The heatmap draws the fingerprints as rows and the residues as
+columns, in one hue from light to dark because the value is a magnitude, and
+orders the rows so that ligands which agree sit together — which is what
+makes two ways of binding one site visible as two blocks. It needs
+matplotlib, and returns `False` without it, as the restraint plot does.
+
 ## Kinetics of a site
 
 ```python

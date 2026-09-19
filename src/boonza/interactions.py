@@ -47,11 +47,112 @@ class Interactions:
         """The average fingerprint: what this ligand touches, over the frames given."""
         return self.values.mean(0) if len(self.values) else np.zeros(len(self.residues))
 
+    def names(self, system) -> list[str]:
+        """``['TYR34', 'LEU58', ...]``: what the columns are."""
+        return [f"{system.residues['name'][r]}{system.residues['resid'][r]}"
+                for r in self.residues]  # fmt: skip
+
+    def table(self, system):
+        """The fingerprints as a table: a row per frame or ligand, a column per residue."""
+        import pandas as pd
+
+        index = pd.MultiIndex.from_arrays(self.where.T, names=("frame", "copy"))
+        return pd.DataFrame(self.values, index=index, columns=self.names(system))
+
+    def write_structure(self, system, path, values=None) -> None:
+        """Write the structure with the fingerprint in its B-factor column.
+
+        Every atom of a residue carries that residue's number, so opening the
+        file and colouring by B-factor shows what the ligand touches, on the
+        structure rather than in a table.  ``values`` picks what to paint --
+        one row, or a mean of your own -- and defaults to the mean of all.
+        """
+        from .io import save
+
+        v = self.mean() if values is None else np.asarray(values, float).reshape(-1)
+        if v.shape != (len(self.residues),):
+            raise ValueError(f"values has {v.shape}, not one per residue {(len(self.residues),)}")
+        out = system.clone()
+        paint = np.zeros(out.nresidues)
+        paint[self.residues] = v
+        out.atoms["bfactor"] = paint[out.atoms["residue"]]
+        save(out, path)
+
     def touched(self, system, share: float = 0.5) -> list[str]:
         """The residues held above ``share`` on average, as ``TYR34`` and so on."""
-        keep = np.flatnonzero(self.mean() >= share)
-        return [f"{system.residues['name'][r]}{system.residues['resid'][r]}"
-                for r in self.residues[keep]]  # fmt: skip
+        keep = self.mean() >= share
+        return [n for n, k in zip(self.names(system), keep, strict=True) if k]
+
+
+# one hue, light to dark: the value is a magnitude, so the colour is a magnitude
+SEQUENTIAL = ("#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5",
+              "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b")  # fmt: skip
+
+
+def _like_beside_like(values) -> np.ndarray:
+    """Row order from average linkage: fingerprints that agree end up adjacent."""
+    from .poses import _nn_chain
+
+    n = len(values)
+    if n < 3:
+        return np.arange(n)
+    d = 1.0 - similarity_matrix(values)
+    np.fill_diagonal(d, 0.0)
+    merges = _nn_chain(np.ascontiguousarray(d))
+    groups = {i: [i] for i in range(n)}
+    for a, b, _height in merges[np.argsort(merges[:, 2], kind="stable")].tolist():
+        groups[int(a)] = groups.pop(int(a)) + groups.pop(int(b))
+    return np.array(next(iter(groups.values())))
+
+
+def plot_interactions(fingerprints, system, path, share: float = 0.2, labels=None,
+                      order: bool = True) -> bool:  # fmt: skip
+    """Draw what each ligand touches as a heatmap; False without matplotlib.
+
+    Rows are the fingerprints, columns the residues any of them comes near.
+    The colour is one hue from light to dark because the value is a magnitude:
+    a rainbow would invent boundaries where the data has none.  With ``order``
+    the rows are arranged so that ligands which agree sit together, which is
+    what makes two ways of binding one site visible as two blocks.
+    """
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LinearSegmentedColormap
+    except ImportError:
+        return False
+    values = np.asarray(fingerprints.values, float)
+    keep = np.flatnonzero(values.max(0) >= share)
+    if not len(keep):
+        return False
+    values = values[:, keep]
+    names = [fingerprints.names(system)[i] for i in keep]
+    rows = list(labels) if labels is not None else [
+        f"{r}:{c}" for r, c in fingerprints.where.tolist()
+    ]  # fmt: skip
+    if order:
+        at = _like_beside_like(fingerprints.values)
+        values, rows = values[at], [rows[i] for i in at]
+    cmap = LinearSegmentedColormap.from_list("touch", SEQUENTIAL)
+    fig, ax = plt.subplots(figsize=(0.32 * len(names) + 2.5, 0.28 * len(rows) + 1.8))
+    mesh = ax.pcolormesh(values, cmap=cmap, vmin=0.0, vmax=1.0, edgecolors="white",
+                         linewidth=0.5)  # fmt: skip
+    ax.set_xticks(np.arange(len(names)) + 0.5, names, rotation=90, fontsize=7)
+    ax.set_yticks(np.arange(len(rows)) + 0.5, rows, fontsize=7)
+    ax.invert_yaxis()
+    for side in ax.spines.values():
+        side.set_visible(False)
+    ax.tick_params(length=0)
+    bar = fig.colorbar(mesh, ax=ax, fraction=0.025, pad=0.02)
+    bar.set_label("how close the ligand comes", fontsize=8)
+    bar.outline.set_visible(False)
+    bar.ax.tick_params(length=0, labelsize=7)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return True
 
 
 def similarity(a, b) -> float:
