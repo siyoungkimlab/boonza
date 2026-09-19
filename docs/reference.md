@@ -624,15 +624,13 @@ at all.
 
 One stretch a copy spent in a state, and whether we saw it end.
 
-<<<<<<< HEAD
 ### `class boonza.Hotspot(family: 'str', center: 'np.ndarray', enrichment: 'float', volume: 'float', points: 'int', ligands: 'int') -> None`
 
 One place a kind of atom gathers, and what says so.
-=======
+
 ### `class boonza.Interactions(values: 'np.ndarray', residues: 'np.ndarray', where: 'np.ndarray', center: 'float', width: 'float') -> None`
 
 A fingerprint per frame and copy, and which residues its columns are.
->>>>>>> interaction-fingerprints
 
 ### `class boonza.LigandRMSD(rmsd: 'float | np.ndarray', plain_rmsd: 'float | np.ndarray | None', fit_rmsd: 'float | np.ndarray', rotation: 'np.ndarray', translation: 'np.ndarray', mapping: 'np.ndarray', mobile_ligand: 'np.ndarray', reference_ligand: 'np.ndarray') -> None`
 
@@ -856,7 +854,6 @@ with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
 
-<<<<<<< HEAD
 ### `boonza.hotspots(maps, enrichment: 'float' = 20.0, min_volume: 'float' = 3.0) -> 'list[Hotspot]'`
 
 The peaks of the maps: what to put where, most enriched first.
@@ -867,7 +864,7 @@ so that a single lucky frame is not one.  ``ligands`` counts the distinct
 molecules that put a feature there, which is the part worth trusting: a
 place five unlike molecules choose is a better bet than one a single
 molecule sat in for a long time.
-=======
+
 ### `boonza.interaction_fingerprints(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and noh', center: 'float' = 4.0, width: 'float' = 1.0, residues=None, periodic: 'bool' = True) -> 'Interactions'`
 
 How near the ligand comes to each residue, per frame, softened to 0-1.
@@ -876,7 +873,6 @@ Every copy of the ligand -- one per molecule of the selection -- gives one
 fingerprint per frame.  ``residues`` fixes the columns, which is what lets
 fingerprints from different ligands, or different systems with the same
 protein, be compared: pass the ``residues`` of an earlier result.
->>>>>>> interaction-fingerprints
 
 ### `boonza.kinetics(system, found, site: 'int', interval_ns: 'float', temperature: 'float' = 310.0, hysteresis: 'float' = 2.0, quantile: 'float' = 0.9, bootstrap: 'int' = 400, seed: 'int' = 0, volume_A3: 'float | None' = None) -> 'Rates'`
 
