@@ -196,3 +196,31 @@ def test_runs_of_different_lengths_pool_by_time(swimming):
     assert (np.diff(per_run) > 0).all()  # the longer the run, the more it contributes
     assert found[0].runs == 3  # but every run is credited once, however long it ran
     assert found.where[:, 2].max() == max(len(r) for r in ragged) - 1
+
+
+def test_runs_may_bring_their_own_system(swimming):
+    """Only the protein has to match: the ligands can be different molecules,
+    in different numbers, from one run to the next."""
+    s, runs = swimming
+    lig = s.select(DEFAULT_LIGAND).ids  # drop two whole copies, hydrogens and all
+    frag = np.asarray(s.fragids)
+    drop = np.isin(frag, np.unique(frag[lig])[1:])
+    keep = np.flatnonzero(~drop)
+    fewer = s.clone(keep)
+    trimmed = runs[1][:, keep]
+    assert len(fewer.select(DEFAULT_LIGAND).ids) == len(lig) // 3  # one copy left
+    assert len(fewer.select("protein").ids) == len(s.select("protein").ids)  # same protein
+
+    mixed = boonza.sites(s, [runs[0], (fewer, trimmed)])
+    assert len(mixed) == 2  # the same two sites, pooled over unlike systems
+    assert mixed.systems[0] is s and mixed.systems[1] is fewer
+    # the copy that was kept visits one site in both runs; the other site only run 0 reaches
+    assert sorted(x.runs for x in mixed) == [1, 2]
+    both = next(x for x in mixed if x.runs == 2)
+    rows = mixed.frames(mixed.sites.index(both))
+    assert set(rows[:, 0].tolist()) == {0, 1}
+    assert rows[rows[:, 0] == 1][:, 1].max() == 0  # run 1 has a single copy
+    pocket = boonza.site_pocket(s, [runs[0], (fewer, trimmed)], mixed,
+                                mixed.sites.index(both), protein="protein and noh",
+                                share=0.3)  # fmt: skip
+    assert len(pocket) >= 4

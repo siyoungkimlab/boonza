@@ -252,6 +252,11 @@ including, often, the most populated pose.
 ```python
 runs = [boonza.open_trajectory(p, s) for p in paths]
 found = boonza.sites(s, runs, ligand="resname LIG")
+
+# or, when the runs hold different ligands: each brings its own system
+runs = [(boonza.load(f"{d}/solvated.dms"), boonza.open_trajectory(f"{d}/trajectory.dcd"))
+        for d in workdirs]  # fmt: skip
+found = boonza.sites(runs[0][0], runs, ligand="chain LIG")
 found[0].occupancy  # share of all pooled frames
 found[0].runs  # how many independent runs visited it
 found[0].arrivals  # separate visits, not frames
@@ -300,10 +305,18 @@ site's frames, counted across runs and copies. Given `pocket=`, the pose
 level uses those atoms and nothing else — no protein selection, no cutoff,
 no reference frame.
 
-From the command line:
+A site is made of ligand *centres*, so only the protein has to be shared:
+the ligands themselves may be different molecules, in different numbers and
+of different sizes, from one run to the next. That is what lets a screen of
+several fragment sets be pooled into one answer — and a site occupied by two
+molecules out of a hundred is a different finding from one that fifty visit.
+
+From the command line, either one system with several trajectories, or a
+work directory per run:
 
 ```
 boonza sites solvated.dms --traj run*.dcd -o sites/
+boonza sites --workdir swim/sim_*/md -o sites/      # each with its own solvated.dms
 ```
 
 ```
