@@ -551,8 +551,11 @@ def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
 
 @needs_amber  # two_ligands is parameterized with GAFF2
 def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligands):
+    # seeded: without one the velocities differ every run, so whether the ligand
+    # reads as detached in two picoseconds is a coin toss, and this asserts what
+    # the record says afterwards
     work = tmp_path / "was_watched"
-    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--early-stop",
+    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--seed", "1", "--early-stop",
             "--monitor-ligand", "ligand-0"]  # fmt: skip
     run_workflow(parse_arguments(argv), log=quiet)
     watched = json.loads(RunPaths(work).status_json.read_text())
@@ -562,6 +565,8 @@ def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligan
     longer[longer.index("--production-ns") + 1] = "0.004"
     run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
     doc = json.loads(RunPaths(work).status_json.read_text())
-    assert doc["early_stop_enabled"] is False  # no longer watched
-    assert doc["ligand_id"] == "ligand-0"  # but what it was watching is not forgotten
-    assert doc["consecutive_detached_count"] == 0
+    # the messages carry the record, so a failure here says what it found
+    assert doc["early_stop_enabled"] is False, doc  # no longer watched
+    assert doc["ligand_id"] == "ligand-0", doc  # but what it was watching is not forgotten
+    assert doc["consecutive_detached_count"] == 0, doc
+    assert doc["outcome"] in ("target_reached", "detached"), doc
