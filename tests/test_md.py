@@ -525,3 +525,42 @@ def test_split_residue_input_keeps_its_recorded_indices(tmp_path, dipeptide):
         b = np.asarray(c["production_atom_indices"])
         assert (loaded.atoms["name"][a] == out.atoms["name"][b]).all()
         assert (loaded.atoms["anum"][a] == out.atoms["anum"][b]).all()
+
+
+def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
+    """status.json is not only for watched runs: 'has this finished, and where is it'
+    should be one file to read whether or not a ligand is being followed."""
+    work = tmp_path / "plain"
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT]), log=quiet)
+    p = RunPaths(work)
+    doc = json.loads(p.status_json.read_text())
+    assert doc["outcome"] == "target_reached"
+    assert doc["early_stop_enabled"] is False
+    assert doc["final_production_time_ns"] == pytest.approx(0.002)
+    assert doc["final_production_step"] == 1000
+    assert "ligand_id" not in doc and "consecutive_detached_count" not in doc
+    assert not p.pocket_json.exists() and not p.monitor_csv.exists()  # those stay for the monitor
+
+    longer = [*SHORT]  # resuming to a further target says so, from the same file
+    longer[longer.index("--production-ns") + 1] = "0.004"
+    run_workflow(parse_arguments(["--workdir", str(work), *longer]), log=quiet)
+    doc = json.loads(p.status_json.read_text())
+    assert doc["final_production_time_ns"] == pytest.approx(0.004)
+    assert doc["target_production_ns"] == 0.004
+
+
+def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligands):
+    work = tmp_path / "was_watched"
+    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--early-stop",
+            "--monitor-ligand", "ligand-0"]  # fmt: skip
+    run_workflow(parse_arguments(argv), log=quiet)
+    watched = json.loads(RunPaths(work).status_json.read_text())
+    assert watched["early_stop_enabled"] is True and watched["ligand_id"] == "ligand-0"
+
+    longer = [*SHORT]
+    longer[longer.index("--production-ns") + 1] = "0.004"
+    run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
+    doc = json.loads(RunPaths(work).status_json.read_text())
+    assert doc["early_stop_enabled"] is False  # no longer watched
+    assert doc["ligand_id"] == "ligand-0"  # but what it was watching is not forgotten
+    assert doc["consecutive_detached_count"] == 0
