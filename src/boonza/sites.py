@@ -94,6 +94,7 @@ class SiteSet:
     centroids: np.ndarray  # (npoints, 3)
     spacing: float
     enrichment: float
+    volume: float = 0.0  # mean box volume of the frames, A^3, not the stored cell
     density: Density | None = None
 
     def __len__(self) -> int:
@@ -122,8 +123,12 @@ class SiteSet:
 
 def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
                      align: str = "protein and name CA", periodic: bool = True,
-                     ) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
-    """``(centroids (nframes ncopies, 3), (frame, copy) of each)`` in the reference's frame.
+                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # fmt: skip
+    """``(centroids (nframes ncopies, 3), (frame, copy) of each, the box volume of each)``.
+
+    The volumes come from the frames themselves, not from the system's stored
+    cell: under a barostat the box is not what the structure file says, and
+    the concentration a rate is measured against depends on it.
 
     Each copy of the ligand -- one per molecule of the selection -- gives one
     centroid per frame, taken in the copy's own periodic image and then moved
@@ -154,10 +159,11 @@ def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAU
     copy_at = [np.array([at[a] for a in c.tolist()]) for c in copies]
     blocks, _ = _boxed_blocks(system, positions, need)
 
-    out, where, frame = [], [], 0
+    out, where, sizes, frame = [], [], [], 0
     for xyz, boxes in blocks:
         for X, box in zip(xyz, boxes, strict=True):
             box = box if periodic and np.asarray(box).any() else None
+            size = abs(float(np.linalg.det(box))) if box is not None else 0.0
             rot, shift = kabsch(X[fit_at], target)
             anchor = X[fit_at].mean(0)
             for c, atoms in enumerate(copy_at):
@@ -166,10 +172,11 @@ def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAU
                 whole = anchor + minimum_image((whole - anchor)[None], box)[0]
                 out.append(whole @ rot.T + shift)
                 where.append((frame, c))
+                sizes.append(size)  # one per row, so the three returns line up
             frame += 1
     if not out:
         raise ValueError("no frames")
-    return np.array(out), np.array(where, np.int64)
+    return np.array(out), np.array(where, np.int64), np.array(sizes)
 
 
 def _dense_cells(points, spacing: float, threshold: float, volume: float):
@@ -246,15 +253,19 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     """
     if runs is None or not isinstance(runs, (list, tuple)):
         runs = [runs]
-    points, where, volume = [], [], 0.0
+    points, where, sizes = [], [], []
     for r, run in enumerate(runs):
-        xyz, rows = ligand_centroids(system, run, reference, ligand, align, periodic)
+        xyz, rows, boxes = ligand_centroids(system, run, reference, ligand, align, periodic)
         points.append(xyz)
         where.append(np.column_stack([np.full(len(rows), r), rows[:, 1], rows[:, 0]]))
-        cell = np.asarray(system.cell, float)
-        volume = max(volume, abs(float(np.linalg.det(cell))))
+        sizes.append(boxes)
     points = np.concatenate(points)
     where = np.concatenate(where)
+    sizes = np.concatenate(sizes)
+    volume = float(sizes[sizes > 0].mean()) if (sizes > 0).any() else 0.0
+    if volume <= 0:  # no cell anywhere: fall back on the space the ligand covered
+        cell = np.asarray(system.cell, float)
+        volume = abs(float(np.linalg.det(cell)))
     if volume <= 0:
         hull = points.max(0) - points.min(0)
         volume = float(np.prod(np.maximum(hull, spacing)))
@@ -283,7 +294,7 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     for k, s in enumerate(found):
         out[s.points] = k
     return SiteSet(sites=found, labels=out, where=where, centroids=points,
-                   spacing=float(spacing), enrichment=float(enrichment),
+                   spacing=float(spacing), enrichment=float(enrichment), volume=volume,
                    density=Density(origin=lo, spacing=float(spacing),
                                    counts=counts.reshape(dims).astype(np.int32),
                                    expected=float(expected)))  # fmt: skip

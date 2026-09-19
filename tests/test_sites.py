@@ -164,3 +164,35 @@ def test_the_density_map_agrees_with_the_clusters(tmp_path, swimming):
     written = np.array([float(x) for line in head[7:-1] for x in line.split()])
     assert written.size == grid.counts.size
     assert np.allclose(written.max(), grid.enrichment.max(), rtol=1e-3)
+
+
+def test_the_box_is_measured_not_assumed(swimming):
+    """Under a barostat the box is not what the structure file says, and the
+    concentration a rate is measured against depends on it."""
+    s, runs = swimming
+    stored = abs(float(np.linalg.det(np.asarray(s.cell, float))))
+    rng = np.random.default_rng(0)
+
+    class Breathing:  # an NPT run: equilibrated smaller than it was built, and fluctuating
+        positions = runs[0]
+        boxes = np.array([np.diag([38.6 + rng.normal(scale=0.15)] * 3) for _ in runs[0]])
+
+    found = boonza.sites(s, Breathing())
+    seen = Breathing.boxes[:, 0, 0] ** 3
+    assert found.volume == pytest.approx(seen.mean(), rel=1e-6)  # the frames, not the file
+    assert found.volume < 0.95 * stored  # and here they differ by a tenth
+    _, _, volumes = boonza.ligand_centroids(s, Breathing())
+    assert volumes.shape == (len(runs[0]) * 3,)  # one per row: frame and copy
+
+
+def test_runs_of_different_lengths_pool_by_time(swimming):
+    """Nothing is padded or truncated: a run counts for as long as it ran."""
+    s, runs = swimming
+    ragged = [runs[0][:50], runs[1][:150], runs[2]]
+    found = boonza.sites(s, ragged)
+    assert len(found.centroids) == 3 * sum(len(r) for r in ragged)  # three copies each
+    rows = found.frames(0)
+    per_run = np.array([int((rows[:, 0] == r).sum()) for r in range(3)])
+    assert (np.diff(per_run) > 0).all()  # the longer the run, the more it contributes
+    assert found[0].runs == 3  # but every run is credited once, however long it ran
+    assert found.where[:, 2].max() == max(len(r) for r in ragged) - 1
