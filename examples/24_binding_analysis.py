@@ -32,7 +32,8 @@ copies = [s.select(f"fragid {int(f)}").ids for f in frag]
 base = s.positions.copy()
 for c in copies:
     base[c] -= base[c].mean(0)
-POCKET = np.array([6.0, 0.0, 2.0])  # where the fragments will gather
+# two places: the first two fragments prefer one, the third the other
+POCKETS = [np.array([6.0, 0.0, 2.0]), np.array([6.0, 0.0, 2.0]), np.array([-4.0, 5.0, -6.0])]
 
 
 def run(seed, nframes=150):
@@ -47,8 +48,8 @@ def run(seed, nframes=150):
                 bound[i] = False
             elif not bound[i] and rng.random() < 0.08:
                 bound[i] = True
-            x[c] = base[c] + (POCKET + rng.normal(scale=0.5, size=3) if bound[i]
-                              else rng.uniform(-14, 14, size=3))  # fmt: skip
+            x[c] = base[c] + (POCKETS[i] + rng.normal(scale=0.5, size=3) if bound[i]
+                               else rng.uniform(-14, 14, size=3))  # fmt: skip
         angle = rng.uniform(0, 2 * np.pi)
         ca, sa = np.cos(angle), np.sin(angle)
         out.append(x @ np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1.0]]).T)
@@ -87,7 +88,10 @@ for row, (r, c) in zip(f.values, f.where.tolist(), strict=True):
     keep = np.flatnonzero(row >= 0.5)
     names = [f.names(s)[i] for i in keep]
     print(f"  run {r} fragment {c}: {' '.join(names) if names else '(nothing above half)'}")
-print(f"agreement between them: {same[np.triu_indices(len(f), 1)].mean():.2f}")
+print(f"agreement within site 0: {same[np.triu_indices(len(f), 1)].mean():.2f}")
+other = boonza.site_interactions(s, runs, found, 1, ligand="not polymer and noh")
+print("agreement with site 1: "
+      f"{boonza.similarity(f.values.mean(0), other.values.mean(0)):.2f}")  # fmt: skip
 
 # --- what should go there? ----------------------------------------------------
 maps = boonza.feature_maps(s, runs, ligand="not polymer")
