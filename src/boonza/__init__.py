@@ -47,6 +47,14 @@ from .gaff import find_unmatched, gaff2_patch  # noqa: E402
 from .glue import Glue, make_whole  # noqa: E402
 from .handles import Atom, AtomSel, Bond, Chain, Ct, Residue, StaleHandleError  # noqa: E402
 from .hbonds import HBonds, baker_hubbard, hbonds, wernet_nilsson  # noqa: E402
+from .interactions import (
+    Interactions,
+    interaction_fingerprints,
+    plot_interactions,
+    similarity,
+    similarity_matrix,
+    site_interactions,
+)  # noqa: E402
 from .io import DMSError, load, save  # noqa: E402
 from .kinetics import Dwell, Rates, dwells, kinetics  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
@@ -174,6 +182,12 @@ __all__ = [
     "ligand_features",
     "feature_points",
     "Hotspot",
+    "interaction_fingerprints",
+    "similarity",
+    "similarity_matrix",
+    "plot_interactions",
+    "site_interactions",
+    "Interactions",
     "kinetics",
     "dwells",
     "Rates",
