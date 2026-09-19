@@ -342,6 +342,49 @@ peaks of the map and the centres of the clusters are two different
 calculations, so when they agree you can believe both. `boonza sites -o`
 writes it beside `sites.json`.
 
+## What a pocket asks for
+
+`sites` says where a ligand goes and fingerprints say what it touches.
+Neither says what to *put* there, which is the question a designer asks. The
+feature maps answer it by counting not atoms but the kind of thing each atom
+is — donor, acceptor, aromatic, greasy, charged — so that where donors
+gather, a donor is wanted:
+
+```python
+maps = boonza.feature_maps(s, runs, ligand="chain LIG")
+spots = boonza.hotspots(maps, enrichment=40.0)
+boonza.write_hotspots("hotspots.pdb", spots)  # pseudo-atoms: DON, ACC, ARO, HYD, CAT, ANI
+maps["Acceptor"].write_dx("acceptor.dx")  # or the map itself
+boonza.wanted(spots, site.center)  # what one pocket asks for
+```
+
+A feature sits at the centre of its atoms, so an aromatic ring counts once in
+the middle rather than six times around the edge. Every family shares one
+grid, so the maps can be read against each other — a place that wants an
+acceptor and not a donor is the interesting kind — and bulk is worked out per
+family, so a library rich in one kind does not make its map look hot
+everywhere.
+
+`hotspots` ranks by **how many distinct molecules** put a feature there,
+before how enriched it is. A place five unlike molecules choose is a better
+bet than one a single molecule sat in for a long time. Each carries a
+tolerance radius from the volume of the region, which is what a pharmacophore
+query needs.
+
+From the command line, `--features` prints what each site asks for and writes
+the maps beside the structures:
+
+```
+boonza sites --workdir swim/sim_*/md --features -o design/
+```
+
+```
+  site 3:
+    Hydrophobe    33 ligands,    161x bulk, radius 1.9 A
+    Aromatic      21 ligands,    209x bulk, radius 2.7 A
+    Acceptor      20 ligands,     90x bulk, radius 1.1 A
+```
+
 ## Kinetics of a site
 
 ```python

@@ -360,9 +360,29 @@ def _sites(args) -> int:
                 continue
             print(rate.summary())
             rates.append(rate)
+    spots = []
+    if args.features:
+        maps = boonza.feature_maps(system, runs, reference, ligand=args.ligandsel,
+                                   align=args.alignsel, spacing=args.spacing,
+                                   periodic=not args.no_pbc)  # fmt: skip
+        spots = boonza.hotspots(maps, enrichment=2.0 * args.enrichment)
+        print(f"\n{len(spots)} hotspots: what a pocket asks for, and how many molecules agree")
+        for k, site in enumerate(found):
+            near = boonza.wanted(spots, site.center)
+            if not near:
+                continue
+            print(f"  site {k}:")
+            for h in near[:5]:
+                print(f"    {h.family:12s} {h.ligands:3d} ligands, {h.enrichment:6.0f}x bulk, "
+                      f"radius {h.radius:.1f} A")  # fmt: skip
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
+        if spots:
+            boonza.write_hotspots(out / "hotspots.pdb", spots)
+            for fam, grid in maps.items():
+                if len(getattr(grid, "places", ())):
+                    grid.write_dx(out / f"{fam.lower()}.dx")
         doc = {"runs": [str(x) for x in args.traj], "frames": frames, "bulk": bulk,
                "spacing": args.spacing, "enrichment": args.enrichment,
                "ligand": args.ligandsel, "sites": []}  # fmt: skip
@@ -383,7 +403,8 @@ def _sites(args) -> int:
         (out / "sites.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         found.density.write_dx(out / "density.dx")
         peak = float(found.density.enrichment.max())
-        print(f"\nwrote sites.json and density.dx to {out} (peak {peak:.0f}x bulk)")
+        extra = " and the feature maps" if spots else ""
+        print(f"\nwrote sites.json and density.dx{extra} to {out} (peak {peak:.0f}x bulk)")
     return 0
 
 
@@ -724,6 +745,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="how many times more visited than bulk a site must be")  # fmt: skip
     q.add_argument("--min-occupancy", type=float, default=0.005,
                    help="share of pooled frames a site must hold")  # fmt: skip
+    q.add_argument("--features", action="store_true",
+                   help="also map what each pocket asks for -- donor, acceptor, aromatic, "
+                        "greasy -- and where")  # fmt: skip
     q.add_argument("--interval-ns", type=float, default=None,
                    help="ns between frames; with it, rates, residence times and dG")  # fmt: skip
     q.add_argument("--temperature", type=float, default=310.0, help="K, for dG")
