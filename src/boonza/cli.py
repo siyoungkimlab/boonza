@@ -312,21 +312,33 @@ def _poses(args) -> int:
 
 def _sites(args) -> int:
     import json
+
+    if not args.workdir and not (args.system and args.traj):
+        raise ValueError("give SYSTEM with --traj, or --workdir for runs of their own")
     from pathlib import Path
 
     import boonza
 
     from .trajectory import open_trajectory
 
-    system = _load(args.system)
     reference = _load(args.reference) if args.reference else None
-    runs = [open_trajectory(path, system) for path in args.traj]
+    if args.workdir:  # each brings its own system: only the protein must match
+        runs = []
+        for d in args.workdir:
+            own = _load(str(Path(d) / "solvated.dms"), structure_only=True)
+            runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
+        system = runs[0][0]
+    else:
+        system = _load(args.system)
+        runs = [open_trajectory(path, system) for path in args.traj]
     found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
                          spacing=args.spacing, enrichment=args.enrichment,
                          min_occupancy=args.min_occupancy, periodic=not args.no_pbc)  # fmt: skip
     frames = len(found.centroids)
     bulk = int((found.labels < 0).sum())
-    print(f"{len(runs)} runs, {frames} pooled frames; {100 * bulk / frames:.1f}% in bulk")
+    topologies = len({own.natoms for own in found.systems}) if found.systems else 1
+    extra = f" over {topologies} topologies" if topologies > 1 else ""
+    print(f"{len(runs)} runs, {frames} pooled frames{extra}; {100 * bulk / frames:.1f}% in bulk")
     print(f"{'site':>4} {'occupied':>9} {'runs':>5} {'copies':>7} {'arrivals':>9} {'spread':>7}"
           f"  centre")  # fmt: skip
     for k, site in enumerate(found):
@@ -699,9 +711,12 @@ def _parser() -> argparse.ArgumentParser:
     q.set_defaults(run=_poses)
 
     q = sub.add_parser("sites", help="where a ligand goes, pooled over runs and copies")
-    q.add_argument("system", help="structure (topology of --traj)")
-    q.add_argument("--traj", required=True, nargs="+", help="one or more trajectories")
-    q.add_argument("--reference", help="structure the runs are superposed on (default: system)")
+    q.add_argument("system", nargs="?", help="structure (topology of --traj)")
+    q.add_argument("--traj", nargs="+", default=[], help="one or more trajectories of SYSTEM")
+    q.add_argument("--workdir", nargs="+", default=[],
+                   help="work directories, each read with its own solvated.dms: runs whose "
+                        "ligands differ pool as long as the protein does not")  # fmt: skip
+    q.add_argument("--reference", help="structure the runs are superposed on (default: the first)")
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms, every copy")
     q.add_argument("--alignsel", default="protein and name CA", help="atoms the runs align on")
     q.add_argument("--spacing", type=float, default=1.0, help="grid spacing (A)")
@@ -717,7 +732,7 @@ def _parser() -> argparse.ArgumentParser:
                         "One boundary counts every recrossing as a departure")  # fmt: skip
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.add_argument("-o", "--out", help="write sites.json here")
-    q.set_defaults(run=_sites)
+    q.set_defaults(run=_sites, needs=("system and --traj", "or --workdir"))
     return p
 
 

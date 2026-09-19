@@ -656,7 +656,7 @@ The kinetics of one site, with what they rest on.
 
 One place the ligand is found, and the evidence for it.
 
-### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', volume: 'float' = 0.0, density: 'Density | None' = None) -> None`
+### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', systems: 'list' = <factory>, volume: 'float' = 0.0, density: 'Density | None' = None) -> None`
 
 The sites of a set of runs, most occupied first.
 

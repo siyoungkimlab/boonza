@@ -18,7 +18,7 @@ its error, stay at the coarse level where pockets are many angstroms apart.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -94,6 +94,7 @@ class SiteSet:
     centroids: np.ndarray  # (npoints, 3)
     spacing: float
     enrichment: float
+    systems: list = field(default_factory=list)  # the system each run was read with
     volume: float = 0.0  # mean box volume of the frames, A^3, not the stored cell
     density: Density | None = None
 
@@ -253,9 +254,11 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     """
     if runs is None or not isinstance(runs, (list, tuple)):
         runs = [runs]
+    pairs = _pairs(system, runs)
+    reference = reference if reference is not None else pairs[0][0]
     points, where, sizes = [], [], []
-    for r, run in enumerate(runs):
-        xyz, rows, boxes = ligand_centroids(system, run, reference, ligand, align, periodic)
+    for r, (own, run) in enumerate(pairs):
+        xyz, rows, boxes = ligand_centroids(own, run, reference, ligand, align, periodic)
         points.append(xyz)
         where.append(np.column_stack([np.full(len(rows), r), rows[:, 1], rows[:, 0]]))
         sizes.append(boxes)
@@ -294,10 +297,29 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     for k, s in enumerate(found):
         out[s.points] = k
     return SiteSet(sites=found, labels=out, where=where, centroids=points,
+                   systems=[own for own, _ in pairs],
                    spacing=float(spacing), enrichment=float(enrichment), volume=volume,
                    density=Density(origin=lo, spacing=float(spacing),
                                    counts=counts.reshape(dims).astype(np.int32),
                                    expected=float(expected)))  # fmt: skip
+
+
+def _pairs(system, runs) -> list[tuple]:
+    """``runs`` as (system, frames) pairs: a run may bring its own system.
+
+    Only the protein has to be shared, because a site is made of ligand
+    centres: the ligands themselves may be different molecules, different in
+    number and different in size from one run to the next.
+    """
+    if runs is None or not isinstance(runs, (list, tuple)):
+        runs = [runs]
+    out = []
+    for run in runs:
+        if isinstance(run, tuple) and len(run) == 2 and hasattr(run[0], "natoms"):
+            out.append((run[0], run[1]))
+        else:
+            out.append((system, run))
+    return out
 
 
 def site_pocket(system, runs, found: SiteSet, k: int, protein: str = "protein and name CA",
@@ -311,25 +333,27 @@ def site_pocket(system, runs, found: SiteSet, k: int, protein: str = "protein an
     when the reference was taken.  Hand the result to :func:`boonza.poses` as
     ``pocket=`` and the pose level stops depending on a reference at all.
     """
-    if not isinstance(runs, (list, tuple)):
-        runs = [runs]
-    lig = _ids(system, ligand)
-    lig = lig[system.atoms["anum"][lig] > 1]
-    frag = np.asarray(system.fragids)[lig]
-    copies = [lig[frag == f] for f in np.unique(frag)]
+    pairs = _pairs(system, runs)
     prot = _ids(system, protein)
-    own = np.isin(prot, lig)
-
     rows = found.frames(k)
     hits, seen = np.zeros(len(prot)), 0
-    for r, run in enumerate(runs):
+    for r, (here_system, run) in enumerate(pairs):
+        lig = _ids(here_system, ligand)
+        lig = lig[here_system.atoms["anum"][lig] > 1]
+        frag = np.asarray(here_system.fragids)[lig]
+        copies = [lig[frag == f] for f in np.unique(frag)]
+        here = _ids(here_system, protein)
+        if len(here) != len(prot):
+            raise ValueError(f"protein {protein!r} selects {len(here)} atoms in run {r} and "
+                             f"{len(prot)} in the first; they are paired in order")  # fmt: skip
+        own = np.isin(here, lig)
         mine = rows[rows[:, 0] == r]
         if not len(mine):
             continue
         wanted = np.unique(mine[:, 2])
-        need = np.union1d(prot, lig)
-        pl = np.searchsorted(need, prot)
-        blocks, _ = _boxed_blocks(system, run[wanted], need)
+        need = np.union1d(here, lig)
+        pl = np.searchsorted(need, here)
+        blocks, _ = _boxed_blocks(here_system, run[wanted], need)
         at = {int(f): i for i, f in enumerate(wanted.tolist())}
         by_frame: dict[int, list[int]] = {}
         for frame, copy in mine[:, [2, 1]].tolist():
