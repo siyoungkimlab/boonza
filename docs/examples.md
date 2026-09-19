@@ -30,6 +30,7 @@ The structures in `examples/data` come from the RCSB PDB.
 - [21_summaries_for_ai.py](#example-21-summaries-for-ai) — From 3D back to text: a summary for people and language models, a table, and a view
 - [22_viparr_forcefields.py](#example-22-viparr-forcefields) — viparr force fields: parameterize, set priorities, patch, and handle D residues
 - [23_compare_forcefields.py](#example-23-compare-forcefields) — Compare two force fields term by term: viparr's ff19SB and OpenMM's amber19
+- [24_binding_analysis.py](#example-24-binding-analysis) — Find the pockets, the pose in one, its kinetics, and what the pocket asks for
 
 (example-01-load-and-inspect)=
 
@@ -793,15 +794,15 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.3  0.46 0.53 0.59]
-radius of gyration: 13.27 +- 0.05 A
-most flexible residues: [(879, 0.74), (844, 0.62), (805, 0.47), (845, 0.46), (878, 0.45)]
+C-alpha RMSD to frame 0 (A): [0.   0.33 0.47 0.51 0.6 ]
+radius of gyration: 13.23 +- 0.04 A
+most flexible residues: [(808, 0.66), (854, 0.65), (855, 0.61), (845, 0.58), (807, 0.52)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-148. -137. -142. -133.] / [156. 170. 173. 168.]
-hydrogen bonds per frame: [53, 49, 37, 32, 31]
-      LYS812:N -> LEU820:O     present in 100% of frames
+residue 830 phi/psi over time: [-146. -150. -106. -138.] / [160. 145. 165. 163.]
+hydrogen bonds per frame: [55, 44, 41, 37, 41]
     ARG846:NH1 -> ASP845:O     present in 100% of frames
       ILE849:N -> LEU835:O     present in 100% of frames
+    THR891:OG1 -> LYS864:O     present in 100% of frames
 ```
 
 (example-10-periodic-boxes)=
@@ -1892,7 +1893,7 @@ print(f"nonbonded difference: {gap:+.4f} kcal/mol")
 Output:
 
 ```text
-<OpenMMForcefield amber19-all.xml, protein.ff19SB.xml, DNA.OL21.xml ...: 152 templates; 0 patches; 275 bonds; 764 angles; 591 propers, 119 impropers; 16 CMAP maps>
+<OpenMMForcefield bundled:amber19-all.xml, protein.ff19SB.xml, DNA.OL21.xml ...: 152 templates; 0 patches; 275 bonds; 764 angles; 591 propers, 119 impropers; 16 CMAP maps>
 
 viparr ff19SB vs OpenMM amber19, table by table:
   atoms: charge differs for 2 atoms: 12: -0.4105 != -0.4106, 16: -0.4105 != -0.4104
@@ -1909,4 +1910,150 @@ energy differences (kcal/mol):
 
 with viparr's 1-4 scale set to exactly 1/1.2, what still differs: charge differs for 2 atoms; dihedral_fourier; dihedral_fourier; pair_12_6_es
 nonbonded difference: -0.0028 kcal/mol
+```
+
+(example-24-binding-analysis)=
+
+## 24_binding_analysis.py: Find the pockets, the pose in one, its kinetics, and what the pocket asks for
+
+A screen makes three trajectories of a small protein with three unlike
+fragments swimming around it.  Then, in the order the questions come:
+
+    where does a ligand go?          boonza.sites
+    what is the pocket made of?      boonza.site_pocket
+    how does it sit there?           boonza.poses
+    how long does it stay?           boonza.kinetics
+    do different molecules agree?    boonza.interaction_fingerprints
+    what should go there?            boonza.feature_maps, boonza.hotspots
+
+    python examples/24_binding_analysis.py
+
+```python
+import numpy as np
+from _common import OUT
+
+import boonza
+
+# --- a screen: one protein, three unlike fragments, three runs ----------------
+protein = boonza.peptide("AAAAAAAAAAAA", conformation="helix")
+protein.positions = protein.positions - protein.positions.mean(0)
+s = protein.clone()
+for smiles in ("c1ccccc1O", "c1ccccc1C(=O)O", "c1ccccc1C=O"):
+    s.append(boonza.from_smiles(smiles))
+s.cell = np.diag([34.0, 34.0, 34.0])
+
+lig = s.select("not polymer and noh").ids
+frag = np.unique(np.asarray(s.fragids)[lig])
+copies = [s.select(f"fragid {int(f)}").ids for f in frag]
+base = s.positions.copy()
+for c in copies:
+    base[c] -= base[c].mean(0)
+# two places: the first two fragments prefer one, the third the other
+POCKETS = [np.array([6.0, 0.0, 2.0]), np.array([6.0, 0.0, 2.0]), np.array([-4.0, 5.0, -6.0])]
+
+
+def run(seed, nframes=150):
+    """A run in which each fragment binds and unbinds, with the protein tumbling."""
+    rng = np.random.default_rng(seed)
+    bound = [False] * len(copies)
+    out = []
+    for _ in range(nframes):
+        x = base.copy()
+        for i, c in enumerate(copies):
+            if bound[i] and rng.random() < 0.05:
+                bound[i] = False
+            elif not bound[i] and rng.random() < 0.08:
+                bound[i] = True
+            x[c] = base[c] + (POCKETS[i] + rng.normal(scale=0.5, size=3) if bound[i]
+                               else rng.uniform(-14, 14, size=3))  # fmt: skip
+        angle = rng.uniform(0, 2 * np.pi)
+        ca, sa = np.cos(angle), np.sin(angle)
+        out.append(x @ np.array([[ca, -sa, 0], [sa, ca, 0], [0, 0, 1.0]]).T)
+    return np.array(out)
+
+
+runs = [run(seed) for seed in (1, 2, 3)]
+
+# --- where does a ligand go? --------------------------------------------------
+found = boonza.sites(s, runs, ligand="not polymer and noh")
+print(found.summary())
+
+# --- what is the pocket made of? ----------------------------------------------
+pocket = boonza.site_pocket(s, runs, found, 0, protein="protein and noh", share=0.3)
+residues = sorted({int(s.residues["resid"][s.atoms["residue"][a]]) for a in pocket})
+print(f"\npocket of site 0: {len(pocket)} atoms in residues {residues}")
+
+# --- how does one fragment sit there? -----------------------------------------
+rows = found.frames(0, run=0)
+copy = int(np.bincount(rows[:, 1]).argmax())
+frames = rows[rows[:, 1] == copy][:, 2]
+p = boonza.poses(s, runs[0][frames], ligand=f"fragid {int(frag[copy])} and noh", pocket=pocket)
+print(f"\nfragment {copy} in site 0, over {len(frames)} frames:")
+print(p.summary())
+
+# --- how long does it stay? ---------------------------------------------------
+rate = boonza.kinetics(s, found, 0, interval_ns=0.1, temperature=298.0, bootstrap=100)
+print()
+print(rate.summary())
+
+# --- do different molecules agree? --------------------------------------------
+f = boonza.site_interactions(s, runs, found, 0, ligand="not polymer and noh")
+same = boonza.similarity_matrix(f.values)
+print(f"\n{len(f)} fragments visited site 0; they touch")
+for row, (r, c) in zip(f.values, f.where.tolist(), strict=True):
+    keep = np.flatnonzero(row >= 0.5)
+    names = [f.names(s)[i] for i in keep]
+    print(f"  run {r} fragment {c}: {' '.join(names) if names else '(nothing above half)'}")
+print(f"agreement within site 0: {same[np.triu_indices(len(f), 1)].mean():.2f}")
+other = boonza.site_interactions(s, runs, found, 1, ligand="not polymer and noh")
+print("agreement with site 1: "
+      f"{boonza.similarity(f.values.mean(0), other.values.mean(0)):.2f}")  # fmt: skip
+
+# --- what should go there? ----------------------------------------------------
+maps = boonza.feature_maps(s, runs, ligand="not polymer")
+spots = boonza.hotspots(maps, enrichment=20.0)
+print(f"\n{len(spots)} hotspots; site 0 asks for")
+for h in boonza.wanted(spots, found[0].center)[:4]:
+    print(f"  {h.family:12s} {h.ligands} fragments, {h.enrichment:.0f}x bulk, "
+          f"radius {h.radius:.1f} A")  # fmt: skip
+boonza.write_hotspots(OUT / "hotspots.pdb", spots)
+maps["Acceptor"].write_dx(OUT / "acceptor.dx")
+f.write_structure(s, OUT / "touched.pdb")
+print(f"\nwrote hotspots.pdb, acceptor.dx and touched.pdb to {OUT.name}/")
+```
+
+Output:
+
+```text
+2 sites of 1350 frames (39.1% in bulk)
+  site 0: 45.1% occupied, 3 runs, 32 arrivals, spread 0.9 A
+  site 1: 15.8% occupied, 3 runs, 26 arrivals, spread 0.9 A
+
+pocket of site 0: 24 atoms in residues [5, 6, 7, 8, 9, 10, 11]
+
+fragment 0 in site 0, over 115 frames:
+1 poses of 115 frames (cut at 1.5 A)
+  pose 0: frame 83, 100.0% of frames, spread 0.43 A
+
+site 0: dG -1.33 kcal/mol [-1.42, -1.28] from 20 departures and 18 arrivals
+  residence 3.08 ns, KD 107 mM, [L] 80.5 mM, bound for 62 of 135 ns
+  occupancy 0.456 by frames, 0.430 by rates
+
+6 fragments visited site 0; they touch
+  run 0 fragment 0: ALA6 ALA7 ALA10
+  run 0 fragment 1: ALA6 ALA7 ALA9 ALA10
+  run 1 fragment 0: ALA6 ALA7 ALA10
+  run 1 fragment 1: ALA6 ALA7 ALA9 ALA10
+  run 2 fragment 0: ALA6 ALA7 ALA10
+  run 2 fragment 1: ALA6 ALA7 ALA9 ALA10
+agreement within site 0: 1.00
+agreement with site 1: 0.31
+
+8 hotspots; site 0 asks for
+  Hydrophobe   7 fragments, 935x bulk, radius 2.6 A
+  Donor        6 fragments, 4891x bulk, radius 2.0 A
+  Aromatic     6 fragments, 4018x bulk, radius 1.8 A
+  Acceptor     6 fragments, 2795x bulk, radius 2.2 A
+
+wrote hotspots.pdb, acceptor.dx and touched.pdb to output/
 ```
