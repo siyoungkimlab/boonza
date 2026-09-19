@@ -309,9 +309,9 @@ def run_workflow(args, log=print) -> None:
             box = np.array(state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer))
             monitor = mon.initialize(s, np.asarray(pos), box, info, args)
             mon.write_pocket(paths.pocket_json, monitor)
-            mon.write_status(
-                paths.status_json, mon.status("running", monitor, args.production_ns, 0.0, 0, 0)
-            )
+        mon.write_status(
+            paths.status_json, mon.status("running", monitor, args.production_ns, 0.0, 0, 0)
+        )
     _production(simulation, s, args, paths, n, dt, resume, monitor, log)
     log(f"Finished. Results are in {paths.workdir}")
 
@@ -323,7 +323,7 @@ def _production(simulation, s, args, paths: RunPaths, n, dt, append, monitor, lo
     step = _current_steps(simulation, dt)
     target = n["production_ns"]
     prior = mon.load_status(paths.status_json)
-    if monitor is not None and prior is not None:
+    if prior is not None:
         done = prior.get("target_production_ns")
         if prior.get("final_production_step", 0) > step:
             raise ValueError(
@@ -347,7 +347,7 @@ def _production(simulation, s, args, paths: RunPaths, n, dt, append, monitor, lo
             ),
         ),
         ("state", _state_reporter(paths.state_csv, n["production_report_interval_ns"], append)),
-        ("checkpoint", app.CheckpointReporter(str(paths.checkpoint), n["checkpoint_interval_ns"])),
+        ("checkpoint", _checkpointer(app, unit, paths, args, monitor, n["checkpoint_interval_ns"])),
     ):
         simulation.reporters.append(TimedReporter(reporter, tracker, task))
     simulation.reporters.append(
@@ -399,16 +399,42 @@ def _production(simulation, s, args, paths: RunPaths, n, dt, append, monitor, lo
                 f"Confirmed detachment of {monitor.ligand_id} at {time_ns:g} ns; production "
                 "stopped early."
             )
-    elif prior is not None:
-        prior.update(
-            outcome="target_reached",
-            target_production_ns=args.production_ns,
-            final_production_time_ns=time_ns,
-            final_production_step=step,
-            consecutive_detached_count=0,
-            early_stop_enabled=False,
-        )
-        mon.write_status(paths.status_json, prior)
+    else:
+        simulation.saveCheckpoint(str(paths.checkpoint))
+        done = mon.status("target_reached", None, args.production_ns, time_ns, step, 0)
+        if prior is not None and prior.get("early_stop_enabled"):
+            # it was watched on an earlier run and is not now: keep what was found, say it stopped
+            done = {**prior, **done, "consecutive_detached_count": 0}
+        mon.write_status(paths.status_json, done)
+
+
+def _checkpointer(app, unit, paths, args, monitor, every):
+    """The checkpoint reporter, and for an unmonitored run the status beside it.
+
+    A monitored run writes its own status in the loop that checks the ligand,
+    right after the checkpoint it takes there; this puts an unmonitored run on
+    the same footing, so status.json is never newer than the checkpoint it
+    describes.
+    """
+    if monitor is not None:
+        return app.CheckpointReporter(str(paths.checkpoint), every)
+
+    class Progress(app.CheckpointReporter):
+        def report(self, simulation, state):
+            super().report(simulation, state)
+            mon.write_status(
+                paths.status_json,
+                mon.status(
+                    "running",
+                    None,
+                    args.production_ns,
+                    state.getTime().value_in_unit(unit.nanoseconds),
+                    simulation.currentStep,
+                    0,
+                ),  # fmt: skip
+            )
+
+    return Progress(str(paths.checkpoint), every)
 
 
 def _monitored(simulation, m, args, paths, n, step, target, count, tracker, dt_ns):

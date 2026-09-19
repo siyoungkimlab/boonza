@@ -211,9 +211,28 @@ receptor's heavy atoms within `pocket_cutoff_nm` at the start of production
 (`pocket.json`). Production stops after `confirmation_checks` checks in a row
 with no target-pocket pair within `contact_cutoff_nm` and a minimum distance
 above `detach_cutoff_nm` (periodic distances). Each check is a line of
-`monitor.csv`, and `status.json` says `running`, `target_reached` or
-`detached`. A detached run stays stopped when resumed unless early stop is
-turned off or a larger `production_ns` is given.
+`monitor.csv`, and `status.json` says `detached` as well as `running` and
+`target_reached`. A detached run stays stopped when resumed unless early stop
+is turned off or a larger `production_ns` is given.
+
+### status.json
+
+Every run writes it, watched or not, beside each checkpoint — so it is never
+newer than the checkpoint it describes, and one file answers "has this
+finished, and where is it" for a whole array of runs:
+
+```json
+{"outcome": "running", "target_production_ns": 500.0,
+ "final_production_time_ns": 128.0, "final_production_step": 64000000,
+ "early_stop_enabled": false}
+```
+
+`outcome` is `running`, `target_reached` or `detached`. With early stop the
+record also carries `ligand_id`, `component_id` and
+`consecutive_detached_count`; without it those are left out rather than left
+empty, so the file never implies a target that was never watched. A run that
+was watched and is resumed without early stop keeps what it found and says
+`early_stop_enabled: false`.
 
 ## Output files
 
@@ -232,7 +251,8 @@ turned off or a larger `production_ns` is given.
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
-| `pocket.json`, `monitor.csv`, `status.json` | with early stop |
+| `status.json` | how far the run got, and how it ended |
+| `pocket.json`, `monitor.csv` | with early stop |
 
 Each run prints the system (particles, waters, ions, constraints, forces,
 box, nonbonded method) and the platform with its properties before it
