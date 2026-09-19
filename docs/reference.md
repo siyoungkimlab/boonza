@@ -656,7 +656,7 @@ The kinetics of one site, with what they rest on.
 
 One place the ligand is found, and the evidence for it.
 
-### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', density: 'Density | None' = None) -> None`
+### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', volume: 'float' = 0.0, density: 'Density | None' = None) -> None`
 
 The sites of a set of runs, most occupied first.
 
@@ -839,7 +839,9 @@ Rates, residence time and dG of one site, with an interval from resampling runs.
 
 ``interval_ns`` is the time between frames.  The free-ligand
 concentration is counted per frame, from the copies not in the site and
-the box volume, so it falls as copies bind.  The interval comes from
+the box volume, so it falls as copies bind.  The volume is the mean of
+the boxes the frames actually had, which under a barostat is not the box
+the structure file carries; ``volume_A3`` overrides it.  The interval comes from
 resampling whole runs with replacement, which carries run-to-run
 disagreement that a Poisson count cannot see; with one run it is the
 dwells that are resampled instead.
@@ -848,9 +850,13 @@ Rates rest on completed events.  A dwell the trajectory cut short counts
 its time and not its ending, so a run stopped early -- by the wall clock
 or by ``--early-stop`` -- biases nothing.
 
-### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray]'`
+### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'`
 
-``(centroids (nframes ncopies, 3), (frame, copy) of each)`` in the reference's frame.
+``(centroids (nframes ncopies, 3), (frame, copy) of each, the box volume of each)``.
+
+The volumes come from the frames themselves, not from the system's stored
+cell: under a barostat the box is not what the structure file says, and
+the concentration a rate is measured against depends on it.
 
 Each copy of the ligand -- one per molecule of the selection -- gives one
 centroid per frame, taken in the copy's own periodic image and then moved

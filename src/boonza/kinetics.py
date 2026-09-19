@@ -165,7 +165,9 @@ def kinetics(system, found, site: int, interval_ns: float, temperature: float = 
 
     ``interval_ns`` is the time between frames.  The free-ligand
     concentration is counted per frame, from the copies not in the site and
-    the box volume, so it falls as copies bind.  The interval comes from
+    the box volume, so it falls as copies bind.  The volume is the mean of
+    the boxes the frames actually had, which under a barostat is not the box
+    the structure file carries; ``volume_A3`` overrides it.  The interval comes from
     resampling whole runs with replacement, which carries run-to-run
     disagreement that a Poisson count cannot see; with one run it is the
     dwells that are resampled instead.
@@ -174,8 +176,10 @@ def kinetics(system, found, site: int, interval_ns: float, temperature: float = 
     its time and not its ending, so a run stopped early -- by the wall clock
     or by ``--early-stop`` -- biases nothing.
     """
-    if volume_A3 is None:
-        volume_A3 = abs(float(np.linalg.det(np.asarray(system.cell, float))))
+    if volume_A3 is None:  # what the frames had, not what the structure file says
+        volume_A3 = getattr(found, "volume", 0.0) or abs(
+            float(np.linalg.det(np.asarray(system.cell, float)))
+        )
     if volume_A3 <= 0:
         raise ValueError("the system has no periodic cell: give volume_A3")
     items = dwells(found, site, hysteresis, quantile)
