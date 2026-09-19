@@ -549,6 +549,7 @@ def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
     assert doc["target_production_ns"] == 0.004
 
 
+@needs_amber  # two_ligands is parameterized with GAFF2
 def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligands):
     work = tmp_path / "was_watched"
     argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--early-stop",
