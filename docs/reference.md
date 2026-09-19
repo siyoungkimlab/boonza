@@ -624,6 +624,10 @@ at all.
 
 One stretch a copy spent in a state, and whether we saw it end.
 
+### `class boonza.Interactions(values: 'np.ndarray', residues: 'np.ndarray', where: 'np.ndarray', center: 'float', width: 'float') -> None`
+
+A fingerprint per frame and copy, and which residues its columns are.
+
 ### `class boonza.LigandRMSD(rmsd: 'float | np.ndarray', plain_rmsd: 'float | np.ndarray | None', fit_rmsd: 'float | np.ndarray', rotation: 'np.ndarray', translation: 'np.ndarray', mapping: 'np.ndarray', mobile_ligand: 'np.ndarray', reference_ligand: 'np.ndarray') -> None`
 
 Outcome of ``ligand_rmsd``: the protein fit and the ligand RMSD in that frame.
@@ -833,6 +837,15 @@ with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
 
+### `boonza.interaction_fingerprints(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and noh', center: 'float' = 4.0, width: 'float' = 1.0, residues=None, periodic: 'bool' = True) -> 'Interactions'`
+
+How near the ligand comes to each residue, per frame, softened to 0-1.
+
+Every copy of the ligand -- one per molecule of the selection -- gives one
+fingerprint per frame.  ``residues`` fixes the columns, which is what lets
+fingerprints from different ligands, or different systems with the same
+protein, be compared: pass the ``residues`` of an earlier result.
+
 ### `boonza.kinetics(system, found, site: 'int', interval_ns: 'float', temperature: 'float' = 310.0, hysteresis: 'float' = 2.0, quantile: 'float' = 0.9, bootstrap: 'int' = 400, seed: 'int' = 0, volume_A3: 'float | None' = None) -> 'Rates'`
 
 Rates, residence time and dG of one site, with an interval from resampling runs.
@@ -1002,6 +1015,16 @@ while phi/psi are held, so side chains relax without losing the
 backbone (omega included).  Termini are free amine and acid, as RDKit
 builds them.
 
+### `boonza.plot_interactions(fingerprints, system, path, share: 'float' = 0.2, labels=None, order: 'bool' = True) -> 'bool'`
+
+Draw what each ligand touches as a heatmap; False without matplotlib.
+
+Rows are the fingerprints, columns the residues any of them comes near.
+The colour is one hue from light to dark because the value is a magnitude:
+a rainbow would invent boundaries where the data has none.  With ``order``
+the rows are arranged so that ligands which agree sit together, which is
+what makes two ways of binding one site visible as two blocks.
+
 ### `boonza.pocket_contacts(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray]'`
 
 ``(protein atoms in contact per frame, share of frames each is in contact)``.
@@ -1068,6 +1091,27 @@ the best is returned.  Discarding too little leaves the drift in; too
 much throws away sampling, and this trades the two off rather than
 guessing a percentage (Chodera 2016).  A series shorter than
 ``min_frames``, or one with no drift to speak of, settles at 0.
+
+### `boonza.similarity(a, b) -> 'float'`
+
+How alike two fingerprints are: 1 the same residues to the same degree, 0 none.
+
+The cosine of the two, which asks about the pattern rather than how
+deeply either sits -- a small fragment in a pocket and a large one
+reaching further into it are alike here if they touch the same residues.
+
+### `boonza.similarity_matrix(values) -> 'np.ndarray'`
+
+Every fingerprint against every other, as cosines.
+
+### `boonza.site_interactions(system, runs, found, site: 'int', ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and noh', center: 'float' = 4.0, width: 'float' = 1.0, periodic: 'bool' = True) -> 'Interactions'`
+
+One fingerprint per ligand that visits ``site``: what each of them touches there.
+
+Rows are ``(run, copy)`` rather than frames, each the average over that
+copy's frames in the site.  The columns are the same residues for every
+row, so two rows can be compared however unlike the two molecules are --
+which is the question a pose cannot answer.
 
 ### `boonza.site_pocket(system, runs, found: 'SiteSet', k: 'int', protein: 'str' = 'protein and name CA', ligand: 'str' = 'not (polymer or water or ions) and noh', cutoff: 'float' = 5.0, share: 'float' = 0.5, periodic: 'bool' = True) -> 'np.ndarray'`
 
