@@ -60,6 +60,15 @@ from .kinetics import Dwell, Rates, dwells, kinetics  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
+from .pharmacophore import (  # noqa: E402
+    Hotspot,
+    feature_maps,
+    feature_points,
+    hotspots,
+    ligand_features,
+    wanted,
+    write_hotspots,
+)
 from .poses import Pose, PoseSet, bound_frame, pocket_contacts, pose_distances, poses  # noqa: E402
 from .rings import ring_systems, sssr  # noqa: E402
 from .schemas import NONBONDED_SCHEMAS, TERM_SCHEMAS  # noqa: E402
@@ -166,6 +175,13 @@ __all__ = [
     "symmetry_rmsd",
     "poses",
     "sites",
+    "feature_maps",
+    "hotspots",
+    "write_hotspots",
+    "wanted",
+    "ligand_features",
+    "feature_points",
+    "Hotspot",
     "interaction_fingerprints",
     "similarity",
     "similarity_matrix",
