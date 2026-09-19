@@ -794,14 +794,14 @@ Output:
 removing incomplete residues: ARG802
 ran 2 ps of MD with OpenMM
 20 frames of 1375 atoms
-C-alpha RMSD to frame 0 (A): [0.   0.33 0.47 0.51 0.6 ]
-radius of gyration: 13.23 +- 0.04 A
-most flexible residues: [(808, 0.66), (854, 0.65), (855, 0.61), (845, 0.58), (807, 0.52)]
+C-alpha RMSD to frame 0 (A): [0.   0.35 0.42 0.56 0.71]
+radius of gyration: 13.29 +- 0.05 A
+most flexible residues: [(841, 0.74), (808, 0.67), (879, 0.63), (844, 0.6), (843, 0.58)]
 strand fraction: first frame 54%, last frame 54%
-residue 830 phi/psi over time: [-146. -150. -106. -138.] / [160. 145. 165. 163.]
-hydrogen bonds per frame: [55, 44, 41, 37, 41]
-    ARG846:NH1 -> ASP845:O     present in 100% of frames
-      ILE849:N -> LEU835:O     present in 100% of frames
+residue 830 phi/psi over time: [-146. -143. -161. -149.] / [157. 159. 155. 146.]
+hydrogen bonds per frame: [54, 44, 41, 35, 38]
+    THR836:OG1 -> THR848:OG1   present in 100% of frames
+    THR852:OG1 -> ASP854:OD1   present in 100% of frames
     THR891:OG1 -> LYS864:O     present in 100% of frames
 ```
 
