@@ -256,18 +256,24 @@ def restore_count(path, step: int) -> int:
 
 
 def status(
-    outcome: str, m: Monitor, target_ns: float, time_ns: float, step: int, count: int
+    outcome: str, m: Monitor | None, target_ns: float, time_ns: float, step: int, count: int
 ) -> dict:
-    return {
-        "outcome": outcome,
-        "ligand_id": m.ligand_id,
-        "component_id": m.component_id,
-        "target_production_ns": target_ns,
-        "final_production_time_ns": time_ns,
-        "final_production_step": step,
-        "consecutive_detached_count": count,
-        "early_stop_enabled": True,
-    }
+    """How far a run has got, and how it ended if it has.
+
+    Without a monitor the ligand fields are left out rather than filled with
+    nothing, so the file never implies a target that was never watched.
+    """
+    doc: dict = {"outcome": outcome}
+    if m is not None:
+        doc["ligand_id"] = m.ligand_id
+        doc["component_id"] = m.component_id
+    doc["target_production_ns"] = target_ns
+    doc["final_production_time_ns"] = time_ns
+    doc["final_production_step"] = step
+    if m is not None:
+        doc["consecutive_detached_count"] = count
+    doc["early_stop_enabled"] = m is not None
+    return doc
 
 
 def write_status(path, doc: dict) -> None:
