@@ -52,8 +52,11 @@ def test_molecules_of_different_size_are_comparable(unlike):
     apart = boonza.similarity(small.mean(), away.mean())
     assert together > 0.95  # unlike molecules, same place: the same residues
     assert together > apart + 0.2  # and the measure can still say no
-    assert set(beside.touched(s)) == set(small.touched(s))
-    assert set(away.touched(s)) != set(small.touched(s))
+    # the larger molecule reaches a residue further, and how far depends on the
+    # conformer RDKit embeds, so ask that they mostly agree rather than exactly
+    here, there = set(small.touched(s)), set(beside.touched(s))
+    assert len(here & there) >= 0.7 * len(here | there)
+    assert len(here & set(away.touched(s))) < 0.7 * len(here | set(away.touched(s)))
 
 
 def test_what_similarity_refuses(unlike):
