@@ -624,6 +624,10 @@ at all.
 
 One stretch a copy spent in a state, and whether we saw it end.
 
+### `class boonza.Hotspot(family: 'str', center: 'np.ndarray', enrichment: 'float', volume: 'float', points: 'int', ligands: 'int') -> None`
+
+One place a kind of atom gathers, and what says so.
+
 ### `class boonza.Interactions(values: 'np.ndarray', residues: 'np.ndarray', where: 'np.ndarray', center: 'float', width: 'float') -> None`
 
 A fingerprint per frame and copy, and which residues its columns are.
@@ -771,6 +775,19 @@ holding ``quantile`` of the site's own frames -- and leaves only past
 ``hysteresis`` times that.  The first and last stretch of every copy are
 censored: they were cut by the trajectory, not by the ligand.
 
+### `boonza.feature_maps(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), spacing: 'float' = 1.0, periodic: 'bool' = True) -> 'dict[str, Density]'`
+
+A map per feature family: how much more often than bulk each kind is found where.
+
+Every map shares one grid, so they can be read against each other -- a
+place that wants an acceptor and not a donor is the interesting kind.
+Bulk is worked out per family, from that family's own count, so a ligand
+set rich in one kind does not make its map look hot everywhere.
+
+### `boonza.feature_points(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), periodic: 'bool' = True) -> 'tuple[dict, np.ndarray]'`
+
+``({family: (n, 3) positions}, {family: (n,) which copy})`` in the reference's frame.
+
 ### `boonza.find_unmatched(system: 'System', forcefields, path=None) -> 'list[list[int]]'`
 
 Residue groups that ``forcefields`` cannot parameterize.
@@ -837,6 +854,17 @@ with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
 
+### `boonza.hotspots(maps, enrichment: 'float' = 20.0, min_volume: 'float' = 3.0) -> 'list[Hotspot]'`
+
+The peaks of the maps: what to put where, most enriched first.
+
+A hotspot is a connected region a family visits at least ``enrichment``
+times more often than bulk would explain, of at least ``min_volume`` A^3
+so that a single lucky frame is not one.  ``ligands`` counts the distinct
+molecules that put a feature there, which is the part worth trusting: a
+place five unlike molecules choose is a better bet than one a single
+molecule sat in for a long time.
+
 ### `boonza.interaction_fingerprints(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and noh', center: 'float' = 4.0, width: 'float' = 1.0, residues=None, periodic: 'bool' = True) -> 'Interactions'`
 
 How near the ligand comes to each residue, per frame, softened to 0-1.
@@ -876,6 +904,15 @@ centroid per frame, taken in the copy's own periodic image and then moved
 to the image nearest the protein.  The frame's ``align`` atoms are
 superposed on the reference's, and the same transform is applied to the
 centroid, so points from different runs live in one frame of reference.
+
+### `boonza.ligand_features(system, ligand: 'str' = 'not (polymer or water or ions) and noh', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable')) -> 'list[list[tuple]]'`
+
+Per ligand copy, ``[(family, atom indices), ...]`` as RDKit types them.
+
+A feature is placed at the centre of its atoms, so an aromatic ring counts
+once at the middle of the ring rather than six times around it.
+``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
+case and the second repeats what ``Hydrophobe`` already says.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 
@@ -1197,8 +1234,20 @@ animated ``interval`` ms apart.
 
 ### `boonza.viparr`
 
+### `boonza.wanted(spots, center, within: 'float' = 6.0) -> 'list[Hotspot]'`
+
+The hotspots near a place, most agreed-upon first: what that pocket asks for.
+
 ### `boonza.write_forcefield(ff: 'ViparrForcefield', directory) -> 'Path'`
 
 Write ``ff`` as a viparr force-field directory: ``rules`` (left out
 for a patch without rules), ``templates`` and one file per parameter
 table, which :func:`load_forcefield` and viparr read back.
+
+### `boonza.write_hotspots(path, spots) -> 'None'`
+
+Write the hotspots as pseudo-atoms: one per peak, named for what it wants.
+
+``DON``, ``ACC``, ``ARO``, ``HYD``, ``CAT``, ``ANI``, with the enrichment
+in the B-factor column and the tolerance radius as the occupancy, so a
+viewer can size and colour them without being told anything else.
