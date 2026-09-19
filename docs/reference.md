@@ -1015,6 +1015,16 @@ while phi/psi are held, so side chains relax without losing the
 backbone (omega included).  Termini are free amine and acid, as RDKit
 builds them.
 
+### `boonza.plot_interactions(fingerprints, system, path, share: 'float' = 0.2, labels=None, order: 'bool' = True) -> 'bool'`
+
+Draw what each ligand touches as a heatmap; False without matplotlib.
+
+Rows are the fingerprints, columns the residues any of them comes near.
+The colour is one hue from light to dark because the value is a magnitude:
+a rainbow would invent boundaries where the data has none.  With ``order``
+the rows are arranged so that ligands which agree sit together, which is
+what makes two ways of binding one site visible as two blocks.
+
 ### `boonza.pocket_contacts(system, positions=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray]'`
 
 ``(protein atoms in contact per frame, share of frames each is in contact)``.

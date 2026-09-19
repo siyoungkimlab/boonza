@@ -50,6 +50,7 @@ from .hbonds import HBonds, baker_hubbard, hbonds, wernet_nilsson  # noqa: E402
 from .interactions import (
     Interactions,
     interaction_fingerprints,
+    plot_interactions,
     similarity,
     similarity_matrix,
     site_interactions,
@@ -168,6 +169,7 @@ __all__ = [
     "interaction_fingerprints",
     "similarity",
     "similarity_matrix",
+    "plot_interactions",
     "site_interactions",
     "Interactions",
     "kinetics",
