@@ -350,6 +350,43 @@ peaks of the map and the centres of the clusters are two different
 calculations, so when they agree you can believe both. `boonza sites -o`
 writes it beside `sites.json`.
 
+## Comparing different molecules
+
+`poses` compares a molecule with itself, frame by frame. It cannot say
+whether *two different* molecules sit the same way, because no atom of one
+answers to an atom of the other. A fingerprint describes a frame by what the
+ligand is near rather than where its atoms are, so it has the same length and
+the same meaning for every ligand:
+
+```python
+a = boonza.interaction_fingerprints(s, frames, ligand="fragid 3 and noh")
+b = boonza.interaction_fingerprints(s, frames, ligand="fragid 7 and noh")
+boonza.similarity(a.mean(), b.mean())  # 1 the same residues, 0 none in common
+a.touched(s)  # ['TYR34', 'LEU58', 'ASP61']
+```
+
+Each residue contributes how close the ligand comes to it, softened through
+`1 / (1 + exp((d - center) / width))`, so a residue at `center` counts a half.
+A hard cutoff would make a residue flicker in and out as the ligand breathes;
+this does not, and the test suite checks that it varies less frame to frame
+than a threshold does.
+
+Pass `residues=` to fix the columns, which is what lets fingerprints from
+different ligands — or from different systems sharing a protein — be compared.
+
+For a whole site at once, one row per ligand that visited it:
+
+```python
+f = boonza.site_interactions(s, runs, found, 0)
+f.where  # (run, copy) of each row
+boonza.similarity_matrix(f.values)  # every occupant against every other
+```
+
+On a real screen this separates what geometry cannot: within a site, unlike
+molecules agree at 0.8–0.9, while the average fingerprints of different sites
+score 0.0–0.3 against each other. Two sites that score higher than the rest
+turn out to be the two that are adjacent and share a residue.
+
 ## Kinetics of a site
 
 ```python
