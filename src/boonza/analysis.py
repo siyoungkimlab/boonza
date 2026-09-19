@@ -395,7 +395,13 @@ class BlockAverage:
 
     @property
     def statistical_inefficiency(self) -> float:
-        """(estimate / naive SEM)^2: frames per independent sample."""
+        """(estimate / naive SEM)^2: frames per independent sample.
+
+        A series that does not vary at all has no correlation to speak of,
+        and would divide by zero: it counts as one frame per sample.
+        """
+        if not self.sem[0]:
+            return 1.0
         return float((self.estimate / self.sem[0]) ** 2)
 
 
