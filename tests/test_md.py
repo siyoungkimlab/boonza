@@ -570,3 +570,27 @@ def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligan
     assert doc["ligand_id"] == "ligand-0", doc  # but what it was watching is not forgotten
     assert doc["consecutive_detached_count"] == 0, doc
     assert doc["outcome"] in ("target_reached", "detached"), doc
+
+
+@needs_amber
+def test_a_detached_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligands):
+    """The other way this can go: the ligand really did leave, and then the run is
+    resumed without early stop. What it found should survive that."""
+    work = tmp_path / "detached"
+    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--seed", "1", "--early-stop",
+            "--monitor-ligand", "ligand-0", "--detach-cutoff-nm", "0.001",
+            "--contact-cutoff-nm", "0.001", "--confirmation-checks", "1",
+            "--monitor-interval-ns", "0.001"]  # the run is 0.002 ns: it must be checked
+    run_workflow(parse_arguments(argv), log=quiet)
+    gone = json.loads(RunPaths(work).status_json.read_text())
+    assert gone["outcome"] == "detached", gone  # by construction: nothing counts as contact
+    assert gone["ligand_id"] == "ligand-0" and gone["early_stop_enabled"] is True, gone
+
+    longer = [*SHORT]
+    longer[longer.index("--production-ns") + 1] = "0.004"
+    run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
+    doc = json.loads(RunPaths(work).status_json.read_text())
+    assert doc["early_stop_enabled"] is False, doc
+    assert doc["ligand_id"] == "ligand-0", doc  # what it found is not forgotten
+    assert doc["outcome"] == "target_reached", doc  # and it ran on to the new target
+    assert doc["final_production_time_ns"] == pytest.approx(0.004), doc
