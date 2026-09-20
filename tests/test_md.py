@@ -580,7 +580,8 @@ def test_a_detached_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_liga
     argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--seed", "1", "--early-stop",
             "--monitor-ligand", "ligand-0", "--detach-cutoff-nm", "0.001",
             "--contact-cutoff-nm", "0.001", "--confirmation-checks", "1",
-            "--monitor-interval-ns", "0.001"]  # the run is 0.002 ns: it must be checked
+            "--monitor-interval-ns", "0.001"]  # fmt: skip
+    # the monitor interval matters: it defaults to 0.1 ns, and the run is 0.002
     run_workflow(parse_arguments(argv), log=quiet)
     gone = json.loads(RunPaths(work).status_json.read_text())
     assert gone["outcome"] == "detached", gone  # by construction: nothing counts as contact
