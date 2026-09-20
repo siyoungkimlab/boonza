@@ -551,9 +551,12 @@ def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
 
 @needs_amber  # two_ligands is parameterized with GAFF2
 def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligands):
+    # seeded: without one the velocities differ every run, so whether the ligand
+    # reads as detached in two picoseconds is a coin toss, and this asserts what
+    # the record says afterwards
     work = tmp_path / "was_watched"
-    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--early-stop",
-            "--monitor-ligand", "ligand-0"]  # fmt: skip
+    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--seed", "1", "--early-stop",
+            "--monitor-ligand", "ligand-0", "--pocket-cutoff-nm", "0.8"]  # fmt: skip
     run_workflow(parse_arguments(argv), log=quiet)
     watched = json.loads(RunPaths(work).status_json.read_text())
     assert watched["early_stop_enabled"] is True and watched["ligand_id"] == "ligand-0"
@@ -562,6 +565,62 @@ def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligan
     longer[longer.index("--production-ns") + 1] = "0.004"
     run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
     doc = json.loads(RunPaths(work).status_json.read_text())
-    assert doc["early_stop_enabled"] is False  # no longer watched
-    assert doc["ligand_id"] == "ligand-0"  # but what it was watching is not forgotten
-    assert doc["consecutive_detached_count"] == 0
+    # the messages carry the record, so a failure here says what it found
+    assert doc["early_stop_enabled"] is False, doc  # no longer watched
+    assert doc["ligand_id"] == "ligand-0", doc  # but what it was watching is not forgotten
+    assert doc["consecutive_detached_count"] == 0, doc
+    assert doc["outcome"] in ("target_reached", "detached"), doc
+
+
+@needs_amber
+def test_a_detached_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligands):
+    """The other way this can go: the ligand really did leave, and then the run is
+    resumed without early stop. What it found should survive that."""
+    work = tmp_path / "detached"
+    argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--seed", "1", "--early-stop",
+            "--monitor-ligand", "ligand-0", "--detach-cutoff-nm", "0.001",
+            "--contact-cutoff-nm", "0.001", "--confirmation-checks", "1",
+            "--monitor-interval-ns", "0.001", "--pocket-cutoff-nm", "0.8"]  # fmt: skip
+    # the monitor interval matters: it defaults to 0.1 ns, and the run is 0.002
+    run_workflow(parse_arguments(argv), log=quiet)
+    gone = json.loads(RunPaths(work).status_json.read_text())
+    assert gone["outcome"] == "detached", gone  # by construction: nothing counts as contact
+    assert gone["ligand_id"] == "ligand-0" and gone["early_stop_enabled"] is True, gone
+
+    longer = [*SHORT]
+    longer[longer.index("--production-ns") + 1] = "0.004"
+    run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
+    doc = json.loads(RunPaths(work).status_json.read_text())
+    assert doc["early_stop_enabled"] is False, doc
+    assert doc["ligand_id"] == "ligand-0", doc  # what it found is not forgotten
+    assert doc["outcome"] == "target_reached", doc  # and it ran on to the new target
+    assert doc["final_production_time_ns"] == pytest.approx(0.004), doc
+
+
+def test_the_barostat_carries_the_seed(tmp_path, dipeptide):
+    """The barostat draws its volume moves from its own generator, and one added
+    to a context that already exists does not keep the seed it was given -- so an
+    NPT run differed every time however it was seeded. It goes into the system
+    before the context is made, asleep, and is woken when NPT starts."""
+    import openmm as mm
+    from openmm import unit
+
+    from boonza.md.run import _barostat, _wake_barostat
+
+    args = parse_arguments(["x", "--seed", "7"])
+    asleep = _barostat(args, mm, unit, every=0)
+    assert asleep.getFrequency() == 0 and asleep.getRandomNumberSeed() == 7
+    system = mm.System()
+    system.addForce(asleep)
+    _wake_barostat(system, mm)
+    assert system.getForce(0).getFrequency() == 25  # and the same object, so the same stream
+    assert system.getForce(0).getRandomNumberSeed() == 7
+    with pytest.raises(ValueError, match="no barostat"):
+        _wake_barostat(mm.System(), mm)
+
+    work = tmp_path / "seeded"  # and it reaches the system a restart is built from
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT,
+                                  "--seed", "7"]), log=quiet)  # fmt: skip
+    written = RunPaths(work).system_xml.read_text()
+    barostat = [x for x in written.split("<Force") if "MonteCarloBarostat" in x][0]
+    assert 'randomSeed="7"' in barostat and 'frequency="25"' in barostat

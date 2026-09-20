@@ -169,7 +169,7 @@ ligands included.
 | `integration_fs`, `hmr` | 2, off | `hmr` repartitions hydrogens to 4 amu (water untouched) and makes the step 4 fs |
 | `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets) |
 | `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
-| `seed`, `precision`, `platform` | 0, mixed, fastest | |
+| `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |
 | `repulsion_selection`, `repulsion_distance_nm`, `repulsion_kJ` | none, 0.5, 500 | keep the molecules a selection picks from sticking together: E = k (d0 - r)^2 between heavy atoms of different ones closer than d0 (k in kJ/mol/nm^2); `boonza swim` sets it for its ligands |
 | `early_stop` and `monitor_*`, `*_cutoff_nm`, `confirmation_checks` | off | see below |
 
@@ -233,6 +233,16 @@ record also carries `ligand_id`, `component_id` and
 empty, so the file never implies a target that was never watched. A run that
 was watched and is resumed without early stop keeps what it found and says
 `early_stop_enabled: false`.
+
+### Repeating a run
+
+`seed` is given to the initial velocities, to the integrator and to the
+barostat, which draws its volume moves from a generator of its own. With the
+same seed and the same input, a run repeats itself exactly — but only when
+the forces are summed the same way each time, which on the CPU platform means
+one thread (`OPENMM_CPU_THREADS=1`). With several threads the summation order
+varies, and a trajectory diverges from its twin within a picosecond however
+it is seeded.
 
 ## Output files
 

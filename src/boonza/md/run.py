@@ -113,20 +113,41 @@ def _state_reporter(path, steps, append=False):
     )
 
 
-def _barostat(args, mm, unit):
+def _barostat(args, mm, unit, every: int = 25):
     """The pressure coupling ``args.barostat`` asks for: one scale factor for
     the whole box, or x and y together with z free (a planar membrane, held at
-    ``surface_tension`` in bar nm; 0 is tensionless)."""
+    ``surface_tension`` in bar nm; 0 is tensionless).
+
+    It carries ``seed`` like the integrator does: its volume moves are drawn
+    from their own generator, so without this a seeded run is still not the
+    same run twice.  OpenMM reads a seed of 0 as "choose one", which is what
+    an unseeded run wants.  ``every`` of 0 leaves it asleep: a barostat added
+    to a context that already exists does not keep its seed, so it is put in
+    the system before the context is made and woken when NPT starts.
+    """
     if getattr(args, "barostat", "isotropic") == "membrane":
-        return mm.MonteCarloMembraneBarostat(
+        out = mm.MonteCarloMembraneBarostat(
             args.pressure * unit.bar,
             args.surface_tension * unit.bar * unit.nanometer,
             args.temperature * unit.kelvin,
             mm.MonteCarloMembraneBarostat.XYIsotropic,
             mm.MonteCarloMembraneBarostat.ZFree,
-            25,
+            every,
         )
-    return mm.MonteCarloBarostat(args.pressure * unit.bar, args.temperature * unit.kelvin, 25)
+    else:
+        out = mm.MonteCarloBarostat(args.pressure * unit.bar, args.temperature * unit.kelvin,
+                                    every)  # fmt: skip
+    out.setRandomNumberSeed(int(getattr(args, "seed", 0) or 0))
+    return out
+
+
+def _wake_barostat(system, mm, every: int = 25) -> None:
+    """Start applying the barostat that has been sitting in the system."""
+    for force in system.getForces():
+        if isinstance(force, mm.MonteCarloBarostat | mm.MonteCarloMembraneBarostat):
+            force.setFrequency(every)
+            return
+    raise ValueError("no barostat in the system to start")
 
 
 def _save_frame(s, state, stem: Path, title: str) -> None:
@@ -168,6 +189,8 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     for p in (paths.solvated_pdb, paths.solvated_mae):
         save_structure(s, p)
     topology, system, positions = to_openmm(s, nonbonded_method="PME", cutoff=10.0 * args.cutoff_nm)
+    if getattr(args, "barostat", "isotropic") != "none":
+        system.addForce(_barostat(args, mm, unit, every=0))  # asleep until NPT
     if args.dihedral_restraint != "none":
         from .restraints import add_dihedral_restraints, plot_well, write_records
 
@@ -293,7 +316,7 @@ def run_workflow(args, log=print) -> None:
             log(f"Running {args.equilibration_ns:g} ns more NVT equilibration (no barostat)...")
         else:
             log(f"Running {args.equilibration_ns:g} ns NPT equilibration ({kind} barostat)...")
-            system.addForce(_barostat(args, mm, unit))
+            _wake_barostat(system, mm)
             simulation.context.reinitialize(preserveState=True)
         simulation.step(n["equilibration_ns"])
         simulation.reporters.clear()
