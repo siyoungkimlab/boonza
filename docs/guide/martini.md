@@ -6,17 +6,18 @@ GROMACS gives it. GROMACS isn't needed at any step.
 
 ```python
 import boonza
-from boonza.martini import OPENMM_OPTIONS
+from boonza.martini import OPENMM_OPTIONS, solvate
 
 s = boonza.load("protein.pdb")
 m = boonza.martinize(s, elastic=True)  # beads, topology, bead positions (Å)
-m.save("cg")  # topol.top, molecule_N.itp, cg.gro
+m = solvate(m, salt=0.15)  # Martini water and NaCl around it
+m.save("cg")  # topol.top, molecule_N.itp, solvent.itp, cg.gro
 cg = m.system("martini_v3.0.0.itp")  # a boonza System with Martini parameters
 topology, system, positions = boonza.to_openmm(cg, **OPENMM_OPTIONS)
 ```
 
 ```bash
-boonza martinize protein.pdb cg --elastic      # the same, from the command line
+boonza martinize protein.pdb cg --elastic --solvate   # the same, from the command line
 ```
 
 The bead types' nonbonded parameters come from the Martini release file
@@ -87,9 +88,40 @@ These cases are rare, and each difference is deliberate:
 - **Hydrogen names.** Any names work in boonza, because it reads hydrogens
   by their bonds. martinize2 needs names its reference residues know, and
   fails on others (boonza's own peptides name them H1, H2, ...).
-- **Proteins only.** Water, ions, lipids and ligands aren't coarse-grained
-  yet. Leave them out of `atoms` (the default is `"protein"`); boonza names
-  any residue it can't map.
+- **Proteins only.** `martinize` maps proteins; water and ions come from
+  `solvate`, and other Martini molecules from their own topologies (see
+  below). Leave everything else out of `atoms` (the default is
+  `"protein"`); boonza names any residue it can't map.
+
+## Water and ions
+
+`solvate` puts the proteins at the centre of a box and tiles Martini 3 water
+around them: W beads, each standing for four waters, from a box boonza
+equilibrated at 300 K and 1 bar (density 987 kg/m³, as GROMACS gives it).
+
+- **Box.** By default a cube of the proteins' largest extent plus `padding`
+  (10 Å) on each side; `box=` sets the edges.
+- **Clashes.** Water beads within 4.2 Å of a protein bead are removed. This
+  is twice the 0.21 nm radius Martini users give `gmx solvate`. Where tiles
+  meet the box's faces, one of each pair closer than 3.5 Å is removed.
+- **Ions.** Na⁺ and Cl⁻ (Martini 3's `TQ5` beads) first cancel the proteins'
+  charge, then ion pairs bring NaCl to `salt` mol/L. They replace water beads
+  at least 5 Å from the proteins.
+
+`save` writes the water and ion molecule types to `solvent.itp`, as
+`martini_v3.0.0_solvents_v1.itp` and `martini_v3.0.0_ions_v1.itp` define
+them, so only `martini_v3.0.0.itp` is needed. The box shrinks by about 10%
+in volume in the first 100 ps of NPT, as the gaps left around the protein
+close.
+
+## Other Martini molecules
+
+Molecules from Martini's own topology files load with `boonza.load` (or
+`boonza.io.load_top`), the same way. That includes lipids, sterols and small
+molecules, with their constraints and virtual sites. Martini 3's cholesterol
+(`CHOL`, in `martini_v3.0_sterols_v1.0.itp`) builds five of its nine beads
+as out-of-plane virtual sites on a triangle of constraints, and runs in
+OpenMM as in GROMACS (see [Verification](../verification.md)).
 
 ## Running it
 
@@ -97,20 +129,28 @@ These cases are rare, and each difference is deliberate:
 ε_r = 15 and ε_rf = ∞ (0), Lennard-Jones shifted to zero at the cutoff,
 an 11 Å cutoff and no dispersion correction. `boonza.martini.OPENMM_OPTIONS`
 holds all of these (see [RDKit and OpenMM](bridges.md#martini)). Martini
-proteins usually run with a 20 fs time step:
+runs with a 20 fs time step, but a 20 fs step straight from an energy
+minimum can blow up. OpenMM's minimizer stops higher than GROMACS's, and the
+first large steps meet the strain it leaves. `equilibrate` minimizes, then
+steps up through 2, 5 and 10 fs before 20:
 
 ```python
 import openmm as mm
 import openmm.unit as u
 from openmm import app
+from boonza.martini import equilibrate
 
+system.addForce(mm.MonteCarloBarostat(1 * u.bar, 310 * u.kelvin))
 integrator = mm.LangevinMiddleIntegrator(310 * u.kelvin, 1 / u.picosecond, 0.020 * u.picosecond)
 simulation = app.Simulation(topology, system, integrator)
 simulation.context.setPositions(positions)
-simulation.context.computeVirtualSites()
-simulation.minimizeEnergy()
+equilibrate(simulation, temperature=310)  # minimize, then 2, 5, 10 and 20 fs
 simulation.step(50_000)  # 1 ns
 ```
 
-Martini water and ions (and so a solvated box), membranes and Gō models are
-not yet in boonza.
+OpenMM holds Martini's constraints, the rigid rings of Trp, Tyr, Phe and
+His and cholesterol's core included, to about 10⁻⁶ of their lengths at
+20 fs. It solves coupled constraints with CCMA, and its default tolerance is
+10⁻⁵.
+
+Membranes and Gō models are not yet in boonza.

@@ -457,9 +457,15 @@ def _martinize(args) -> int:
                          res_min_dist=args.res_min_dist, cys=cys,
                          neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
                          extdih=args.extdih)  # fmt: skip
+    if args.solvate:
+        from .martini import solvate
+
+        m = solvate(m, padding=args.padding, salt=args.salt, seed=args.seed)
     top = m.save(args.output, martini_itp=args.martini_itp)
-    print(f"wrote {top} ({len(m.molecules)} molecules, {m.nbeads} beads) and cg.gro; "
-          f"it includes {args.martini_itp}, which is not written")  # fmt: skip
+    water = ", ".join(f"{c} {n}" for n, c in m.solvent)
+    print(f"wrote {top} ({len(m.molecules)} molecules, {m.nbeads} beads"
+          f"{'; ' + water if water else ''}) and cg.gro; it includes {args.martini_itp}, "
+          "which is not written")  # fmt: skip
     return 0
 
 
@@ -651,6 +657,10 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--neutral-termini", action="store_true")
     q.add_argument("--no-scfix", action="store_true", help="no side-chain corrections")
     q.add_argument("--extdih", action="store_true", help="dihedrals for extended regions (-ed)")
+    q.add_argument("--solvate", action="store_true", help="add Martini water and NaCl")
+    q.add_argument("--padding", type=float, default=10.0, help="water beyond the protein (A)")
+    q.add_argument("--salt", type=float, default=0.15, help="NaCl (mol/L), after neutralizing")
+    q.add_argument("--seed", type=int, default=0, help="which waters become ions")
     q.add_argument("--martini-itp", default="martini_v3.0.0.itp",
                    help="the Martini parameter file topol.top includes")  # fmt: skip
     q.set_defaults(run=_martinize)

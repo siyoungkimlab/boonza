@@ -43,6 +43,7 @@ import numpy as np
 
 from .._columns import STR
 from ..elements import guess_atomic_number
+from ..schemas import TERM_SCHEMAS
 from ..system import System
 
 KJ = 4.184  # kJ per kcal
@@ -281,7 +282,7 @@ class _Terms:
         self.stretch, self.angle, self.dihedral, self.improper = [], [], [], []
         self.pair, self.hoh, self.posre = [], [], []
         self.angle_cosine, self.angle_restricted = [], []  # GROMACS types 2 and 10
-        self.virtual: dict[int, list] = {}  # constructing atoms -> (site, *atoms, *weights)
+        self.virtual: dict[str, list] = {}  # table -> (site, *parents, *params)
         self.constraint = []  # [ constraints ]: a fixed distance, not only a bond
 
 
@@ -404,8 +405,26 @@ def _molecule_terms(top: _Topology, mol: _Molecule, types, charge, mass=None) ->
                                "at most 7 are supported")  # fmt: skip
         weights = [w / total for w in weights]
         # virtual_lcN: the first parent's weight is what the others leave
-        out.virtual.setdefault(len(parents), []).append((site, *parents, *weights[1:]))
-    for section in ("virtual_sites2", "virtual_sites3", "virtual_sites4", "cmap"):
+        out.virtual.setdefault(f"virtual_lc{len(parents)}", []).append(
+            (site, *parents, *weights[1:]))  # fmt: skip
+    for t in mol.lines("virtual_sites2"):
+        site, i, j = (int(x) - 1 for x in t[:3])
+        funct = int(t[3])
+        if funct != 1:  # (1 - a) i + a j
+            raise _unsupported("virtual_sites2", funct, "not a linear combination")
+        out.virtual.setdefault("virtual_lc2", []).append((site, i, j, float(t[4])))
+    for t in mol.lines("virtual_sites3"):
+        site, i, j, k = (int(x) - 1 for x in t[:4])
+        funct = int(t[4])
+        a, b = float(t[5]), float(t[6])
+        if funct == 1:  # i + a (j - i) + b (k - i)
+            out.virtual.setdefault("virtual_lc3", []).append((site, i, j, k, a, b))
+        elif funct == 4:  # "3out": that plus c (rij x rik), c per nm
+            out.virtual.setdefault("virtual_out3", []).append(
+                (site, i, j, k, a, b, float(t[7]) / 10))  # fmt: skip
+        else:
+            raise _unsupported("virtual_sites3", funct, "not 3 (average) or 3out")
+    for section in ("virtual_sites4", "cmap"):
         if mol.lines(section):
             raise GromacsError(f"[ {section} ] is not supported; load with structure_only=True")
     return out
@@ -627,16 +646,17 @@ def _force_field(s: System, top: _Topology, per_mol: dict, types: np.ndarray) ->
         pids = table.params.add_params(len(values),
                                        **{c: values[:, k] for k, c in enumerate(cols)})  # fmt: skip
         table.add_terms(atoms, params=pids)
-    for n in sorted({n for info in per_mol.values() for n in info["terms"].virtual}):
-        blocks = [_replicate(info, info["terms"].virtual.get(n, []), info["n"], n + 1)
+    for name in sorted({n for info in per_mol.values() for n in info["terms"].virtual}):
+        natoms = TERM_SCHEMAS[name].natoms
+        blocks = [_replicate(info, info["terms"].virtual.get(name, []), info["n"], natoms)
                   for info in per_mol.values()]  # fmt: skip
         blocks = [b for b in blocks if b is not None]
         if blocks:
             atoms = np.concatenate([b[0] for b in blocks])
             values = np.concatenate([b[1] for b in blocks])
-            table = s.add_table_from_schema(f"virtual_lc{n}")
-            pids = table.params.add_params(len(values), **{f"c{k + 1}": values[:, k]
-                                                           for k in range(n - 1)})  # fmt: skip
+            table = s.add_table_from_schema(name)
+            cols = {f"c{k + 1}": values[:, k] for k in range(values.shape[1])}
+            pids = table.params.add_params(len(values), **cols)
             table.add_terms(atoms, params=pids)
     posre = [b for b in (_replicate(info, info["terms"].posre, info["n"], 1)
                          for info in per_mol.values()) if b is not None]  # fmt: skip
