@@ -33,10 +33,11 @@ SECTIONS = [
                   "backbone_dihedrals", "backbone_hbonds"]),
     ("RDKit", ["to_rdkit", "from_rdkit", "fragments_to_rdkit", "assign_bond_orders"]),
     ("OpenMM", ["to_openmm", "from_openmm", "openmm_energies"]),
+    ("Martini", ["martinize", "Martinized"]),
 ]  # fmt: skip
 CLASSES_WITH_MEMBERS = {"System", "AtomSel", "Atom", "Bond", "Residue", "Chain", "Ct",
                         "TermTable", "ParamTable", "Term", "OverrideTable", "Trajectory",
-                        "SequenceAlignment", "HBonds", "MatchResult"}  # fmt: skip
+                        "SequenceAlignment", "HBonds", "MatchResult", "Martinized"}  # fmt: skip
 
 
 def _sig(obj) -> str:

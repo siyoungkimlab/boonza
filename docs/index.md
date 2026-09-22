@@ -134,12 +134,13 @@ trajectory, periodic boxes, RDKit, validation and the command line.
 7. [Ligands and covalent adducts (GAFF2)](guide/ligands.md)
 8. [Running simulations (`boonza md`)](guide/md.md)
 9. [Ligands swimming around a protein (`boonza swim`)](guide/swim.md)
-10. [Checking systems: validate, knots, diff](guide/checking.md)
-11. [Geometry and periodic boundaries](guide/geometry.md)
-12. [Alignment: superposition and sequences](guide/alignment.md)
-13. [Analysis](guide/analysis.md)
-14. [RDKit and OpenMM](guide/bridges.md)
-15. [Command line](guide/cli.md)
+10. [Martini 3 coarse-grained proteins](guide/martini.md)
+11. [Checking systems: validate, knots, diff](guide/checking.md)
+12. [Geometry and periodic boundaries](guide/geometry.md)
+13. [Alignment: superposition and sequences](guide/alignment.md)
+14. [Analysis](guide/analysis.md)
+15. [RDKit and OpenMM](guide/bridges.md)
+16. [Command line](guide/cli.md)
 
 [API reference](reference.md) · [Verification and benchmarks](verification.md)
 
@@ -157,6 +158,7 @@ guide/openmm_forcefields
 guide/ligands
 guide/md
 guide/swim
+guide/martini
 guide/building
 guide/checking
 guide/geometry

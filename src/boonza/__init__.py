@@ -57,6 +57,7 @@ from .interactions import (
 )  # noqa: E402
 from .io import DMSError, load, save  # noqa: E402
 from .kinetics import Dwell, Rates, dwells, kinetics  # noqa: E402
+from .martini import Martinized, martinize  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
@@ -207,6 +208,8 @@ __all__ = [
     "sequence",
     "CEResult",
     "MatchResult",
+    "Martinized",
+    "martinize",
     "ce_align",
     "cealign",
     "chimerax_ss",

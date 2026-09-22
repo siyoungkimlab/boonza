@@ -469,6 +469,36 @@ of raising.
 
 Energy of each translated force in kcal/mol (and the total).
 
+## Martini
+
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
+
+Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
+
+``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
+default boonza's DSSP is run on the structure.  ``elastic`` adds
+martinize2's elastic network between backbone beads ``elastic_lower`` to
+``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
+``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
+``elastic_power`` (``-ea``/``-ep``), dropping those below
+``elastic_min_fc`` (``-em``) and those within ``res_min_dist`` residues
+apart in the residue graph (default 2, as martinize2's).  ``cys``: ``"auto"``
+bonds cysteines whose sulfurs are bonded, ``"none"`` never, or a
+distance in Å.  ``neutral_termini`` makes neutral termini;
+``scfix``/``extdih`` as martinize2's (side-chain corrections on by
+default).  Hydrogens present in the structure decide protonation:
+Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
+neutral, and His is typed by which ring nitrogens carry one.
+
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '') -> None`
+
+The Martini beads of a system and their GROMACS topology.
+
+``molecules`` holds one topology per molecule (chains joined by a
+disulfide are one molecule), ``positions`` the beads in Å, ``cell`` the
+input box.  ``itp``/``top`` give GROMACS text; ``save`` writes the files;
+``system`` loads them into a boonza System for OpenMM.
+
 ## Per-format readers and writers (`boonza.io`)
 
 ### `boonza.io.load_cif(path, guess_bonds: 'bool' = True, struct_conn: 'bool' = True) -> 'System'`

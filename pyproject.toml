@@ -33,7 +33,9 @@ boonza = "boonza.cli:main"
 version = { attr = "boonza.__version__" }
 
 [tool.setuptools.package-data]
-boonza = ["data/*.dms", "data/*.zip", "data/fragments/*.sdf"]
+boonza = ["data/*.dms", "data/*.zip", "data/fragments/*.sdf", "data/martini/LICENSE",
+          "data/martini/README.md",
+          "data/martini/*/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
