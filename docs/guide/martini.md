@@ -114,6 +114,48 @@ them, so only `martini_v3.0.0.itp` is needed. The box shrinks by about 10%
 in volume in the first 100 ps of NPT, as the gaps left around the protein
 close.
 
+## Membranes
+
+`boonza.martini.bilayer` builds a lipid bilayer in water, optionally around
+proteins, as insane does:
+
+```python
+from boonza.martini import bilayer
+
+lipids = ["martini_v3.0.0_phospholipids_v1.itp", "martini_v3.0_sterols_v1.0.itp"]
+m = bilayer(lipids, {"POPC": 7, "CHOL": 3}, size=100.0)  # a 100 Å square membrane
+m = bilayer(lipids, {"POPC": 7, "CHOL": 3}, {"POPC": 5, "POPS": 2, "CHOL": 3})  # asymmetric
+protein = boonza.martinize(boonza.load("receptor_opm.pdb"), elastic=True)
+m = bilayer(lipids, {"POPC": 7, "CHOL": 3}, protein=protein, protein_origin=True)
+m.save("membrane")  # topol.top (including the lipid files), .itp files, cg.gro
+```
+
+```bash
+boonza bilayer membrane --lipid-itp martini_v3.0.0_phospholipids_v1.itp \
+    martini_v3.0_sterols_v1.0.itp --upper POPC:7,CHOL:3 --protein receptor_opm.pdb --opm --elastic
+```
+
+- **Lipids.** Any molecule type in the lipid files works: phospholipids,
+  sterols, or your own. boonza builds a straight template from the
+  topology. Bead levels are 3.3 Å apart down from the head, as insane stacks
+  them, and chains zig-zag so that bonded beads stay a bond apart.
+  Constraints are set to their lengths and virtual sites placed from their
+  parents (cholesterol's rigid core, for instance).
+- **Leaflets.** Each leaflet is a lattice at `area_per_lipid` (60 Å²),
+  filled in the ratios given, with each lipid turned about the membrane
+  normal the way that best clears its neighbours. Water fills `water` Å
+  beyond the lipids on each side, then Na⁺ and Cl⁻ neutralize the system and
+  add `salt`.
+- **Proteins** come from `martinize`, with the membrane normal along z.
+  With `protein_origin` (`--opm`), the protein's z = 0 is the midplane, as
+  OPM orients structures; otherwise its centre is. Lipids within 4.5 Å of a
+  protein bead are left out, and the box is tall enough for the whole
+  protein.
+
+Run membranes with semi-isotropic pressure: OpenMM's
+`MonteCarloMembraneBarostat` with `XYIsotropic` and `ZFree`, as
+`Pcoupltype = semiisotropic` in GROMACS.
+
 ## Other Martini molecules
 
 Molecules from Martini's own topology files load with `boonza.load` (or

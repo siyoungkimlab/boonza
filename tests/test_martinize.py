@@ -311,3 +311,163 @@ def test_solvated_beads_run(solvated, tmp_path):
     assert integrator.getStepSize().value_in_unit(mm.unit.picosecond) == pytest.approx(0.020)
     sim.step(10)
     assert np.isfinite(sim.context.getState(getEnergy=True).getPotentialEnergy()._value)
+
+
+TOY_LIPIDS = """[ moleculetype ]
+TLP 1
+[ atoms ]
+1 Q5 1 TLP HD 1 -1.0
+2 N4a 1 TLP GL1 2 0
+3 N4a 1 TLP GL2 3 0
+4 C1 1 TLP C1A 4 0
+5 C1 1 TLP C2A 5 0
+6 C1 1 TLP C1B 6 0
+7 C1 1 TLP C2B 7 0
+[ bonds ]
+1 2 1 0.47 1250
+2 3 1 0.37 1250
+2 4 1 0.47 1250
+4 5 1 0.47 1250
+3 6 1 0.47 1250
+6 7 1 0.47 1250
+[ angles ]
+2 4 5 2 180.0 35.0
+3 6 7 2 180.0 35.0
+
+[ moleculetype ]
+STR 1
+[ atoms ]
+1 P1 1 STR OH 1 0 0.0
+2 SC3 1 STR R1 2 0 72.0
+3 SC3 1 STR R2 3 0 72.0
+4 C2 1 STR C1 4 0 72.0
+5 C2 1 STR C2 5 0 72.0
+[ bonds ]
+4 5 1 0.44 5000
+#ifdef FLEXIBLE
+2 3 1 0.35 100000
+#else
+[ constraints ]
+4 3 1 0.75
+4 2 1 0.78
+3 2 1 0.35
+#endif
+[ virtual_sites3 ]
+1 4 3 2 4 1.09 0.36 0.23
+[ exclusions ]
+1 2 3 4 5
+"""
+
+
+@pytest.fixture(scope="module")
+def toy_lipids(tmp_path_factory):
+    path = tmp_path_factory.mktemp("lipids") / "toy_lipids.itp"
+    path.write_text(TOY_LIPIDS)
+    return path
+
+
+def test_lipid_templates(toy_lipids):
+    """Straight templates from the topology: constraints at their lengths,
+    virtual sites where their parents put them, long axis along z, head up."""
+    from boonza.martini import lipid_templates
+
+    t = lipid_templates([toy_lipids])
+    lipid, sterol = t["TLP"], t["STR"]
+    assert lipid.charge == -1.0 and sterol.charge == 0.0
+    x = lipid.xyz
+    assert x[0, 2] == x[:, 2].max() and x[:, 2].min() == 0.0  # head up
+    assert abs(x[4, 0] - x[6, 0]) > 2.0  # the tails side by side
+    for i, j in ((1, 3), (3, 4), (2, 5), (5, 6)):  # bonded beads about a bond apart
+        assert 3.0 < np.linalg.norm(x[i] - x[j]) < 6.0
+    y = sterol.xyz
+    for i, j, d in ((3, 2, 7.5), (3, 1, 7.8), (2, 1, 3.5)):
+        assert np.linalg.norm(y[i] - y[j]) == pytest.approx(d, abs=1e-3)
+    rij, rik = y[2] - y[3], y[1] - y[3]
+    assert y[0] == pytest.approx(y[3] + 1.09 * rij + 0.36 * rik + 0.023 * np.cross(rij, rik))
+
+
+def test_bilayer(toy_lipids, tmp_path):
+    from boonza.martini import bilayer
+    from boonza.spatial import pairs_within
+
+    m = bilayer([toy_lipids], {"TLP": 3, "STR": 1}, {"TLP": 1}, size=60.0,
+                area_per_lipid=60.0, water=20.0, salt=0.1)  # fmt: skip
+    groups = [(n, c) for n, c, _ in m.lipids]
+    upper = dict(groups[:2])
+    per_leaflet = sum(upper.values())  # a lattice near 60 Å² a lipid
+    assert 60 * 60 / per_leaflet == pytest.approx(60.0, rel=0.1)
+    assert upper["TLP"] == 3 * upper["STR"]
+    assert groups[2:] == [("TLP", per_leaflet)]
+    (w, nw), (na, n_na), (cl, n_cl) = m.solvent
+    lipid_charge = -(upper["TLP"] + per_leaflet)
+    assert lipid_charge + n_na - n_cl == 0
+    box = np.diag(m.cell)
+    assert box[:2] == pytest.approx([60.0, 60.0])
+    nlip = sum(c * len(b) for _, c, b in m.lipids)
+    lipids, water = m.positions[:nlip], m.positions[nlip:]
+    top, bottom = lipids[:, 2].max(), lipids[:, 2].min()
+    assert not ((water[:, 2] < top - 2) & (water[:, 2] > bottom + 2)).any()  # none inside
+    assert box[2] == pytest.approx(top - bottom + 40.0, abs=2.0)  # water on both sides
+    # lipids turned to clear each other: no two molecules' beads overlap
+    mol = np.repeat(np.arange(sum(c for _, c, _ in m.lipids)),
+                    [len(b) for _, c, b in m.lipids for _ in range(c)])  # fmt: skip
+    i, j, _ = pairs_within(lipids, 2.0, cell=m.cell)
+    assert not (mol[i] != mol[j]).any()
+    text = m.top("martini.itp")
+    assert f'#include "{toy_lipids.resolve()}"' in text
+    assert f"TLP {upper['TLP']}\nSTR {upper['STR']}\nTLP {per_leaflet}\nW " in text
+
+
+def test_bilayer_around_a_protein(toy_lipids, tmp_path):
+    """Lipids on the protein are left out, and the box's height takes in the
+    protein; with ``protein_origin`` its z = 0 is the midplane."""
+    from boonza.martini import bilayer
+    from boonza.spatial import min_dist2
+
+    p = martinize(boonza.peptide("AAAAAAAAAAAAAAAAAAAA"), ss="H" * 20)
+    x = p.positions
+    axis = np.linalg.svd(x - x.mean(0))[2][0]
+    p.positions = x @ _to_z(axis).T  # the helix across the membrane
+    free = bilayer([toy_lipids], {"TLP": 1}, size=60.0, water=10.0)
+    m = bilayer([toy_lipids], {"TLP": 1}, size=60.0, water=10.0, protein=p)
+    assert sum(c for _, c, _ in m.lipids) < sum(c for _, c, _ in free.lipids)
+    prot = m.positions[: p.nbeads]
+    lipids = m.positions[p.nbeads : p.nbeads + sum(c * len(b) for _, c, b in m.lipids)]
+    assert (min_dist2(lipids, prot, 4.5, cell=m.cell) >= 4.5**2 - 1e-3).all()
+    mid = np.diag(m.cell)[2] / 2
+    assert prot.mean(0)[2] == pytest.approx(mid)
+    assert prot[:, 2].min() > 0 and prot[:, 2].max() < np.diag(m.cell)[2]
+    shifted = bilayer([toy_lipids], {"TLP": 1}, size=60.0, water=10.0, protein=p,
+                      protein_origin=True)  # fmt: skip
+    z0 = shifted.positions[: p.nbeads, 2] - p.positions[:, 2]
+    assert z0 == pytest.approx(np.full(p.nbeads, np.diag(shifted.cell)[2] / 2))
+
+
+def _to_z(axis):
+    """A rotation taking ``axis`` to z."""
+    z = np.array([0.0, 0.0, 1.0])
+    v, c = np.cross(axis, z), float(axis @ z)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k / (1 + c)
+
+
+def test_bilayer_runs(toy_lipids, tmp_path):
+    pytest.importorskip("openmm")
+    from boonza.martini import bilayer
+
+    m = bilayer([toy_lipids], {"TLP": 1, "STR": 1}, size=50.0, water=15.0)
+    _toy_martini_itp(tmp_path / "toy.itp", {"Q5", "N4a", "C1", "P1", "SC3", "C2", "W", "TQ5"})
+    s = m.system(tmp_path / "toy.itp")
+    assert "virtual_out3" in s.tables and "constraint_ah1" in s.tables
+    e = boonza.openmm_energies(s, **OPENMM_OPTIONS)
+    assert np.isfinite(e["total"])
+
+
+def test_bilayer_command_line(toy_lipids, tmp_path, capsys):
+    out = tmp_path / "memb"
+    args = ["bilayer", str(out), "--lipid-itp", str(toy_lipids), "--upper", "TLP:3,STR:1",
+            "--lower", "TLP", "--size", "40", "--water", "15"]  # fmt: skip
+    assert main(args) == 0
+    printed = capsys.readouterr().out
+    assert "TLP" in printed and "STR" in printed and " W" in printed
+    assert {p.name for p in out.iterdir()} == {"topol.top", "solvent.itp", "cg.gro"}

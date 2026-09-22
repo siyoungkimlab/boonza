@@ -2,6 +2,7 @@
 
 from .build import Martinized, convert_dssp_to_martini, force_field, martinize
 from .md import equilibrate
+from .membrane import bilayer, lipid_templates
 from .solvate import solvate
 
 # to_openmm settings for Martini 3: GROMACS's reaction field (epsilon_r 15,
@@ -15,5 +16,5 @@ OPENMM_OPTIONS = {
     "lj_shift": True,
 }
 
-__all__ = ["OPENMM_OPTIONS", "Martinized", "convert_dssp_to_martini", "equilibrate",
-           "force_field", "martinize", "solvate"]  # fmt: skip
+__all__ = ["OPENMM_OPTIONS", "Martinized", "bilayer", "convert_dssp_to_martini", "equilibrate",
+           "force_field", "lipid_templates", "martinize", "solvate"]  # fmt: skip
