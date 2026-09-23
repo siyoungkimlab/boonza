@@ -70,6 +70,15 @@ def force_field(name: str = "martini3001"):
     return ff
 
 
+def _nonbonded(martini_itp):
+    """The Martini parameter file to include: the one given, or the one carried."""
+    if martini_itp is not None:
+        return martini_itp
+    from . import NONBONDED, parameters
+
+    return parameters(NONBONDED)[0]
+
+
 @dataclass
 class Martinized:
     """The Martini beads of a system and their GROMACS topology.
@@ -98,11 +107,11 @@ class Martinized:
     def itp(self, k: int = 0) -> str:
         return _write_itp(self.molecules[k], self.names[k])
 
-    def top(self, martini_itp: str = "martini_v3.0.0.itp") -> str:
-        lines = [f'#include "{martini_itp}"']
+    def top(self, martini_itp=None) -> str:
+        lines = [f'#include "{_nonbonded(martini_itp)}"']
         lines += [f'#include "{p}"' for p in self.includes]
         lines += [f'#include "{n}.itp"' for n in self.names]
-        if self.solvent:
+        if any(c for _, c in self.solvent):  # a list of zero counts is no solvent
             lines.append('#include "solvent.itp"')
         lines += ["", "[ system ]", "Martini system", "", "[ molecules ]"]
         lines += [f"{n} 1" for n in self.names]
@@ -110,27 +119,32 @@ class Martinized:
         lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
 
-    def save(self, directory, martini_itp: str = "martini_v3.0.0.itp") -> Path:
+    def save(self, directory, martini_itp=None) -> Path:
         """Write ``topol.top``, one ``.itp`` per molecule (``solvent.itp`` for water
-        and ions) and ``cg.gro``; returns the top."""
+        and ions) and ``cg.gro``; returns the top.
+
+        ``topol.top`` includes ``martini_itp``, the Martini 3 file boonza
+        carries when none is given, so that GROMACS can resolve it as written.
+        """
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         for k, name in enumerate(self.names):
             (d / f"{name}.itp").write_text(self.itp(k))
-        if self.solvent:
+        if any(c for _, c in self.solvent):
             (d / "solvent.itp").write_text(SOLVENT_ITP)
         (d / "topol.top").write_text(self.top(martini_itp))
         (d / "cg.gro").write_text(self._gro())
         return d / "topol.top"
 
-    def system(self, martini_itp):
+    def system(self, martini_itp=None):
         """The beads as a boonza System, with the Martini force field of
-        ``martini_itp`` (e.g. ``martini_v3.0.0.itp``) for nonbonded terms."""
+        ``martini_itp`` for nonbonded terms; the bundled Martini 3 file when
+        none is given."""
         import tempfile
 
         from ..io.gromacs import load_top
 
-        martini_itp = Path(martini_itp).resolve()
+        martini_itp = Path(_nonbonded(martini_itp)).resolve()
         with tempfile.TemporaryDirectory() as tmp:
             top = self.save(tmp, martini_itp.name)
             s = load_top(top, Path(tmp) / "cg.gro", include_dirs=[str(martini_itp.parent)])

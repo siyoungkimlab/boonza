@@ -471,3 +471,33 @@ def test_bilayer_command_line(toy_lipids, tmp_path, capsys):
     printed = capsys.readouterr().out
     assert "TLP" in printed and "STR" in printed and " W" in printed
     assert {p.name for p in out.iterdir()} == {"topol.top", "solvent.itp", "cg.gro"}
+
+
+def test_the_parameters_come_with_boonza(tmp_path):
+    """The Martini 3 files are carried, so martinizing needs no download."""
+    from boonza.martini import LIPIDS, NONBONDED, parameters
+
+    every = parameters()
+    assert len(every) >= 7 and all(p.is_file() for p in every)
+    assert parameters(NONBONDED)[0].name == NONBONDED
+    assert [p.name for p in parameters(*LIPIDS)] == list(LIPIDS)
+    assert "10.1038" in (parameters(NONBONDED)[0].parent / "README.md").read_text()
+    with pytest.raises(FileNotFoundError, match="does not carry"):
+        parameters("martini_v2.itp")
+
+
+def test_martinizing_needs_no_parameter_file(tmp_path):
+    """system() with nothing given is system() pointed at the file it carries."""
+    from boonza.martini import NONBONDED, parameters
+
+    m = martinize(boonza.load(DATA / "1HHO.pdb"), "protein and chain A", elastic=True)
+    carried = m.system()
+    named = m.system(parameters(NONBONDED)[0])
+    assert carried.natoms == named.natoms
+    assert set(carried.tables) == set(named.tables)
+    for name, table in carried.tables.items():
+        assert len(table) == len(named.tables[name])
+
+    top = Path(m.save(tmp_path / "cg"))  # and what it writes can be read by GROMACS
+    included = [x.split('"')[1] for x in top.read_text().splitlines() if x.startswith("#include")]
+    assert Path(included[0]).is_file() and Path(included[0]).name == NONBONDED

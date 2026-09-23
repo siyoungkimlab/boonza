@@ -501,6 +501,16 @@ every bead in Å, ``cell`` the box.  ``itp``/``top`` give GROMACS text;
 ``save`` writes the files; ``system`` loads them into a boonza System for
 OpenMM.
 
+### `boonza.martini.parameters(*names) -> list[pathlib._local.Path]`
+
+Parameter files that came with boonza, by name; all of them with none.
+
+The Martini 3.0.0 release from cgmartini.nl, unchanged, so that martinizing
+and building a membrane need no separate download, and the Martini 2 files
+for what has not been ported to Martini 3.  The two must not be mixed in
+one system.  Give a path of your own instead wherever one of these is
+taken, to use another version or a lipid boonza does not carry.
+
 ### `boonza.martini.solvate(m: 'Martinized', padding: 'float' = 10.0, box=None, salt: 'float' = 0.15, neutralize: 'bool' = True, clash: 'float' = 4.2, ion_distance: 'float' = 5.0, seed: 'int' = 0) -> 'Martinized'`
 
 ``m`` in a box of Martini 3 water (W beads, 4 waters each), with Na+/Cl- ions.

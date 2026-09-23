@@ -367,3 +367,38 @@ def test_virtual_sites_as_gromacs_builds_them(tmp_path):
     assert x[3] == pytest.approx(a + 0.6 * (b - a) + 0.3 * (c - a) + 1.8 * np.cross(b - a, c - a))
     assert x[4] == pytest.approx(a + 0.3 * (b - a) + 0.3 * (c - a))
     assert x[5] == pytest.approx(0.7 * b + 0.3 * c)
+
+
+def test_martini_2_lipids_against_gromacs(tmp_path):
+    """The Martini 2 files boonza carries, on a bilayer of 128 DPPC (1536 beads).
+
+    GROMACS 2024.6 rereads the same minimized .gro under the same reaction
+    field and shifted Lennard-Jones: bond 421.644, G96 angle 435.416,
+    LJ (SR) -28536.0, Coulomb (SR) -1081.11, potential -28760.1 kJ/mol.
+    GROMACS reports one Coulomb number, so the three reaction-field tables are
+    summed to meet it.
+    """
+    import gzip
+    from pathlib import Path
+
+    from boonza.martini import parameters
+
+    data = Path(__file__).parent / "data" / "martini" / "DPPC_bilayer"
+    gro = tmp_path / "min.gro"
+    gro.write_bytes(gzip.decompress((data / "min.gro.gz").read_bytes()))
+    files = parameters("martini_v2.2.itp", "martini_v2.0_lipids_all_201506.itp")
+    top = tmp_path / "topol.top"
+    top.write_text(
+        "".join(f'#include "{p}"\n' for p in files)
+        + "\n[ system ]\nDPPC bilayer\n\n[ molecules ]\nDPPC 64\nDPPC 64\n"
+    )
+
+    s = boonza.load(top, coordinates=gro)
+    assert s.natoms == 1536
+    e = {k: v * 4.184 for k, v in boonza.openmm_energies(s, **MARTINI).items()}
+    assert e["stretch_harm"] == pytest.approx(421.644, abs=0.01)
+    assert e["angle_cosine_harm"] == pytest.approx(435.416, abs=0.01)
+    assert e["nonbonded_vdw"] == pytest.approx(-28536.0, abs=0.1)
+    coulomb = e["nonbonded"] + e["nonbonded_rf_exclusions"] + e["nonbonded_rf_self"]
+    assert coulomb == pytest.approx(-1081.11, abs=0.01)
+    assert e["total"] == pytest.approx(-28760.1, abs=0.1)
