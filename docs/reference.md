@@ -490,14 +490,44 @@ default).  Hydrogens present in the structure decide protonation:
 Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
 neutral, and His is typed by which ring nitrogens carry one.
 
-### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '') -> None`
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>) -> None`
 
 The Martini beads of a system and their GROMACS topology.
 
 ``molecules`` holds one topology per molecule (chains joined by a
-disulfide are one molecule), ``positions`` the beads in Å, ``cell`` the
-input box.  ``itp``/``top`` give GROMACS text; ``save`` writes the files;
-``system`` loads them into a boonza System for OpenMM.
+disulfide are one molecule), ``solvent`` the (name, count) of water and
+ion beads after them (see :func:`boonza.martini.solvate`), ``positions``
+every bead in Å, ``cell`` the box.  ``itp``/``top`` give GROMACS text;
+``save`` writes the files; ``system`` loads them into a boonza System for
+OpenMM.
+
+### `boonza.martini.solvate(m: 'Martinized', padding: 'float' = 10.0, box=None, salt: 'float' = 0.15, neutralize: 'bool' = True, clash: 'float' = 4.2, ion_distance: 'float' = 5.0, seed: 'int' = 0) -> 'Martinized'`
+
+``m`` in a box of Martini 3 water (W beads, 4 waters each), with Na+/Cl- ions.
+
+``box``: edge lengths (one value or three, Å); by default a cube of the
+proteins' largest extent plus ``padding`` on each side.  The proteins are
+centered, and a box of water equilibrated at 300 K and 1 bar is tiled
+around them; water beads within ``clash`` Å of a protein bead are
+removed, and one of each pair closer than 3.5 Å where the tiles meet the
+box's faces.  Counterions
+neutralize the proteins (``neutralize``), then ion pairs bring the salt
+to ``salt`` mol/L, counted against the waters as boonza's all-atom
+``neutralize`` counts them.  Ions replace water beads at least
+``ion_distance`` Å from the proteins, picked in an order fixed by
+``seed``.
+
+### `boonza.martini.equilibrate(simulation, temperature: 'float' = 310.0, timestep: 'float' = 0.02, steps: 'int' = 2000, seed: 'int' = 1) -> 'None'`
+
+Minimize, give velocities at ``temperature`` (K), and step up to ``timestep`` (ps).
+
+A 20 fs step straight from a minimum can blow up even where 20 fs is
+stable afterwards: OpenMM's minimizer stops higher than GROMACS's, and
+the first large steps meet the strain it leaves.  So after a tight
+minimization (1 kJ/mol/nm) this runs ``steps`` steps at each of 2, 5 and
+10 fs before leaving the integrator at ``timestep``, as Martini
+tutorials do.  The integrator must have a step size to set (Langevin
+middle, Verlet, ...).
 
 ## Per-format readers and writers (`boonza.io`)
 

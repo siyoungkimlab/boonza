@@ -75,9 +75,11 @@ class Martinized:
     """The Martini beads of a system and their GROMACS topology.
 
     ``molecules`` holds one topology per molecule (chains joined by a
-    disulfide are one molecule), ``positions`` the beads in Å, ``cell`` the
-    input box.  ``itp``/``top`` give GROMACS text; ``save`` writes the files;
-    ``system`` loads them into a boonza System for OpenMM.
+    disulfide are one molecule), ``solvent`` the (name, count) of water and
+    ion beads after them (see :func:`boonza.martini.solvate`), ``positions``
+    every bead in Å, ``cell`` the box.  ``itp``/``top`` give GROMACS text;
+    ``save`` writes the files; ``system`` loads them into a boonza System for
+    OpenMM.
     """
 
     molecules: list
@@ -85,6 +87,7 @@ class Martinized:
     cell: np.ndarray | None
     names: list = field(default_factory=list)
     ss: str = ""
+    solvent: list = field(default_factory=list)
 
     @property
     def nbeads(self) -> int:
@@ -96,16 +99,22 @@ class Martinized:
     def top(self, martini_itp: str = "martini_v3.0.0.itp") -> str:
         lines = [f'#include "{martini_itp}"']
         lines += [f'#include "{n}.itp"' for n in self.names]
+        if self.solvent:
+            lines.append('#include "solvent.itp"')
         lines += ["", "[ system ]", "Martini system", "", "[ molecules ]"]
         lines += [f"{n} 1" for n in self.names]
+        lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
 
     def save(self, directory, martini_itp: str = "martini_v3.0.0.itp") -> Path:
-        """Write ``topol.top``, one ``.itp`` per molecule and ``cg.gro``; returns the top."""
+        """Write ``topol.top``, one ``.itp`` per molecule (``solvent.itp`` for water
+        and ions) and ``cg.gro``; returns the top."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         for k, name in enumerate(self.names):
             (d / f"{name}.itp").write_text(self.itp(k))
+        if self.solvent:
+            (d / "solvent.itp").write_text(SOLVENT_ITP)
         (d / "topol.top").write_text(self.top(martini_itp))
         (d / "cg.gro").write_text(self._gro())
         return d / "topol.top"
@@ -124,13 +133,16 @@ class Martinized:
         return s
 
     def _gro(self) -> str:
-        rows, k = [], 0
-        for mol in self.molecules:
-            for node, x in zip(mol.nodes, mol.positions, strict=True):
-                k += 1
-                rows.append(f"{node['input_resid'] % 100000:5d}{node['resname'][:5]:<5s}"
-                            f"{node['atomname'][:5]:>5s}{k % 100000:5d}"
-                            f"{x[0]:8.3f}{x[1]:8.3f}{x[2]:8.3f}")  # fmt: skip
+        labels = [(n["input_resid"], n["resname"], n["atomname"])
+                  for mol in self.molecules for n in mol.nodes]  # fmt: skip
+        for name, count in self.solvent:
+            resname = "W" if name == "W" else "ION"
+            labels += [(r, resname, name) for r in range(1, count + 1)]
+        rows = []
+        for k, ((resid, resname, name), x) in enumerate(zip(labels, self.positions / 10,
+                                                            strict=True), start=1):  # fmt: skip
+            rows.append(f"{resid % 100000:5d}{resname[:5]:<5s}{name[:5]:>5s}{k % 100000:5d}"
+                        f"{x[0]:8.3f}{x[1]:8.3f}{x[2]:8.3f}")  # fmt: skip
         if self.cell is not None and np.any(self.cell):
             box = np.asarray(self.cell) / 10
             v = [box[0, 0], box[1, 1], box[2, 2], box[0, 1], box[0, 2], box[1, 0], box[1, 2],
@@ -140,6 +152,28 @@ class Martinized:
             x = self.positions / 10
             tail = " ".join(f"{e:.5f}" for e in (x.max(0) - x.min(0) + 2.0))
         return f"Martini beads\n{len(rows)}\n" + "\n".join(rows) + f"\n{tail}\n"
+
+
+# Martini 3's water and ion molecules, as martini_v3.0.0_solvents_v1.itp and
+# martini_v3.0.0_ions_v1.itp define them; their bead types are martini_v3.0.0.itp's
+SOLVENT_ITP = """[ moleculetype ]
+W 1
+
+[ atoms ]
+1 W 1 W W 1 0
+
+[ moleculetype ]
+NA 1
+
+[ atoms ]
+1 TQ5 1 ION NA 1 1.0
+
+[ moleculetype ]
+CL 1
+
+[ atoms ]
+1 TQ5 1 ION CL 1 -1.0 35.453
+"""
 
 
 @dataclass

@@ -13,7 +13,7 @@ import pytest
 
 import boonza
 from boonza.cli import main
-from boonza.martini import OPENMM_OPTIONS, convert_dssp_to_martini, martinize
+from boonza.martini import OPENMM_OPTIONS, convert_dssp_to_martini, equilibrate, martinize, solvate
 from boonza.martini.links import match_order
 
 DATA = Path(__file__).parent / "data"
@@ -254,3 +254,60 @@ def test_the_command_line(tmp_path, capsys):
     rubber = [line for line in (out / "molecule_0.itp").read_text().splitlines()
               if line.endswith(" 700")]  # fmt: skip
     assert rubber
+
+
+@pytest.fixture(scope="module")
+def solvated():
+    m = martinize(boonza.load(DATA / "1HHO.pdb"), "protein and chain A", elastic=True)
+    return m, solvate(m, padding=10.0, salt=0.15)
+
+
+def test_solvate(solvated):
+    """Water fills the box without touching the protein, and ions neutralize it
+    and bring NaCl to 0.15 M (counted against the 4 waters each bead is)."""
+    from boonza.spatial import min_dist2, pairs_within
+
+    dry, wet = solvated
+    (w, nw), (na, n_na), (cl, n_cl) = wet.solvent
+    assert (w, na, cl) == ("W", "NA", "CL")
+    assert wet.nbeads == dry.nbeads + nw + n_na + n_cl
+    charge = sum(n["charge"] for mol in wet.molecules for n in mol.nodes)
+    assert charge + n_na - n_cl == pytest.approx(0)
+    pairs = min(n_na, n_cl)
+    assert pairs == int(0.15 / 55.345 * (4 * (nw + n_na + n_cl) - abs(round(charge))))
+    box = np.diag(wet.cell)
+    extent = dry.positions.max(0) - dry.positions.min(0)
+    assert box == pytest.approx(np.full(3, extent.max() + 20.0))
+    x = wet.positions
+    assert (x >= 0).all() and (x <= box).all()
+    protein, water = x[: dry.nbeads], x[dry.nbeads :]
+    assert (min_dist2(water, protein, 4.2, cell=wet.cell) > 4.2**2 - 1e-3).all()
+    i, j, d2 = pairs_within(water, 3.5, cell=wet.cell)
+    assert len(i) == 0  # not even across the box's faces
+    # the proteins moved, not reshaped
+    assert np.allclose(protein - protein.mean(0), dry.positions - dry.positions.mean(0))
+    density = nw / (np.prod(box) / 1000)  # beads per nm^3 of box
+    assert 6.0 < density < 8.3  # bulk is 8.2; the protein takes the rest
+    with pytest.raises(ValueError, match="already solvated"):
+        solvate(wet)
+
+
+def test_solvated_beads_run(solvated, tmp_path):
+    pytest.importorskip("openmm")
+    import openmm as mm
+    from openmm import app
+
+    _, wet = solvated
+    types = {n["atype"] for mol in wet.molecules for n in mol.nodes} | {"W", "TQ5"}
+    _toy_martini_itp(tmp_path / "toy.itp", types)
+    s = wet.system(tmp_path / "toy.itp")
+    names = np.asarray(s.residues["name"])
+    assert (names == "W").sum() == wet.solvent[0][1]
+    top, system, pos = boonza.to_openmm(s, **OPENMM_OPTIONS)
+    integrator = mm.LangevinMiddleIntegrator(310, 1.0, 0.002)
+    sim = app.Simulation(top, system, integrator, mm.Platform.getPlatformByName("CPU"))
+    sim.context.setPositions(pos)
+    equilibrate(sim, steps=10)
+    assert integrator.getStepSize().value_in_unit(mm.unit.picosecond) == pytest.approx(0.020)
+    sim.step(10)
+    assert np.isfinite(sim.context.getState(getEnergy=True).getPotentialEnergy()._value)
