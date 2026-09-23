@@ -50,7 +50,7 @@ Martini runs with GROMACS's reaction field and potential-shifted
 Lennard-Jones, which `to_openmm` reproduces:
 
 ```python
-s = boonza.load("topol.top", coordinates="cg.gro")  # e.g. from martinize2
+s = boonza.load("topol.top", coordinates="cg.gro")  # from martinize2 or boonza.martinize
 topology, system, positions = boonza.to_openmm(
     s,
     nonbonded_method="CutoffPeriodic",
@@ -59,8 +59,10 @@ topology, system, positions = boonza.to_openmm(
     epsilon_r=15,
     epsilon_rf=0,
     lj_shift=True,
-)
+)  # the same as **boonza.martini.OPENMM_OPTIONS
 ```
+
+To build Martini proteins from all-atom structures, see [Martini](martini.md).
 
 - `epsilon_r` screens every charge interaction, 1-4 pairs included.
 - `epsilon_rf=0` means an infinite reaction-field dielectric, as in GROMACS.

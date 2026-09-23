@@ -446,6 +446,23 @@ def _build(args) -> int:
     return 0
 
 
+def _martinize(args) -> int:
+    import boonza
+
+    cys = args.cys if args.cys in ("auto", "none") else float(args.cys)
+    m = boonza.martinize(_load(args.input), args.selection, ss=args.ss, elastic=args.elastic,
+                         elastic_fc=args.elastic_fc, elastic_lower=args.elastic_lower,
+                         elastic_upper=args.elastic_upper, elastic_decay=args.elastic_decay,
+                         elastic_power=args.elastic_power, elastic_min_fc=args.elastic_min_fc,
+                         res_min_dist=args.res_min_dist, cys=cys,
+                         neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
+                         extdih=args.extdih)  # fmt: skip
+    top = m.save(args.output, martini_itp=args.martini_itp)
+    print(f"wrote {top} ({len(m.molecules)} molecules, {m.nbeads} beads) and cg.gro; "
+          f"it includes {args.martini_itp}, which is not written")  # fmt: skip
+    return 0
+
+
 def _parameterize(args) -> int:
     import boonza
     from boonza import viparr
@@ -616,6 +633,27 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--seed", type=int, default=42, help="random seed for the embedding")
     q.add_argument("--no-optimize", action="store_true", help="skip the MMFF minimization")
     q.set_defaults(run=_build)
+
+    q = sub.add_parser("martinize", help="Martini 3 beads and topology for proteins, as martinize2")
+    q.add_argument("input", help="all-atom structure (hydrogens, if present, set protonation)")
+    q.add_argument("output", help="directory for topol.top, molecule_N.itp and cg.gro")
+    q.add_argument("--selection", default="protein", help="atoms to coarse-grain")
+    q.add_argument("--ss", help="DSSP codes, one per residue (default: boonza's DSSP)")
+    q.add_argument("--elastic", action="store_true", help="add an elastic network (-elastic)")
+    q.add_argument("--elastic-fc", type=float, default=700.0, help="kJ/mol/nm^2 (-ef)")
+    q.add_argument("--elastic-lower", type=float, default=0.0, help="A (-el, in nm there)")
+    q.add_argument("--elastic-upper", type=float, default=9.0, help="A (-eu, in nm there)")
+    q.add_argument("--elastic-decay", type=float, default=0.0, help="-ea")
+    q.add_argument("--elastic-power", type=float, default=0.0, help="-ep")
+    q.add_argument("--elastic-min-fc", type=float, default=0.0, help="-em")
+    q.add_argument("--res-min-dist", type=int, help="-ermd (default 2)")
+    q.add_argument("--cys", default="auto", help="auto, none, or an S-S distance in A")
+    q.add_argument("--neutral-termini", action="store_true")
+    q.add_argument("--no-scfix", action="store_true", help="no side-chain corrections")
+    q.add_argument("--extdih", action="store_true", help="dihedrals for extended regions (-ed)")
+    q.add_argument("--martini-itp", default="martini_v3.0.0.itp",
+                   help="the Martini parameter file topol.top includes")  # fmt: skip
+    q.set_defaults(run=_martinize)
 
     q = sub.add_parser("parameterize", help="apply viparr force fields (first match wins)")
     q.add_argument("input", help="structure with bonds and hydrogens")
