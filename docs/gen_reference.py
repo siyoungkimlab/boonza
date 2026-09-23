@@ -33,7 +33,7 @@ SECTIONS = [
                   "backbone_dihedrals", "backbone_hbonds"]),
     ("RDKit", ["to_rdkit", "from_rdkit", "fragments_to_rdkit", "assign_bond_orders"]),
     ("OpenMM", ["to_openmm", "from_openmm", "openmm_energies"]),
-    ("Martini", ["martinize", "Martinized"]),
+    ("Martini", ["martinize", "Martinized", "martini.solvate", "martini.equilibrate"]),
 ]  # fmt: skip
 CLASSES_WITH_MEMBERS = {"System", "AtomSel", "Atom", "Bond", "Residue", "Chain", "Ct",
                         "TermTable", "ParamTable", "Term", "OverrideTable", "Trajectory",
@@ -90,7 +90,10 @@ def main():
     for title, names in SECTIONS:
         lines += [f"## {title}", ""]
         for name in names:
-            lines += _entry(f"boonza.{name}", getattr(boonza, name))
+            obj = boonza
+            for part in name.split("."):  # submodule members too, e.g. martini.solvate
+                obj = getattr(obj, part)
+            lines += _entry(f"boonza.{name}", obj)
             documented.add(name)
     lines += ["## Per-format readers and writers (`boonza.io`)", ""]
     for name in sorted(dir(bio)):

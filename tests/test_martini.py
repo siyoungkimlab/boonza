@@ -283,3 +283,87 @@ def test_what_the_options_refuse(tmp_path):
     s = _load(tmp_path, TWO_CHARGES, _pair(0.5))
     with pytest.raises(ValueError, match="epsilon_rf"):
         boonza.to_openmm(s, nonbonded_method="NoCutoff", epsilon_rf=0.0)
+
+
+RIGID = """[ defaults ]
+1 2
+[ atomtypes ]
+C 72.0 0.0 A 0.0 0.0
+V 0.0 0.0 A 0.0 0.0
+P 72.0 0.0 A 0.0 0.0
+[ nonbond_params ]
+C C 1 0.47 0.5
+C V 1 0.47 0.5
+V V 1 0.47 0.5
+C P 1 0.47 0.5
+V P 1 0.40 4.0
+P P 1 0.47 0.5
+[ moleculetype ]
+RIG 1
+[ atoms ]
+1 C 1 RIG A 1 0.0 72.0
+2 C 1 RIG B 2 0.0 72.0
+3 C 1 RIG D 3 0.0 72.0
+4 V 1 RIG O 4 0.5 0.0
+5 V 1 RIG T 5 0.0 0.0
+6 V 1 RIG L 6 -0.5 0.0
+[ constraints ]
+1 2 1 0.40
+1 3 1 0.45
+2 3 1 0.35
+[ virtual_sites3 ]
+4 1 2 3 4 0.6 0.3 1.8
+5 1 2 3 1 0.3 0.3
+[ virtual_sites2 ]
+6 2 3 1 0.3
+[ exclusions ]
+1 2 3 4 5 6
+2 3 4 5 6
+3 4 5 6
+4 5 6
+5 6
+[ moleculetype ]
+PRB 1
+[ atoms ]
+1 P 1 PRB P 1 0.0
+[ system ]
+vsites
+[ molecules ]
+RIG 1
+PRB 3
+"""
+RIGID_GRO = """vsites
+9
+    1RIG      A    1   2.000   2.000   2.000
+    1RIG      B    2   2.400   2.000   2.000
+    1RIG      D    3   2.150   2.417   2.000
+    1RIG      O    4   0.000   0.000   0.000
+    1RIG      T    5   0.000   0.000   0.000
+    1RIG      L    6   0.000   0.000   0.000
+    2PRB      P    7   2.285   2.125   2.750
+    3PRB      P    8   2.165   2.125   1.550
+    4PRB      P    9   2.800   2.125   2.000
+   5.00000   5.00000   5.00000
+"""
+
+
+def test_virtual_sites_as_gromacs_builds_them(tmp_path):
+    """virtual_sites3 (3 and 3out, as Martini 3's cholesterol uses) and
+    virtual_sites2, placed by OpenMM from their parents: the energy is
+    GROMACS's with the sites it builds (a 0-step md run, not -rerun, which
+    takes sites as given).  The charged sites are excluded from each other,
+    so the reaction field's exclusion term counts too."""
+    s = _load(tmp_path, RIGID, RIGID_GRO)
+    assert {t for t in s.table_names if t.startswith("virtual")} == {
+        "virtual_lc2", "virtual_lc3", "virtual_out3"}  # fmt: skip
+    _, system, ctx = _energies(s, **MARTINI)
+    ctx.computeVirtualSites()
+    energy = (
+        ctx.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
+    )
+    assert energy == pytest.approx(-16.233511, abs=2e-4)  # GROMACS 2024.6
+    x = ctx.getState(getPositions=True).getPositions(asNumpy=True).value_in_unit(unit.nanometer)
+    a, b, c = x[0], x[1], x[2]
+    assert x[3] == pytest.approx(a + 0.6 * (b - a) + 0.3 * (c - a) + 1.8 * np.cross(b - a, c - a))
+    assert x[4] == pytest.approx(a + 0.3 * (b - a) + 0.3 * (c - a))
+    assert x[5] == pytest.approx(0.7 * b + 0.3 * c)

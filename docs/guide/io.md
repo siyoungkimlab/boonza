@@ -21,7 +21,7 @@ format's reader or writer.
 | GRO (`.gro`) | ✓ | ✓ | first frame; nm → Å; masses as MDAnalysis guesses them |
 | Amber prmtop (`.prmtop`, `.parm7`, `.top`) | ✓ | | full force field as msys's `LoadPrmTop` builds it, CMAP included; coordinates from inpcrd/rst7 or NetCDF restarts |
 | CHARMM/NAMD/X-PLOR PSF (`.psf`) | ✓ | | atoms, CHARMM types, charges, masses, bonds; segments as chains; standard, EXT and NAMD layouts |
-| GROMACS topology (`.top`) | ✓ | | `#include`/`#define`/`#ifdef`; force field for harmonic, Urey-Bradley, periodic, RB and improper terms, LJ combination rules 1-3, pairs, settles, constraints; Martini's cosine and restricted-bending angles and `virtual_sitesn` |
+| GROMACS topology (`.top`) | ✓ | | `#include`/`#define`/`#ifdef`; force field for harmonic, Urey-Bradley, periodic, RB and improper terms, LJ combination rules 1-3, pairs, settles, constraints; Martini's cosine and restricted-bending angles; virtual sites (`virtual_sitesn`, `virtual_sites2`, `virtual_sites3` 3 and 3out) |
 | SDF / MOL (`.sdf`, `.mol`, compressed) | ✓ | ✓ | V2000 and V3000, data fields, charges, isotopes, stereo flags; matches msys |
 
 Reader options:
@@ -100,11 +100,15 @@ s = boonza.load("topol.top", coordinates="conf.gro", include_dirs=["/path/to/gro
   build the OpenMM system from the PSF and parameter files and use
   `boonza.from_openmm`.
 - **GROMACS topologies** are preprocessed as GROMACS does, and each molecule
-  type is repeated as `[ molecules ]` says. Martini topologies from
-  martinize2 read completely: G96 cosine angles (type 2), restricted bending
-  (type 10), `[ constraints ]` and `virtual_sitesn` (centre of geometry, mass
-  or weights, as `virtual_lc{n}`). Terms with no table (GROMOS quartic bonds,
-  tabulated terms, CMAP, `virtual_sites2/3/4`) raise an error; `structure_only=True` reads atoms, residues and bonds. The
+  type is repeated as `[ molecules ]` says. Martini topologies read
+  completely: G96 cosine angles (type 2), restricted bending (type 10),
+  `[ constraints ]`, `virtual_sitesn` (centre of geometry, mass or weights,
+  as `virtual_lc{n}`), `virtual_sites2` (as `virtual_lc2`) and
+  `virtual_sites3` of types 1 and 4 (as `virtual_lc3` and the out-of-plane
+  `virtual_out3`, which Martini 3's cholesterol uses). Terms with no table
+  (GROMOS quartic bonds, tabulated terms, CMAP, `virtual_sites4` and the
+  other `virtual_sites3` types) raise an error; `structure_only=True` reads
+  atoms, residues and bonds. The
   default `#ifdef` choices apply (for example rigid water); pass `defines` to
   change them.
 
