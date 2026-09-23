@@ -23,6 +23,8 @@ boonza parameterize in.dms out.dms -f aa.amber.ff99SB -m aa.amber.ff99SB-ILDN   
 boonza parameterize in.dms out.dms -x amber19-all.xml -x amber19/opc.xml   # OpenMM XML force fields
 boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --gaff2   # + GAFF2 ligands
 boonza martinize protein.pdb cg [--elastic] [--ss CODES]   # Martini 3 topology, as martinize2
+boonza martinize protein.pdb cg --elastic --solvate [--salt 0.15]   # ... in water with NaCl
+boonza bilayer memb --lipid-itp lipids.itp --upper POPC:7,CHOL:3 [--protein p.pdb --opm]   # a membrane
 boonza md protein.pdb --workdir run   # prepare and run MD; the same command resumes it
 boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-swimming runs
 boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two force fields

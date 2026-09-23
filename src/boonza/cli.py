@@ -469,6 +469,36 @@ def _martinize(args) -> int:
     return 0
 
 
+def _composition(text: str) -> dict:
+    """``POPC:7,CHOL:3`` -> {"POPC": 7.0, "CHOL": 3.0}; a bare name counts 1."""
+    out = {}
+    for part in text.split(","):
+        name, _, share = part.partition(":")
+        out[name.strip()] = float(share) if share else 1.0
+    return out
+
+
+def _bilayer(args) -> int:
+    import boonza
+    from boonza.martini import bilayer
+
+    protein = None
+    if args.protein:
+        protein = boonza.martinize(_load(args.protein), args.selection, elastic=args.elastic,
+                                   neutral_termini=args.neutral_termini)  # fmt: skip
+    size = args.size[0] if len(args.size) == 1 else tuple(args.size)
+    m = bilayer(args.lipid_itp, _composition(args.upper),
+                _composition(args.lower) if args.lower else None, size=size,
+                area_per_lipid=args.apl, water=args.water, salt=args.salt, protein=protein,
+                protein_origin=args.opm, protein_shift=args.shift, seed=args.seed)  # fmt: skip
+    top = m.save(args.output, martini_itp=args.martini_itp)
+    lipids = ", ".join(f"{c} {n}" for n, c, _ in m.lipids)
+    water = ", ".join(f"{c} {n}" for n, c in m.solvent)
+    print(f"wrote {top} ({lipids}; {water}; box {' x '.join(f'{v:.1f}' for v in m.cell.diagonal())}"
+          f" A) and cg.gro; it includes {args.martini_itp}, which is not written")  # fmt: skip
+    return 0
+
+
 def _parameterize(args) -> int:
     import boonza
     from boonza import viparr
@@ -664,6 +694,28 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--martini-itp", default="martini_v3.0.0.itp",
                    help="the Martini parameter file topol.top includes")  # fmt: skip
     q.set_defaults(run=_martinize)
+
+    q = sub.add_parser("bilayer", help="a Martini bilayer in water, optionally around a protein")
+    q.add_argument("output", help="directory for topol.top, the .itp files and cg.gro")
+    q.add_argument("--lipid-itp", nargs="+", required=True,
+                   help="Martini lipid and sterol topologies")  # fmt: skip
+    q.add_argument("--upper", required=True, help="upper leaflet, e.g. POPC:7,CHOL:3")
+    q.add_argument("--lower", help="lower leaflet (default: as the upper)")
+    q.add_argument("--size", type=float, nargs="+", default=[100.0], help="x [y] edge (A)")
+    q.add_argument("--apl", type=float, default=60.0, help="area per lipid (A^2)")
+    q.add_argument("--water", type=float, default=25.0, help="water beyond the lipids (A)")
+    q.add_argument("--salt", type=float, default=0.15, help="NaCl (mol/L), after neutralizing")
+    q.add_argument("--protein", help="all-atom protein, martinized and embedded")
+    q.add_argument("--selection", default="protein", help="its atoms to coarse-grain")
+    q.add_argument("--elastic", action="store_true", help="the protein's elastic network")
+    q.add_argument("--neutral-termini", action="store_true")
+    q.add_argument("--opm", action="store_true",
+                   help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
+    q.add_argument("--shift", type=float, default=0.0, help="move the protein along z (A)")
+    q.add_argument("--seed", type=int, default=0)
+    q.add_argument("--martini-itp", default="martini_v3.0.0.itp",
+                   help="the Martini parameter file topol.top includes")  # fmt: skip
+    q.set_defaults(run=_bilayer)
 
     q = sub.add_parser("parameterize", help="apply viparr force fields (first match wins)")
     q.add_argument("input", help="structure with bonds and hydrogens")
