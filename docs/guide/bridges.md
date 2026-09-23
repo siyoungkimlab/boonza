@@ -39,10 +39,45 @@ boonza.save(s, "system.dms")
 - `pair_12_6_es` 1-4 pairs and exclusions;
 - Lorentz-Berthelot or geometric combining, NBFIX overrides;
 - constraints, including rigid water;
-- virtual sites (`lc2`, `lc3`, `out3`, `fdat3`);
+- virtual sites (`lc2`-`lc7`, `out3`, `fdat3`);
 - position restraints and CMAP.
 
 Constrained stretch and angle terms are left out when `constraints=True`.
+
+### Martini
+
+Martini runs with GROMACS's reaction field and potential-shifted
+Lennard-Jones, which `to_openmm` reproduces:
+
+```python
+s = boonza.load("topol.top", coordinates="cg.gro")  # from martinize2 or boonza.martinize
+topology, system, positions = boonza.to_openmm(
+    s,
+    nonbonded_method="CutoffPeriodic",
+    cutoff=11.0,
+    dispersion_correction=False,
+    epsilon_r=15,
+    epsilon_rf=0,
+    lj_shift=True,
+)  # the same as **boonza.martini.OPENMM_OPTIONS
+```
+
+To build Martini proteins from all-atom structures, see [Martini](martini.md).
+
+- `epsilon_r` screens every charge interaction, 1-4 pairs included.
+- `epsilon_rf=0` means an infinite reaction-field dielectric, as in GROMACS.
+  The reaction field is not a plain cutoff: the force goes to zero at the
+  cutoff, and GROMACS adds a term for each excluded pair within it and one
+  for each charge. boonza adds both (forces `nonbonded_rf_exclusions` and
+  `nonbonded_rf_self`), so energies equal GROMACS's. Only
+  `epsilon_rf == epsilon_r` is a plain cutoff of the screened Coulomb.
+- `lj_shift` shifts Lennard-Jones to zero at the cutoff (GROMACS's
+  `Potential-shift-verlet`).
+- Martini's cosine (`angle_cosine_harm`) and restricted-bending
+  (`angle_restricted`) angles become custom angle forces, and
+  `virtual_lc4`-`virtual_lc7` become centre-of-weight sites.
+- GROMACS's `-rerun` takes virtual sites as they are in the file, so
+  compare energies with sites placed by the same construction.
 
 `from_openmm` reads what OpenMM builds from Amber, CHARMM and GROMACS inputs
 and from `ForceField` XML:

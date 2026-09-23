@@ -93,7 +93,7 @@ Pairwise replacement parameters, keyed by a pair of param ids (NBFIX-style).
 
 ### `boonza.TERM_SCHEMAS`
 
-72 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_fbhw`, `angle_harm`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
+74 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
 
 ### `boonza.NONBONDED_SCHEMAS`
 
@@ -432,7 +432,7 @@ single molecule).  Best suited to ligands and other small molecules.
 
 ## OpenMM
 
-### `boonza.to_openmm(system, nonbonded_method: 'str' = 'NoCutoff', cutoff: 'float' = 9.0, constraints: 'bool' = True, dispersion_correction: 'bool' = True, ewald_tolerance: 'float' = 0.0005)`
+### `boonza.to_openmm(system, nonbonded_method: 'str' = 'NoCutoff', cutoff: 'float' = 9.0, constraints: 'bool' = True, dispersion_correction: 'bool' = True, ewald_tolerance: 'float' = 0.0005, epsilon_r: 'float' = 1.0, epsilon_rf: 'float | None' = None, lj_shift: 'bool' = False)`
 
 (Topology, System, positions) for OpenMM; cutoff in Å.
 
@@ -440,6 +440,15 @@ single molecule).  Best suited to ligands and other small molecules.
 CutoffNonPeriodic, CutoffPeriodic, Ewald, PME, LJPME).  With
 ``constraints``, the constraint tables become OpenMM constraints and
 stretch/angle terms marked ``constrained`` are left out.
+
+The rest are GROMACS's settings, for coarse-grained force fields that were
+made with them.  ``epsilon_r`` divides every Coulomb interaction.
+``epsilon_rf`` is the reaction-field dielectric, 0 meaning infinity as in
+GROMACS; with it, the energy is GROMACS's to the digit, including the terms
+GROMACS adds for excluded pairs and for each charge with itself.
+``lj_shift`` shifts every Lennard-Jones pair to zero at the cutoff.  Martini
+uses all three: ``epsilon_r=15, epsilon_rf=0, lj_shift=True``, cutoff 11 Å,
+and no dispersion correction.
 
 ### `boonza.from_openmm(topology, omm_system=None, positions=None, ignore_unknown: 'bool' = False) -> 'System'`
 
@@ -459,6 +468,110 @@ of raising.
 ### `boonza.openmm_energies(system, positions=None, platform: 'str' = 'Reference', **kwargs) -> 'dict'`
 
 Energy of each translated force in kcal/mol (and the total).
+
+## Martini
+
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
+
+Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
+
+``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
+default boonza's DSSP is run on the structure.  ``elastic`` adds
+martinize2's elastic network between backbone beads ``elastic_lower`` to
+``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
+``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
+``elastic_power`` (``-ea``/``-ep``), dropping those below
+``elastic_min_fc`` (``-em``) and those within ``res_min_dist`` residues
+apart in the residue graph (default 2, as martinize2's).  ``cys``: ``"auto"``
+bonds cysteines whose sulfurs are bonded, ``"none"`` never, or a
+distance in Å.  ``neutral_termini`` makes neutral termini;
+``scfix``/``extdih`` as martinize2's (side-chain corrections on by
+default).  Hydrogens present in the structure decide protonation:
+Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
+neutral, and His is typed by which ring nitrogens carry one.
+
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>) -> None`
+
+The Martini beads of a system and their GROMACS topology.
+
+``molecules`` holds one topology per molecule (chains joined by a
+disulfide are one molecule), ``solvent`` the (name, count) of water and
+ion beads after them (see :func:`boonza.martini.solvate`), ``positions``
+every bead in Å, ``cell`` the box.  ``itp``/``top`` give GROMACS text;
+``save`` writes the files; ``system`` loads them into a boonza System for
+OpenMM.
+
+### `boonza.martini.parameters(*names) -> list[pathlib._local.Path]`
+
+Parameter files that came with boonza, by name; all of them with none.
+
+The Martini 3.0.0 release from cgmartini.nl, unchanged, so that martinizing
+and building a membrane need no separate download, and the Martini 2 files
+for what has not been ported to Martini 3.  The two must not be mixed in
+one system.  Give a path of your own instead wherever one of these is
+taken, to use another version or a lipid boonza does not carry.
+
+### `boonza.martini.solvate(m: 'Martinized', padding: 'float' = 10.0, box=None, salt: 'float' = 0.15, neutralize: 'bool' = True, clash: 'float' = 4.2, ion_distance: 'float' = 5.0, seed: 'int' = 0) -> 'Martinized'`
+
+``m`` in a box of Martini 3 water (W beads, 4 waters each), with Na+/Cl- ions.
+
+``box``: edge lengths (one value or three, Å); by default a cube of the
+proteins' largest extent plus ``padding`` on each side.  The proteins are
+centered, and a box of water equilibrated at 300 K and 1 bar is tiled
+around them; water beads within ``clash`` Å of a protein bead are
+removed, and one of each pair closer than 3.5 Å where the tiles meet the
+box's faces.  Counterions
+neutralize the proteins (``neutralize``), then ion pairs bring the salt
+to ``salt`` mol/L, counted against the waters as boonza's all-atom
+``neutralize`` counts them.  Ions replace water beads at least
+``ion_distance`` Å from the proteins, picked in an order fixed by
+``seed``.
+
+### `boonza.martini.bilayer(lipid_itps, upper: 'dict', lower: 'dict | None' = None, size=100.0, area_per_lipid: 'float' = 60.0, water: 'float' = 25.0, salt: 'float' = 0.15, protein: 'Martinized | None' = None, protein_origin: 'bool' = False, protein_shift: 'float' = 0.0, lipid_clash: 'float' = 4.5, seed: 'int' = 0) -> 'Martinized'`
+
+A Martini lipid bilayer in water, optionally around proteins, as insane builds one.
+
+``upper``/``lower``: lipid name -> share in each leaflet (``lower`` is
+``upper`` by default), for molecule types in ``lipid_itps`` (Martini's
+lipid and sterol topologies).  The membrane is ``size`` Å square (or
+(x, y)) with lipids on the lattice nearest ``area_per_lipid`` Å² per
+lipid (counts in the ratios given, rounded), lies in the xy plane with
+its midplane at the box's center, and has ``water`` Å of water beyond
+its lipids on each side (and beyond the protein).  Each lipid is a
+straight template from its topology, turned about z the way, of 12 tried
+at random, that keeps it farthest from the lipids already around it.
+
+``protein``: a martinized system (from :func:`boonza.martinize`),
+oriented with the membrane normal along z.  Its center goes to the
+middle of the box; along z, its center goes to the midplane, or with
+``protein_origin`` its z = 0 does (as OPM orients structures), then it
+moves by ``protein_shift`` Å.  Lipids with a bead within
+``lipid_clash`` Å of a protein bead are left out.  Water and ions
+are then added as :func:`boonza.martini.solvate` adds them.
+
+### `boonza.martini.lipid_templates(itps, names=None) -> 'dict[str, Lipid]'`
+
+Templates for the molecule types in ``itps`` (Martini lipid topologies).
+
+A template is built from the molecule's graph (its bonds, constraints and
+virtual-site parents), as insane builds lipids: bead levels 3.3 Å apart
+down from the first bead (the head), chains zig-zagging so that bonded
+beads stay about a bond apart, branches (a phospholipid's two tails)
+side by side.  Constraints are then brought to their lengths, virtual
+sites put where their parents place them, and the molecule turned so its
+long axis is along z, head up.  Minimization does the rest.
+
+### `boonza.martini.equilibrate(simulation, temperature: 'float' = 310.0, timestep: 'float' = 0.02, steps: 'int' = 2000, seed: 'int' = 1) -> 'None'`
+
+Minimize, give velocities at ``temperature`` (K), and step up to ``timestep`` (ps).
+
+A 20 fs step straight from a minimum can blow up even where 20 fs is
+stable afterwards: OpenMM's minimizer stops higher than GROMACS's, and
+the first large steps meet the strain it leaves.  So after a tight
+minimization (1 kJ/mol/nm) this runs ``steps`` steps at each of 2, 5 and
+10 fs before leaving the integrator at ``timestep``, as Martini
+tutorials do.  The integrator must have a step size to set (Langevin
+middle, Verlet, ...).
 
 ## Per-format readers and writers (`boonza.io`)
 

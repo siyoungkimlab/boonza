@@ -22,6 +22,9 @@ boonza parameterize in.dms out.dms -f aa.charmm.c36m -f water.tip3p_charmm   # v
 boonza parameterize in.dms out.dms -f aa.amber.ff99SB -m aa.amber.ff99SB-ILDN   # with a patch
 boonza parameterize in.dms out.dms -x amber19-all.xml -x amber19/opc.xml   # OpenMM XML force fields
 boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --gaff2   # + GAFF2 ligands
+boonza martinize protein.pdb cg [--elastic] [--ss CODES]   # Martini 3 topology, as martinize2
+boonza martinize protein.pdb cg --elastic --solvate [--salt 0.15]   # ... in water with NaCl
+boonza bilayer memb --lipid-itp lipids.itp --upper POPC:7,CHOL:3 [--protein p.pdb --opm]   # a membrane
 boonza md protein.pdb --workdir run   # prepare and run MD; the same command resumes it
 boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-swimming runs
 boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two force fields
@@ -29,6 +32,9 @@ boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two for
 
 `parameterize` takes force fields in priority order (`-f`, names in
 `$VIPARR_FFPATH` or directories); see [viparr force fields](viparr.md).
+
+`martinize` writes `topol.top`, one `molecule_N.itp` per molecule and
+`cg.gro`; see [Martini](martini.md) for its options.
 
 `validate`, `knots` and `diff` exit with status 1 when they find something,
 so they work in scripts and CI.
