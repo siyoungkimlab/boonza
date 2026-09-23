@@ -41,6 +41,7 @@ from .ce import CEResult, ce_align, cealign  # noqa: E402
 from .chem import assign_bond_orders, fragments_to_rdkit, from_rdkit, to_rdkit  # noqa: E402
 from .describe import ForceFieldReport, describe, topological_distances  # noqa: E402
 from .diff import Difference, canonical_forcefield, diff  # noqa: E402
+from .draw import Drawing, common_core, draw, read_smiles  # noqa: E402
 from .exclusions import update_exclusions  # noqa: E402
 from .ffxml import OpenMMForcefield, load_openmm_forcefield, parameterize_openmm  # noqa: E402
 from .gaff import find_unmatched, gaff2_patch  # noqa: E402
@@ -246,4 +247,8 @@ __all__ = [
     "TermTable",
     "load",
     "save",
+    "Drawing",
+    "common_core",
+    "draw",
+    "read_smiles",
 ]
