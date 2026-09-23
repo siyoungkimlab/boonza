@@ -29,6 +29,9 @@ import sys
 
 import numpy as np
 
+#: what the site and pose commands align runs on, unless told otherwise
+DEFAULT_ALIGN = "protein and name CA"
+
 
 def _load(path, structure_only=False):
     import boonza
@@ -393,6 +396,36 @@ def _poses(args) -> int:
     return 0
 
 
+def _coarse_grained(system) -> bool:
+    """A Martini system: backbone beads rather than alpha carbons."""
+    return len(system.select("name CA").ids) == 0 and len(system.select("name BB").ids) >= 3
+
+
+def _cg_selections(args, system, workdirs) -> None:
+    """Fill in what a coarse-grained run needs: the probes of a `boonza swim
+    --model martini3` simulation, and its backbone beads to align on."""
+    import json
+    from pathlib import Path
+
+    from .symmetry import DEFAULT_LIGAND
+
+    if not _coarse_grained(system):
+        return
+    if getattr(args, "alignsel", None) in (None, DEFAULT_ALIGN):
+        args.alignsel = "name BB"
+        print("aligning on 'name BB' (a coarse-grained system has no CA atoms)")
+    if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
+        probes = []
+        for d in workdirs or []:
+            for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
+                if candidate.is_file():
+                    probes += json.loads(candidate.read_text())["probes"]
+                    break
+        if probes:
+            args.ligandsel = "resname " + " ".join(dict.fromkeys(probes))
+            print(f"the probes of the run(s): {args.ligandsel}")
+
+
 def _sites(args) -> int:
     import json
 
@@ -408,12 +441,15 @@ def _sites(args) -> int:
     if args.workdir:  # each brings its own system: only the protein must match
         runs = []
         for d in args.workdir:
-            own = _load(str(Path(d) / "solvated.dms"), structure_only=True)
+            # not structure_only: that drops pseudo particles (Martini virtual
+            # sites, CHARMM lone pairs), which the trajectory still carries
+            own = boonza.load(str(Path(d) / "solvated.dms"), without_tables=True)
             runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
         system = runs[0][0]
     else:
         system = _load(args.system)
         runs = [open_trajectory(path, system) for path in args.traj]
+    _cg_selections(args, system, args.workdir)
     found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
                          spacing=args.spacing, enrichment=args.enrichment,
                          min_occupancy=args.min_occupancy, periodic=not args.no_pbc)  # fmt: skip
@@ -901,7 +937,7 @@ def _parser() -> argparse.ArgumentParser:
                         "ligands differ pool as long as the protein does not")  # fmt: skip
     q.add_argument("--reference", help="structure the runs are superposed on (default: the first)")
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms, every copy")
-    q.add_argument("--alignsel", default="protein and name CA", help="atoms the runs align on")
+    q.add_argument("--alignsel", default=DEFAULT_ALIGN, help="atoms the runs align on")
     q.add_argument("--spacing", type=float, default=1.0, help="grid spacing (A)")
     q.add_argument("--enrichment", type=float, default=20.0,
                    help="how many times more visited than bulk a site must be")  # fmt: skip

@@ -213,6 +213,20 @@ Run membranes with semi-isotropic pressure: OpenMM's
 `MonteCarloMembraneBarostat` with `XYIsotropic` and `ZFree`, as
 `Pcoupltype = semiisotropic` in GROMACS.
 
+## Probes
+
+`boonza swim --model martini3` maps a protein's surface with dipeptide
+probes, which need no parameterization of their own; see
+[swim](swim.md#coarse-grained-probes---model-martini3).
+`boonza.martini.probes` builds them:
+
+```python
+from boonza.martini.probes import probe, probe_sequences
+
+probe_sequences()  # 105 dipeptides of the 14 probe residues
+probe("EK")  # a martinized Glu-Lys probe, ends neutral, free to bend
+```
+
 ## Other Martini molecules
 
 Molecules from Martini's own topology files load with `boonza.load` (or

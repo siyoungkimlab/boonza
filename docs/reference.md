@@ -476,7 +476,9 @@ Energy of each translated force in kcal/mol (and the total).
 Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
 
 ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
-default boonza's DSSP is run on the structure.  ``elastic`` adds
+default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
+unassigned (the backbone then takes the coil terms, as martinize2's
+links give a residue with no secondary structure).  ``elastic`` adds
 martinize2's elastic network between backbone beads ``elastic_lower`` to
 ``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
 ``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
@@ -490,7 +492,7 @@ default).  Hydrogens present in the structure decide protonation:
 Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
 neutral, and His is typed by which ring nitrogens carry one.
 
-### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, copies: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
 
 The Martini beads of a system and their GROMACS topology.
 

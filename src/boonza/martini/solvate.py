@@ -82,7 +82,8 @@ def solvate(m: Martinized, padding: float = 10.0, box=None, salt: float = 0.15,
             gone[b] = True
     water = water[~gone]
 
-    charge = sum(float(n["charge"]) for mol in m.molecules for n in mol.nodes)
+    charge = sum(count * sum(float(n["charge"]) for n in mol.nodes)
+                 for mol, count in zip(m.molecules, m.molecule_copies, strict=True))  # fmt: skip
     net = round(charge)
     if abs(charge - net) > 1e-6:
         raise ValueError(f"the proteins carry a charge of {charge:g}, not a whole number")

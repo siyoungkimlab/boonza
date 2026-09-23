@@ -19,7 +19,6 @@ GAFF2 (AM1-BCC, AmberTools), in parallel with ``--jobs``.
 
 from __future__ import annotations
 
-import argparse
 import csv
 import re
 import sys
@@ -565,8 +564,12 @@ def main(argv=None) -> int:
     g.add_argument("--ligands",
                    help="SDF or DMS file of ligands (with or without a force field), or a "
                         "library boonza ships: AstexMiniFrag, Essential320")  # fmt: skip
-    g.add_argument("--types", type=int, help="ligand types per simulation (default: 5)")
-    g.add_argument("--copies", type=int, help="copies of each ligand type (default: 3)")
+    g.add_argument("--types", type=int,
+                   help="ligand types per simulation (default: 5; Martini probes: 10)")  # fmt: skip
+    g.add_argument("--copies", type=int,
+                   help="copies of each ligand type (default: 3; Martini probes: 5)")  # fmt: skip
+    g.add_argument("--probes", nargs="+", metavar="XY",
+                   help="Martini: the dipeptide probes (default: all 105 of them)")  # fmt: skip
     g.add_argument("--jobs", type=int, help="ligands parameterized at once (default: 1)")
     g.add_argument(
         "--clearance",
@@ -576,21 +579,38 @@ def main(argv=None) -> int:
     g.add_argument("--run", action="store_true", help="run the simulations here, one by one")
     g.add_argument("--repulsion", dest="repulsion", action="store_true",
                    help="keep ligand copies from sticking together: a flat-bottom wall "
-                        "between the heavy atoms of different ligands (off by default, "
-                        "as in boonza md)")  # fmt: skip
-    # --no-repulsion was the way to turn off what swim once did by default
+                        "between the heavy atoms of different ligands (off by default for "
+                        "ligands, as in boonza md; on for Martini probes)")  # fmt: skip
     g.add_argument("--no-repulsion", dest="no_repulsion", action="store_true",
-                   help=argparse.SUPPRESS)  # fmt: skip
+                   help="Martini: let the probes stick to each other (and the way to turn "
+                        "off what swim once did by default for ligands)")  # fmt: skip
     args = parse_arguments(argv, parser)
     x = args.extra
     if "workdir" not in args.specified:
         args.workdir = "swim"
     try:
-        if "ligands" not in x:
-            raise ValueError("give the ligands with --ligands")
-        sims = prepare(args, x["ligands"], x.get("types", 5), x.get("copies", 3),
-                       x.get("jobs", 1), x.get("clearance", 3.0),
-                       repel=bool(x.get("repulsion")) and not x.get("no_repulsion"))  # fmt: skip
+        if args.model != "aa":  # Martini: dipeptide probes, no ligand library to parameterize
+            from .cgswim import prepare as prepare_cg
+
+            if "ligands" in x:
+                raise ValueError(f"model = '{args.model}' swims dipeptide probes, not a ligand "
+                                 "library; choose them with --probes")  # fmt: skip
+            sims = prepare_cg(args, x.get("probes"), x.get("types", 10), x.get("copies", 5),
+                              x.get("clearance", 5.0),
+                              repel=not x.get("no_repulsion"))  # fmt: skip
+        else:
+            if "ligands" not in x:
+                raise ValueError("give the ligands with --ligands")
+            repel = bool(x.get("repulsion")) and not x.get("no_repulsion")
+            sims = prepare(
+                args,
+                x["ligands"],
+                x.get("types", 5),
+                x.get("copies", 3),
+                x.get("jobs", 1),
+                x.get("clearance", 3.0),
+                repel=repel,
+            )
         if x.get("run"):
             for d in sims:
                 print(f"== {d}")
