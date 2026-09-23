@@ -88,6 +88,8 @@ class Martinized:
     names: list = field(default_factory=list)
     ss: str = ""
     solvent: list = field(default_factory=list)
+    lipids: list = field(default_factory=list)  # (name, count, bead names), in order
+    includes: list = field(default_factory=list)  # topology files the lipids come from
 
     @property
     def nbeads(self) -> int:
@@ -98,11 +100,13 @@ class Martinized:
 
     def top(self, martini_itp: str = "martini_v3.0.0.itp") -> str:
         lines = [f'#include "{martini_itp}"']
+        lines += [f'#include "{p}"' for p in self.includes]
         lines += [f'#include "{n}.itp"' for n in self.names]
         if self.solvent:
             lines.append('#include "solvent.itp"')
         lines += ["", "[ system ]", "Martini system", "", "[ molecules ]"]
         lines += [f"{n} 1" for n in self.names]
+        lines += [f"{n} {c}" for n, c, _ in self.lipids]
         lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
 
@@ -135,6 +139,11 @@ class Martinized:
     def _gro(self) -> str:
         labels = [(n["input_resid"], n["resname"], n["atomname"])
                   for mol in self.molecules for n in mol.nodes]  # fmt: skip
+        resid = 0
+        for name, count, beads in self.lipids:
+            for _ in range(count):
+                resid += 1
+                labels += [(resid, name, bead) for bead in beads]
         for name, count in self.solvent:
             resname = "W" if name == "W" else "ION"
             labels += [(r, resname, name) for r in range(1, count + 1)]

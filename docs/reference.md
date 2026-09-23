@@ -490,7 +490,7 @@ default).  Hydrogens present in the structure decide protonation:
 Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
 neutral, and His is typed by which ring nitrogens carry one.
 
-### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>) -> None`
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>) -> None`
 
 The Martini beads of a system and their GROMACS topology.
 
@@ -516,6 +516,40 @@ to ``salt`` mol/L, counted against the waters as boonza's all-atom
 ``neutralize`` counts them.  Ions replace water beads at least
 ``ion_distance`` Å from the proteins, picked in an order fixed by
 ``seed``.
+
+### `boonza.martini.bilayer(lipid_itps, upper: 'dict', lower: 'dict | None' = None, size=100.0, area_per_lipid: 'float' = 60.0, water: 'float' = 25.0, salt: 'float' = 0.15, protein: 'Martinized | None' = None, protein_origin: 'bool' = False, protein_shift: 'float' = 0.0, lipid_clash: 'float' = 4.5, seed: 'int' = 0) -> 'Martinized'`
+
+A Martini lipid bilayer in water, optionally around proteins, as insane builds one.
+
+``upper``/``lower``: lipid name -> share in each leaflet (``lower`` is
+``upper`` by default), for molecule types in ``lipid_itps`` (Martini's
+lipid and sterol topologies).  The membrane is ``size`` Å square (or
+(x, y)) with lipids on the lattice nearest ``area_per_lipid`` Å² per
+lipid (counts in the ratios given, rounded), lies in the xy plane with
+its midplane at the box's center, and has ``water`` Å of water beyond
+its lipids on each side (and beyond the protein).  Each lipid is a
+straight template from its topology, turned about z the way, of 12 tried
+at random, that keeps it farthest from the lipids already around it.
+
+``protein``: a martinized system (from :func:`boonza.martinize`),
+oriented with the membrane normal along z.  Its center goes to the
+middle of the box; along z, its center goes to the midplane, or with
+``protein_origin`` its z = 0 does (as OPM orients structures), then it
+moves by ``protein_shift`` Å.  Lipids with a bead within
+``lipid_clash`` Å of a protein bead are left out.  Water and ions
+are then added as :func:`boonza.martini.solvate` adds them.
+
+### `boonza.martini.lipid_templates(itps, names=None) -> 'dict[str, Lipid]'`
+
+Templates for the molecule types in ``itps`` (Martini lipid topologies).
+
+A template is built from the molecule's graph (its bonds, constraints and
+virtual-site parents), as insane builds lipids: bead levels 3.3 Å apart
+down from the first bead (the head), chains zig-zagging so that bonded
+beads stay about a bond apart, branches (a phospholipid's two tails)
+side by side.  Constraints are then brought to their lengths, virtual
+sites put where their parents place them, and the molecule turned so its
+long axis is along z, head up.  Minimization does the rest.
 
 ### `boonza.martini.equilibrate(simulation, temperature: 'float' = 310.0, timestep: 'float' = 0.02, steps: 'int' = 2000, seed: 'int' = 1) -> 'None'`
 
