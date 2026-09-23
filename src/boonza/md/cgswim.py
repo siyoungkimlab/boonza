@@ -85,7 +85,8 @@ def build(protein, probes, copies: int, box, rng, salt: float = 0.15,
 
 
 def prepare(args, sequences=None, types: int = 10, copies: int = 5,
-            clearance: float = CLEARANCE, log=print, repel: bool = True) -> list[Path]:  # fmt: skip
+            clearance: float = CLEARANCE, log=print, repel: bool = True,
+            elastic: bool = True) -> list[Path]:  # fmt: skip
     """Write one ``boonza md`` Martini simulation per group of probes into
     ``args.workdir``; returns their directories."""
     from ..martini import martinize
@@ -99,7 +100,6 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     root = Path(args.workdir)
     root.mkdir(parents=True, exist_ok=True)
     aa = load_input(args.input_structure, log, hydrogens=False)
-    elastic = args.elastic if "elastic" in args.specified else True
     protein = martinize(aa, args.cg_selection, elastic=elastic,
                         neutral_termini=bool(args.neutral_termini))  # fmt: skip
     log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
@@ -128,6 +128,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         system = build(protein, [probe(q) for q in group], copies, box, rng, args.saltM,
                        clearance)  # fmt: skip
         system.save(d / "martini", martini_itp=args.martini_itp)
+        if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
+            (d / "martini" / "secondary.txt").write_text(protein.ss + "\n")
         settings = {**settings_of(args), "model": args.model, "solvate": "none",
                     "input_structure": str((d / "martini" / "topol.top").resolve()),
                     "workdir": str((d / "md").resolve())}  # fmt: skip
@@ -135,8 +137,12 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         for key in ("upper", "lower", "size_nm", "opm", "shift_nm", "elastic", "cg_selection",
                     "neutral_termini", "lipid_itp", *ALL_ATOM_ONLY):  # fmt: skip
             settings.pop(key, None)
+        probes_are = "resname " + " ".join(group)
         if repel and "repulsion_selection" not in args.specified:
-            settings["repulsion_selection"] = "resname " + " ".join(group)  # probes apart
+            settings["repulsion_selection"] = probes_are  # probes apart
+        if (settings.get("dihedral_restraint", "none") != "none"
+                and "dihedral_restraint_selection" not in args.specified):  # fmt: skip
+            settings["dihedral_restraint_selection"] = f"not ({probes_are})"  # probes swim
         write_settings(d / "md.toml", settings)
         # what the analysis needs to know about a coarse-grained run
         (d / "probes.json").write_text(json.dumps(

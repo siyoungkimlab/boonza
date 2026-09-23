@@ -156,6 +156,10 @@ boonza swim protein.pdb --model martini3 --probes RR EK FF --types 3 --copies 6
   chemistry rather than all the Arg probes together.
 - **Repulsion is on by default** here, unlike an all-atom swim: probe
   clusters would otherwise read as hotspots. `--no-repulsion` turns it off.
+- **`--dihedral-restraint bb` or `ss`** holds the protein's BB-BB-BB-BB
+  torsions, as in an all-atom swim it holds phi and psi; the probes are left
+  free. It is worth adding when the protein is built without an elastic
+  network (`--no-elastic`), since Martini leaves loops free.
 
 Each simulation directory holds the built topology (`martini/topol.top`),
 its `md.toml`, and `probes.json`, which records the probes so that the

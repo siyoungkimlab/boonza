@@ -570,6 +570,9 @@ def main(argv=None) -> int:
                    help="copies of each ligand type (default: 3; Martini probes: 5)")  # fmt: skip
     g.add_argument("--probes", nargs="+", metavar="XY",
                    help="Martini: the dipeptide probes (default: all 105 of them)")  # fmt: skip
+    g.add_argument("--no-elastic", dest="no_elastic", action="store_true",
+                   help="Martini: no elastic network on the protein (it is on by "
+                        "default here, to hold the fold)")  # fmt: skip
     g.add_argument("--jobs", type=int, help="ligands parameterized at once (default: 1)")
     g.add_argument(
         "--clearance",
@@ -596,8 +599,8 @@ def main(argv=None) -> int:
                 raise ValueError(f"model = '{args.model}' swims dipeptide probes, not a ligand "
                                  "library; choose them with --probes")  # fmt: skip
             sims = prepare_cg(args, x.get("probes"), x.get("types", 10), x.get("copies", 5),
-                              x.get("clearance", 5.0),
-                              repel=not x.get("no_repulsion"))  # fmt: skip
+                              x.get("clearance", 5.0), repel=not x.get("no_repulsion"),
+                              elastic=not x.get("no_elastic"))  # fmt: skip
         else:
             if "ligands" not in x:
                 raise ValueError("give the ligands with --ligands")

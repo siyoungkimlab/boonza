@@ -172,7 +172,7 @@ ligands included.
 | `*_report_interval_ns`, `checkpoint_interval_ns` | 0.01 / 1.0, 0.01 | checkpoints must divide the production report interval |
 | `performance_interval_ns` | 1.0 | rows of `performance.csv` |
 | `integration_fs`, `hmr` | 2, off | `hmr` repartitions hydrogens to 4 amu (water untouched) and makes the step 4 fs |
-| `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets) |
+| `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets); in Martini, the BB-BB-BB-BB torsions |
 | `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
 | `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |
 | `repulsion_selection`, `repulsion_distance_nm`, `repulsion_kJ` | none, 0.5, 500 | keep the molecules a selection picks from sticking together: E = k (d0 - r)^2 between heavy atoms of different ones closer than d0 (k in kJ/mol/nm^2); `boonza swim` sets it for its ligands |
@@ -251,6 +251,16 @@ of depth set by `dihedral_restraint_kJ`; `"ss"` only those of residues DSSP
 puts in helices or sheets (boonza's own DSSP; MDTraj is not needed). The
 force is in `system.xml`, so restarts keep it; the torsions and their
 reference angles are in `dihedral_restraints.csv`.
+
+A Martini run restrains the coarse-grained backbone instead: the
+BB-BB-BB-BB torsion over four residues in a row, which is the torsion
+Martini's own helix term acts on (in an α-helix it sits at about +60°,
+where that term has its minimum). DSSP cannot read beads, so `"ss"` takes
+the secondary structure from `secondary.txt`, which boonza writes beside
+the topology it builds; without it, use `"bb"`. Note that Martini already
+holds helices with its own dihedral, and sheets with short elastic bonds,
+so these restraints matter most for a protein built without an elastic
+network, or for the loops that Martini leaves free.
 
 ## Stopping when a binder leaves
 
