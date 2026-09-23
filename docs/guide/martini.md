@@ -227,6 +227,10 @@ probe_sequences()  # 105 dipeptides of the 14 probe residues
 probe("EK")  # a martinized Glu-Lys probe, ends neutral, free to bend
 ```
 
+Pharmacophore features of beads come from what each bead stands for, in
+`boonza.martini.features`, which is what `boonza sites --features` uses on a
+coarse-grained run.
+
 ## Other Martini molecules
 
 Molecules from Martini's own topology files load with `boonza.load` (or

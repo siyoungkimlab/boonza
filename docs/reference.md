@@ -916,7 +916,7 @@ holding ``quantile`` of the site's own frames -- and leaves only past
 ``hysteresis`` times that.  The first and last stretch of every copy are
 censored: they were cut by the trajectory, not by the ligand.
 
-### `boonza.feature_maps(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), spacing: 'float' = 1.0, periodic: 'bool' = True) -> 'dict[str, Density]'`
+### `boonza.feature_maps(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), spacing: 'float' = 1.0, periodic: 'bool' = True, backbone: 'bool' = False) -> 'dict[str, Density]'`
 
 A map per feature family: how much more often than bulk each kind is found where.
 
@@ -925,7 +925,7 @@ place that wants an acceptor and not a donor is the interesting kind.
 Bulk is worked out per family, from that family's own count, so a ligand
 set rich in one kind does not make its map look hot everywhere.
 
-### `boonza.feature_points(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), periodic: 'bool' = True) -> 'tuple[dict, np.ndarray]'`
+### `boonza.feature_points(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), periodic: 'bool' = True, backbone: 'bool' = False) -> 'tuple[dict, np.ndarray]'`
 
 ``({family: (n, 3) positions}, {family: (n,) which copy})`` in the reference's frame.
 
@@ -1046,7 +1046,7 @@ to the image nearest the protein.  The frame's ``align`` atoms are
 superposed on the reference's, and the same transform is applied to the
 centroid, so points from different runs live in one frame of reference.
 
-### `boonza.ligand_features(system, ligand: 'str' = 'not (polymer or water or ions) and noh', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable')) -> 'list[list[tuple]]'`
+### `boonza.ligand_features(system, ligand: 'str' = 'not (polymer or water or ions) and noh', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), backbone: 'bool' = False) -> 'list[list[tuple]]'`
 
 Per ligand copy, ``[(family, atom indices), ...]`` as RDKit types them.
 
@@ -1054,6 +1054,10 @@ A feature is placed at the centre of its atoms, so an aromatic ring counts
 once at the middle of the ring rather than six times around it.
 ``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
 case and the second repeats what ``Hydrophobe`` already says.
+
+Martini beads are typed by what they stand for instead, since they have no
+element or valence for RDKit to read (:mod:`boonza.martini.features`);
+``backbone`` then also types the BB beads, which every probe carries.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 

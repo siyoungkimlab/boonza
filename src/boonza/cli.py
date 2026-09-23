@@ -540,25 +540,29 @@ def _sites(args) -> int:
             print(rate.summary())
             rates.append(rate)
     spots = []
-    if args.features and _coarse_grained(system):
-        raise ValueError("--features types the ligand's atoms with RDKit, which coarse-grained "
-                         "beads are not: a Martini bead has no element or valence to read. "
-                         "Use 'boonza probes' for a coarse-grained run, where the probe itself "
-                         "is the chemistry")  # fmt: skip
     if args.features:
         maps = boonza.feature_maps(system, runs, reference, ligand=args.ligandsel,
                                    align=args.alignsel, spacing=args.spacing,
-                                   periodic=not args.no_pbc)  # fmt: skip
+                                   periodic=not args.no_pbc,
+                                   backbone=args.feature_backbone)  # fmt: skip
         spots = boonza.hotspots(maps, enrichment=2.0 * args.enrichment)
         print(f"\n{len(spots)} hotspots: what a pocket asks for, and how many molecules agree")
+        placed = 0
         for k, site in enumerate(found):
             near = boonza.wanted(spots, site.center)
             if not near:
                 continue
+            placed += 1
             print(f"  site {k}:")
             for h in near[:5]:
                 print(f"    {h.family:12s} {h.ligands:3d} ligands, {h.enrichment:6.0f}x bulk, "
                       f"radius {h.radius:.1f} A")  # fmt: skip
+        if spots and not placed:  # hotspots of their own, where no site settled
+            print("  none of them sits in a site; the strongest, wherever they are:")
+            for h in sorted(spots, key=lambda h: -h.enrichment)[:10]:
+                centre = " ".join(f"{x:7.1f}" for x in h.center)
+                print(f"    {h.family:12s} {h.ligands:3d} ligands, {h.enrichment:6.0f}x bulk, "
+                      f"radius {h.radius:.1f} A  {centre}")  # fmt: skip
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
@@ -1024,6 +1028,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="how many times more visited than bulk a site must be")  # fmt: skip
     q.add_argument("--min-occupancy", type=float, default=0.005,
                    help="share of pooled frames a site must hold")  # fmt: skip
+    q.add_argument("--feature-backbone", action="store_true",
+                   help="with --features on a Martini run, also type the BB beads (an amide: "
+                        "donor and acceptor), which every probe carries")  # fmt: skip
     q.add_argument("--features", action="store_true",
                    help="also map what each pocket asks for -- donor, acceptor, aromatic, "
                         "greasy -- and where")  # fmt: skip
