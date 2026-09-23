@@ -446,6 +446,28 @@ def _build(args) -> int:
     return 0
 
 
+def _where(path) -> str:
+    """What to say about a parameter file: there it is, or you have to supply it."""
+    from pathlib import Path
+
+    path = Path(path)
+    if path.is_file():
+        return f"{path.name}, which it carries" if path.parent.name == "params" else str(path)
+    return f"{path.name}, which is not written"
+
+
+def _martini_files(args):
+    """The parameter files to use: the ones given, else the ones boonza carries."""
+
+    from .martini import LIPIDS, NONBONDED, parameters
+
+    itp = args.martini_itp or str(parameters(NONBONDED)[0])
+    lipids = getattr(args, "lipid_itp", None)
+    if lipids is None:
+        lipids = [str(p) for p in parameters(*LIPIDS)]
+    return itp, lipids
+
+
 def _martinize(args) -> int:
     import boonza
 
@@ -461,11 +483,13 @@ def _martinize(args) -> int:
         from .martini import solvate
 
         m = solvate(m, padding=args.padding, salt=args.salt, seed=args.seed)
-    top = m.save(args.output, martini_itp=args.martini_itp)
+    itp, _ = _martini_files(args)
+    top = m.save(args.output, martini_itp=itp)
     water = ", ".join(f"{c} {n}" for n, c in m.solvent)
-    print(f"wrote {top} ({len(m.molecules)} molecules, {m.nbeads} beads"
-          f"{'; ' + water if water else ''}) and cg.gro; it includes {args.martini_itp}, "
-          "which is not written")  # fmt: skip
+    print(
+        f"wrote {top} ({len(m.molecules)} molecules, {m.nbeads} beads"
+        f"{'; ' + water if water else ''}) and cg.gro; it includes {_where(itp)}"
+    )
     return 0
 
 
@@ -487,15 +511,16 @@ def _bilayer(args) -> int:
         protein = boonza.martinize(_load(args.protein), args.selection, elastic=args.elastic,
                                    neutral_termini=args.neutral_termini)  # fmt: skip
     size = args.size[0] if len(args.size) == 1 else tuple(args.size)
-    m = bilayer(args.lipid_itp, _composition(args.upper),
+    itp, lipid_itp = _martini_files(args)
+    m = bilayer(lipid_itp, _composition(args.upper),
                 _composition(args.lower) if args.lower else None, size=size,
                 area_per_lipid=args.apl, water=args.water, salt=args.salt, protein=protein,
                 protein_origin=args.opm, protein_shift=args.shift, seed=args.seed)  # fmt: skip
-    top = m.save(args.output, martini_itp=args.martini_itp)
+    top = m.save(args.output, martini_itp=itp)
     lipids = ", ".join(f"{c} {n}" for n, c, _ in m.lipids)
     water = ", ".join(f"{c} {n}" for n, c in m.solvent)
     print(f"wrote {top} ({lipids}; {water}; box {' x '.join(f'{v:.1f}' for v in m.cell.diagonal())}"
-          f" A) and cg.gro; it includes {args.martini_itp}, which is not written")  # fmt: skip
+          f" A) and cg.gro; it includes {_where(itp)}")  # fmt: skip
     return 0
 
 
@@ -691,14 +716,16 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--padding", type=float, default=10.0, help="water beyond the protein (A)")
     q.add_argument("--salt", type=float, default=0.15, help="NaCl (mol/L), after neutralizing")
     q.add_argument("--seed", type=int, default=0, help="which waters become ions")
-    q.add_argument("--martini-itp", default="martini_v3.0.0.itp",
-                   help="the Martini parameter file topol.top includes")  # fmt: skip
+    q.add_argument("--martini-itp", default=None,
+                   help="the Martini parameter file topol.top includes "
+                        "(default: the Martini 3 file boonza carries)")  # fmt: skip
     q.set_defaults(run=_martinize)
 
     q = sub.add_parser("bilayer", help="a Martini bilayer in water, optionally around a protein")
     q.add_argument("output", help="directory for topol.top, the .itp files and cg.gro")
-    q.add_argument("--lipid-itp", nargs="+", required=True,
-                   help="Martini lipid and sterol topologies")  # fmt: skip
+    q.add_argument("--lipid-itp", nargs="+", default=None,
+                   help="Martini lipid and sterol topologies (default: the phospholipids "
+                        "and sterols boonza carries)")  # fmt: skip
     q.add_argument("--upper", required=True, help="upper leaflet, e.g. POPC:7,CHOL:3")
     q.add_argument("--lower", help="lower leaflet (default: as the upper)")
     q.add_argument("--size", type=float, nargs="+", default=[100.0], help="x [y] edge (A)")
@@ -713,8 +740,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
     q.add_argument("--shift", type=float, default=0.0, help="move the protein along z (A)")
     q.add_argument("--seed", type=int, default=0)
-    q.add_argument("--martini-itp", default="martini_v3.0.0.itp",
-                   help="the Martini parameter file topol.top includes")  # fmt: skip
+    q.add_argument("--martini-itp", default=None,
+                   help="the Martini parameter file topol.top includes "
+                        "(default: the Martini 3 file boonza carries)")  # fmt: skip
     q.set_defaults(run=_bilayer)
 
     q = sub.add_parser("parameterize", help="apply viparr force fields (first match wins)")
