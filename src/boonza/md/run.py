@@ -199,11 +199,13 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     if getattr(args, "barostat", "isotropic") != "none":
         system.addForce(_barostat(args, mm, unit, every=0))  # asleep until NPT
     if args.dihedral_restraint != "none":
+        from .prepare import secondary_beside
         from .restraints import add_dihedral_restraints, plot_well, write_records
 
         records, what = add_dihedral_restraints(
             system, s, args.dihedral_restraint, args.dihedral_restraint_kJ,
             getattr(args, "dihedral_restraint_selection", None),
+            secondary_beside(args.input_structure) if args.input_structure else None,
         )  # fmt: skip
         write_records(paths.dihedral_restraints_csv, records)
         plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)

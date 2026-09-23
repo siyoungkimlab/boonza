@@ -288,8 +288,9 @@ def bilayer(lipid_itps, upper: dict, lower: dict | None = None, size=100.0,
             gone[b] = True
     w = w[~gone]
 
-    charge = 0.0 if protein is None else sum(float(n["charge"]) for mol in protein.molecules
-                                             for n in mol.nodes)  # fmt: skip
+    charge = 0.0 if protein is None else sum(
+        count * sum(float(n["charge"]) for n in mol.nodes)
+        for mol, count in zip(protein.molecules, protein.molecule_copies, strict=True))  # fmt: skip
     charge += sum(templates[name].charge for leaflet in leaflets for name, _ in leaflet)
     net = round(charge)
     if abs(charge - net) > 1e-6:
