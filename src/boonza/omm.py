@@ -35,6 +35,7 @@ NM = 0.1  # nm per Å
 _ONE_4PI_EPS0 = 138.935456  # kJ nm / (mol e^2)
 _KNOWN = {
     "stretch_harm", "angle_harm", "dihedral_trig", "improper_harm", "pair_12_6_es",
+    "angle_cosine_harm", "angle_restricted", *[f"virtual_lc{n}" for n in range(4, 8)],
     "nonbonded", "exclusion", "constraint_hoh", "virtual_lc2", "virtual_lc3", "virtual_out3",
     "virtual_midpoint", "virtual_fdat3", "posre_harm", "torsiontorsion_cmap",
     *[f"constraint_ah{n}" for n in range(1, 9)],
@@ -56,14 +57,29 @@ def _omm():
 
 def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
               constraints: bool = True, dispersion_correction: bool = True,
-              ewald_tolerance: float = 5e-4):  # fmt: skip
+              ewald_tolerance: float = 5e-4, epsilon_r: float = 1.0,
+              epsilon_rf: float | None = None, lj_shift: bool = False):  # fmt: skip
     """(Topology, System, positions) for OpenMM; cutoff in Å.
 
     ``nonbonded_method`` is an OpenMM NonbondedForce method name (NoCutoff,
     CutoffNonPeriodic, CutoffPeriodic, Ewald, PME, LJPME).  With
     ``constraints``, the constraint tables become OpenMM constraints and
     stretch/angle terms marked ``constrained`` are left out.
+
+    The rest are GROMACS's settings, for coarse-grained force fields that were
+    made with them.  ``epsilon_r`` divides every Coulomb interaction.
+    ``epsilon_rf`` is the reaction-field dielectric, 0 meaning infinity as in
+    GROMACS; with it, the energy is GROMACS's to the digit, including the terms
+    GROMACS adds for excluded pairs and for each charge with itself.
+    ``lj_shift`` shifts every Lennard-Jones pair to zero at the cutoff.  Martini
+    uses all three: ``epsilon_r=15, epsilon_rf=0, lj_shift=True``, cutoff 11 Å,
+    and no dispersion correction.
     """
+    if epsilon_r <= 0:
+        raise ValueError(f"epsilon_r must be positive, not {epsilon_r}")
+    if epsilon_rf is not None and nonbonded_method not in ("CutoffPeriodic",
+                                                            "CutoffNonPeriodic"):  # fmt: skip
+        raise ValueError("epsilon_rf is a reaction field, which needs a cutoff method")
     mm, app, unit = _omm()
     s = system
     unknown = sorted(set(s.tables) - _KNOWN)
@@ -104,6 +120,20 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
                                      t.values("fc")[keep].tolist(), strict=True):  # fmt: skip
             f.addAngle(i, j, k, math.radians(th), 2 * fc * KCAL)
         add(f, "angle_harm")
+    for name, energy in (
+        ("angle_cosine_harm", "fc*(cos(theta)-cos(theta0))^2"),
+        # grows without bound as the angle straightens: Martini's backbone stays bent
+        ("angle_restricted", "fc*(cos(theta)-cos(theta0))^2/sin(theta)^2"),
+    ):
+        if name in tables:
+            t = tables[name]
+            f = mm.CustomAngleForce(energy)
+            f.addPerAngleParameter("theta0")
+            f.addPerAngleParameter("fc")
+            for (i, j, k), th, fc in zip(t.atoms.tolist(), t.values("theta0").tolist(),
+                                         t.values("fc").tolist(), strict=True):  # fmt: skip
+                f.addAngle(i, j, k, [math.radians(th), fc * KCAL])
+            add(f, name)
     if "dihedral_trig" in tables:
         t = tables["dihedral_trig"]
         f = mm.PeriodicTorsionForce()
@@ -138,7 +168,7 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
         _add_constraints(s, omm)
     _add_virtual_sites(s, omm, mm)
     _add_nonbonded(s, omm, mm, add, nonbonded_method, cutoff, dispersion_correction,
-                   ewald_tolerance)  # fmt: skip
+                   ewald_tolerance, epsilon_r, epsilon_rf, lj_shift)  # fmt: skip
     if "posre_harm" in tables:
         t = tables["posre_harm"]
         f = mm.CustomExternalForce("0.5*(fcx*(x-x0)^2 + fcy*(y-y0)^2 + fcz*(z-z0)^2)")
@@ -214,6 +244,9 @@ def _add_virtual_sites(s, omm, mm):
             elif name == "virtual_lc3":
                 w1, w2 = c[0][k], c[1][k]
                 site = mm.ThreeParticleAverageSite(*atoms[1:4], 1 - w1 - w2, w1, w2)
+            elif name in (f"virtual_lc{n}" for n in range(4, 8)):  # a weighted average of n
+                w = [row[k] for row in c]
+                site = _average_site(mm, atoms[1:], [1 - sum(w), *w])
             elif name == "virtual_out3":  # cross term coefficient is per length
                 site = mm.OutOfPlaneSite(atoms[1], atoms[2], atoms[3], c[0][k], c[1][k],
                                          c[2][k] / NM)  # fmt: skip
@@ -222,6 +255,20 @@ def _add_virtual_sites(s, omm, mm):
             else:
                 raise NotImplementedError(f"{name} has no OpenMM translation")
             omm.setVirtualSite(v, site)
+
+
+def _average_site(mm, parents, weights):
+    """A weighted average of any number of particles, as OpenMM's local frame.
+
+    The site is the frame's origin; the axes only have to be well defined
+    (each set of weights summing to zero), since the site sits at no offset
+    from the origin along any of them.
+    """
+    n = len(parents)
+    x = [-1.0, 1.0] + [0.0] * (n - 2)
+    y = [-1.0, 0.0, 1.0] + [0.0] * (n - 3)
+    return mm.LocalCoordinatesSite([int(p) for p in parents], [float(w) for w in weights],
+                                   x, y, mm.Vec3(0, 0, 0))  # fmt: skip
 
 
 # fdat3 as an OpenMM local frame: origin i, x along i - j, y along k - j (made
@@ -259,7 +306,23 @@ def _combine(rule, s1, e1, s2, e2):
     return 0.5 * (s1 + s2), np.sqrt(e1 * e2)
 
 
-def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance):
+def _reaction_field(epsilon_r: float, epsilon_rf: float, cutoff_nm: float):
+    """(OpenMM's dielectric for the same field, k_rf, c_rf) from GROMACS's settings.
+
+    GROMACS: k_rf = (eps_rf - eps_r) / (2 eps_rf + eps_r) / rc^3, with 0
+    standing for an infinite eps_rf.  OpenMM writes the same field with an
+    inner dielectric of 1, so it is given the dielectric that makes its k_rf
+    GROMACS's; the charges have already been divided by sqrt(eps_r).
+    """
+    kappa = 0.5 if epsilon_rf == 0 else (epsilon_rf - epsilon_r) / (2 * epsilon_rf + epsilon_r)
+    k = kappa / cutoff_nm**3
+    c = 1 / cutoff_nm + k * cutoff_nm**2
+    inner = 1e20 if kappa >= 0.5 else (1 + kappa) / (1 - 2 * kappa)
+    return inner, k, c
+
+
+def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsilon_r=1.0,
+                   epsilon_rf=None, lj_shift=False):  # fmt: skip
     n = s.natoms
     nb = s.tables.get("nonbonded")
     sigma, eps, ptype = np.zeros(n), np.zeros(n), np.zeros(n, np.int64)
@@ -273,7 +336,7 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance):
         atoms = nb.atoms[:, 0]
         sigma[atoms], eps[atoms] = nb.values("sigma"), nb.values("epsilon")
         ptype[atoms] = nb.param_ids
-    custom = nb is not None and (rule == "geometric" or len(nb.overrides) > 0)
+    custom = nb is not None and (rule == "geometric" or len(nb.overrides) > 0 or lj_shift)
     f = mm.NonbondedForce()
     methods = {"NoCutoff": f.NoCutoff, "CutoffNonPeriodic": f.CutoffNonPeriodic,
                "CutoffPeriodic": f.CutoffPeriodic, "Ewald": f.Ewald, "PME": f.PME,
@@ -284,7 +347,11 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance):
     f.setCutoffDistance(cutoff * NM)
     f.setEwaldErrorTolerance(tolerance)
     f.setUseDispersionCorrection(dispersion and not custom)
-    charge = s.atoms["charge"].tolist()
+    if epsilon_rf is not None:
+        inner, k_rf, c_rf = _reaction_field(epsilon_r, epsilon_rf, cutoff * NM)
+        f.setReactionFieldDielectric(inner)
+    scale = 1 / math.sqrt(epsilon_r)  # Coulomb over epsilon_r, as charges over its root
+    charge = (s.atoms["charge"] * scale).tolist()
     for i in range(n):
         sig = sigma[i] * NM if sigma[i] > 0 else NM
         f.addParticle(charge[i], sig, 0.0 if custom else eps[i] * KCAL)
@@ -292,14 +359,17 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance):
     extra = []
     for i, j in sorted(excl):
         a, b, q = pairs.pop((i, j), (0.0, 0.0, 0.0))
+        q /= epsilon_r
         if a > 0 and b > 0:
             f.addException(i, j, q, (a / b) ** (1 / 6) * NM, b * b / (4 * a) * KCAL)
         else:
             f.addException(i, j, q, NM, 0.0)
             if a or b:
                 extra.append((i, j, a, b, 0.0))
-    extra += [(i, j, a, b, q) for (i, j), (a, b, q) in pairs.items()]
+    extra += [(i, j, a, b, q / epsilon_r) for (i, j), (a, b, q) in pairs.items()]
     add(f, "nonbonded")
+    if epsilon_rf is not None:
+        _add_rf_corrections(s, mm, add, excl, charge, k_rf, c_rf, cutoff * NM)
     if custom:
         types = len(nb.params)
         ps, pe = nb.params["sigma"], nb.params["epsilon"]
@@ -309,7 +379,12 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance):
             ee[p, q] = ee[q, p] = vals["epsilon"]
         acoef = (4 * ee * ss**12 * KCAL * NM**12).ravel(order="F").tolist()
         bcoef = (4 * ee * ss**6 * KCAL * NM**6).ravel(order="F").tolist()
-        lj = mm.CustomNonbondedForce("acoef(t1, t2)/r^12 - bcoef(t1, t2)/r^6")
+        if lj_shift:  # zero at the cutoff, as GROMACS's potential-shift
+            rc = cutoff * NM
+            lj = mm.CustomNonbondedForce(f"acoef(t1, t2)*(1/r^12 - {1 / rc**12!r}) "
+                                         f"- bcoef(t1, t2)*(1/r^6 - {1 / rc**6!r})")  # fmt: skip
+        else:
+            lj = mm.CustomNonbondedForce("acoef(t1, t2)/r^12 - bcoef(t1, t2)/r^6")
         lj.addTabulatedFunction("acoef", mm.Discrete2DFunction(types, types, acoef))
         lj.addTabulatedFunction("bcoef", mm.Discrete2DFunction(types, types, bcoef))
         lj.addPerParticleParameter("t")
@@ -333,6 +408,33 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance):
         for i, j, a, b, q in extra:
             pf.addBond(i, j, [a * KCAL * NM**12, b * KCAL * NM**6, q])
         add(pf, "pair_12_6_es")
+
+
+def _add_rf_corrections(s, mm, add, excl, charge, k_rf, c_rf, rc):
+    """What GROMACS adds to a reaction field besides the pairs themselves.
+
+    An excluded pair within the cutoff still gets the field's smooth part,
+    k r^2 - c; and each charge meets its own field, -c q^2 / 2.  Without these
+    the forces agree with GROMACS but the energies do not: for a neutral pair
+    the two constants cancel the pair's own -c, which is why GROMACS's
+    reaction-field energy does not fall to zero at the cutoff.
+    """
+    q = np.asarray(charge)  # already over sqrt(epsilon_r)
+    pairs = [(i, j, q[i] * q[j]) for i, j in sorted(excl) if q[i] and q[j]]
+    if pairs:
+        f = mm.CustomBondForce(f"step({rc!r} - r)*{_ONE_4PI_EPS0}*qq*({k_rf!r}*r^2 - {c_rf!r})")
+        f.addPerBondParameter("qq")
+        f.setUsesPeriodicBoundaryConditions(True)
+        for i, j, qq in pairs:
+            f.addBond(i, j, [float(qq)])
+        add(f, "nonbonded_rf_exclusions")
+    self_energy = -0.5 * _ONE_4PI_EPS0 * c_rf * q**2
+    if self_energy.any():  # constant: it moves nothing, but it is part of the energy
+        f = mm.CustomExternalForce("e")
+        f.addPerParticleParameter("e")
+        for i in np.flatnonzero(self_energy):
+            f.addParticle(int(i), [float(self_energy[i])])
+        add(f, "nonbonded_rf_self")
 
 
 def _add_cmap(s, omm, mm, add):
