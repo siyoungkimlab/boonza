@@ -245,22 +245,76 @@ def _reference_frame(system, traj, args):
               "groups poses against one of them; use 'boonza sites' to separate them first, "
               "or --pocketsel to say which.")  # fmt: skip
     out = system.clone()
-    out.positions = traj[best].positions
+    frame = traj[best]  # a trajectory gives a Frame, an array of structures gives coordinates
+    out.positions = getattr(frame, "positions", frame)
     return out, counts  # the counts settle the run too, from this one pass
+
+
+def _structures(paths, log=print):
+    """Frames from separate structure files: heavy atoms, matched by name.
+
+    Docking and structure prediction hand back a folder rather than a
+    trajectory, and those files rarely agree on how many hydrogens they carry
+    or what order the atoms come in -- so the heavy atoms of each are put in
+    the order of the first, by chain, residue and atom name.
+    """
+    from pathlib import Path
+
+    import boonza
+
+    def named(system, ids):
+        chains, residues = system.chains["name"], system.residues
+        of_residue = system.atoms["residue"]
+        return [
+            (str(chains[residues["chain"][r]]), int(residues["resid"][r]), str(n))
+            for r, n in zip(of_residue[ids], system.atoms["name"][ids], strict=True)
+        ]
+
+    first = boonza.load(str(paths[0]))
+    keep = first.select("noh").ids
+    system = first.clone(keep)
+    order = {k: i for i, k in enumerate(named(first, keep))}
+    if len(order) != len(keep):
+        raise ValueError(f"{paths[0]} names two atoms of a residue the same: they cannot be paired")
+    frames, kept = [], []
+    for path in paths:
+        one = boonza.load(str(path))
+        heavy = one.select("noh").ids
+        here = named(one, heavy)
+        if set(here) != set(order):
+            log(f"  {Path(path).name} holds different atoms: left out")
+            continue
+        at = np.empty(len(order), np.int64)
+        for i, key in enumerate(here):
+            at[order[key]] = heavy[i]
+        frames.append(one.positions[at])
+        kept.append(str(path))
+    if len(frames) < 2:
+        raise ValueError(f"{len(frames)} of {len(paths)} structures could be compared")
+    return system, np.array(frames), kept
 
 
 def _poses(args) -> int:
     import json
+    import shutil
     from pathlib import Path
 
     import boonza
+
+    if not args.structures and not (args.system and args.traj):
+        raise ValueError("give SYSTEM with --traj, or --structures for separate files")
 
     from .analysis import settled
     from .poses import pocket_contacts
     from .trajectory import open_trajectory
 
-    system = _load(args.system)
-    traj = open_trajectory(args.traj, system)
+    if args.structures:  # a folder of structures rather than a trajectory
+        system, traj, files = _structures(args.structures)
+        print(f"comparing {len(traj)} of {len(args.structures)} structures")
+        args.no_settle = True  # they are not a time series: there is no drift to drop
+    else:
+        system, files = _load(args.system), None
+        traj = open_trajectory(args.traj, system)
     counts = None
     if args.reference:
         reference = _load(args.reference)
@@ -295,11 +349,14 @@ def _poses(args) -> int:
                      protein=args.proteinsel, pocket_cutoff=args.pocket_cutoff,
                      pocket=args.pocketsel,
                      symmetry=not args.no_symmetry, periodic=not args.no_pbc)  # fmt: skip
-    print(f"{len(p)} poses of {len(kept)} frames, cut at {args.cutoff:g} A dRMSD")
-    print(f"{'pose':>4} {'frame':>7} {'share':>7} {'spread':>7} {'frames':>7}")
+    what = "structures" if files else "frames"
+    print(f"{len(p)} poses of {len(kept)} {what}, cut at {args.cutoff:g} A dRMSD")
+    head = "representative" if files else "frame"
+    print(f"{'pose':>4} {head:>14} {'share':>7} {'spread':>7} {what:>10}")
     for k, pose in enumerate(p):
-        print(f"{k:4d} {kept[pose.center]:7d} {100 * pose.population:6.1f}% "
-              f"{pose.spread:6.2f} A {len(pose):7d}")  # fmt: skip
+        centre = Path(files[kept[pose.center]]).name if files else str(kept[pose.center])
+        print(f"{k:4d} {centre:>14} {100 * pose.population:6.1f}% "
+              f"{pose.spread:6.2f} A {len(pose):10d}")  # fmt: skip
     cutoffs, share, count = p.sweep()
     print("\ncutoff (A) " + " ".join(f"{c:5.2f}" for c in cutoffs))
     print("largest    " + " ".join(f"{100 * s:4.0f}%" for s in share))
@@ -311,12 +368,24 @@ def _poses(args) -> int:
                "ligand": args.ligandsel, "stride": args.stride, "poses": []}  # fmt: skip
         for k, pose in enumerate(p):
             frame = int(kept[pose.center])
-            system.positions = traj[frame].positions
-            name = f"pose_{k:03d}.{args.format}"
-            boonza.save(system, out / name)
-            doc["poses"].append({"file": name, "frame": frame, "population": pose.population,
-                                 "spread": pose.spread, "frames": len(pose),
-                                 "members": kept[pose.frames].tolist()})  # fmt: skip
+            if files:  # the representative is one of the files: copy it, hydrogens and all
+                source = Path(files[frame])
+                name = f"pose_{k:03d}_{source.name}"
+                shutil.copy2(source, out / name)
+            else:
+                written = system.clone()
+                written.positions = traj[frame].positions
+                name = f"pose_{k:03d}.{args.format}"
+                boonza.save(written, out / name)
+            record = {"file": name, "population": pose.population, "spread": pose.spread,
+                      "frames": len(pose)}  # fmt: skip
+            if files:  # say which structures, not which frame numbers
+                record["representative"] = files[frame]
+                record["members"] = [files[int(i)] for i in kept[pose.frames]]
+            else:
+                record["frame"] = frame
+                record["members"] = kept[pose.frames].tolist()
+            doc["poses"].append(record)
         doc["sweep"] = {"cutoff": cutoffs.tolist(), "largest": share.tolist(),
                         "poses": count.tolist()}  # fmt: skip
         (out / "poses.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -849,8 +918,12 @@ def _parser() -> argparse.ArgumentParser:
     q.set_defaults(run=_drmsd)
 
     q = sub.add_parser("poses", help="representative frames: which pose, and how much of the run")
-    q.add_argument("system", help="structure (topology of --traj)")
-    q.add_argument("--traj", required=True, help="trajectory (DCD/XTC)")
+    q.add_argument("system", nargs="?", help="structure (topology of --traj)")
+    q.add_argument("--traj", help="trajectory (DCD/XTC)")
+    q.add_argument("--structures", nargs="+", default=[],
+                   help="separate structure files instead: what docking and structure "
+                        "prediction write. Their heavy atoms are paired by name, so files "
+                        "that differ in hydrogens or atom order still compare")  # fmt: skip
     q.add_argument("--reference", help="structure the pocket comes from "
                    "(default: the frame whose ligand touches the most protein)")  # fmt: skip
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms")

@@ -241,6 +241,28 @@ counts, share = boonza.pocket_contacts(s, traj)  # per frame, and per protein at
 boonza.bound_frame(counts)  # a median bound frame
 ```
 
+### From a folder of structures
+
+Docking and structure prediction hand back a folder rather than a
+trajectory, and those files rarely agree on how many hydrogens they carry or
+what order their atoms come in. Neither makes them a different complex, so
+`--structures` takes them as they are:
+
+```
+boonza poses --structures models/*.mae --ligandsel "chain L" --min-population 0 -o poses/
+```
+
+The heavy atoms of every file are paired with the first file's by chain,
+residue and atom name, so a different protonation state or two atoms written
+the other way round changes nothing. A file whose heavy atoms are not the same
+set is a different molecule, and is left out with its name printed.
+
+Each representative written to `-o` is **a copy of that input file**,
+hydrogens and all: the comparison needs the heavy atoms, the answer is the
+structure you gave. `poses.json` lists the member *files* of every pose, so
+`--min-population 0` turns a folder of a thousand models into the handful
+worth opening. Settling is off, since a folder is not a time series.
+
 Settling drops the frames before the ligand arrived, and is on; `--no-settle`
 keeps them. It asks where the series of *contacts* becomes stationary
 (`boonza.settled` over `pocket_contacts`), because a run is not stationary

@@ -260,3 +260,69 @@ def test_a_pocket_can_be_given_outright(two_sites):
                        boonza.pose_distances(s, frames, pocket_cutoff=WIDE))  # fmt: skip
     with pytest.raises(ValueError, match="no atoms outside the ligand"):
         boonza.poses(s, frames, pocket=DEFAULT_LIGAND)
+
+
+def test_the_command_takes_a_folder_of_structures(tmp_path, two_sites, capsys):
+    """What docking and structure prediction hand back is a folder, and those
+    files rarely agree on how many hydrogens they carry or what order the atoms
+    come in. Both are ordinary; neither is a different complex."""
+    import json
+
+    from boonza.cli import main
+
+    s, frames = two_sites
+    hydrogens = np.flatnonzero(s.atoms["anum"] == 1)
+    heavy = np.flatnonzero(s.atoms["anum"] > 1)
+    files = []
+    for k, x in enumerate(frames[::4]):  # 25 structures, 15 in one site and 10 in the other
+        one = s.clone()
+        one.positions = x
+        if k % 3 == 1:  # a proton fewer, as a different protonation state would leave
+            one = one.clone(np.setdiff1d(np.arange(one.natoms), hydrogens[:1]))
+        if k % 3 == 2:  # two heavy atoms written the other way round
+            order = np.arange(one.natoms)
+            order[[heavy[3], heavy[4]]] = order[[heavy[4], heavy[3]]]
+            one.reorder_atoms(order)
+        path = tmp_path / f"model_{k:02d}.mae"
+        boonza.save(one, path)
+        files.append(str(path))
+    out = tmp_path / "out"
+    argv = ["poses", "--structures", *files, "--pocket-cutoff", "8", "-o", str(out)]
+    assert main(argv) == 0
+    printed = capsys.readouterr().out
+    assert "comparing 25 of 25 structures" in printed  # none dropped for either reason
+    assert "arrived by frame" not in printed  # a folder is not a time series
+
+    doc = json.loads((out / "poses.json").read_text())
+    sizes = sorted((p["frames"] for p in doc["poses"]), reverse=True)
+    assert sizes == [15, 10]  # the two sites, whatever the files disagreed on
+    best = doc["poses"][0]
+    assert best["representative"] in files  # a file, not a frame number
+    assert all(m in files for m in best["members"])
+
+    copied = boonza.load(out / best["file"])  # and it is that file, hydrogens and all
+    original = boonza.load(best["representative"])
+    assert copied.natoms == original.natoms
+    assert (copied.atoms["anum"] == 1).sum() == (original.atoms["anum"] == 1).sum()
+
+
+def test_structures_that_are_not_the_same_complex_are_left_out(tmp_path, two_sites, capsys):
+    from boonza.cli import main
+
+    s, frames = two_sites
+    files = []
+    for k in range(4):
+        one = s.clone()
+        one.positions = frames[k]
+        boonza.save(one, tmp_path / f"same_{k}.mae")
+        files.append(str(tmp_path / f"same_{k}.mae"))
+    other = boonza.peptide("GGG")  # a different molecule altogether
+    boonza.save(other, tmp_path / "other.mae")
+    files.append(str(tmp_path / "other.mae"))
+    assert main(["poses", "--structures", *files, "--pocket-cutoff", "8"]) == 0
+    printed = capsys.readouterr().out
+    assert "other.mae holds different atoms: left out" in printed
+    assert "comparing 4 of 5 structures" in printed
+
+    assert main(["poses"]) == 1  # neither a trajectory nor a folder
+    assert "give SYSTEM with --traj, or --structures" in capsys.readouterr().err
