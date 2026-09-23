@@ -123,3 +123,47 @@ Each copy gets a random orientation and a random position in the box, at
 least `--clearance` Å (3) from the protein's and the other ligands' heavy
 atoms. Placement is seeded by `seed` and the simulation's number, so it is
 reproducible. The box is then filled with water and ions as `boonza md` does.
+
+## Coarse-grained probes (`--model martini3`)
+
+Martini has no general way to parameterize a small molecule, so a
+coarse-grained swim uses **dipeptides** as probes instead of a ligand
+library: every amino acid is already parameterized, so a probe needs nothing
+new.
+
+```bash
+boonza swim protein.pdb --model martini3 --production-ns 500
+boonza swim protein.pdb --model martini3 --probes RR EK FF --types 3 --copies 6
+```
+
+- **The probes** are the 105 dipeptides of 14 residues: Arg, Gln, Glu, His,
+  Ile, Leu, Lys, Met, Phe, Pro, Ser, Thr, Trp and Tyr. Ala, Gly and Val are
+  too small to say much, Asp and Asn are left to Glu and Gln, and Cys is
+  left out. XY and YX are one probe, since in Martini they differ only in
+  which backbone bead carries which side chain. `--probes` takes a list
+  instead.
+- **Each probe is free**: no secondary structure, no side-chain corrections
+  and no elastic network. Both ends are neutral, so only the side chains
+  carry charge — Arg and Lys +1, Glu −1, His neutral, as at pH 7. Its
+  residues take the probe's own name (`EK`), so the analysis can tell probes
+  from protein.
+- **The protein** is martinized with an elastic network, which holds its
+  fold while its side chains move. It is free to tumble; the analysis
+  superposes the frames.
+- **Simulations** hold `--types` probes (10) with `--copies` each (5), so
+  the 105 probes are spread over 10 runs of about 50 probe molecules, near
+  0.1 M. Probes are dealt round robin, so each run holds a spread of
+  chemistry rather than all the Arg probes together.
+- **Repulsion is on by default** here, unlike an all-atom swim: probe
+  clusters would otherwise read as hotspots. `--no-repulsion` turns it off.
+
+Each simulation directory holds the built topology (`martini/topol.top`),
+its `md.toml`, and `probes.json`, which records the probes so that the
+analysis needs no selections of its own:
+
+```bash
+boonza sites --workdir swim/sim_*/md      # aligns on BB beads, probes as ligands
+```
+
+Martini's resolution is a bead (about 0.47 nm), so the maps say which
+chemistry a pocket likes and where, not how a ligand poses in it.
