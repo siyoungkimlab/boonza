@@ -23,8 +23,9 @@ DIHEDRAL_RESTRAINTS = ("none", "bb", "ss")
 #: free (a planar membrane), or constant volume.
 BAROSTATS = ("isotropic", "membrane", "none")
 #: What to do about water: pad the solute and make a box, fill the empty space
-#: of the input's own cell (a system built elsewhere, a membrane), or nothing.
-SOLVATE_MODES = ("box", "fill", "none")
+#: of the input's own cell (a system built elsewhere, a membrane), build a
+#: lipid bilayer around the solute (Martini only), or nothing.
+SOLVATE_MODES = ("box", "fill", "membrane", "none")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
 PROTEIN_EXTENTS = ("matched", "cb")
@@ -43,8 +44,28 @@ DEFAULT_FORCEFIELDS = (
     ("ions.amber1234lm_anton.tip3p",),
 )
 
+#: The resolutions a run can use.  ``aa`` is all-atom, with force fields
+#: applied by viparr or OpenMM; the Martini models coarse-grain the input and
+#: take their parameters from the topology instead.
+MODELS = ("aa", "martini2", "martini3")
+#: What a model changes when the setting was not given, on top of DEFAULTS:
+#: Martini runs hotter, with a long step and its own cut-off.  Everything
+#: else -- the intervals, the monitor, the barostat, the platform -- is shared.
+MODEL_DEFAULTS: dict = {
+    "martini2": {"temperature": 310.0, "integration_fs": 20.0, "cutoff_nm": 1.1},
+    "martini3": {"temperature": 310.0, "integration_fs": 20.0, "cutoff_nm": 1.1},
+}
+#: Settings that only an all-atom run has; giving one to a Martini run is an error.
+ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
+                 "protein_extent", "hmr")  # fmt: skip
+#: Settings that only a Martini run has.
+MARTINI_ONLY = ("elastic", "upper", "lower", "area_per_lipid", "size_nm", "water_nm",
+                "opm", "shift_nm", "cg_selection", "neutral_termini", "lipid_itp",
+                "martini_itp")  # fmt: skip
+
 DEFAULTS: dict = {
     "input_structure": None,
+    "model": "aa",
     "workdir": "openmm_md",
     "forcefields": None,
     "ligand_mode": "auto",
@@ -88,6 +109,18 @@ DEFAULTS: dict = {
     "contact_cutoff_nm": 0.5,
     "detach_cutoff_nm": 0.8,
     "confirmation_checks": 2,
+    "elastic": False,
+    "upper": None,
+    "lower": None,
+    "area_per_lipid": 60.0,
+    "size_nm": None,
+    "water_nm": 2.5,
+    "opm": False,
+    "shift_nm": 0.0,
+    "cg_selection": "protein",
+    "neutral_termini": False,
+    "lipid_itp": None,
+    "martini_itp": None,
 }
 _NUMBERS = {
     "padding_nm",
@@ -111,10 +144,14 @@ _NUMBERS = {
     "detach_cutoff_nm",
     "repulsion_distance_nm",
     "repulsion_kJ",
+    "area_per_lipid",
+    "water_nm",
+    "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop"}
+_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini"}
 _CHOICES = {
+    "model": MODELS,
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
     "protein_extent": PROTEIN_EXTENTS,
@@ -307,6 +344,43 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         help="list the molecules of INPUT_STRUCTURE with their selectors and exit",
     )
 
+    files.add_argument(
+        "--model",
+        choices=MODELS,
+        help="aa (default): all-atom, with the force fields below; martini3 or "
+        "martini2: coarse-grained, taking parameters from the topology instead, at "
+        "310 K with a 20 fs step and 1.1 nm cut-offs",
+    )
+
+    cg = p.add_argument_group("Martini (--model martini3 / martini2)")
+    cg.add_argument(
+        "--elastic",
+        action="store_true",
+        help="hold the protein's fold with an elastic network",
+    )
+    cg.add_argument("--upper", metavar="LIPIDS",
+                    help="upper leaflet of the bilayer, e.g. POPC:7,CHOL:3 "
+                         "(with --solvate membrane)")  # fmt: skip
+    cg.add_argument("--lower", metavar="LIPIDS",
+                    help="lower leaflet (default: as the upper)")  # fmt: skip
+    cg.add_argument("--size-nm", dest="size_nm", type=float, nargs="+", metavar="NM",
+                    help="the bilayer's x [y] (nm; default: 10)")  # fmt: skip
+    cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
+                    help="the atoms to coarse-grain (default: protein)")  # fmt: skip
+    cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",
+                    help="uncharged chain ends")  # fmt: skip
+    cg.add_argument("--opm", action="store_true",
+                    help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
+    cg.add_argument("--lipid-itp", dest="lipid_itp", nargs="+", metavar="ITP",
+                    help="lipid and sterol topologies (default: the carried ones)")  # fmt: skip
+    cg.add_argument("--martini-itp", dest="martini_itp", metavar="ITP",
+                    help="the Martini parameter file (default: the carried one)")  # fmt: skip
+    numbers(cg, [
+        ("--area-per-lipid", "area_per_lipid", "area per lipid (A^2)"),
+        ("--water-nm", "water_nm", "water beyond the lipids on each side (nm)"),
+        ("--shift-nm", "shift_nm", "move the protein along z (nm)"),
+    ])  # fmt: skip
+
     ff = p.add_argument_group("force fields and ligands")
     ff.add_argument(
         "-f",
@@ -367,7 +441,8 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         choices=SOLVATE_MODES,
         help="box (default): water and ions around the solute, in a new box; fill: "
         "keep INPUT_STRUCTURE's own cell and fill its empty space, keeping water out "
-        "of hydrophobic voids (a membrane); none: run it as it is",
+        "of hydrophobic voids (a membrane); membrane: build a coarse-grained bilayer "
+        "around the solute (Martini, with --upper); none: run it as it is",
     )
     box.add_argument(
         "--no-solvate",
@@ -378,6 +453,8 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
     numbers(box, [
         ("--padding-nm", "padding_nm", "solute to box edge (nm)"),
+        ("--box-nm", "box_nm", "a fixed box edge instead of padding (nm); "
+                               "with solvate = 'membrane', the bilayer's x and y"),
         ("--saltM", "saltM", "NaCl added beyond neutralizing (mol/L, counted against waters)"),
         ("--cutoff-nm", "cutoff_nm", "nonbonded cutoff (nm; 0.9 Amber, 1.2 CHARMM)"),
     ])  # fmt: skip
@@ -506,7 +583,11 @@ def parse_arguments(argv=None, parser=None) -> argparse.Namespace:
     if "parent_options" in given:
         cli["parents"] = {**(from_file.get("parents") or {}),
                           **_cli_parents(given["parent_options"], parser)}  # fmt: skip
-    args = argparse.Namespace(**{**DEFAULTS, **from_file, **cli})
+    model = cli.get("model") or from_file.get("model") or DEFAULTS["model"]
+    if model not in MODELS:
+        parser.error(f"model must be one of {', '.join(MODELS)}, not {model!r}")
+    # defaults < the model's defaults < the TOML file < the command line
+    args = argparse.Namespace(**{**DEFAULTS, **MODEL_DEFAULTS.get(model, {}), **from_file, **cli})
     args.config = given.get("config")
     args.write_default_config = given.get("write_default_config")
     args.list_components = given.get("list_components", False)
@@ -567,6 +648,7 @@ def finish(args) -> None:
         "performance_interval_ns",
         "integration_fs",
         "monitor_interval_ns",
+        "water_nm",
         "pocket_cutoff_nm",
         "contact_cutoff_nm",
         "detach_cutoff_nm",
@@ -583,13 +665,42 @@ def finish(args) -> None:
         raise ValueError("'confirmation_checks' must be at least 1")
     if args.surface_tension and args.barostat != "membrane":
         raise ValueError("'surface_tension' needs barostat = 'membrane' (x and y coupled, z free)")
-    if args.forcefields is None:
-        args.forcefields = DEFAULT_FORCEFIELDS
-    args.forcefields = forcefield_spec(args.forcefields)
-    forcefield_kind(args.forcefields)  # viparr or XML, not a mixture
-    problem = water_model_mismatch(args.forcefields)
-    if problem:
-        raise ValueError(problem)
+    # a settings file written by boonza (swim's, a restart's) carries every key,
+    # so only a value that differs from the default counts as one asked for
+    given = {k for k in getattr(args, "specified", ())
+             if k not in DEFAULTS or getattr(args, k, None) != DEFAULTS[k]}  # fmt: skip
+    if args.model == "aa":
+        wrong = [k for k in MARTINI_ONLY if k in given]
+        if wrong:
+            raise ValueError(f"{', '.join(sorted(wrong))} needs a Martini model; "
+                             f"give model = 'martini3' or 'martini2'")  # fmt: skip
+        if args.solvate == "membrane":
+            raise ValueError("solvate = 'membrane' builds a coarse-grained bilayer, so it "
+                             "needs model = 'martini3' or 'martini2'")  # fmt: skip
+        if args.forcefields is None:
+            args.forcefields = DEFAULT_FORCEFIELDS
+        args.forcefields = forcefield_spec(args.forcefields)
+        forcefield_kind(args.forcefields)  # viparr or XML, not a mixture
+        problem = water_model_mismatch(args.forcefields)
+        if problem:
+            raise ValueError(problem)
+    else:
+        wrong = [k for k in ALL_ATOM_ONLY if k in given]
+        if wrong:
+            raise ValueError(f"{', '.join(sorted(wrong))} belongs to an all-atom run; Martini "
+                             "takes its parameters from the topology")  # fmt: skip
+        args.forcefields = ()  # they come with the beads, not from a force field
+        if args.solvate == "membrane" and not args.upper:
+            raise ValueError("solvate = 'membrane' needs the lipids: upper = 'POPC:7,CHOL:3'")
+        if args.upper and args.solvate != "membrane":
+            raise ValueError("'upper' builds a bilayer, which needs solvate = 'membrane'")
+        if args.size_nm is not None:
+            size = [args.size_nm] if isinstance(args.size_nm, int | float) else list(args.size_nm)
+            if len(size) not in (1, 2) or not all(
+                isinstance(v, int | float) and math.isfinite(v) and v > 0 for v in size
+            ):
+                raise ValueError("'size_nm' is the bilayer's x, or its x and y, both positive")
+            args.size_nm = [float(v) for v in size]
     if args.cutoff_nm is None:
         args.cutoff_nm = default_cutoff_nm(args)
     if args.hmr and "integration_fs" not in args.specified:
@@ -632,7 +743,13 @@ def write_settings(path, settings: dict) -> None:
         "# Resolved boonza md settings of this run.",
         "# A restart reads them back; options given again override them.",
     ]
-    lines += [f"{k} = {toml_value(settings[k])}" for k in DEFAULTS if settings.get(k) is not None]
+
+    # an empty list is no setting at all: a Martini run has no force fields,
+    # and writing 'forcefields = []' would fail the file's own validation
+    def worth(v) -> bool:
+        return v is not None and not (isinstance(v, list | tuple) and not v)
+
+    lines += [f"{k} = {toml_value(settings[k])}" for k in DEFAULTS if worth(settings.get(k))]
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -641,6 +758,13 @@ def restore_settings(args, path) -> None:
     saved = load_configuration(path)
     if "production_ns" not in args.specified and "production_ns" not in saved:
         raise ValueError(f"cannot resume: {path} has no production_ns")
+    # the model built the system: system.xml fixes the physics, so changing it
+    # now would say one thing and run another
+    if "model" in saved:
+        if "model" in args.specified and args.model != saved["model"]:
+            raise ValueError(f"cannot resume a {saved['model']} run as {args.model}: the "
+                             "system was built for it, and system.xml fixes it")  # fmt: skip
+        args.model = saved["model"]
     for key in RESTARTABLE:
         if key not in args.specified and key in saved:
             setattr(args, key, saved[key])

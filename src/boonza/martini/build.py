@@ -70,13 +70,25 @@ def force_field(name: str = "martini3001"):
     return ff
 
 
-def _nonbonded(martini_itp):
-    """The Martini parameter file to include: the one given, or the one carried."""
+def _nonbonded(martini_itp, martini: int = 3):
+    """The Martini parameter file to include: the one given, or the one carried
+    for that version of Martini."""
     if martini_itp is not None:
         return martini_itp
-    from . import NONBONDED, parameters
+    from . import NONBONDED_FOR, parameters
 
-    return parameters(NONBONDED)[0]
+    return parameters(NONBONDED_FOR[martini])[0]
+
+
+def _solvent_include(martini: int = 3):
+    """What defines water and ions: the ``solvent.itp`` boonza writes for
+    Martini 3, whose parameter file holds no moleculetype, or Martini 2's own
+    ion file (its water comes with ``martini_v2.2.itp``)."""
+    if martini == 3:
+        return "solvent.itp"
+    from . import IONS_FOR, parameters
+
+    return parameters(IONS_FOR[martini])[0]
 
 
 @dataclass
@@ -99,6 +111,7 @@ class Martinized:
     solvent: list = field(default_factory=list)
     lipids: list = field(default_factory=list)  # (name, count, bead names), in order
     includes: list = field(default_factory=list)  # topology files the lipids come from
+    martini: int = 3  # which Martini the beads are, for the parameters to include
 
     @property
     def nbeads(self) -> int:
@@ -108,11 +121,11 @@ class Martinized:
         return _write_itp(self.molecules[k], self.names[k])
 
     def top(self, martini_itp=None) -> str:
-        lines = [f'#include "{_nonbonded(martini_itp)}"']
+        lines = [f'#include "{_nonbonded(martini_itp, self.martini)}"']
         lines += [f'#include "{p}"' for p in self.includes]
         lines += [f'#include "{n}.itp"' for n in self.names]
         if any(c for _, c in self.solvent):  # a list of zero counts is no solvent
-            lines.append('#include "solvent.itp"')
+            lines.append(f'#include "{_solvent_include(self.martini)}"')
         lines += ["", "[ system ]", "Martini system", "", "[ molecules ]"]
         lines += [f"{n} 1" for n in self.names]
         lines += [f"{n} {c}" for n, c, _ in self.lipids]
@@ -123,14 +136,16 @@ class Martinized:
         """Write ``topol.top``, one ``.itp`` per molecule (``solvent.itp`` for water
         and ions) and ``cg.gro``; returns the top.
 
-        ``topol.top`` includes ``martini_itp``, the Martini 3 file boonza
-        carries when none is given, so that GROMACS can resolve it as written.
+        ``topol.top`` includes ``martini_itp``, the file boonza carries for
+        this version of Martini when none is given, so that GROMACS can
+        resolve it as written.  ``solvent.itp`` is written for Martini 3
+        only: Martini 2 defines its water and ions upstream.
         """
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         for k, name in enumerate(self.names):
             (d / f"{name}.itp").write_text(self.itp(k))
-        if any(c for _, c in self.solvent):
+        if any(c for _, c in self.solvent) and self.martini == 3:
             (d / "solvent.itp").write_text(SOLVENT_ITP)
         (d / "topol.top").write_text(self.top(martini_itp))
         (d / "cg.gro").write_text(self._gro())
@@ -138,13 +153,13 @@ class Martinized:
 
     def system(self, martini_itp=None):
         """The beads as a boonza System, with the Martini force field of
-        ``martini_itp`` for nonbonded terms; the bundled Martini 3 file when
-        none is given."""
+        ``martini_itp`` for nonbonded terms; the file boonza carries for this
+        version of Martini when none is given."""
         import tempfile
 
         from ..io.gromacs import load_top
 
-        martini_itp = Path(_nonbonded(martini_itp)).resolve()
+        martini_itp = Path(_nonbonded(martini_itp, self.martini)).resolve()
         with tempfile.TemporaryDirectory() as tmp:
             top = self.save(tmp, martini_itp.name)
             s = load_top(top, Path(tmp) / "cg.gro", include_dirs=[str(martini_itp.parent)])

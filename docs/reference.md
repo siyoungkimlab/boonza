@@ -490,7 +490,7 @@ default).  Hydrogens present in the structure decide protonation:
 Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
 neutral, and His is typed by which ring nitrogens carry one.
 
-### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>) -> None`
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
 
 The Martini beads of a system and their GROMACS topology.
 
@@ -513,7 +513,13 @@ taken, to use another version or a lipid boonza does not carry.
 
 ### `boonza.martini.solvate(m: 'Martinized', padding: 'float' = 10.0, box=None, salt: 'float' = 0.15, neutralize: 'bool' = True, clash: 'float' = 4.2, ion_distance: 'float' = 5.0, seed: 'int' = 0) -> 'Martinized'`
 
-``m`` in a box of Martini 3 water (W beads, 4 waters each), with Na+/Cl- ions.
+``m`` in a box of Martini water (W beads, 4 waters each), with Na+/Cl- ions.
+
+The water and ions are written for whichever Martini ``m`` is: Martini 3
+gets the ``solvent.itp`` boonza writes, Martini 2 its own upstream
+definitions (``P4`` water, ``Qd``/``Qa`` ions).  The box of water tiled in
+was equilibrated under Martini 3; Martini 2's water is close enough in
+density to start from it, and equilibration settles the difference.
 
 ``box``: edge lengths (one value or three, Å); by default a cube of the
 proteins' largest extent plus ``padding`` on each side.  The proteins are
@@ -527,7 +533,7 @@ to ``salt`` mol/L, counted against the waters as boonza's all-atom
 ``ion_distance`` Å from the proteins, picked in an order fixed by
 ``seed``.
 
-### `boonza.martini.bilayer(lipid_itps, upper: 'dict', lower: 'dict | None' = None, size=100.0, area_per_lipid: 'float' = 60.0, water: 'float' = 25.0, salt: 'float' = 0.15, protein: 'Martinized | None' = None, protein_origin: 'bool' = False, protein_shift: 'float' = 0.0, lipid_clash: 'float' = 4.5, seed: 'int' = 0) -> 'Martinized'`
+### `boonza.martini.bilayer(lipid_itps, upper: 'dict', lower: 'dict | None' = None, size=100.0, area_per_lipid: 'float' = 60.0, water: 'float' = 25.0, salt: 'float' = 0.15, protein: 'Martinized | None' = None, protein_origin: 'bool' = False, protein_shift: 'float' = 0.0, martini: 'int' = 3, lipid_clash: 'float' = 4.5, seed: 'int' = 0) -> 'Martinized'`
 
 A Martini lipid bilayer in water, optionally around proteins, as insane builds one.
 
@@ -548,6 +554,11 @@ middle of the box; along z, its center goes to the midplane, or with
 moves by ``protein_shift`` Å.  Lipids with a bead within
 ``lipid_clash`` Å of a protein bead are left out.  Water and ions
 are then added as :func:`boonza.martini.solvate` adds them.
+
+``martini``: which Martini the lipid topologies are, 3 or 2.  It picks
+the water and ions written beside them and the parameter file the
+topology includes; it does not change how the bilayer is built, which
+reads every bead and bond from ``lipid_itps``.
 
 ### `boonza.martini.lipid_templates(itps, names=None) -> 'dict[str, Lipid]'`
 

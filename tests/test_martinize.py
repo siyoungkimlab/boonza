@@ -463,14 +463,38 @@ def test_bilayer_runs(toy_lipids, tmp_path):
     assert np.isfinite(e["total"])
 
 
-def test_bilayer_command_line(toy_lipids, tmp_path, capsys):
-    out = tmp_path / "memb"
-    args = ["bilayer", str(out), "--lipid-itp", str(toy_lipids), "--upper", "TLP:3,STR:1",
-            "--lower", "TLP", "--size", "40", "--water", "15"]  # fmt: skip
-    assert main(args) == 0
-    printed = capsys.readouterr().out
-    assert "TLP" in printed and "STR" in printed and " W" in printed
-    assert {p.name for p in out.iterdir()} == {"topol.top", "solvent.itp", "cg.gro"}
+def test_a_bilayer_is_built_by_boonza_md(toy_lipids, tmp_path):
+    """`boonza bilayer` built a membrane and stopped there; `boonza md
+    --solvate membrane` builds the same one and runs it, so everything the
+    command took has to arrive through the settings."""
+    from boonza.md.config import parse_arguments
+    from boonza.md.prepare import build_martini_system
+
+    args = parse_arguments(
+        ["--model", "martini3", "--solvate", "membrane", "--upper", "TLP:3,STR:1",
+         "--lower", "TLP", "--size-nm", "4", "--water-nm", "1.5",
+         "--lipid-itp", str(toy_lipids), "--workdir", str(tmp_path / "run")]
+    )  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    names = set(s.residues["name"].tolist())
+    assert {"TLP", "STR", "W"} <= names
+    written = {p.name for p in (tmp_path / "martini").iterdir()}
+    assert written == {"topol.top", "solvent.itp", "cg.gro"}
+
+
+def test_a_rectangular_bilayer_keeps_both_edges(toy_lipids, tmp_path):
+    """--size-nm takes x and y, as the removed command's --size did."""
+    from boonza.md.config import parse_arguments
+    from boonza.md.prepare import build_martini_system
+
+    args = parse_arguments(
+        ["--model", "martini3", "--solvate", "membrane", "--upper", "TLP",
+         "--size-nm", "5", "3.5", "--lipid-itp", str(toy_lipids),
+         "--workdir", str(tmp_path / "run")]
+    )  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    x, y = np.diag(np.asarray(s.cell, float))[:2]
+    assert (round(x, 1), round(y, 1)) == (50.0, 35.0)
 
 
 def test_the_parameters_come_with_boonza(tmp_path):
@@ -501,3 +525,44 @@ def test_martinizing_needs_no_parameter_file(tmp_path):
     top = Path(m.save(tmp_path / "cg"))  # and what it writes can be read by GROMACS
     included = [x.split('"')[1] for x in top.read_text().splitlines() if x.startswith("#include")]
     assert Path(included[0]).is_file() and Path(included[0]).name == NONBONDED
+
+
+def test_martini_2_membranes_are_solvated_with_martini_2_water(tmp_path):
+    """solvate() wrote Martini 3 bead types whatever the system was, so a
+    Martini 2 membrane came out with W and TQ5 beads its parameters do not
+    define.  Now the version decides: Martini 3 gets the solvent.itp boonza
+    writes, Martini 2 its own upstream water (in martini_v2.2.itp) and ions.
+    """
+    from boonza.martini import IONS_FOR, LIPIDS_FOR, NONBONDED_FOR, bilayer, parameters
+
+    itps = [str(p) for p in parameters(*LIPIDS_FOR[2])]
+    m = bilayer(itps, {"DPPC": 1}, size=60.0, martini=2, salt=0.15)
+    assert m.martini == 2
+    assert dict(m.solvent)["W"] > 0 and dict(m.solvent)["NA"] > 0
+
+    top = Path(m.save(tmp_path / "cg")).read_text()
+    included = [x.split('"')[1] for x in top.splitlines() if x.startswith("#include")]
+    assert Path(included[0]).name == NONBONDED_FOR[2]
+    assert Path(included[-1]).name == IONS_FOR[2]
+    # Martini 2 defines W itself: writing one would be a duplicate moleculetype
+    assert "solvent.itp" not in top
+    assert not (tmp_path / "cg" / "solvent.itp").exists()
+    assert all(Path(p).is_file() for p in included)
+
+    s = m.system()  # and it loads, with Martini 2's bead types
+    types = {a["type"] for a in s.atoms}
+    assert {"P4", "Qd", "Qa"} <= types and "TQ5" not in types
+
+
+def test_the_two_martinis_are_not_mixed(tmp_path):
+    """A Martini 3 protein in a Martini 2 membrane is refused: the bead types
+    share names between the versions and mean different things."""
+    from boonza.martini import LIPIDS_FOR, bilayer, parameters
+
+    protein = martinize(boonza.load(DATA / "1HHO.pdb"), "protein and chain A")
+    assert protein.martini == 3
+    itps = [str(p) for p in parameters(*LIPIDS_FOR[2])]
+    with pytest.raises(ValueError, match="cannot be mixed"):
+        bilayer(itps, {"DPPC": 1}, size=80.0, martini=2, protein=protein)
+    with pytest.raises(ValueError, match="martini must be one of"):
+        bilayer(itps, {"DPPC": 1}, size=60.0, martini=4)
