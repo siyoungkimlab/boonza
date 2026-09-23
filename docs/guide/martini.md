@@ -12,7 +12,7 @@ s = boonza.load("protein.pdb")
 m = boonza.martinize(s, elastic=True)  # beads, topology, bead positions (Å)
 m = solvate(m, salt=0.15)  # Martini water and NaCl around it
 m.save("cg")  # topol.top, molecule_N.itp, solvent.itp, cg.gro
-cg = m.system("martini_v3.0.0.itp")  # a boonza System with Martini parameters
+cg = m.system()  # a boonza System with Martini parameters
 topology, system, positions = boonza.to_openmm(cg, **OPENMM_OPTIONS)
 ```
 
@@ -21,9 +21,41 @@ boonza martinize protein.pdb cg --elastic --solvate   # the same, from the comma
 ```
 
 The bead types' nonbonded parameters come from the Martini release file
-`martini_v3.0.0.itp` (from cgmartini.nl). boonza doesn't ship that file, and
-martinize2 doesn't either, so `m.system` asks for its path. The `topol.top`
-that `save` writes only `#include`s it.
+`martini_v3.0.0.itp`, and the lipids and sterols from theirs. boonza carries
+the Martini 3.0.0 release (cgmartini.nl, 2021-03-29) in
+`boonza/data/martini/params`, so nothing needs downloading and `topol.top`
+`#include`s them by a path GROMACS can resolve as written:
+
+```python
+from boonza.martini import parameters, NONBONDED, LIPIDS
+
+parameters()  # every file carried
+parameters(NONBONDED)  # martini_v3.0.0.itp
+parameters(*LIPIDS)  # phospholipids and sterols
+```
+
+Give a path of your own wherever one is taken — `m.system("…/martini_v3.0.0.itp")`,
+`--martini-itp`, `--lipid-itp` — to use another version, or a lipid boonza does
+not carry. **Please cite** the parameters: PCT Souza et al., *Nature Methods*
+18, 382-388 (2021), DOI 10.1038/s41592-021-01098-3.
+
+Martini 2 comes too — `martini_v2.2.itp`, `martini_v2.0_ions.itp` and the
+2015-06 lipid collection `martini_v2.0_lipids_all_201506.itp` — for the lipids
+and systems that were never ported to Martini 3. `martinize` and `bilayer`
+build Martini 3 only, so Martini 2 is for reading and running a topology you
+already have:
+
+```python
+s = boonza.load("topol.top", coordinates="min.gro")  # #includes the v2 files
+boonza.openmm_energies(s, **boonza.martini.OPENMM_OPTIONS)
+```
+
+A bilayer of 128 DPPC read this way matches GROMACS 2024.6 term by term, to a
+potential of -28760.11 against -28760.1 kJ/mol. The two versions must never be
+mixed in one system: their bead types share names and mean different things.
+**Please cite** Martini 2: SJ Marrink et al., *J. Phys. Chem. B* 111,
+7812-7824 (2007), and L Monticelli et al., *J. Chem. Theory Comput.* 4,
+819-834 (2008).
 
 ## What martinize does
 
