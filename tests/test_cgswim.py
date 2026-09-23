@@ -162,3 +162,74 @@ def test_swim_refuses_a_ligand_library_in_martini(tmp_path):
     code = main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--ligands", "library.sdf",
                  "--workdir", str(tmp_path / "swim")])  # fmt: skip
     assert code == 1
+
+
+def _martinized(name="1MBN.pdb", **kw):
+    from boonza.martini import martinize
+
+    m = martinize(boonza.load(DATA / name), **kw)
+    return m, m.system()
+
+
+def test_coarse_grained_backbone_torsions():
+    """BB-BB-BB-BB over four residues in a row, the torsion Martini's own
+    helix term acts on; the chain's last three residues start no torsion."""
+    from boonza.md.restraints import bead_torsions, coarse_grained
+
+    m, s = _martinized()
+    assert coarse_grained(s) and not coarse_grained(boonza.load(DATA / "1MBN.pdb"))
+    torsions = bead_torsions(s)
+    assert len(torsions) == len(m.ss) - 3
+    residue, kind, beads = torsions[0]
+    names = [str(s.atoms["name"][b]) for b in beads]
+    assert kind == "bb" and names == ["BB"] * 4
+    of = [int(s.atoms["residue"][b]) for b in beads]
+    assert of == [residue, residue + 1, residue + 2, residue + 3]
+
+
+def test_restraining_a_coarse_grained_backbone():
+    """`bb` holds every torsion, `ss` only the helices and sheets, which needs
+    the secondary structure boonza writes when it builds the system."""
+    pytest.importorskip("openmm")
+    from boonza.martini import OPENMM_OPTIONS
+    from boonza.md.restraints import add_dihedral_restraints
+
+    m, s = _martinized(elastic=False)
+    _top, system, _pos = boonza.to_openmm(s, **OPENMM_OPTIONS)
+    records, what = add_dihedral_restraints(system, s, "bb", 20.0)
+    assert len(records) == len(m.ss) - 3 and "protein residues" in what
+    assert {r["angle"] for r in records} == {"bb"}
+    assert [f.getName() for f in system.getForces()].count("DihedralRestraint") == 1
+
+    _top, system, _pos = boonza.to_openmm(s, **OPENMM_OPTIONS)
+    ss_records, what = add_dihedral_restraints(system, s, "ss", 20.0, secondary=m.ss)
+    assert 0 < len(ss_records) < len(records) and "helices and sheets" in what
+    # myoglobin is helical, and Martini's helix dihedral has its minimum at +60
+    angles = np.array([r["reference_degrees"] for r in ss_records])
+    assert abs(np.median(angles) - 60) < 15
+
+    _top, system, _pos = boonza.to_openmm(s, **OPENMM_OPTIONS)
+    with pytest.raises(ValueError, match="secondary.txt"):
+        add_dihedral_restraints(system, s, "ss", 20.0)
+
+
+def test_the_secondary_structure_is_written_beside_the_topology(tmp_path):
+    from boonza.md.prepare import build_martini_system, secondary_beside
+
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    build_martini_system(args, tmp_path, log=lambda *_: None)
+    written = (tmp_path / "martini" / "secondary.txt").read_text().strip()
+    assert set(written) <= set("HBEGITSC ")
+    assert secondary_beside(tmp_path / "martini" / "topol.top") == written
+    assert secondary_beside(tmp_path / "topol.top") is None
+
+
+def test_probes_swim_free_of_the_backbone_restraints(tmp_path):
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+                            "--dihedral-restraint", "bb",
+                            "--workdir", str(tmp_path / "swim")])  # fmt: skip
+    sims = prepare(args, ["EK", "LL"], types=2, copies=1, log=lambda *_: None)
+    settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
+    assert settings.dihedral_restraint == "bb"
+    assert settings.dihedral_restraint_selection == "not (resname EK LL)"
