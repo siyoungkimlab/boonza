@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .align import kabsch
+from .martini.features import bead_features, martini_beads
 from .pbc import minimum_image
 from .sites import Density, _join_neighbours, _pairs
 from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids
@@ -50,13 +51,18 @@ class Hotspot:
         return float((3.0 * self.volume / (4.0 * np.pi)) ** (1.0 / 3.0))
 
 
-def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES) -> list[list[tuple]]:
+def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES,
+                    backbone: bool = False) -> list[list[tuple]]:  # fmt: skip
     """Per ligand copy, ``[(family, atom indices), ...]`` as RDKit types them.
 
     A feature is placed at the centre of its atoms, so an aromatic ring counts
     once at the middle of the ring rather than six times around it.
     ``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
     case and the second repeats what ``Hydrophobe`` already says.
+
+    Martini beads are typed by what they stand for instead, since they have no
+    element or valence for RDKit to read (:mod:`boonza.martini.features`);
+    ``backbone`` then also types the BB beads, which every probe carries.
     """
     import os
 
@@ -65,11 +71,14 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES) -> 
 
     from .chem import to_rdkit
 
+    lig = _ids(system, ligand)
+    frag = np.asarray(system.fragids)[lig]
+    if len(lig) and martini_beads(system, lig):
+        return [bead_features(system, lig[frag == f], families, backbone)
+                for f in np.unique(frag)]  # fmt: skip
     factory = ChemicalFeatures.BuildFeatureFactory(
         os.path.join(RDConfig.RDDataDir, "BaseFeatures.fdef")
     )
-    lig = _ids(system, ligand)
-    frag = np.asarray(system.fragids)[lig]
     out = []
     for f in np.unique(frag):
         atoms = lig[frag == f]
@@ -84,10 +93,10 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES) -> 
 
 
 def feature_points(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
-                   align: str = "protein and name CA", families=FAMILIES,
-                   periodic: bool = True) -> tuple[dict, np.ndarray]:  # fmt: skip
+                   align: str = "protein and name CA", families=FAMILIES, periodic: bool = True,
+                   backbone: bool = False) -> tuple[dict, np.ndarray]:  # fmt: skip
     """``({family: (n, 3) positions}, {family: (n,) which copy})`` in the reference's frame."""
-    per_copy = ligand_features(system, ligand, families)
+    per_copy = ligand_features(system, ligand, families, backbone)
     lig = _ids(system, ligand)
     fit = _ids(system, align)
     ref = system if reference is None else reference
@@ -120,7 +129,7 @@ def feature_points(system, positions=None, reference=None, ligand: str = DEFAULT
 
 def feature_maps(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
                  align: str = "protein and name CA", families=FAMILIES, spacing: float = 1.0,
-                 periodic: bool = True) -> dict[str, Density]:  # fmt: skip
+                 periodic: bool = True, backbone: bool = False) -> dict[str, Density]:  # fmt: skip
     """A map per feature family: how much more often than bulk each kind is found where.
 
     Every map shares one grid, so they can be read against each other -- a
@@ -134,7 +143,8 @@ def feature_maps(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND
     owners = {fam: [] for fam in families}
     volume, seen = 0.0, 0
     for own, run in pairs:
-        here, whose = feature_points(own, run, reference, ligand, align, families, periodic)
+        here, whose = feature_points(own, run, reference, ligand, align, families, periodic,
+                                     backbone)  # fmt: skip
         for fam in families:
             places[fam].append(here[fam])
             owners[fam].append(whose[fam] + seen)

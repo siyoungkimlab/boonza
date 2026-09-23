@@ -193,6 +193,28 @@ asks which probe to pose. But they answer a different question — where a
 ligand *settles* — and Martini probes mostly touch and leave, so they often
 find nothing where `boonza probes` still shows a clear preference.
 
-`sites --features` does not work on beads and says so: it types a ligand's
-atoms with RDKit, and a bead has no element or valence to read. In a probe
-run the chemistry is the probe, so no typing is needed.
+`sites --features` works on beads too. RDKit types a ligand's atoms, and a
+bead has no element or valence to read, so a Martini probe is typed by what
+its beads stand for instead:
+
+| residue | bead | families |
+|---|---|---|
+| Arg, Lys | the charged bead | cation, donor |
+| Glu (Asp) | the charged bead | anion, acceptor |
+| Ser, Thr | the hydroxyl bead | donor, acceptor |
+| Gln (Asn) | the amide bead | donor, acceptor |
+| Tyr | the phenol bead | donor, acceptor |
+| Trp | the indole NH bead | donor |
+| His | one ring nitrogen each | donor (ND1-H), acceptor (NE2) |
+| Phe, Trp | the ring | aromatic, hydrophobe |
+| Tyr, His | the ring | aromatic |
+| Ile, Leu, Val, Met, Pro, Cys, Ala | the side-chain bead | hydrophobe |
+
+A group that both donates and accepts carries both families, as RDKit's
+definitions give a hydroxyl both. Histidine is the one place Martini is more
+precise than "both": its two ring nitrogens are separate beads, so the donor
+and the acceptor are told apart.
+
+The backbone is left out: every probe carries the same amide backbone, and
+typing it would mark everywhere any probe went. `--feature-backbone` puts it
+back in (donor and acceptor).

@@ -302,11 +302,12 @@ def test_the_probes_command(tmp_path, capsys):
     assert (tmp_path / "out.csv").is_file()
 
 
-def test_feature_maps_refuse_beads(tmp_path):
-    """RDKit types atoms, and a bead is not one; the message says what to use."""
+def test_feature_maps_run_on_beads(tmp_path, capsys):
+    """`--features` types beads by what they stand for, so it works on a
+    coarse-grained run rather than quietly finding nothing."""
     from boonza.cli import main as cli_main
 
-    s, frames, _ = _probe_run(tmp_path, frames=2)
+    s, frames, _ = _probe_run(tmp_path, frames=4)
     run = tmp_path / "md"
     run.mkdir()
     boonza.save(s, run / "solvated.dms")
@@ -314,7 +315,8 @@ def test_feature_maps_refuse_beads(tmp_path):
         for frame in frames:
             w.write(frame, s.cell)
     (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}')
-    assert cli_main(["sites", "--workdir", str(run), "--features"]) == 1
+    assert cli_main(["sites", "--workdir", str(run), "--features"]) == 0
+    assert "hotspots" in capsys.readouterr().out
 
 
 def test_poses_ask_which_probe(tmp_path, capsys):
@@ -332,3 +334,84 @@ def test_poses_ask_which_probe(tmp_path, capsys):
     assert cli_main(["poses", str(tmp_path / "system.dms"), "--traj", str(tmp_path / "traj.dcd"),
                      "--ligandsel", "resname EK"]) == 0  # fmt: skip
     assert "name BB" in capsys.readouterr().out
+
+
+def _named(system, atoms):
+    return [str(np.asarray(system.atoms["name"])[a]) for a in atoms]
+
+
+def test_beads_are_typed_by_what_they_stand_for():
+    """No element to read, but the bead is a known piece of a known residue."""
+    from boonza.pharmacophore import ligand_features
+
+    s = probe("FK").system()
+    found = {(f, tuple(_named(s, at))) for f, at in ligand_features(s, "all")[0]}
+    assert ("Aromatic", ("SC1", "SC2", "SC3")) in found  # the Phe ring, once, at its centre
+    assert ("Hydrophobe", ("SC1", "SC2", "SC3")) in found
+    assert ("PosIonizable", ("SC2",)) in found and ("Donor", ("SC2",)) in found  # Lys
+    assert not [f for f, _ in found if f == "NegIonizable"]
+
+    s = probe("EQ").system()
+    found = {(f, tuple(_named(s, at))) for f, at in ligand_features(s, "all")[0]}
+    assert ("NegIonizable", ("SC1",)) in found and ("Acceptor", ("SC1",)) in found  # Glu
+    assert ("Donor", ("SC1",)) in found  # Gln's amide both donates and accepts
+
+
+def test_histidine_tells_its_nitrogens_apart():
+    """Martini gives ND1-H and NE2 their own beads, so the donor and the
+    acceptor are separate features, not one bead that is both."""
+    from boonza.pharmacophore import ligand_features
+
+    s = probe("HH").system()
+    found = {(f, tuple(_named(s, at))) for f, at in ligand_features(s, "all")[0]}
+    assert ("Donor", ("SC2",)) in found
+    assert ("Acceptor", ("SC3",)) in found
+    assert ("Aromatic", ("SC1", "SC2", "SC3")) in found
+
+
+@pytest.mark.parametrize(("sequence", "bead", "families"), [
+    ("SS", "SC1", {"Donor", "Acceptor"}),   # hydroxyls donate and accept
+    ("TT", "SC1", {"Donor", "Acceptor"}),
+    ("YY", "SC4", {"Donor", "Acceptor"}),   # the phenol
+    ("WW", "SC2", {"Donor"}),               # the indole NH only
+    ("RR", "SC2", {"PosIonizable", "Donor"}),
+    ("LL", "SC1", {"Hydrophobe"}),
+])  # fmt: skip
+def test_which_families_a_side_chain_bead_carries(sequence, bead, families):
+    from boonza.pharmacophore import ligand_features
+
+    s = probe(sequence).system()
+    found = {f for f, at in ligand_features(s, "all")[0] if _named(s, at) == [bead]}
+    assert found == families
+
+
+def test_the_backbone_is_left_out_unless_asked():
+    """Every probe carries the same backbone; typing it would mark everywhere a
+    probe went."""
+    from boonza.pharmacophore import ligand_features
+
+    s = probe("LL").system()
+    plain = ligand_features(s, "all")[0]
+    assert not [f for f, at in plain if _named(s, at) == ["BB"]]
+    with_bb = ligand_features(s, "all", backbone=True)[0]
+    bb = {f for f, at in with_bb if _named(s, at) == ["BB"]}
+    assert bb == {"Donor", "Acceptor"}
+
+
+def test_all_atom_ligands_still_go_to_rdkit():
+    from boonza.pharmacophore import ligand_features
+
+    s = boonza.from_smiles("c1ccccc1O", name="PHN")
+    families = {f for f, _ in ligand_features(s, "all")[0]}
+    assert {"Aromatic", "Donor", "Acceptor"} <= families
+
+
+def test_feature_maps_of_a_coarse_grained_run(tmp_path):
+    from boonza.pharmacophore import feature_maps
+
+    s, frames, _ = _probe_run(tmp_path, frames=4)
+    maps = feature_maps(s, [(s, frames)], ligand="resname EK LL", align="name BB", spacing=2.0)
+    assert {"Donor", "Acceptor", "PosIonizable", "NegIonizable", "Hydrophobe"} <= set(maps)
+    assert len(maps["PosIonizable"].places) > 0  # EK carries Lys
+    assert len(maps["NegIonizable"].places) > 0  # and Glu
+    assert len(maps["Aromatic"].places) == 0  # neither probe has a ring
