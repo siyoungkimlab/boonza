@@ -40,6 +40,11 @@ _SCHEDULE = (("schedule", "str"),)
 _TERM = [
     _s("angle_harm", "bond", 3, ["theta0", "fc"], _CONSTRAINED),
     _s("angle_fbhw", "bond", 3, ["sigma", "theta0", "fc"]),
+    # fc (cos theta - cos theta0)^2: GROMACS angle type 2, GROMOS-96 and Martini side chains
+    _s("angle_cosine_harm", "bond", 3, ["theta0", "fc"]),
+    # fc (cos theta - cos theta0)^2 / sin^2 theta: GROMACS type 10, Martini's restricted
+    # bending, which grows without bound as the angle straightens and so keeps it from doing so
+    _s("angle_restricted", "bond", 3, ["theta0", "fc"]),
     _s("dihedral_trig", "bond", 4, ["phi0", *_fc("fc", 0, 6)]),
     _s("dihedral_fourier", "bond", 4, _fc("fc", 0, 12)),
     _s("dihedral6_trig", "bond", 6, ["phi0", "fc0", "fc2", "fc4"]),

@@ -93,7 +93,7 @@ Pairwise replacement parameters, keyed by a pair of param ids (NBFIX-style).
 
 ### `boonza.TERM_SCHEMAS`
 
-72 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_fbhw`, `angle_harm`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
+74 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
 
 ### `boonza.NONBONDED_SCHEMAS`
 
@@ -432,7 +432,7 @@ single molecule).  Best suited to ligands and other small molecules.
 
 ## OpenMM
 
-### `boonza.to_openmm(system, nonbonded_method: 'str' = 'NoCutoff', cutoff: 'float' = 9.0, constraints: 'bool' = True, dispersion_correction: 'bool' = True, ewald_tolerance: 'float' = 0.0005)`
+### `boonza.to_openmm(system, nonbonded_method: 'str' = 'NoCutoff', cutoff: 'float' = 9.0, constraints: 'bool' = True, dispersion_correction: 'bool' = True, ewald_tolerance: 'float' = 0.0005, epsilon_r: 'float' = 1.0, epsilon_rf: 'float | None' = None, lj_shift: 'bool' = False)`
 
 (Topology, System, positions) for OpenMM; cutoff in Å.
 
@@ -440,6 +440,15 @@ single molecule).  Best suited to ligands and other small molecules.
 CutoffNonPeriodic, CutoffPeriodic, Ewald, PME, LJPME).  With
 ``constraints``, the constraint tables become OpenMM constraints and
 stretch/angle terms marked ``constrained`` are left out.
+
+The rest are GROMACS's settings, for coarse-grained force fields that were
+made with them.  ``epsilon_r`` divides every Coulomb interaction.
+``epsilon_rf`` is the reaction-field dielectric, 0 meaning infinity as in
+GROMACS; with it, the energy is GROMACS's to the digit, including the terms
+GROMACS adds for excluded pairs and for each charge with itself.
+``lj_shift`` shifts every Lennard-Jones pair to zero at the cutoff.  Martini
+uses all three: ``epsilon_r=15, epsilon_rf=0, lj_shift=True``, cutoff 11 Å,
+and no dispersion correction.
 
 ### `boonza.from_openmm(topology, omm_system=None, positions=None, ignore_unknown: 'bool' = False) -> 'System'`
 

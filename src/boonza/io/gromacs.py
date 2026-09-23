@@ -187,6 +187,7 @@ class _Topology:
         self.defaults = [1, 1, False, 1.0, 1.0]
         self.atomtypes: dict[str, dict] = {}
         self.bondtypes: dict = {}
+        self.constrainttypes: dict = {}
         self.angletypes: dict = {}
         self.dihedraltypes: dict = {}
         self.pairtypes: dict = {}
@@ -205,7 +206,7 @@ class _Topology:
             elif section == "bondtypes":
                 self._both(self.bondtypes, t[:2], int(t[2]), t[3:])
             elif section == "constrainttypes":
-                continue
+                self._both(self.constrainttypes, t[:2], int(t[2]), t[3:])
             elif section == "angletypes":
                 self._both(self.angletypes, t[:3], int(t[3]), t[4:])
             elif section == "dihedraltypes":
@@ -279,9 +280,12 @@ class _Terms:
     def __init__(self):
         self.stretch, self.angle, self.dihedral, self.improper = [], [], [], []
         self.pair, self.hoh, self.posre = [], [], []
+        self.angle_cosine, self.angle_restricted = [], []  # GROMACS types 2 and 10
+        self.virtual: dict[int, list] = {}  # constructing atoms -> (site, *atoms, *weights)
+        self.constraint = []  # [ constraints ]: a fixed distance, not only a bond
 
 
-def _molecule_terms(top: _Topology, mol: _Molecule, types, charge) -> _Terms:
+def _molecule_terms(top: _Topology, mol: _Molecule, types, charge, mass=None) -> _Terms:
     out = _Terms()
     comb, fudge_lj, fudge_qq = top.defaults[1], top.defaults[3], top.defaults[4]
     bt = [top.bond_type(t) for t in types]
@@ -306,13 +310,20 @@ def _molecule_terms(top: _Topology, mol: _Molecule, types, charge) -> _Terms:
         i, j, k = local(t, 3)
         funct = int(t[3])
         params = t[4:] or top.angletypes.get((bt[i], bt[j], bt[k], funct))
-        if funct not in (1, 5):
-            names = {2: "GROMOS cosine", 3: "cross bond-bond", 4: "cross bond-angle",
-                     6: "quartic", 8: "tabulated", 10: "restricted bending"}  # fmt: skip
+        if funct not in (1, 2, 5, 10):
+            names = {3: "cross bond-bond", 4: "cross bond-angle", 6: "quartic",
+                     8: "tabulated"}  # fmt: skip
             raise _unsupported("angle", funct, names.get(funct, "not harmonic"))
         if params is None:
             raise GromacsError(f"no [ angletypes ] entry for {bt[i]}-{bt[j]}-{bt[k]}")
-        out.angle.append((i, j, k, float(params[0]), float(params[1]) / 2 / KJ))
+        term = (i, j, k, float(params[0]), float(params[1]) / 2 / KJ)  # 1/2 k, in kcal
+        if funct == 2:  # 1/2 k (cos theta - cos theta0)^2
+            out.angle_cosine.append(term)
+            continue
+        if funct == 10:  # the same over sin^2 theta: restricted bending
+            out.angle_restricted.append(term)
+            continue
+        out.angle.append(term)
         if funct == 5 and float(params[3]) != 0:  # Urey-Bradley 1-3 spring
             out.stretch.append((i, k, float(params[2]) * 10, float(params[3]) / 2 / KJ / 100))
     for t in mol.lines("dihedrals"):
@@ -363,8 +374,38 @@ def _molecule_terms(top: _Topology, mol: _Molecule, types, charge) -> _Terms:
         if int(t[1]) != 1:
             raise _unsupported("position restraint", int(t[1]), "not harmonic")
         out.posre.append((i, *(float(x) / KJ / 100 for x in t[2:5])))
-    for section in ("virtual_sites2", "virtual_sites3", "virtual_sites4", "virtual_sitesn",
-                    "cmap"):  # fmt: skip
+    for t in mol.lines("constraints"):
+        i, j = local(t, 2)
+        funct = int(t[2])
+        if funct not in (1, 2):  # 2 is the same distance, without counting as a bond
+            raise _unsupported("constraint", funct, "not a fixed distance")
+        params = t[3:] or top.constrainttypes.get((bt[i], bt[j], funct))
+        if params is None:
+            raise GromacsError(f"no [ constrainttypes ] entry for {bt[i]}-{bt[j]}")
+        out.constraint.append((i, j, float(params[0]) * 10))  # nm to A
+    for t in mol.lines("virtual_sitesn"):
+        site, funct = int(t[0]) - 1, int(t[1])
+        if funct == 3:  # centre of weights: atom, weight, atom, weight...
+            parents = [int(x) - 1 for x in t[2::2]]
+            weights = [float(x) for x in t[3::2]]
+        elif funct in (1, 2):  # centre of geometry, or of mass
+            parents = [int(x) - 1 for x in t[2:]]
+            if funct == 1 or mass is None:
+                weights = [1.0] * len(parents)
+            else:
+                weights = [float(mass[a]) for a in parents]
+        else:
+            raise _unsupported("virtual_sitesn", funct, "not a centre of geometry, mass or weights")
+        total = sum(weights)
+        if not parents or total <= 0:
+            raise GromacsError(f"virtual site {site + 1} has no weight to place it by")
+        if len(parents) > 7:
+            raise GromacsError(f"virtual site {site + 1} is built from {len(parents)} atoms; "
+                               "at most 7 are supported")  # fmt: skip
+        weights = [w / total for w in weights]
+        # virtual_lcN: the first parent's weight is what the others leave
+        out.virtual.setdefault(len(parents), []).append((site, *parents, *weights[1:]))
+    for section in ("virtual_sites2", "virtual_sites3", "virtual_sites4", "cmap"):
         if mol.lines(section):
             raise GromacsError(f"[ {section} ] is not supported; load with structure_only=True")
     return out
@@ -545,7 +586,7 @@ def _prepare(top: _Topology, mol: _Molecule, structure_only: bool) -> dict:
                         for k in starts],
             "bonds": np.array(chem, np.int64).reshape(-1, 2)}  # fmt: skip
     if not structure_only:
-        info["terms"] = _molecule_terms(top, mol, types, charge)
+        info["terms"] = _molecule_terms(top, mol, types, charge, mass)
         info["exclusions"] = np.array(sorted(_exclusions(n, chem, mol.nrexcl,
                                                          mol.lines("exclusions"))),
                                       np.int64).reshape(-1, 2)  # fmt: skip
@@ -567,10 +608,13 @@ def _force_field(s: System, top: _Topology, per_mol: dict, types: np.ndarray) ->
     comb = top.defaults[1]
     plan = [("stretch", "stretch_harm", 2, ["r0", "fc"]),
             ("angle", "angle_harm", 3, ["theta0", "fc"]),
+            ("angle_cosine", "angle_cosine_harm", 3, ["theta0", "fc"]),
+            ("angle_restricted", "angle_restricted", 3, ["theta0", "fc"]),
             ("dihedral", "dihedral_trig", 4, ["phi0"] + [f"fc{k}" for k in range(7)]),
             ("improper", "improper_harm", 4, ["phi0", "fc"]),
             ("pair", "pair_12_6_es", 2, ["aij", "bij", "qij"]),
-            ("hoh", "constraint_hoh", 3, ["theta", "r1", "r2"])]  # fmt: skip
+            ("hoh", "constraint_hoh", 3, ["theta", "r1", "r2"]),
+            ("constraint", "constraint_ah1", 2, ["r1"])]  # fmt: skip
     for attr, table_name, width, cols in plan:
         blocks = [_replicate(info, getattr(info["terms"], attr), info["n"], width)
                   for info in per_mol.values()]  # fmt: skip
@@ -583,6 +627,17 @@ def _force_field(s: System, top: _Topology, per_mol: dict, types: np.ndarray) ->
         pids = table.params.add_params(len(values),
                                        **{c: values[:, k] for k, c in enumerate(cols)})  # fmt: skip
         table.add_terms(atoms, params=pids)
+    for n in sorted({n for info in per_mol.values() for n in info["terms"].virtual}):
+        blocks = [_replicate(info, info["terms"].virtual.get(n, []), info["n"], n + 1)
+                  for info in per_mol.values()]  # fmt: skip
+        blocks = [b for b in blocks if b is not None]
+        if blocks:
+            atoms = np.concatenate([b[0] for b in blocks])
+            values = np.concatenate([b[1] for b in blocks])
+            table = s.add_table_from_schema(f"virtual_lc{n}")
+            pids = table.params.add_params(len(values), **{f"c{k + 1}": values[:, k]
+                                                           for k in range(n - 1)})  # fmt: skip
+            table.add_terms(atoms, params=pids)
     posre = [b for b in (_replicate(info, info["terms"].posre, info["n"], 1)
                          for info in per_mol.values()) if b is not None]  # fmt: skip
     if posre:
