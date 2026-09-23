@@ -233,3 +233,102 @@ def test_probes_swim_free_of_the_backbone_restraints(tmp_path):
     settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
     assert settings.dihedral_restraint == "bb"
     assert settings.dihedral_restraint_selection == "not (resname EK LL)"
+
+
+def _probe_run(tmp_path, frames=6):
+    """A tiny coarse-grained run: a martinized protein, two probes, and frames
+    in which one probe sits on a chosen residue while the other stays away."""
+    from boonza.martini import martinize
+
+    protein = martinize(boonza.load(DATA / "1TEN.pdb"), elastic=True)
+    probes = [probe("EK"), probe("LL")]
+    box = np.full(3, float(np.ptp(protein.positions, axis=0).max()) + 30.0)
+    m = build(protein, probes, 1, box, np.random.default_rng(0), salt=0.0)
+    s = m.system()
+    res = np.asarray(s.atoms["residue"])
+    names = np.array([str(x) for x in np.asarray(s.residues["name"])])
+    ek = np.flatnonzero(names[res] == "EK")
+    target = int(res[np.flatnonzero(names[res] == "LEU")[0]])  # a residue of the protein
+    on_target = np.flatnonzero(res == target)
+    xyz = np.asarray(s.positions)
+    positions = []
+    for _ in range(frames):
+        frame = xyz.copy()
+        frame[ek] = xyz[on_target].mean(0) + np.linspace(0, 2, len(ek))[:, None]  # EK sits on it
+        positions.append(frame)
+    return s, np.array(positions), int(np.asarray(s.residues["resid"])[target])
+
+
+def test_probe_contacts(tmp_path):
+    """Each residue's share of frames touching each probe."""
+    from boonza.probemap import probe_contacts
+
+    s, frames, resid = _probe_run(tmp_path)
+    m = probe_contacts(s, [(s, frames)], ["EK", "LL"], cutoff=6.0)
+    assert m.frames == len(frames)
+    assert m.probes == ["EK", "LL"]
+    assert len(m.residues) == len([r for r in np.unique(np.asarray(s.atoms["residue"]))
+                                   if str(np.asarray(s.residues["name"])[r]) not in
+                                   ("W", "ION", "EK", "LL")])  # fmt: skip
+    row = [k for k, (_, r, _) in enumerate(m.residues) if r == resid][0]
+    assert m.contacts[row, 0] == 1.0  # EK touches it in every frame
+    assert m.contacts[:, 1].max() < 1.0  # LL was left where it was placed
+    letters, pooled = m.side_chains()
+    assert letters == ["E", "K", "L"]
+    assert pooled[row, letters.index("E")] == pooled[row, letters.index("K")] == 1.0
+    top = m.top(n=1, by="side-chain")
+    assert ("E", m.residues[row], 1.0) in top
+    m.to_csv(tmp_path / "probes.csv")
+    text = (tmp_path / "probes.csv").read_text().splitlines()
+    assert text[0] == "chain,resid,residue,EK,LL"
+    assert len(text) == len(m.residues) + 1
+
+
+def test_the_probes_command(tmp_path, capsys):
+    """It reads the probes of each run and writes the table."""
+    from boonza.cli import main as cli_main
+
+    s, frames, resid = _probe_run(tmp_path)
+    run = tmp_path / "md"
+    run.mkdir()
+    boonza.save(s, run / "solvated.dms")
+    with boonza.open_writer(run / "trajectory.dcd", s.natoms) as w:
+        for frame in frames:
+            w.write(frame, s.cell)
+    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}')
+    assert cli_main(["probes", "--workdir", str(run), "-o", str(tmp_path / "out.csv")]) == 0
+    printed = capsys.readouterr().out
+    assert "2 probes" in printed and f"LEU{resid}" in printed
+    assert (tmp_path / "out.csv").is_file()
+
+
+def test_feature_maps_refuse_beads(tmp_path):
+    """RDKit types atoms, and a bead is not one; the message says what to use."""
+    from boonza.cli import main as cli_main
+
+    s, frames, _ = _probe_run(tmp_path, frames=2)
+    run = tmp_path / "md"
+    run.mkdir()
+    boonza.save(s, run / "solvated.dms")
+    with boonza.open_writer(run / "trajectory.dcd", s.natoms) as w:
+        for frame in frames:
+            w.write(frame, s.cell)
+    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}')
+    assert cli_main(["sites", "--workdir", str(run), "--features"]) == 1
+
+
+def test_poses_ask_which_probe(tmp_path, capsys):
+    """A coarse-grained pocket is BB beads, and the probe has to be named."""
+    from boonza.cli import main as cli_main
+
+    s, frames, _ = _probe_run(tmp_path, frames=3)
+    boonza.save(s, tmp_path / "system.dms")
+    with boonza.open_writer(tmp_path / "traj.dcd", s.natoms) as w:
+        for frame in frames:
+            w.write(frame, s.cell)
+    assert (
+        cli_main(["poses", str(tmp_path / "system.dms"), "--traj", str(tmp_path / "traj.dcd")]) == 1
+    )
+    assert cli_main(["poses", str(tmp_path / "system.dms"), "--traj", str(tmp_path / "traj.dcd"),
+                     "--ligandsel", "resname EK"]) == 0  # fmt: skip
+    assert "name BB" in capsys.readouterr().out

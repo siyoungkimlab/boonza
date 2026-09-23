@@ -586,6 +586,21 @@ minimization (1 kJ/mol/nm) this runs ``steps`` steps at each of 2, 5 and
 tutorials do.  The integrator must have a step size to set (Langevin
 middle, Verlet, ...).
 
+### `boonza.probe_contacts(system, runs, probes, cutoff: 'float' = 6.0, stride: 'int' = 1, periodic: 'bool' = True) -> 'ProbeMap'`
+
+How often each residue of ``system`` touches each of ``probes``.
+
+``runs`` is one trajectory or several (each with its own system, as
+:func:`boonza.sites` takes them); ``probes`` are the residue names the
+probes carry (``EK``, ``LL``, ...).  A residue and a probe touch in a
+frame when any of their beads are within ``cutoff`` Å, minimum image if
+``periodic``.  Runs that hold different probes pool: each column counts
+only the frames of the runs that carried that probe.
+
+### `class boonza.ProbeMap(residues: 'list', probes: 'list', contacts: 'np.ndarray', frames: 'int') -> None`
+
+Contacts as a fraction of frames, residues down and probes across.
+
 ## Per-format readers and writers (`boonza.io`)
 
 ### `boonza.io.load_cif(path, guess_bonds: 'bool' = True, struct_conn: 'bool' = True) -> 'System'`

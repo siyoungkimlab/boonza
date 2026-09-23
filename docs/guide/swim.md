@@ -171,3 +171,28 @@ boonza sites --workdir swim/sim_*/md      # aligns on BB beads, probes as ligand
 
 Martini's resolution is a bead (about 0.47 nm), so the maps say which
 chemistry a pocket likes and where, not how a ligand poses in it.
+
+### Reading a coarse-grained swim
+
+```bash
+boonza probes --workdir swim/sim_*/md -o probes.csv   # what each probe touches
+boonza sites --workdir swim/sim_*/md                  # where probes gather, if they settle
+boonza poses run/solvated.dms --traj run/trajectory.dcd --ligandsel "resname EK"
+```
+
+`boonza probes` is the one written for this. For every residue and every
+probe it counts the frames in which they touch (any beads within `--cutoff`,
+6 Å), pools runs, and prints the residues each **side chain** visits most,
+with `--by probe` for the probes themselves and `-o` for the whole table as
+CSV. `boonza.probe_contacts` is the same thing in Python.
+
+`boonza sites` and `boonza poses` work too, and fill in what a
+coarse-grained run needs: `sites --workdir` aligns on `name BB` and takes the
+probes from `probes.json`, and `poses` builds its pocket from `name BB` and
+asks which probe to pose. But they answer a different question — where a
+ligand *settles* — and Martini probes mostly touch and leave, so they often
+find nothing where `boonza probes` still shows a clear preference.
+
+`sites --features` does not work on beads and says so: it types a ligand's
+atoms with RDKit, and a bead has no element or valence to read. In a probe
+run the chemistry is the probe, so no typing is needed.

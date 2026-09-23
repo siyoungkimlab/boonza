@@ -34,11 +34,13 @@ SECTIONS = [
     ("RDKit", ["to_rdkit", "from_rdkit", "fragments_to_rdkit", "assign_bond_orders"]),
     ("OpenMM", ["to_openmm", "from_openmm", "openmm_energies"]),
     ("Martini", ["martinize", "Martinized", "martini.parameters", "martini.solvate",
-                 "martini.bilayer", "martini.lipid_templates", "martini.equilibrate"]),
+                 "martini.bilayer", "martini.lipid_templates", "martini.equilibrate",
+                 "probe_contacts", "ProbeMap"]),
 ]  # fmt: skip
 CLASSES_WITH_MEMBERS = {"System", "AtomSel", "Atom", "Bond", "Residue", "Chain", "Ct",
                         "TermTable", "ParamTable", "Term", "OverrideTable", "Trajectory",
-                        "SequenceAlignment", "HBonds", "MatchResult", "Martinized"}  # fmt: skip
+                        "SequenceAlignment", "HBonds", "MatchResult", "Martinized",
+                        "ProbeMap"}  # fmt: skip
 
 
 def _sig(obj) -> str:
