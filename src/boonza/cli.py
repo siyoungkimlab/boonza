@@ -515,6 +515,34 @@ def _build(args) -> int:
     return 0
 
 
+def _draw(args) -> int:
+    from pathlib import Path
+
+    from .draw import draw, read_smiles
+
+    smiles, names = list(args.smiles or []), None
+    if args.input:
+        pairs = read_smiles(Path(args.input).read_text())
+        if not pairs:
+            raise ValueError(f"{args.input} holds no SMILES")
+        smiles += [s for s, _ in pairs]
+        names = [""] * len(args.smiles or []) + [n for _, n in pairs]
+    if not smiles:
+        raise ValueError("give SMILES to draw, or --input a file of them")
+    d = draw(smiles, args.output, names=names, size=tuple(args.size), columns=args.columns,
+             rows=args.rows, highlight=args.highlight, mcs=args.mcs, align=args.align,
+             labels=not args.no_labels)  # fmt: skip
+    where = ", ".join(str(f) for f in d.files)
+    print(f"wrote {where}: {d.drawn} molecule{'s' if d.drawn != 1 else ''}")
+    if d.failures:
+        print(f"  {len(d.failures)} could not be read: {', '.join(d.failures[:5])}")
+    if args.mcs:
+        print(f"  common core: {d.core}" if d.core else "  no common core to mark")
+    if args.align:
+        print(f"  {d.aligned} of {d.drawn} laid out on the core")
+    return 0
+
+
 def _where(path) -> str:
     """What to say about a parameter file: there it is, or you have to supply it."""
     from pathlib import Path
@@ -763,6 +791,26 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--seed", type=int, default=42, help="random seed for the embedding")
     q.add_argument("--no-optimize", action="store_true", help="skip the MMFF minimization")
     q.set_defaults(run=_build)
+
+    q = sub.add_parser("draw", help="a picture of molecules from SMILES (PNG or SVG)")
+    q.add_argument("smiles", nargs="*", help="SMILES to draw")
+    q.add_argument("-o", "--output", required=True, help="output file (.png or .svg)")
+    q.add_argument("--input", help="file of SMILES, one per line, each with an optional name")
+    q.add_argument("--columns", type=int, default=4, help="molecules across (default: 4)")
+    q.add_argument(
+        "--rows",
+        type=int,
+        help="molecules down; more than one page's worth go to NAME-2, NAME-3, ...",
+    )
+    q.add_argument("--size", type=int, nargs=2, default=[300, 250], metavar=("W", "H"),
+                   help="pixels per molecule (default: 300 250)")  # fmt: skip
+    q.add_argument("--mcs", action="store_true",
+                   help="find the largest scaffold they share and mark it")  # fmt: skip
+    q.add_argument("--highlight", metavar="SMARTS", help="mark this instead of the MCS")
+    q.add_argument("--align", action="store_true",
+                   help="draw every molecule with the core the same way up")  # fmt: skip
+    q.add_argument("--no-labels", action="store_true", help="no names under the molecules")
+    q.set_defaults(run=_draw)
 
     q = sub.add_parser("martinize", help="Martini 3 beads and topology for proteins, as martinize2")
     q.add_argument("input", help="all-atom structure (hydrogens, if present, set protonation)")

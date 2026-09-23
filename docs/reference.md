@@ -469,6 +469,50 @@ of raising.
 
 Energy of each translated force in kcal/mol (and the total).
 
+## Drawing molecules
+
+### `boonza.draw(smiles, path, names=None, size=(300, 250), columns: 'int' = 4, rows: 'int | None' = None, highlight: 'str | None' = None, mcs: 'bool' = False, align: 'bool' = False, labels: 'bool' = True) -> 'Drawing'`
+
+Draw ``smiles`` into ``path`` (.png or .svg); returns a :class:`Drawing`.
+
+One molecule fills the picture; several are laid out ``columns`` wide,
+each ``size`` pixels, labelled with their names (or their SMILES, when
+the list carries none) unless ``labels`` is off.  ``rows`` caps the grid,
+and anything beyond one page goes to ``out-2.png``, ``out-3.png`` and so
+on, so a library does not become one unreadable image.
+
+``highlight`` is a SMARTS marked wherever it is found.  ``mcs`` finds the
+largest scaffold the molecules share and marks that instead, which is the
+version to reach for when you do not already know what they have in
+common.  ``align`` lays them out so that the marked core sits the same way
+up in every picture, which is what makes a series comparable by eye.
+
+### `class boonza.Drawing(files: 'list' = <factory>, failures: 'list' = <factory>, core: 'str | None' = None, aligned: 'int' = 0, drawn: 'int' = 0) -> None`
+
+What a call to :func:`draw` produced.
+
+``files`` are the pictures written (more than one when ``rows`` caps the
+grid), ``failures`` the SMILES RDKit could not read, ``core`` the SMARTS
+that was marked, and ``aligned`` how many molecules were laid out on it.
+``core`` is None when ``--mcs`` found nothing the molecules share, which
+is worth saying: the picture is then simply unmarked.
+
+### `boonza.common_core(mols, timeout: 'int' = 20)`
+
+The maximum common substructure of ``mols``, or None if there is none.
+
+Bonds match on order and atoms on element, which is what makes the result
+a scaffold a chemist would recognize rather than a shape that happens to
+overlap.  Needs two molecules; one molecule is its own core.
+
+### `boonza.read_smiles(text: 'str') -> 'list[tuple[str, str]]'`
+
+``(smiles, name)`` per non-empty line, as a ``.smi`` file holds them.
+
+A line is a SMILES and, after whitespace, an optional name; ``#`` starts
+a comment.  The name is what a grid labels the molecule with, so a file
+that carries names needs nothing else to make a legible picture.
+
 ## Martini
 
 ### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
