@@ -71,6 +71,7 @@ from .pharmacophore import (  # noqa: E402
     write_hotspots,
 )
 from .poses import Pose, PoseSet, bound_frame, pocket_contacts, pose_distances, poses  # noqa: E402
+from .probemap import ProbeMap, probe_contacts  # noqa: E402
 from .rings import ring_systems, sssr  # noqa: E402
 from .schemas import NONBONDED_SCHEMAS, TERM_SCHEMAS  # noqa: E402
 from .secondary import backbone_dihedrals, backbone_hbonds, chimerax_ss, dssp  # noqa: E402
@@ -224,6 +225,8 @@ __all__ = [
     "Problem",
     "find_knots",
     "distinct_fragments",
+    "ProbeMap",
+    "probe_contacts",
     "ring_systems",
     "update_exclusions",
     "sssr",

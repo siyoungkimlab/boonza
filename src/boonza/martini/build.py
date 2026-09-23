@@ -109,6 +109,7 @@ class Martinized:
     names: list = field(default_factory=list)
     ss: str = ""
     solvent: list = field(default_factory=list)
+    copies: list = field(default_factory=list)  # how many of each molecule (1 each by default)
     lipids: list = field(default_factory=list)  # (name, count, bead names), in order
     includes: list = field(default_factory=list)  # topology files the lipids come from
     martini: int = 3  # which Martini the beads are, for the parameters to include
@@ -127,7 +128,7 @@ class Martinized:
         if any(c for _, c in self.solvent):  # a list of zero counts is no solvent
             lines.append(f'#include "{_solvent_include(self.martini)}"')
         lines += ["", "[ system ]", "Martini system", "", "[ molecules ]"]
-        lines += [f"{n} 1" for n in self.names]
+        lines += [f"{n} {c}" for n, c in zip(self.names, self.molecule_copies, strict=True)]
         lines += [f"{n} {c}" for n, c, _ in self.lipids]
         lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
@@ -165,9 +166,18 @@ class Martinized:
             s = load_top(top, Path(tmp) / "cg.gro", include_dirs=[str(martini_itp.parent)])
         return s
 
+    @property
+    def molecule_copies(self) -> list:
+        """How many of each molecule the system holds; one each unless set."""
+        return self.copies or [1] * len(self.molecules)
+
     def _gro(self) -> str:
-        labels = [(n["input_resid"], n["resname"], n["atomname"])
-                  for mol in self.molecules for n in mol.nodes]  # fmt: skip
+        labels = []
+        for mol, count in zip(self.molecules, self.molecule_copies, strict=True):
+            rows = [(n["input_resid"], n["resname"], n["atomname"]) for n in mol.nodes]
+            for c in range(count):
+                # copies of one molecule carry on its residue numbering
+                labels += [(r + c * len(mol.nodes), name, bead) for r, name, bead in rows]
         resid = 0
         for name, count, beads in self.lipids:
             for _ in range(count):
@@ -234,7 +244,9 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     """Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
 
     ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
-    default boonza's DSSP is run on the structure.  ``elastic`` adds
+    default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
+    unassigned (the backbone then takes the coil terms, as martinize2's
+    links give a residue with no secondary structure).  ``elastic`` adds
     martinize2's elastic network between backbone beads ``elastic_lower`` to
     ``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
     ``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
@@ -261,7 +273,9 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     groups = _molecules(len(residues), bonds)
     if ss is None:
         ss = _dssp(system, atoms)
-    if len(ss) != len(residues):
+    elif ss is False:  # no secondary structure: the coil terms, and no more
+        ss = ""
+    if ss and len(ss) != len(residues):
         raise ValueError(f"ss has {len(ss)} codes for {len(residues)} residues")
     neighbours = defaultdict(set)
     for a, _, b, _ in bonds:
@@ -272,7 +286,7 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     cter = {r for r, nb in neighbours.items() if len(nb) == 1 and r > max(nb)}
     molecules, names, positions, missing = [], [], [], []
     for m, members in enumerate(groups):
-        cg_ss = convert_dssp_to_martini("".join(ss[r] for r in members))
+        cg_ss = convert_dssp_to_martini("".join(ss[r] for r in members)) if ss else ""
         mol = _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral_termini,
                               missing)  # fmt: skip
         mol.meta = {"scfix": scfix, "extdih": extdih, "idr": False}

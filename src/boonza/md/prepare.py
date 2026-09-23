@@ -376,6 +376,12 @@ def save_structure(s: System, path, positions=None, box=None) -> None:
     save(frame, path)
 
 
+def secondary_beside(top) -> str | None:
+    """The DSSP codes boonza wrote beside a built Martini topology, if any."""
+    path = Path(top).parent / "secondary.txt"
+    return path.read_text().strip() if path.is_file() else None
+
+
 def _coordinates_beside(top: Path) -> Path:
     """The coordinates of a Martini topology: ``<stem>.gro``, or the ``cg.gro``
     that :meth:`boonza.martini.Martinized.save` writes beside ``topol.top``."""
@@ -469,6 +475,8 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                        seed=args.seed)  # fmt: skip
 
     m.save(workdir / "martini", martini_itp=args.martini_itp)
+    if m.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
+        (workdir / "martini" / "secondary.txt").write_text(m.ss + "\n")
     s = m.system(args.martini_itp)
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])

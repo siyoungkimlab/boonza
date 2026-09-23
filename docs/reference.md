@@ -476,7 +476,9 @@ Energy of each translated force in kcal/mol (and the total).
 Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
 
 ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
-default boonza's DSSP is run on the structure.  ``elastic`` adds
+default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
+unassigned (the backbone then takes the coil terms, as martinize2's
+links give a residue with no secondary structure).  ``elastic`` adds
 martinize2's elastic network between backbone beads ``elastic_lower`` to
 ``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
 ``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
@@ -490,7 +492,7 @@ default).  Hydrogens present in the structure decide protonation:
 Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
 neutral, and His is typed by which ring nitrogens carry one.
 
-### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, copies: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
 
 The Martini beads of a system and their GROMACS topology.
 
@@ -583,6 +585,21 @@ minimization (1 kJ/mol/nm) this runs ``steps`` steps at each of 2, 5 and
 10 fs before leaving the integrator at ``timestep``, as Martini
 tutorials do.  The integrator must have a step size to set (Langevin
 middle, Verlet, ...).
+
+### `boonza.probe_contacts(system, runs, probes, cutoff: 'float' = 6.0, stride: 'int' = 1, periodic: 'bool' = True) -> 'ProbeMap'`
+
+How often each residue of ``system`` touches each of ``probes``.
+
+``runs`` is one trajectory or several (each with its own system, as
+:func:`boonza.sites` takes them); ``probes`` are the residue names the
+probes carry (``EK``, ``LL``, ...).  A residue and a probe touch in a
+frame when any of their beads are within ``cutoff`` Å, minimum image if
+``periodic``.  Runs that hold different probes pool: each column counts
+only the frames of the runs that carried that probe.
+
+### `class boonza.ProbeMap(residues: 'list', probes: 'list', contacts: 'np.ndarray', frames: 'int') -> None`
+
+Contacts as a fraction of frames, residues down and probes across.
 
 ## Per-format readers and writers (`boonza.io`)
 
@@ -899,7 +916,7 @@ holding ``quantile`` of the site's own frames -- and leaves only past
 ``hysteresis`` times that.  The first and last stretch of every copy are
 censored: they were cut by the trajectory, not by the ligand.
 
-### `boonza.feature_maps(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), spacing: 'float' = 1.0, periodic: 'bool' = True) -> 'dict[str, Density]'`
+### `boonza.feature_maps(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), spacing: 'float' = 1.0, periodic: 'bool' = True, backbone: 'bool' = False) -> 'dict[str, Density]'`
 
 A map per feature family: how much more often than bulk each kind is found where.
 
@@ -908,7 +925,7 @@ place that wants an acceptor and not a donor is the interesting kind.
 Bulk is worked out per family, from that family's own count, so a ligand
 set rich in one kind does not make its map look hot everywhere.
 
-### `boonza.feature_points(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), periodic: 'bool' = True) -> 'tuple[dict, np.ndarray]'`
+### `boonza.feature_points(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), periodic: 'bool' = True, backbone: 'bool' = False) -> 'tuple[dict, np.ndarray]'`
 
 ``({family: (n, 3) positions}, {family: (n,) which copy})`` in the reference's frame.
 
@@ -1029,7 +1046,7 @@ to the image nearest the protein.  The frame's ``align`` atoms are
 superposed on the reference's, and the same transform is applied to the
 centroid, so points from different runs live in one frame of reference.
 
-### `boonza.ligand_features(system, ligand: 'str' = 'not (polymer or water or ions) and noh', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable')) -> 'list[list[tuple]]'`
+### `boonza.ligand_features(system, ligand: 'str' = 'not (polymer or water or ions) and noh', families=('Donor', 'Acceptor', 'Aromatic', 'Hydrophobe', 'PosIonizable', 'NegIonizable'), backbone: 'bool' = False) -> 'list[list[tuple]]'`
 
 Per ligand copy, ``[(family, atom indices), ...]`` as RDKit types them.
 
@@ -1037,6 +1054,10 @@ A feature is placed at the centre of its atoms, so an aromatic ring counts
 once at the middle of the ring rather than six times around it.
 ``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
 case and the second repeats what ``Hydrophobe`` already says.
+
+Martini beads are typed by what they stand for instead, since they have no
+element or valence for RDKit to read (:mod:`boonza.martini.features`);
+``backbone`` then also types the BB beads, which every probe carries.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 

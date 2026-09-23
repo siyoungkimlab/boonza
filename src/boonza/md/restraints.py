@@ -40,6 +40,30 @@ def backbone_torsions(s) -> list[tuple[int, str, tuple[int, int, int, int]]]:
     return out
 
 
+def bead_torsions(s) -> list[tuple[int, str, tuple[int, int, int, int]]]:
+    """(residue, "bb", beads) for each BB-BB-BB-BB torsion of a coarse-grained
+    backbone: four residues in a row, bonded, so chain breaks are left free.
+
+    It is the Martini counterpart of phi and psi, and the torsion Martini's
+    own helix term acts on.
+    """
+    names, res = s.atoms["name"], s.atoms["residue"]
+    bb = {int(res[a]): int(a) for a in np.flatnonzero(names == "BB").tolist()}
+    out = []
+    for r in sorted(bb):
+        beads = [bb.get(r + k) for k in range(4)]
+        if any(b is None for b in beads):
+            continue
+        if all(beads[k + 1] in s.bonded_atoms(beads[k]).tolist() for k in range(3)):
+            out.append((r, "bb", tuple(beads)))
+    return out
+
+
+def coarse_grained(s) -> bool:
+    """A Martini system: backbone beads rather than alpha carbons."""
+    return not len(s.select("name CA").ids) and len(s.select("name BB").ids) >= 4
+
+
 def fourier_terms(strength_kj: float):
     """(periodicity, force constant in kJ/mol) of the well."""
     k = -abs(strength_kj)
@@ -57,23 +81,43 @@ def dihedral(pos, atoms) -> float:
     return math.atan2(float(np.dot(np.cross(b1, v), w)), float(np.dot(v, w)))
 
 
-def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, selection=None):
-    """Restrain phi/psi of ``s`` (``mode`` "bb" or "ss") to their values in
-    its positions, only torsions whose atoms ``selection`` picks when given;
-    returns (records, description)."""
+def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, selection=None,
+                            secondary=None):  # fmt: skip
+    """Restrain the backbone torsions of ``s`` (``mode`` "bb" or "ss") to their
+    values in its positions, only torsions whose atoms ``selection`` picks when
+    given; returns (records, description).
+
+    All-atom torsions are phi and psi; a coarse-grained one is BB-BB-BB-BB
+    over four residues, the torsion Martini's own helix term acts on.  There
+    ``mode`` "ss" needs ``secondary``, the DSSP codes of the protein's
+    residues, since DSSP cannot read beads; boonza writes them beside the
+    topology it builds.
+    """
     import openmm as mm
 
-    torsions = backbone_torsions(s)
+    beads = coarse_grained(s)
+    torsions = bead_torsions(s) if beads else backbone_torsions(s)
     if selection:
         picked = np.zeros(s.natoms, bool)
         picked[s.select(selection).ids] = True
         torsions = [t for t in torsions if picked[list(t[2])].all()]
     if mode == "ss":
-        from ..secondary import dssp
+        if beads:
+            if not secondary:
+                raise ValueError("dihedral_restraint = 'ss' needs the secondary structure of a "
+                                 "coarse-grained system, which boonza writes as secondary.txt "
+                                 "beside the topology it builds; use 'bb' instead")  # fmt: skip
+            # the codes are the protein's residues, in order, from its first one
+            first = min((t[0] for t in torsions), default=0)
+            structured = ("H", "G", "I", "E", "B")
+            chosen = {first + k for k, code in enumerate(secondary) if code in structured}
+            torsions = [t for t in torsions if all(t[0] + k in chosen for k in range(4))]
+        else:
+            from ..secondary import dssp
 
-        codes = dssp(s, simplified=True)[0]
-        chosen = {r for r, code in enumerate(codes.tolist()) if code in ("H", "E")}
-        torsions = [t for t in torsions if t[0] in chosen]
+            codes = dssp(s, simplified=True)[0]
+            chosen = {r for r, code in enumerate(codes.tolist()) if code in ("H", "E")}
+            torsions = [t for t in torsions if t[0] in chosen]
         description = f"{len(chosen)} residues in helices and sheets"
     else:
         description = f"{len({t[0] for t in torsions})} protein residues"

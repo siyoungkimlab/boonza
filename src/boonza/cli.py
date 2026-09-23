@@ -29,6 +29,9 @@ import sys
 
 import numpy as np
 
+#: what the site and pose commands align runs on, unless told otherwise
+DEFAULT_ALIGN = "protein and name CA"
+
 
 def _load(path, structure_only=False):
     import boonza
@@ -315,6 +318,7 @@ def _poses(args) -> int:
     else:
         system, files = _load(args.system), None
         traj = open_trajectory(args.traj, system)
+    _cg_poses_selections(args, system)
     counts = None
     if args.reference:
         reference = _load(args.reference)
@@ -393,6 +397,95 @@ def _poses(args) -> int:
     return 0
 
 
+def _cg_poses_selections(args, system) -> None:
+    """A coarse-grained pocket is made of backbone beads, and its probes have to
+    be named: the default ligand selection would take the protein itself."""
+    from .symmetry import DEFAULT_FIT, DEFAULT_LIGAND
+
+    if not _coarse_grained(system):
+        return
+    if getattr(args, "proteinsel", None) in (None, DEFAULT_ALIGN, DEFAULT_FIT):
+        args.proteinsel = "name BB"
+        print("the pocket is made of 'name BB' (a coarse-grained system has no CA atoms)")
+    if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
+        raise ValueError("say which probe to pose with --ligandsel, e.g. \"resname EK\": in a "
+                         "coarse-grained system the default ligand selection would take the "
+                         "protein itself.  'boonza probes' maps every probe at once")  # fmt: skip
+
+
+def _coarse_grained(system) -> bool:
+    """A Martini system: backbone beads rather than alpha carbons."""
+    return len(system.select("name CA").ids) == 0 and len(system.select("name BB").ids) >= 3
+
+
+def _cg_selections(args, system, workdirs) -> None:
+    """Fill in what a coarse-grained run needs: the probes of a `boonza swim
+    --model martini3` simulation, and its backbone beads to align on."""
+    import json
+    from pathlib import Path
+
+    from .symmetry import DEFAULT_LIGAND
+
+    if not _coarse_grained(system):
+        return
+    if getattr(args, "alignsel", None) in (None, DEFAULT_ALIGN):
+        args.alignsel = "name BB"
+        print("aligning on 'name BB' (a coarse-grained system has no CA atoms)")
+    if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
+        probes = []
+        for d in workdirs or []:
+            for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
+                if candidate.is_file():
+                    probes += json.loads(candidate.read_text())["probes"]
+                    break
+        if probes:
+            args.ligandsel = "resname " + " ".join(dict.fromkeys(probes))
+            print(f"the probes of the run(s): {args.ligandsel}")
+
+
+def _probes(args) -> int:
+    """What each probe touches, residue by residue."""
+    import json
+    from pathlib import Path
+
+    import boonza
+
+    from .probemap import probe_contacts
+    from .trajectory import open_trajectory
+
+    runs, probes = [], []
+    for d in args.workdir:
+        found = None
+        for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
+            if candidate.is_file():
+                found = json.loads(candidate.read_text())["probes"]
+                break
+        if found is None:
+            raise ValueError(f"{d} has no probes.json: it is not a run of "
+                             "'boonza swim --model martini3'")  # fmt: skip
+        probes += [p for p in found if p not in probes]
+        own = boonza.load(str(Path(d) / "solvated.dms"), without_tables=True)
+        runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
+    m = probe_contacts(runs[0][0], runs, probes, cutoff=args.cutoff, stride=args.stride,
+                       periodic=not args.no_pbc)  # fmt: skip
+    print(f"{len(runs)} runs, {m.frames} frames, {len(m.probes)} probes over "
+          f"{len(m.residues)} residues; contact within {args.cutoff:g} A")  # fmt: skip
+    by = "side chain" if args.by == "side-chain" else "probe"
+    labels, matrix = (m.probes, m.contacts) if by == "probe" else m.side_chains()
+    print(f"\n{by:10s} residues it touches most (share of frames)")
+    import numpy as np
+
+    for k, label in enumerate(labels):
+        order = np.argsort(-matrix[:, k])[: args.top]
+        best = ", ".join(f"{m.residues[r][2]}{m.residues[r][1]} {100 * matrix[r, k]:.0f}%"
+                         for r in order if matrix[r, k] > 0)  # fmt: skip
+        print(f"  {label:10s} {best or 'nothing it touched'}")
+    if args.out:
+        m.to_csv(args.out)
+        print(f"\nwrote {args.out}: a residue by probe table")
+    return 0
+
+
 def _sites(args) -> int:
     import json
 
@@ -408,12 +501,15 @@ def _sites(args) -> int:
     if args.workdir:  # each brings its own system: only the protein must match
         runs = []
         for d in args.workdir:
-            own = _load(str(Path(d) / "solvated.dms"), structure_only=True)
+            # not structure_only: that drops pseudo particles (Martini virtual
+            # sites, CHARMM lone pairs), which the trajectory still carries
+            own = boonza.load(str(Path(d) / "solvated.dms"), without_tables=True)
             runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
         system = runs[0][0]
     else:
         system = _load(args.system)
         runs = [open_trajectory(path, system) for path in args.traj]
+    _cg_selections(args, system, args.workdir)
     found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
                          spacing=args.spacing, enrichment=args.enrichment,
                          min_occupancy=args.min_occupancy, periodic=not args.no_pbc)  # fmt: skip
@@ -447,17 +543,26 @@ def _sites(args) -> int:
     if args.features:
         maps = boonza.feature_maps(system, runs, reference, ligand=args.ligandsel,
                                    align=args.alignsel, spacing=args.spacing,
-                                   periodic=not args.no_pbc)  # fmt: skip
+                                   periodic=not args.no_pbc,
+                                   backbone=args.feature_backbone)  # fmt: skip
         spots = boonza.hotspots(maps, enrichment=2.0 * args.enrichment)
         print(f"\n{len(spots)} hotspots: what a pocket asks for, and how many molecules agree")
+        placed = 0
         for k, site in enumerate(found):
             near = boonza.wanted(spots, site.center)
             if not near:
                 continue
+            placed += 1
             print(f"  site {k}:")
             for h in near[:5]:
                 print(f"    {h.family:12s} {h.ligands:3d} ligands, {h.enrichment:6.0f}x bulk, "
                       f"radius {h.radius:.1f} A")  # fmt: skip
+        if spots and not placed:  # hotspots of their own, where no site settled
+            print("  none of them sits in a site; the strongest, wherever they are:")
+            for h in sorted(spots, key=lambda h: -h.enrichment)[:10]:
+                centre = " ".join(f"{x:7.1f}" for x in h.center)
+                print(f"    {h.family:12s} {h.ligands:3d} ligands, {h.enrichment:6.0f}x bulk, "
+                      f"radius {h.radius:.1f} A  {centre}")  # fmt: skip
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
@@ -893,6 +998,22 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--format", default="dms", help="structure format to write (default: dms)")
     q.set_defaults(run=_poses)
 
+    q = sub.add_parser("probes", help="what each Martini probe touches, residue by residue")
+    q.add_argument(
+        "--workdir",
+        nargs="+",
+        required=True,
+        help="runs of 'boonza swim --model martini3', each with its probes.json",
+    )
+    q.add_argument("--cutoff", type=float, default=6.0, help="contact distance (A)")
+    q.add_argument("--stride", type=int, default=1, help="use every Nth frame")
+    q.add_argument("--by", choices=("probe", "side-chain"), default="side-chain",
+                   help="report per probe, or pooled by side chain (default)")  # fmt: skip
+    q.add_argument("--top", type=int, default=6, help="residues listed per probe")
+    q.add_argument("--no-pbc", action="store_true", help="ignore the periodic box")
+    q.add_argument("-o", "--out", help="write the whole table as CSV")
+    q.set_defaults(run=_probes)
+
     q = sub.add_parser("sites", help="where a ligand goes, pooled over runs and copies")
     q.add_argument("system", nargs="?", help="structure (topology of --traj)")
     q.add_argument("--traj", nargs="+", default=[], help="one or more trajectories of SYSTEM")
@@ -901,12 +1022,15 @@ def _parser() -> argparse.ArgumentParser:
                         "ligands differ pool as long as the protein does not")  # fmt: skip
     q.add_argument("--reference", help="structure the runs are superposed on (default: the first)")
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms, every copy")
-    q.add_argument("--alignsel", default="protein and name CA", help="atoms the runs align on")
+    q.add_argument("--alignsel", default=DEFAULT_ALIGN, help="atoms the runs align on")
     q.add_argument("--spacing", type=float, default=1.0, help="grid spacing (A)")
     q.add_argument("--enrichment", type=float, default=20.0,
                    help="how many times more visited than bulk a site must be")  # fmt: skip
     q.add_argument("--min-occupancy", type=float, default=0.005,
                    help="share of pooled frames a site must hold")  # fmt: skip
+    q.add_argument("--feature-backbone", action="store_true",
+                   help="with --features on a Martini run, also type the BB beads (an amide: "
+                        "donor and acceptor), which every probe carries")  # fmt: skip
     q.add_argument("--features", action="store_true",
                    help="also map what each pocket asks for -- donor, acceptor, aromatic, "
                         "greasy -- and where")  # fmt: skip
