@@ -624,3 +624,117 @@ def test_the_barostat_carries_the_seed(tmp_path, dipeptide):
     written = RunPaths(work).system_xml.read_text()
     barostat = [x for x in written.split("<Force") if "MonteCarloBarostat" in x][0]
     assert 'randomSeed="7"' in barostat and 'frequency="25"' in barostat
+
+
+MARTINI_SHORT = ["--platform", "CPU", "--equilibration-ns", "0.001",
+                 "--equilibration-report-interval-ns", "0.001", "--production-ns", "0.002",
+                 "--production-report-interval-ns", "0.001",
+                 "--checkpoint-interval-ns", "0.001",
+                 "--performance-interval-ns", "0.001"]  # fmt: skip
+
+
+def test_a_model_brings_its_own_defaults():
+    """Martini runs hotter, with a long step and its own cut-off, and takes no
+    force field: the parameters come with the beads.  Anything given by hand
+    still wins."""
+    aa = parse_arguments(["x.pdb"])
+    assert (aa.model, aa.temperature, aa.integration_fs) == ("aa", 298.0, 2.0)
+    assert aa.forcefields == config.DEFAULT_FORCEFIELDS
+
+    cg = parse_arguments(["x.pdb", "--model", "martini3"])
+    assert (cg.temperature, cg.integration_fs, cg.cutoff_nm) == (310.0, 20.0, 1.1)
+    assert cg.forcefields == ()
+
+    # defaults < the model's defaults < the command line
+    mine = parse_arguments(["x.pdb", "--model", "martini2", "--temperature", "300"])
+    assert (mine.temperature, mine.integration_fs) == (300.0, 20.0)
+
+
+def test_a_model_refuses_what_belongs_to_the_other(tmp_path):
+    """An all-atom setting under Martini is an error rather than a silent no-op."""
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--model", "martini3", "--hmr"])
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--model", "martini3", "-f", "aa.amber.ff19SB"])
+    with pytest.raises(SystemExit):  # and a Martini setting in an all-atom run
+        parse_arguments(["x.pdb", "--elastic"])
+    with pytest.raises(SystemExit):  # a bilayer is coarse-grained by nature
+        parse_arguments(["x.pdb", "--solvate", "membrane", "--upper", "POPC:1"])
+    with pytest.raises(SystemExit):  # and it needs to know the lipids
+        parse_arguments(["--model", "martini3", "--solvate", "membrane"])
+
+
+def test_a_settings_file_of_defaults_is_not_a_model_conflict(tmp_path):
+    """boonza writes every key into final.toml (and boonza swim into its own
+    settings), so a key sitting there at its default must not read as one asked
+    for -- that made every swim run fail with 'elastic needs a Martini model'."""
+    path = tmp_path / "settings.toml"
+    config.write_settings(path, config.settings_of(parse_arguments(["x.pdb"])))
+    args = parse_arguments(["x.pdb", "--config", str(path)])
+    assert args.model == "aa" and "elastic" in config.load_configuration(path)
+
+    # a value that really differs is still refused
+    path.write_text(path.read_text().replace("elastic = false", "elastic = true"))
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--config", str(path)])
+
+
+def test_martini_needs_no_force_field_in_final_toml(tmp_path):
+    """A Martini run has no force fields, and 'forcefields = []' would fail the
+    settings file's own validation when the run is resumed."""
+    args = parse_arguments(["x.pdb", "--model", "martini3"])
+    path = tmp_path / "final.toml"
+    config.write_settings(path, config.settings_of(args))
+    assert "forcefields" not in path.read_text()
+    assert config.load_configuration(path)["model"] == "martini3"
+
+
+@pytest.mark.parametrize("model", ["martini2", "martini3"])
+def test_boonza_md_runs_a_martini_bilayer(tmp_path, model):
+    """A bilayer built from its composition alone -- no input structure --
+    equilibrated with the timestep warm-up and run under a membrane barostat."""
+    pytest.importorskip("openmm")
+    work = tmp_path / "run"
+    args = parse_arguments(
+        ["--model", model, "--solvate", "membrane", "--upper", "DPPC:1", "--box-nm", "5.5",
+         "--barostat", "membrane", "--workdir", str(work), "--seed", "1", *MARTINI_SHORT]
+    )  # fmt: skip
+    run_workflow(args, log=quiet)
+
+    paths = RunPaths(work)
+    assert paths.trajectory_dcd.is_file() and paths.checkpoint.is_file()
+    saved = config.load_configuration(paths.final_configuration)
+    assert saved["model"] == model and saved["temperature"] == 310.0
+    s = boonza.load(paths.solvated_dms)
+    names = set(s.residues["name"].tolist())
+    assert "DPPC" in names and "W" in names
+    # the water is recorded as water, not as 1177 one-bead ions
+    info = json.loads(paths.components_json.read_text())
+    assert info["water_molecules"] > 100
+
+
+def test_boonza_md_martinizes_a_protein_and_solvates_it(tmp_path):
+    """An all-atom PDB in, a coarse-grained trajectory out, with nothing else given."""
+    pytest.importorskip("openmm")
+    work = tmp_path / "run"
+    args = parse_arguments(
+        ["tests/data/1HHO.pdb", "--model", "martini3", "--elastic", "--padding-nm", "0.8",
+         "--workdir", str(work), "--seed", "1", *MARTINI_SHORT]
+    )  # fmt: skip
+    run_workflow(args, log=quiet)
+    s = boonza.load(RunPaths(work).solvated_dms)
+    assert s.natoms < 4000  # 1HHO is 4779 atoms all-atom; martinized it is ~680 beads
+    assert (work / "martini" / "topol.top").is_file()  # what GROMACS would need
+
+
+def test_a_martini_run_cannot_be_resumed_as_all_atom(tmp_path):
+    """system.xml fixes the physics, so changing the model would say one thing
+    and run another."""
+    pytest.importorskip("openmm")
+    work = tmp_path / "run"
+    common = ["--solvate", "membrane", "--upper", "DPPC:1", "--box-nm", "5.5",
+              "--workdir", str(work), "--seed", "1", *MARTINI_SHORT]  # fmt: skip
+    run_workflow(parse_arguments(["--model", "martini3", *common]), log=quiet)
+    again = parse_arguments(["--model", "aa", "--workdir", str(work), "--production-ns", "0.003"])
+    with pytest.raises(ValueError, match="cannot resume a martini3 run as aa"):
+        run_workflow(again, log=quiet)

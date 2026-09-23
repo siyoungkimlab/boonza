@@ -175,7 +175,7 @@ def _counts(fractions: dict, total: int) -> list[str]:
 def bilayer(lipid_itps, upper: dict, lower: dict | None = None, size=100.0,
             area_per_lipid: float = 60.0, water: float = 25.0, salt: float = 0.15,
             protein: Martinized | None = None, protein_origin: bool = False,
-            protein_shift: float = 0.0,
+            protein_shift: float = 0.0, martini: int = 3,
             lipid_clash: float = 4.5, seed: int = 0) -> Martinized:  # fmt: skip
     """A Martini lipid bilayer in water, optionally around proteins, as insane builds one.
 
@@ -196,7 +196,19 @@ def bilayer(lipid_itps, upper: dict, lower: dict | None = None, size=100.0,
     moves by ``protein_shift`` Å.  Lipids with a bead within
     ``lipid_clash`` Å of a protein bead are left out.  Water and ions
     are then added as :func:`boonza.martini.solvate` adds them.
+
+    ``martini``: which Martini the lipid topologies are, 3 or 2.  It picks
+    the water and ions written beside them and the parameter file the
+    topology includes; it does not change how the bilayer is built, which
+    reads every bead and bond from ``lipid_itps``.
     """
+    from . import VERSIONS
+
+    if martini not in VERSIONS:
+        raise ValueError(f"martini must be one of {', '.join(map(str, VERSIONS))}, not {martini!r}")
+    if protein is not None and protein.martini != martini:
+        raise ValueError(f"the protein is Martini {protein.martini}, the membrane Martini "
+                         f"{martini}; they cannot be mixed in one system")  # fmt: skip
     from ..spatial import min_dist2, pairs_within
 
     lower = upper if lower is None else lower
@@ -308,4 +320,5 @@ def bilayer(lipid_itps, upper: dict, lower: dict | None = None, size=100.0,
     out.lipids = groups
     out.includes = [Path(p).resolve() for p in lipid_itps]
     out.solvent = [("W", len(w)), ("NA", len(na)), ("CL", len(cl))]
+    out.martini = martini
     return out

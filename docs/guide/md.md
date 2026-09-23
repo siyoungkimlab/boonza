@@ -152,12 +152,17 @@ ligands included.
 
 | Setting | Default | |
 |---|---|---|
-| `forcefields` (`-f`, `-m`) | see above | viparr force fields, or OpenMM XML files |
+| `model` (`--model`) | `aa` | `martini3` or `martini2` coarse-grain instead; see [Martini runs](#martini-runs) |
+| `forcefields` (`-f`, `-m`) | see above | viparr force fields, or OpenMM XML files (all-atom only) |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
-| `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `none` (`--no-solvate`) runs the input as it is |
+| `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
+| `elastic`, `cg_selection`, `neutral_termini` | off, `protein`, off | Martini only: an elastic network, which atoms to coarse-grain, and uncharged chain ends |
+| `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
+| `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
+| `lipid_itp`, `martini_itp` | the carried files | parameter files of your own |
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |
 | `temperature`, `pressure` | 298 K, 1 bar | |
@@ -172,6 +177,61 @@ ligands included.
 | `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |
 | `repulsion_selection`, `repulsion_distance_nm`, `repulsion_kJ` | none, 0.5, 500 | keep the molecules a selection picks from sticking together: E = k (d0 - r)^2 between heavy atoms of different ones closer than d0 (k in kJ/mol/nm^2); `boonza swim` sets it for its ligands |
 | `early_stop` and `monitor_*`, `*_cutoff_nm`, `confirmation_checks` | off | see below |
+
+## Martini runs
+
+`--model martini3` (or `martini2`) runs the same workflow coarse-grained.
+Everything that makes `boonza md` worth using -- checkpoints, restart by
+rerunning the command, `status.json`, the reporters, the early-stop monitor --
+is shared; what changes is how the system is built and which numbers it starts
+from:
+
+| | `aa` | `martini3` / `martini2` |
+|---|---|---|
+| parameters | force fields, applied by viparr or OpenMM | carried by the beads, from the topology |
+| `temperature` | 298 K | 310 K |
+| `integration_fs` | 2 | 20, reached through 2, 5 and 10 fs |
+| `cutoff_nm` | 0.9 | 1.1, with GROMACS's reaction field and shifted Lennard-Jones |
+
+Anything given by hand still wins: the model only fills what you left out.
+Settings that belong to the other resolution are refused rather than ignored
+--- `--hmr` or `-f` under Martini, `--elastic` in an all-atom run.
+
+A protein is martinized, solvated and run in one command; nothing needs
+downloading, since boonza carries the parameters:
+
+```bash
+boonza md protein.pdb --model martini3 --elastic --production-ns 5000
+```
+
+`--solvate membrane` builds a bilayer instead of a box of water, around the
+protein or on its own. The barostat stays something you type, because a
+cylinder or a vesicle is not a planar membrane:
+
+```bash
+boonza md receptor.pdb --model martini3 --elastic \
+    --solvate membrane --upper "POPC:7,CHOL:3" --size-nm 12 --opm \
+    --barostat membrane --production-ns 5000
+
+boonza md --model martini3 --solvate membrane --upper "POPC:7,CHOL:3" \
+    --size-nm 12 8 --barostat membrane   # no protein: just the bilayer
+```
+
+A topology that was already built runs as it is --- boonza reads its
+parameters and finds `cg.gro` (or `<name>.gro`) beside it:
+
+```bash
+boonza md cg/topol.top --model martini2
+```
+
+That is the route for Martini 2 proteins: `martinize` builds Martini 3, so a
+Martini 2 protein has to come from a topology (martinize2's, say). Martini 2
+lipids, water and ions are built and solvated by boonza directly, and match
+GROMACS term for term ([Verification](../verification.md)).
+
+The model is recorded in `final.toml` and cannot be changed on a restart:
+`system.xml` fixes the physics, so a resumed run would otherwise say one thing
+and do another.
 
 ## Restarts
 

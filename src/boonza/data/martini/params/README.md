@@ -2,7 +2,7 @@
 
 The Martini 3 force field, version 3.0.0, files dated 2021-03-29, from
 https://cgmartini.nl, included unchanged so that `boonza martinize` and
-`boonza bilayer` work without a separate download.
+`boonza md --model martini3` work without a separate download.
 
 **Please cite** the work these parameters come from:
 
