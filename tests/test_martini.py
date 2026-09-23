@@ -402,3 +402,39 @@ def test_martini_2_lipids_against_gromacs(tmp_path):
     coulomb = e["nonbonded"] + e["nonbonded_rf_exclusions"] + e["nonbonded_rf_self"]
     assert coulomb == pytest.approx(-1081.11, abs=0.01)
     assert e["total"] == pytest.approx(-28760.1, abs=0.1)
+
+
+def test_martini_2_membrane_and_solvent_against_gromacs(tmp_path):
+    """A bilayer boonza built and solvated as Martini 2, against GROMACS 2024.6.
+
+    128 DPPC, 1177 waters and 26 ions (2739 beads), minimized by GROMACS and
+    made whole: bond 747.725, G96 angle 571.457, LJ (SR) -67642.2,
+    Coulomb (SR) -960.358, potential -67283.4 kJ/mol.  Water and ions are
+    Martini 2's own (P4, Qd, Qa), which is what this pins: the same build
+    under Martini 3 bead types would not reach these numbers.
+    """
+    import gzip
+    from pathlib import Path
+
+    from boonza.martini import IONS_FOR, LIPIDS_FOR, NONBONDED_FOR, parameters
+
+    data = Path(__file__).parent / "data" / "martini" / "DPPC_bilayer_m2"
+    gro = tmp_path / "min.gro"
+    gro.write_bytes(gzip.decompress((data / "min.gro.gz").read_bytes()))
+    files = parameters(NONBONDED_FOR[2], *LIPIDS_FOR[2], IONS_FOR[2])
+    top = tmp_path / "topol.top"
+    top.write_text(
+        "".join(f'#include "{p}"\n' for p in files)
+        + "\n[ system ]\nMartini system\n\n[ molecules ]\n"
+        + "DPPC 64\nDPPC 64\nW 1177\nNA 13\nCL 13\n"
+    )
+
+    s = boonza.load(top, coordinates=gro)
+    assert s.natoms == 2739
+    e = {k: v * 4.184 for k, v in boonza.openmm_energies(s, **MARTINI).items()}
+    assert e["stretch_harm"] == pytest.approx(747.725, abs=0.01)
+    assert e["angle_cosine_harm"] == pytest.approx(571.457, abs=0.01)
+    assert e["nonbonded_vdw"] == pytest.approx(-67642.2, abs=0.1)
+    coulomb = e["nonbonded"] + e["nonbonded_rf_exclusions"] + e["nonbonded_rf_self"]
+    assert coulomb == pytest.approx(-960.358, abs=0.01)
+    assert e["total"] == pytest.approx(-67283.4, abs=0.1)

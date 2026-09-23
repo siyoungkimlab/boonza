@@ -15,13 +15,21 @@ from ..io import load, save
 from ..system import System
 from .config import HYDROGEN_MASS_AMU, describe_forcefields, forcefield_kind, ion_water_mismatch
 
+#: Residue names of Martini water: a bead is four waters, and carries no
+#: element that the all-atom ``water`` selection could find it by.
+MARTINI_WATER = ("W", "WF")
 
-def load_input(path, log=None) -> System:
-    """The input structure, with ``md_index`` (1-based) to follow its atoms."""
+
+def load_input(path, log=None, hydrogens: bool = True) -> System:
+    """The input structure, with ``md_index`` (1-based) to follow its atoms.
+
+    ``hydrogens``: require them, as an all-atom force field does.  Martini
+    maps heavy atoms, so its route asks for none.
+    """
     s = load(path)
     if s.natoms == 0:
         raise ValueError(f"{path} has no atoms")
-    if not (s.atoms["anum"] == 1).any():
+    if hydrogens and not (s.atoms["anum"] == 1).any():
         raise ValueError(f"{path} has no hydrogens: add them, with protonation states, first")
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     _gather_residues(s, path, log)
@@ -74,6 +82,9 @@ def components(s: System, groups=()) -> dict:
     new = {r for g in groups for r in g}
     water = np.zeros(s.natoms, bool)
     water[s.select("water").ids] = True
+    # a Martini water bead is four waters, with no element to recognize it by
+    names = s.residues["name"][s.atoms["residue"]]
+    water |= np.isin(names, MARTINI_WATER)
     frag = np.asarray(s.fragids)
     atoms_of: dict[int, list[int]] = {}
     for a, f in enumerate(frag.tolist()):
@@ -170,6 +181,10 @@ def describe_components(args) -> str:
     """The component table of ``args.input_structure``; nothing is built."""
     if args.input_structure is None:
         raise ValueError("give INPUT_STRUCTURE to list its components")
+    if getattr(args, "model", "aa") != "aa":
+        # nothing is matched against templates, so nothing is a GAFF2 ligand
+        s = load_input(args.input_structure, hydrogens=False)
+        return f"Components of {args.input_structure}:\n\n" + component_table(components(s))
     s = load_input(args.input_structure)
     kind, ffs = forcefields(args)
     return f"Components of {args.input_structure}:\n\n" + component_table(
@@ -219,7 +234,12 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
     comes from the bundled TIP3P box (4- and 5-site models add their sites
     from their templates); counterions and NaCl follow msys, counting salt
     against the number of waters.
+
+    A Martini model takes the other route, :func:`build_martini_system`:
+    coarse-grain the input and read the parameters off the beads.
     """
+    if getattr(args, "model", "aa") != "aa":
+        return build_martini_system(args, workdir, log, check)
     s = load_input(args.input_structure, log)
     kind, ff = forcefields(args)
     log(f"Force fields: {describe_forcefields(args.forcefields)}")
@@ -354,3 +374,117 @@ def save_structure(s: System, path, positions=None, box=None) -> None:
     if box is not None:
         frame.cell = box
     save(frame, path)
+
+
+def _coordinates_beside(top: Path) -> Path:
+    """The coordinates of a Martini topology: ``<stem>.gro``, or the ``cg.gro``
+    that :meth:`boonza.martini.Martinized.save` writes beside ``topol.top``."""
+    for name in (top.with_suffix(".gro").name, "cg.gro", "cg.pdb"):
+        here = top.parent / name
+        if here.is_file():
+            return here
+    raise ValueError(f"{top} is a topology, which carries no coordinates; put its .gro "
+                     f"beside it as {top.with_suffix('.gro').name} or cg.gro")  # fmt: skip
+
+
+def _composition(text: str) -> dict:
+    """``POPC:7,CHOL:3`` as shares per lipid."""
+    out = {}
+    for part in str(text).split(","):
+        name, _, share = part.partition(":")
+        name = name.strip().upper()
+        if not name:
+            raise ValueError(f"cannot read lipids from {text!r}: use POPC:7,CHOL:3")
+        try:
+            out[name] = float(share) if share else 1.0
+        except ValueError:
+            raise ValueError(f"{part!r}: the share after ':' must be a number") from None
+    return out
+
+
+def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[System, dict]:
+    """The coarse-grained system: the input martinized, then water and ions or
+    a bilayer around it, or a topology that was already built.
+
+    Martini takes its parameters from the topology rather than from a force
+    field, so nothing here matches templates: the beads carry their own.
+    """
+    from .. import martini as mt
+
+    version = int(args.model.removeprefix("martini"))
+    mode = getattr(args, "solvate", "box")
+    mode = {True: "box", False: "none"}.get(mode, mode)
+    path = Path(args.input_structure) if args.input_structure else None
+    lipid_itps = [str(p) for p in mt.parameters(*mt.LIPIDS_FOR[version])]
+
+    if path is not None and path.suffix.lower() in (".top", ".itp"):
+        if "solvate" in getattr(args, "specified", ()) and mode != "none":
+            raise ValueError(f"{path.name} is a topology, which is already built; "
+                             "it runs with solvate = 'none'")  # fmt: skip
+        gro = _coordinates_beside(path)
+        log(f"Martini {version}: {path.name} with {gro.name}, as built")
+        s = load(path, coordinates=gro)
+        s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
+        info = components(s, [])
+        if getattr(args, "monitor_selection", None) is not None:
+            info["selection"] = select_atoms(s, args.monitor_selection)
+        if check is not None:
+            check(info)
+        _log_built(log, s, "System")
+        return _with_production_indices(s, s, info)
+
+    protein = None
+    if path is not None:
+        if version != 3:
+            raise ValueError(f"model = '{args.model}' cannot coarse-grain {path.name}: boonza "
+                             "martinizes proteins as Martini 3.  Give a Martini 2 topology "
+                             "(.top) instead, or build a membrane without a protein")  # fmt: skip
+        aa = load_input(path, log, hydrogens=False)
+        protein = mt.martinize(aa, "protein", elastic=bool(getattr(args, "elastic", False)))
+        log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
+            f"{', elastic network' if args.elastic else ''}")  # fmt: skip
+    elif mode != "membrane":
+        raise ValueError("give a structure to coarse-grain, or solvate = 'membrane' "
+                         "with upper = 'POPC:7,CHOL:3' to build a bilayer on its own")  # fmt: skip
+
+    if mode == "membrane":
+        upper = _composition(args.upper)
+        lower = _composition(args.lower) if args.lower else None
+        size = 10.0 * args.box_nm if getattr(args, "box_nm", None) else 100.0
+        m = mt.bilayer(lipid_itps, upper, lower, size=size, martini=version,
+                       area_per_lipid=args.area_per_lipid, salt=args.saltM, protein=protein,
+                       seed=args.seed)  # fmt: skip
+        total: dict[str, int] = {}  # m.lipids is per leaflet; the log wants the system
+        for name, count, _ in m.lipids:
+            total[name] = total.get(name, 0) + count
+        log("Bilayer: " + ", ".join(f"{c} {n}" for n, c in total.items()))
+    elif mode == "none":
+        m = protein
+    else:
+        box = 10.0 * args.box_nm if getattr(args, "box_nm", None) else None
+        m = mt.solvate(protein, padding=10.0 * args.padding_nm, box=box, salt=args.saltM,
+                       seed=args.seed)  # fmt: skip
+
+    m.save(workdir / "martini")
+    s = m.system()
+    s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
+    info = components(s, [])
+    if getattr(args, "monitor_selection", None) is not None:
+        info["selection"] = select_atoms(s, args.monitor_selection)
+    if check is not None:
+        check(info)
+    _log_built(log, s, "Bilayer" if mode == "membrane" else "Solvated")
+    return _with_production_indices(s, s, info)
+
+
+def _log_built(log, s: System, what: str) -> None:
+    cell = np.diag(np.asarray(s.cell, dtype=float))
+    log(f"{what}: {s.natoms} beads, box " + " x ".join(f"{x / 10:.2f}" for x in cell) + " nm")
+
+
+def _with_production_indices(s: System, out: System, info: dict) -> tuple[System, dict]:
+    where = {int(k): i for i, k in enumerate(out.atoms["md_index"].tolist()) if k > 0}
+    md = s.atoms["md_index"]
+    for c in [*info["components"], *([info["selection"]] if "selection" in info else [])]:
+        c["production_atom_indices"] = [where[int(md[a])] for a in c["input_atom_indices"]]
+    return out, info

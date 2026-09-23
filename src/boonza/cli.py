@@ -526,14 +526,16 @@ def _where(path) -> str:
 
 
 def _martini_files(args):
-    """The parameter files to use: the ones given, else the ones boonza carries."""
+    """The parameter files to use: the ones given, else the ones boonza carries
+    for the version of Martini asked for."""
 
-    from .martini import LIPIDS, NONBONDED, parameters
+    from .martini import LIPIDS_FOR, NONBONDED_FOR, parameters
 
-    itp = args.martini_itp or str(parameters(NONBONDED)[0])
+    version = int(getattr(args, "martini", 3))
+    itp = args.martini_itp or str(parameters(NONBONDED_FOR[version])[0])
     lipids = getattr(args, "lipid_itp", None)
     if lipids is None:
-        lipids = [str(p) for p in parameters(*LIPIDS)]
+        lipids = [str(p) for p in parameters(*LIPIDS_FOR[version])]
     return itp, lipids
 
 
@@ -584,7 +586,8 @@ def _bilayer(args) -> int:
     m = bilayer(lipid_itp, _composition(args.upper),
                 _composition(args.lower) if args.lower else None, size=size,
                 area_per_lipid=args.apl, water=args.water, salt=args.salt, protein=protein,
-                protein_origin=args.opm, protein_shift=args.shift, seed=args.seed)  # fmt: skip
+                protein_origin=args.opm, protein_shift=args.shift, martini=args.martini,
+                seed=args.seed)  # fmt: skip
     top = m.save(args.output, martini_itp=itp)
     lipids = ", ".join(f"{c} {n}" for n, c, _ in m.lipids)
     water = ", ".join(f"{c} {n}" for n, c in m.solvent)
@@ -808,6 +811,8 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--opm", action="store_true",
                    help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
     q.add_argument("--shift", type=float, default=0.0, help="move the protein along z (A)")
+    q.add_argument("--martini", type=int, choices=(2, 3), default=3,
+                   help="which Martini the lipids, water and ions are (default: 3)")  # fmt: skip
     q.add_argument("--seed", type=int, default=0)
     q.add_argument("--martini-itp", default=None,
                    help="the Martini parameter file topol.top includes "

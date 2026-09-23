@@ -180,7 +180,8 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     from ..io import save
     from ..omm import to_openmm
 
-    shutil.copy2(src, paths.workdir / f"input{''.join(src.suffixes).lower()}")
+    if src is not None:
+        shutil.copy2(src, paths.workdir / f"input{''.join(src.suffixes).lower()}")
     # a wrong or missing early-stop target fails before anything is built
     check = (lambda found: mon.select_target(found, args)) if args.early_stop else None
     s, info = build_system(args, paths.workdir, log, check=check)
@@ -188,7 +189,13 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     save(s, paths.solvated_dms)
     for p in (paths.solvated_pdb, paths.solvated_mae):
         save_structure(s, p)
-    topology, system, positions = to_openmm(s, nonbonded_method="PME", cutoff=10.0 * args.cutoff_nm)
+    if getattr(args, "model", "aa") == "aa":
+        options = {"nonbonded_method": "PME", "cutoff": 10.0 * args.cutoff_nm}
+    else:  # Martini: GROMACS's reaction field and shifted Lennard-Jones
+        from ..martini import OPENMM_OPTIONS
+
+        options = {**OPENMM_OPTIONS, "cutoff": 10.0 * args.cutoff_nm}
+    topology, system, positions = to_openmm(s, **options)
     if getattr(args, "barostat", "isotropic") != "none":
         system.addForce(_barostat(args, mm, unit, every=0))  # asleep until NPT
     if args.dihedral_restraint != "none":
@@ -237,10 +244,12 @@ def run_workflow(args, log=print) -> None:
         raise NotADirectoryError(f"{paths.workdir} exists and is not a directory")
     info = None
     if not resume:
-        if args.input_structure is None:
+        # a Martini bilayer is built from its composition, with nothing to read
+        on_its_own = getattr(args, "solvate", "box") == "membrane" and args.model != "aa"
+        if args.input_structure is None and not on_its_own:
             raise ValueError("a new run needs INPUT_STRUCTURE")
-        src = Path(args.input_structure)
-        if not src.is_file():
+        src = Path(args.input_structure) if args.input_structure else None
+        if src is not None and not src.is_file():
             raise FileNotFoundError(f"{src} does not exist")
         if not args.early_stop and any(getattr(args, k) is not None for k in mon.MONITOR_SELECTORS):
             raise ValueError("an early-stop target is chosen but early_stop is off")
@@ -301,8 +310,16 @@ def run_workflow(args, log=print) -> None:
         commit_settings(args, paths.final_configuration)
     else:
         simulation.context.setPositions(positions)
-        simulation.minimizeEnergy()
-        simulation.context.setVelocitiesToTemperature(args.temperature * unit.kelvin, args.seed)
+        if getattr(args, "model", "aa") == "aa":
+            simulation.minimizeEnergy()
+            simulation.context.setVelocitiesToTemperature(args.temperature * unit.kelvin, args.seed)
+        else:  # a 20 fs step straight from a minimum blows up: walk it up first
+            from ..martini import equilibrate
+
+            log("Minimizing, then stepping up to "
+                f"{args.integration_fs:g} fs (2, 5, 10 fs)...")  # fmt: skip
+            equilibrate(simulation, temperature=args.temperature,
+                        timestep=args.integration_fs / 1000.0, seed=args.seed or 1)  # fmt: skip
         simulation.reporters.append(
             app.DCDReporter(str(paths.equilibration_dcd), n["equilibration_report_interval_ns"])
         )

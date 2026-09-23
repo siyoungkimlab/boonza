@@ -39,20 +39,41 @@ Give a path of your own wherever one is taken — `m.system("…/martini_v3.0.0.
 not carry. **Please cite** the parameters: PCT Souza et al., *Nature Methods*
 18, 382-388 (2021), DOI 10.1038/s41592-021-01098-3.
 
+## Martini 2
+
 Martini 2 comes too — `martini_v2.2.itp`, `martini_v2.0_ions.itp` and the
 2015-06 lipid collection `martini_v2.0_lipids_all_201506.itp` — for the lipids
-and systems that were never ported to Martini 3. `martinize` and `bilayer`
-build Martini 3 only, so Martini 2 is for reading and running a topology you
-already have:
+and systems that were never ported to Martini 3. `bilayer` and `solvate` build
+either version; `martini=2` picks the water and ions written beside the lipids,
+and the parameter file the topology includes:
 
 ```python
-s = boonza.load("topol.top", coordinates="min.gro")  # #includes the v2 files
-boonza.openmm_energies(s, **boonza.martini.OPENMM_OPTIONS)
+from boonza.martini import LIPIDS_FOR, bilayer, parameters
+
+itps = [str(p) for p in parameters(*LIPIDS_FOR[2])]
+m = bilayer(itps, {"DPPC": 1}, size=60.0, martini=2, salt=0.15)
+m.save("cg")  # topol.top, cg.gro: GROMACS can run them
 ```
 
-A bilayer of 128 DPPC read this way matches GROMACS 2024.6 term by term, to a
-potential of -28760.11 against -28760.1 kJ/mol. The two versions must never be
-mixed in one system: their bead types share names and mean different things.
+```bash
+boonza bilayer cg --upper "DPPC:1" --size 60 --martini 2
+boonza md --model martini2 --solvate membrane --upper "DPPC:1" --box-nm 6 \
+    --barostat membrane           # built and run in one command
+```
+
+Martini 2 defines its water and ions upstream, so boonza includes them instead
+of writing a `solvent.itp` whose moleculetypes would clash — Martini 3's
+parameter file holds no moleculetype at all, so there boonza writes one. Such a
+bilayer matches GROMACS 2024.6 term by term, to a potential of -67283.37
+against -67283.4 kJ/mol, and a plain 128-DPPC topology read from disk to
+-28760.11 against -28760.1.
+
+`martinize` builds Martini 3 only, so a Martini 2 *protein* has to come from a
+topology you already have (martinize2's, say), which `boonza md cg/topol.top
+--model martini2` will run. The two versions must never be mixed in one system:
+their bead types share names and mean different things, and boonza refuses a
+Martini 3 protein in a Martini 2 membrane rather than building it.
+
 **Please cite** Martini 2: SJ Marrink et al., *J. Phys. Chem. B* 111,
 7812-7824 (2007), and L Monticelli et al., *J. Chem. Theory Comput.* 4,
 819-834 (2008).

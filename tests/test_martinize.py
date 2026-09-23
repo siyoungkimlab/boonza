@@ -501,3 +501,44 @@ def test_martinizing_needs_no_parameter_file(tmp_path):
     top = Path(m.save(tmp_path / "cg"))  # and what it writes can be read by GROMACS
     included = [x.split('"')[1] for x in top.read_text().splitlines() if x.startswith("#include")]
     assert Path(included[0]).is_file() and Path(included[0]).name == NONBONDED
+
+
+def test_martini_2_membranes_are_solvated_with_martini_2_water(tmp_path):
+    """solvate() wrote Martini 3 bead types whatever the system was, so a
+    Martini 2 membrane came out with W and TQ5 beads its parameters do not
+    define.  Now the version decides: Martini 3 gets the solvent.itp boonza
+    writes, Martini 2 its own upstream water (in martini_v2.2.itp) and ions.
+    """
+    from boonza.martini import IONS_FOR, LIPIDS_FOR, NONBONDED_FOR, bilayer, parameters
+
+    itps = [str(p) for p in parameters(*LIPIDS_FOR[2])]
+    m = bilayer(itps, {"DPPC": 1}, size=60.0, martini=2, salt=0.15)
+    assert m.martini == 2
+    assert dict(m.solvent)["W"] > 0 and dict(m.solvent)["NA"] > 0
+
+    top = Path(m.save(tmp_path / "cg")).read_text()
+    included = [x.split('"')[1] for x in top.splitlines() if x.startswith("#include")]
+    assert Path(included[0]).name == NONBONDED_FOR[2]
+    assert Path(included[-1]).name == IONS_FOR[2]
+    # Martini 2 defines W itself: writing one would be a duplicate moleculetype
+    assert "solvent.itp" not in top
+    assert not (tmp_path / "cg" / "solvent.itp").exists()
+    assert all(Path(p).is_file() for p in included)
+
+    s = m.system()  # and it loads, with Martini 2's bead types
+    types = {a["type"] for a in s.atoms}
+    assert {"P4", "Qd", "Qa"} <= types and "TQ5" not in types
+
+
+def test_the_two_martinis_are_not_mixed(tmp_path):
+    """A Martini 3 protein in a Martini 2 membrane is refused: the bead types
+    share names between the versions and mean different things."""
+    from boonza.martini import LIPIDS_FOR, bilayer, parameters
+
+    protein = martinize(boonza.load(DATA / "1HHO.pdb"), "protein and chain A")
+    assert protein.martini == 3
+    itps = [str(p) for p in parameters(*LIPIDS_FOR[2])]
+    with pytest.raises(ValueError, match="cannot be mixed"):
+        bilayer(itps, {"DPPC": 1}, size=80.0, martini=2, protein=protein)
+    with pytest.raises(ValueError, match="martini must be one of"):
+        bilayer(itps, {"DPPC": 1}, size=60.0, martini=4)

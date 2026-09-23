@@ -1,4 +1,4 @@
-"""Martini 3 water and ions around martinized proteins."""
+"""Martini water and ions around martinized proteins and membranes."""
 
 from __future__ import annotations
 
@@ -38,7 +38,13 @@ def _tile(dims) -> np.ndarray:
 def solvate(m: Martinized, padding: float = 10.0, box=None, salt: float = 0.15,
             neutralize: bool = True, clash: float = CLASH, ion_distance: float = 5.0,
             seed: int = 0) -> Martinized:  # fmt: skip
-    """``m`` in a box of Martini 3 water (W beads, 4 waters each), with Na+/Cl- ions.
+    """``m`` in a box of Martini water (W beads, 4 waters each), with Na+/Cl- ions.
+
+    The water and ions are written for whichever Martini ``m`` is: Martini 3
+    gets the ``solvent.itp`` boonza writes, Martini 2 its own upstream
+    definitions (``P4`` water, ``Qd``/``Qa`` ions).  The box of water tiled in
+    was equilibrated under Martini 3; Martini 2's water is close enough in
+    density to start from it, and equilibration settles the difference.
 
     ``box``: edge lengths (one value or three, Å); by default a cube of the
     proteins' largest extent plus ``padding`` on each side.  The proteins are
