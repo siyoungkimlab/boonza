@@ -56,7 +56,8 @@ m.save("cg")  # topol.top, cg.gro: GROMACS can run them
 ```
 
 ```bash
-boonza bilayer cg --upper "DPPC:1" --size 60 --martini 2
+boonza md --model martini2 --solvate membrane --upper "DPPC:1" --size-nm 6 \
+    --barostat membrane --workdir run
 boonza md --model martini2 --solvate membrane --upper "DPPC:1" --box-nm 6 \
     --barostat membrane           # built and run in one command
 ```
@@ -183,9 +184,12 @@ m = bilayer(lipids, {"POPC": 7, "CHOL": 3}, protein=protein, protein_origin=True
 m.save("membrane")  # topol.top (including the lipid files), .itp files, cg.gro
 ```
 
+From the command line the same membrane is built and run by `boonza md`
+([MD](md.md#martini-runs)); there is no separate build command:
+
 ```bash
-boonza bilayer membrane --lipid-itp martini_v3.0.0_phospholipids_v1.itp \
-    martini_v3.0_sterols_v1.0.itp --upper POPC:7,CHOL:3 --protein receptor_opm.pdb --opm --elastic
+boonza md receptor_opm.pdb --model martini3 --solvate membrane \
+    --upper POPC:7,CHOL:3 --opm --elastic --barostat membrane --workdir run
 ```
 
 - **Lipids.** Any molecule type in the lipid files works: phospholipids,

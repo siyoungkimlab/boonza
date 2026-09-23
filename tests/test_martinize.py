@@ -463,14 +463,38 @@ def test_bilayer_runs(toy_lipids, tmp_path):
     assert np.isfinite(e["total"])
 
 
-def test_bilayer_command_line(toy_lipids, tmp_path, capsys):
-    out = tmp_path / "memb"
-    args = ["bilayer", str(out), "--lipid-itp", str(toy_lipids), "--upper", "TLP:3,STR:1",
-            "--lower", "TLP", "--size", "40", "--water", "15"]  # fmt: skip
-    assert main(args) == 0
-    printed = capsys.readouterr().out
-    assert "TLP" in printed and "STR" in printed and " W" in printed
-    assert {p.name for p in out.iterdir()} == {"topol.top", "solvent.itp", "cg.gro"}
+def test_a_bilayer_is_built_by_boonza_md(toy_lipids, tmp_path):
+    """`boonza bilayer` built a membrane and stopped there; `boonza md
+    --solvate membrane` builds the same one and runs it, so everything the
+    command took has to arrive through the settings."""
+    from boonza.md.config import parse_arguments
+    from boonza.md.prepare import build_martini_system
+
+    args = parse_arguments(
+        ["--model", "martini3", "--solvate", "membrane", "--upper", "TLP:3,STR:1",
+         "--lower", "TLP", "--size-nm", "4", "--water-nm", "1.5",
+         "--lipid-itp", str(toy_lipids), "--workdir", str(tmp_path / "run")]
+    )  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    names = set(s.residues["name"].tolist())
+    assert {"TLP", "STR", "W"} <= names
+    written = {p.name for p in (tmp_path / "martini").iterdir()}
+    assert written == {"topol.top", "solvent.itp", "cg.gro"}
+
+
+def test_a_rectangular_bilayer_keeps_both_edges(toy_lipids, tmp_path):
+    """--size-nm takes x and y, as the removed command's --size did."""
+    from boonza.md.config import parse_arguments
+    from boonza.md.prepare import build_martini_system
+
+    args = parse_arguments(
+        ["--model", "martini3", "--solvate", "membrane", "--upper", "TLP",
+         "--size-nm", "5", "3.5", "--lipid-itp", str(toy_lipids),
+         "--workdir", str(tmp_path / "run")]
+    )  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    x, y = np.diag(np.asarray(s.cell, float))[:2]
+    assert (round(x, 1), round(y, 1)) == (50.0, 35.0)
 
 
 def test_the_parameters_come_with_boonza(tmp_path):

@@ -59,7 +59,9 @@ MODEL_DEFAULTS: dict = {
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
                  "protein_extent", "hmr")  # fmt: skip
 #: Settings that only a Martini run has.
-MARTINI_ONLY = ("elastic", "upper", "lower", "area_per_lipid")
+MARTINI_ONLY = ("elastic", "upper", "lower", "area_per_lipid", "size_nm", "water_nm",
+                "opm", "shift_nm", "cg_selection", "neutral_termini", "lipid_itp",
+                "martini_itp")  # fmt: skip
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -111,6 +113,14 @@ DEFAULTS: dict = {
     "upper": None,
     "lower": None,
     "area_per_lipid": 60.0,
+    "size_nm": None,
+    "water_nm": 2.5,
+    "opm": False,
+    "shift_nm": 0.0,
+    "cg_selection": "protein",
+    "neutral_termini": False,
+    "lipid_itp": None,
+    "martini_itp": None,
 }
 _NUMBERS = {
     "padding_nm",
@@ -135,9 +145,11 @@ _NUMBERS = {
     "repulsion_distance_nm",
     "repulsion_kJ",
     "area_per_lipid",
+    "water_nm",
+    "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop", "elastic"}
+_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini"}
 _CHOICES = {
     "model": MODELS,
     "ligand_mode": LIGAND_MODES,
@@ -351,7 +363,23 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                          "(with --solvate membrane)")  # fmt: skip
     cg.add_argument("--lower", metavar="LIPIDS",
                     help="lower leaflet (default: as the upper)")  # fmt: skip
-    numbers(cg, [("--area-per-lipid", "area_per_lipid", "area per lipid (A^2)")])
+    cg.add_argument("--size-nm", dest="size_nm", type=float, nargs="+", metavar="NM",
+                    help="the bilayer's x [y] (nm; default: 10)")  # fmt: skip
+    cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
+                    help="the atoms to coarse-grain (default: protein)")  # fmt: skip
+    cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",
+                    help="uncharged chain ends")  # fmt: skip
+    cg.add_argument("--opm", action="store_true",
+                    help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
+    cg.add_argument("--lipid-itp", dest="lipid_itp", nargs="+", metavar="ITP",
+                    help="lipid and sterol topologies (default: the carried ones)")  # fmt: skip
+    cg.add_argument("--martini-itp", dest="martini_itp", metavar="ITP",
+                    help="the Martini parameter file (default: the carried one)")  # fmt: skip
+    numbers(cg, [
+        ("--area-per-lipid", "area_per_lipid", "area per lipid (A^2)"),
+        ("--water-nm", "water_nm", "water beyond the lipids on each side (nm)"),
+        ("--shift-nm", "shift_nm", "move the protein along z (nm)"),
+    ])  # fmt: skip
 
     ff = p.add_argument_group("force fields and ligands")
     ff.add_argument(
@@ -620,6 +648,7 @@ def finish(args) -> None:
         "performance_interval_ns",
         "integration_fs",
         "monitor_interval_ns",
+        "water_nm",
         "pocket_cutoff_nm",
         "contact_cutoff_nm",
         "detach_cutoff_nm",
@@ -665,6 +694,13 @@ def finish(args) -> None:
             raise ValueError("solvate = 'membrane' needs the lipids: upper = 'POPC:7,CHOL:3'")
         if args.upper and args.solvate != "membrane":
             raise ValueError("'upper' builds a bilayer, which needs solvate = 'membrane'")
+        if args.size_nm is not None:
+            size = [args.size_nm] if isinstance(args.size_nm, int | float) else list(args.size_nm)
+            if len(size) not in (1, 2) or not all(
+                isinstance(v, int | float) and math.isfinite(v) and v > 0 for v in size
+            ):
+                raise ValueError("'size_nm' is the bilayer's x, or its x and y, both positive")
+            args.size_nm = [float(v) for v in size]
     if args.cutoff_nm is None:
         args.cutoff_nm = default_cutoff_nm(args)
     if args.hmr and "integration_fs" not in args.specified:

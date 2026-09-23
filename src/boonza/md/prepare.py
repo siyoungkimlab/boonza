@@ -415,7 +415,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
     mode = getattr(args, "solvate", "box")
     mode = {True: "box", False: "none"}.get(mode, mode)
     path = Path(args.input_structure) if args.input_structure else None
-    lipid_itps = [str(p) for p in mt.parameters(*mt.LIPIDS_FOR[version])]
+    lipid_itps = args.lipid_itp or [str(p) for p in mt.parameters(*mt.LIPIDS_FOR[version])]
 
     if path is not None and path.suffix.lower() in (".top", ".itp"):
         if "solvate" in getattr(args, "specified", ()) and mode != "none":
@@ -440,7 +440,8 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                              "martinizes proteins as Martini 3.  Give a Martini 2 topology "
                              "(.top) instead, or build a membrane without a protein")  # fmt: skip
         aa = load_input(path, log, hydrogens=False)
-        protein = mt.martinize(aa, "protein", elastic=bool(getattr(args, "elastic", False)))
+        protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
+                               neutral_termini=bool(args.neutral_termini))  # fmt: skip
         log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
             f"{', elastic network' if args.elastic else ''}")  # fmt: skip
     elif mode != "membrane":
@@ -450,9 +451,11 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
     if mode == "membrane":
         upper = _composition(args.upper)
         lower = _composition(args.lower) if args.lower else None
-        size = 10.0 * args.box_nm if getattr(args, "box_nm", None) else 100.0
-        m = mt.bilayer(lipid_itps, upper, lower, size=size, martini=version,
-                       area_per_lipid=args.area_per_lipid, salt=args.saltM, protein=protein,
+        size = [10.0 * v for v in args.size_nm] if args.size_nm else [100.0]
+        m = mt.bilayer(lipid_itps, upper, lower, size=size[0] if len(size) == 1 else tuple(size),
+                       martini=version, area_per_lipid=args.area_per_lipid,
+                       water=10.0 * args.water_nm, salt=args.saltM, protein=protein,
+                       protein_origin=bool(args.opm), protein_shift=10.0 * args.shift_nm,
                        seed=args.seed)  # fmt: skip
         total: dict[str, int] = {}  # m.lipids is per leaflet; the log wants the system
         for name, count, _ in m.lipids:
@@ -465,8 +468,8 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
         m = mt.solvate(protein, padding=10.0 * args.padding_nm, box=box, salt=args.saltM,
                        seed=args.seed)  # fmt: skip
 
-    m.save(workdir / "martini")
-    s = m.system()
+    m.save(workdir / "martini", martini_itp=args.martini_itp)
+    s = m.system(args.martini_itp)
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])
     if getattr(args, "monitor_selection", None) is not None:

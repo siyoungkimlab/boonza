@@ -159,7 +159,10 @@ ligands included.
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
 | `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
-| `elastic`, `upper`, `lower`, `area_per_lipid` | off, none, as `upper`, 60 | Martini only: an elastic network for the protein, and the leaflets of a `solvate = "membrane"` bilayer |
+| `elastic`, `cg_selection`, `neutral_termini` | off, `protein`, off | Martini only: an elastic network, which atoms to coarse-grain, and uncharged chain ends |
+| `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
+| `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
+| `lipid_itp`, `martini_itp` | the carried files | parameter files of your own |
 | `padding_nm`, `saltM` | 1.0, 0.15 | |
 | `cutoff_nm` | 0.9 Amber, 1.2 CHARMM | |
 | `temperature`, `pressure` | 298 K, 1 bar | |
@@ -206,12 +209,12 @@ protein or on its own. The barostat stays something you type, because a
 cylinder or a vesicle is not a planar membrane:
 
 ```bash
-boonza md protein.pdb --model martini3 --elastic \
-    --solvate membrane --upper "POPC:7,CHOL:3" --box-nm 12 \
+boonza md receptor.pdb --model martini3 --elastic \
+    --solvate membrane --upper "POPC:7,CHOL:3" --size-nm 12 --opm \
     --barostat membrane --production-ns 5000
 
 boonza md --model martini3 --solvate membrane --upper "POPC:7,CHOL:3" \
-    --box-nm 12 --barostat membrane      # no protein: just the bilayer
+    --size-nm 12 8 --barostat membrane   # no protein: just the bilayer
 ```
 
 A topology that was already built runs as it is --- boonza reads its
