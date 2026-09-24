@@ -20,7 +20,7 @@
 #                  OpenCL runs on NVIDIA GPUs through the driver whatever CUDA
 #                  release it supports (run boonza md with --platform OpenCL);
 #                  ocl-icd-system is added so OpenCL finds the system's driver.
-# --openmm VERSION this OpenMM release, such as 8.2 or 8.4.0 (8.1 or later).
+# --openmm VERSION this OpenMM release, such as 8.2 or 8.4.0 (8.2 or later).
 # --dev            also pytest, ruff and MDAnalysis, for the test suite.
 # --dry-run        show what conda would install, and change nothing.
 #
@@ -68,8 +68,8 @@ fi
 if [ -n "$OPENMM" ]; then
     [[ "$OPENMM" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "--openmm takes a release such as 8.2 or 8.4.0; not '$OPENMM'" >&2; exit 2; }
     IFS=. read -r major minor _ <<<"$OPENMM"
-    if [ "$major" -lt 8 ] || { [ "$major" -eq 8 ] && [ "${minor:-0}" -lt 1 ]; }; then
-        echo "boonza needs OpenMM 8.1 or later; not $OPENMM" >&2
+    if [ "$major" -lt 8 ] || { [ "$major" -eq 8 ] && [ "${minor:-0}" -lt 2 ]; }; then
+        echo "boonza needs OpenMM 8.2, the first built against NumPy 2; not $OPENMM" >&2
         exit 2
     fi
 fi
@@ -87,7 +87,7 @@ SOLVER=conda
 # ----------------------------------------------------------------------
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-OPENMM_SPEC="openmm>=8.1"
+OPENMM_SPEC="openmm>=8.2"
 [ -n "$OPENMM" ] && OPENMM_SPEC="openmm=$OPENMM"
 EXTRA=()
 
