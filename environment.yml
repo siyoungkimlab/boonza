@@ -11,7 +11,7 @@ dependencies:
   - numpy>=2.0,<2.4
   - numba
   - rdkit
-  - openmm>=8.1
+  - openmm>=8.2
   - pandas<3
   - networkx
   - ambertools
