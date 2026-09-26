@@ -160,15 +160,19 @@ def _save_frame(s, state, stem: Path, title: str) -> None:
 
 
 def _current_steps(simulation, dt) -> int:
-    """The production step a restored checkpoint is at (OpenMM's clock drifts
-    by about 1e-9 per step, so a small tolerance)."""
-    raw = simulation.context.getState().getTime() / dt
-    steps = round(raw)
-    if abs(raw - steps) > 0.01:
-        raise ValueError(
-            f"the checkpoint time is {raw:g} steps: it was written with another integration_fs"
-        )
-    return steps
+    """The production step a restored checkpoint is at.
+
+    OpenMM's step counter is exact, and boonza zeroes it with the clock when
+    production starts, so it is the production step.  A checkpoint written
+    before boonza zeroed it counts the equilibration steps too, and there the
+    clock decides instead: it accumulates the step size once per step, drifting
+    by about 1e-9 of a step per step, which rounding absorbs.  The step size
+    itself cannot have changed -- a restart deserializes integrator.xml, and
+    run_workflow refuses an integration_fs that contradicts it.
+    """
+    by_clock = round(simulation.context.getState().getTime() / dt)
+    counted = simulation.context.getStepCount()
+    return counted if abs(counted - by_clock) <= max(1, by_clock // 1000) else by_clock
 
 
 def _new_run(args, paths: RunPaths, src: Path, log):
@@ -342,6 +346,7 @@ def run_workflow(args, log=print) -> None:
         state = simulation.context.getState(getPositions=True)
         _save_frame(s, state, paths.equilibrated_pdb, "equilibrated")
         simulation.context.setTime(0 * unit.picoseconds)
+        simulation.context.setStepCount(0)  # both clocks count production from here
         simulation.currentStep = 0
         paths.system_xml.write_text(mm.XmlSerializer.serialize(system), encoding="utf-8")
         paths.integrator_xml.write_text(mm.XmlSerializer.serialize(integrator), encoding="utf-8")
