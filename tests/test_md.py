@@ -738,3 +738,60 @@ def test_a_martini_run_cannot_be_resumed_as_all_atom(tmp_path):
     again = parse_arguments(["--model", "aa", "--workdir", str(work), "--production-ns", "0.003"])
     with pytest.raises(ValueError, match="cannot resume a martini3 run as aa"):
         run_workflow(again, log=quiet)
+
+
+#: OpenMM's clock adds one step size per step, and a step size such as 0.002 ps
+#: has no exact binary form, so the sum falls behind by about this much a step
+#: (measured: 0.05 steps by 50 million, 0.34 by 270 million).
+CLOCK_DRIFT_PER_STEP = -1.3e-9
+
+
+def _clocked(steps: int, dt_ps: float, counted: int):
+    """A two-particle simulation whose clock reads what OpenMM's would after
+    ``steps`` steps, drift included, with its step counter set to ``counted``."""
+    mm = pytest.importorskip("openmm")
+    from openmm import app, unit
+
+    system = mm.System()
+    for _ in range(2):
+        system.addParticle(1.0 * unit.amu)
+    force = mm.HarmonicBondForce()
+    force.addBond(0, 1, 0.15, 1000.0)
+    system.addForce(force)
+    top = app.Topology()
+    residue = top.addResidue("X", top.addChain())
+    for name in ("A", "B"):
+        top.addAtom(name, app.Element.getBySymbol("C"), residue)
+    integrator = mm.LangevinMiddleIntegrator(
+        300 * unit.kelvin, 1 / unit.picosecond, dt_ps * unit.picoseconds
+    )
+    sim = app.Simulation(top, system, integrator, mm.Platform.getPlatformByName("Reference"))
+    sim.context.setPositions([[0, 0, 0], [0.15, 0, 0]])
+    behind = steps * (1.0 + CLOCK_DRIFT_PER_STEP) * dt_ps
+    sim.context.setTime(behind * unit.picoseconds)
+    sim.context.setStepCount(counted)
+    return sim, integrator.getStepSize()
+
+
+@pytest.mark.parametrize("steps", [1000, 50_000_000, 269_650_000])
+def test_a_long_run_resumes_at_its_own_step(steps):
+    """A drifting clock must not look like a different integration_fs: boonza
+    once read the checkpoint's time in steps and refused anything more than
+    0.01 of a step from whole, which no run past about 50 million steps is."""
+    from boonza.md.run import _current_steps
+
+    sim, dt = _clocked(steps, 0.002, counted=steps)
+    assert _current_steps(sim, dt) == steps
+    raw = sim.context.getState().getTime() / dt  # what the old check measured
+    assert steps < 50_000_000 or abs(raw - round(raw)) > 0.01
+
+
+def test_an_older_checkpoint_counts_production_by_its_clock():
+    """Before boonza zeroed OpenMM's step counter at production, the counter
+    also held the equilibration steps; the clock, which boonza did zero, is
+    then the production step."""
+    from boonza.md.run import _current_steps
+
+    production, equilibration = 5_000_000, 50_000
+    sim, dt = _clocked(production, 0.002, counted=production + equilibration)
+    assert _current_steps(sim, dt) == production
