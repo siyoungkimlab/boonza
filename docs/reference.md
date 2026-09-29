@@ -648,6 +648,51 @@ only the frames of the runs that carried that probe.
 
 Contacts as a fraction of frames, residues down and probes across.
 
+## SIRAH
+
+### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, log=None) -> 'Sirahized'`
+
+Map ``system`` onto SIRAH beads and build the topology of each chain.
+
+The beads come from SIRAH's map, their topology from its residue library,
+and the angles, dihedrals and 1-4 pairs follow from the bonds, the way
+pdb2gmx generates them.  ``termini`` is ``"Charged"`` or ``"Neutral"``,
+named as the library's ``.tdb`` files are.
+
+### `class boonza.sirah.Sirahized(molecules: 'list[Molecule]', positions: 'np.ndarray', cell: 'np.ndarray | None' = None, nrexcl: 'int' = 3, solvent: 'list[tuple[str, int]]' = <factory>, copies: 'list[int]' = <factory>) -> None`
+
+A coarse-grained system: its molecules, its beads' positions, its box.
+
+### `boonza.sirah.solvate(m: 'Sirahized', padding: 'float' = 10.0, box=None, salt: 'float' = 0.15, neutralize: 'bool' = True, clash: 'float' = 3.0, ion_distance: 'float' = 5.0, seed: 'int' = 0, fit: 'bool' = True, log=None) -> 'Sirahized'`
+
+``m`` in a box of SIRAH's WT4 water, with NaW and ClW ions.
+
+The water is the force field's own equilibrated box, tiled to fill the
+cell and cut where it meets the solute: a molecule with any bead within
+``clash`` Å of one of the solute's is left out, as SIRAH's tutorial
+removes them.  Ions replace whole waters at least ``ion_distance`` Å from
+the solute -- enough to cancel the solute's charge, then pairs until the
+salt reaches ``salt`` mol/L, counted as SIRAH counts it: one pair for
+every 34 waters is about 0.15 M.
+
+``fit`` grows the box to whole tiles of the water box (1.72 nm), so the
+water meets itself as it was equilibrated and only the solute displaces
+any; cutting mid-tile costs a slab of water at every face.
+
+### `boonza.sirah.map_structure(system, atoms: 'str' = 'protein', log=None) -> 'list[Bead]'`
+
+The beads of ``atoms``, each on the atom SIRAH's map names for it.
+
+A residue the map does not know, or one missing the atom a bead sits on,
+raises rather than coming out with a bead short.
+
+### `boonza.sirah.unpack(directory) -> 'Path'`
+
+Write the carried force field into ``directory``/sirah.ff and return it.
+
+A topology that includes its parameters needs them on disk, and a run
+directory that carries its own is one that moves.
+
 ## Per-format readers and writers (`boonza.io`)
 
 ### `boonza.io.load_cif(path, guess_bonds: 'bool' = True, struct_conn: 'bool' = True) -> 'System'`
@@ -1241,9 +1286,10 @@ A peptide built from a one-letter sequence (through RDKit).
 
 ``conformation``: "helix", "sheet", "extended", "polyproline", one
 (phi, psi) pair, or one pair per residue (degrees).  The chain is built
-by RDKit with PDB atom and residue names, every peptide bond is set
-trans, and phi/psi are set residue by residue (proline's phi is fixed by
-its ring).  With ``optimize`` the structure is minimized with MMFF94
+by RDKit with PDB atom and residue names -- hydrogens included, which
+RDKit itself does not name -- every peptide bond is set trans, and
+phi/psi are set residue by residue (proline's phi is fixed by its
+ring).  With ``optimize`` the structure is minimized with MMFF94
 while phi/psi are held, so side chains relax without losing the
 backbone (omega included).  Termini are free amine and acid, as RDKit
 builds them.

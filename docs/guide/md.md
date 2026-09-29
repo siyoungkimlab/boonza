@@ -368,10 +368,15 @@ it from the hydrogens instead — a histidine with both ring nitrogens
 protonated comes out +1, one with a single hydrogen neutral, residue by
 residue.
 
-Not yet: `boonza swim`, which refuses `--model sirah` rather than quietly
-martinizing the protein, and SIRAH's lipids, whose library and mapping files
-are carried (for the atomistic force fields SIRAH maps from) but not yet
-assembled here. Glycans are in SIRAH's AMBER release rather than this one.
+`boonza swim --model sirah` swims dipeptide probes around a SIRAH protein, as
+`--model martini3` does around a martinized one; see
+[Coarse-grained probes](swim.md#coarse-grained-probes---model-martini3---model-sirah).
+Dihedral restraints are refused here, since SIRAH's backbone holds its fold
+with torsion terms of its own where Martini needs a network or restraints.
+
+Not yet: SIRAH's lipids, whose library and mapping files are carried (for the
+atomistic force fields SIRAH maps from) but not yet assembled here. Glycans
+are in SIRAH's AMBER release rather than this one.
 
 ## Backbone restraints
 
@@ -390,7 +395,9 @@ the secondary structure from `secondary.txt`, which boonza writes beside
 the topology it builds; without it, use `"bb"`. Note that Martini already
 holds helices with its own dihedral, and sheets with short elastic bonds,
 so these restraints matter most for a protein built without an elastic
-network, or for the loops that Martini leaves free.
+network, or for the loops that Martini leaves free. A SIRAH run takes no
+dihedral restraints at all: its backbone is three beads a residue, held by
+torsion terms of the force field's own.
 
 ## Stopping when a binder leaves
 

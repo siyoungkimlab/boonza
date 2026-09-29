@@ -231,7 +231,7 @@ Run membranes with semi-isotropic pressure: OpenMM's
 
 `boonza swim --model martini3` maps a protein's surface with dipeptide
 probes, which need no parameterization of their own; see
-[swim](swim.md#coarse-grained-probes---model-martini3).
+[swim](swim.md#coarse-grained-probes---model-martini3---model-sirah).
 `boonza.martini.probes` builds them:
 
 ```python

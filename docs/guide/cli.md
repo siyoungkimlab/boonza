@@ -30,6 +30,7 @@ boonza md p.pdb --model martini3 --solvate membrane --upper POPC:7,CHOL:3 --opm 
 boonza md topol.top --model sirah   # a SIRAH topology, coarse-grained with PME
 boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-swimming runs
 boonza swim protein.pdb --model martini3   # coarse-grained, with dipeptide probes
+boonza swim protein.pdb --model sirah      # the same probes, mapped onto SIRAH beads
 boonza probes --workdir boonza_swim/sim_*/md [-o probes.csv]   # what each probe touches, per residue
 boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two force fields
 ```

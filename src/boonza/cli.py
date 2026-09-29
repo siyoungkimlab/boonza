@@ -434,8 +434,8 @@ def _coarse_grained(system) -> bool:
 
 
 def _cg_selections(args, system, workdirs) -> None:
-    """Fill in what a coarse-grained run needs: the probes of a `boonza swim
-    --model martini3` simulation, and its backbone beads to align on."""
+    """Fill in what a coarse-grained run needs: the probes of a coarse-grained
+    `boonza swim` simulation, and its backbone beads to align on."""
     import json
     from pathlib import Path
 
@@ -477,8 +477,8 @@ def _probes(args) -> int:
                     found = json.loads(candidate.read_text())["probes"]
                     break
         if found is None:
-            raise ValueError(f"{d} has no probes.json, so name the probes with --probes: it is "
-                             "not a run of 'boonza swim --model martini3'")  # fmt: skip
+            raise ValueError(f"{d} has no probes.json, so name the probes with --probes: it "
+                             "is not a run of a coarse-grained 'boonza swim'")  # fmt: skip
         probes += [p for p in found if p not in probes]
         own = boonza.load(str(Path(d) / "solvated.dms"), without_tables=True)
         runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
@@ -1062,12 +1062,14 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--format", default="dms", help="structure format to write (default: dms)")
     q.set_defaults(run=_poses)
 
-    q = sub.add_parser("probes", help="what each Martini probe touches, residue by residue")
+    q = sub.add_parser("probes",
+                       help="what each probe of a coarse-grained swim touches, "
+                            "residue by residue")  # fmt: skip
     q.add_argument(
         "--workdir",
         nargs="+",
         required=True,
-        help="runs of 'boonza swim --model martini3', each with its probes.json",
+        help="runs of a coarse-grained 'boonza swim', each with its probes.json",
     )
     q.add_argument("--probes", nargs="+", metavar="RESNAME",
                    help="the probes' residue names, for a run without probes.json (any "

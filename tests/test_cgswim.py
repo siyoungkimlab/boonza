@@ -737,3 +737,14 @@ def test_the_default_work_directories():
 
     source = swim.main.__code__.co_consts
     assert any(c == "boonza_swim" for c in source if isinstance(c, str))
+
+
+def test_a_coarse_grained_swim_needs_a_model_it_can_map(tmp_path):
+    """boonza martinizes as Martini 3, so a Martini 2 swim would label a Martini 3
+    system as Martini 2 rather than build one."""
+    from boonza.md.swim import main
+
+    code = main([str(DATA / "1TEN.pdb"), "--model", "martini2", "--probes", "EK",
+                 "--workdir", str(tmp_path / "swim")])  # fmt: skip
+    assert code == 1
+    assert not any((tmp_path / "swim").glob("sim_*/martini"))

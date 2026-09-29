@@ -83,7 +83,7 @@ BACKBONE = ("GN", "GC", "GO")
 
 
 def __getattr__(name):  # the builder is heavier than the settings above
-    if name in ("Sirahized", "sirahize", "map_structure", "read_residues"):
+    if name in ("Sirahized", "sirahize", "solvate", "map_structure", "read_residues"):
         from . import build
 
         return getattr(build, name)
@@ -92,4 +92,4 @@ def __getattr__(name):  # the builder is heavier than the settings above
 
 __all__ = ["BACKBONE", "IONS", "OPENMM_OPTIONS", "PARAMETERS", "WATER", "WATERS_PER_ION_PAIR",
            "Sirahized", "contents", "map_structure", "read", "read_residues", "sirahize",
-           "unpack"]  # fmt: skip
+           "solvate", "unpack"]  # fmt: skip

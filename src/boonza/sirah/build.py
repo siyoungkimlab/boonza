@@ -482,10 +482,16 @@ class Sirahized:
     cell: np.ndarray | None = None
     nrexcl: int = 3
     solvent: list[tuple[str, int]] = field(default_factory=list)  # WT4, NaW, ClW counts
+    copies: list[int] = field(default_factory=list)  # how many of each molecule (1 each)
 
     @property
     def nbeads(self) -> int:
         return len(self.positions)
+
+    @property
+    def molecule_copies(self) -> list[int]:
+        """How many of each molecule the system holds; one each unless set."""
+        return self.copies or [1] * len(self.molecules)
 
     def itp(self, k: int) -> str:
         """One molecule's topology, with its parameters left to the force field."""
@@ -512,7 +518,8 @@ class Sirahized:
         if any(c for _, c in self.solvent):
             lines.append(f'#include "{forcefield}/solv.itp"')
         lines += ["", "[ system ]", "SIRAH system", "", "[ molecules ]"]
-        lines += [f"{m.name} 1" for m in self.molecules]
+        lines += [f"{m.name} {c}"
+                  for m, c in zip(self.molecules, self.molecule_copies, strict=True)]  # fmt: skip
         lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
 
@@ -565,16 +572,23 @@ class Sirahized:
                 (Path(tmp) / f"{mol.name}.itp").write_text(self.itp(k))
             (Path(tmp) / "topol.top").write_text(self.top(str(ff)))
             s = load_top(Path(tmp) / "topol.top", include_dirs=[tmp, str(ff)])
+        if s.natoms != len(self.positions):
+            raise ValueError(f"the topology built {s.natoms} beads where this system holds "
+                             f"{len(self.positions)}: does one of its molecules take a name "
+                             "the force field already uses (WT4, WLS, NaW, KW, ClW), whose "
+                             "definition wins over a later one?")  # fmt: skip
         s.positions = np.asarray(self.positions, float)
         if self.cell is not None and np.any(self.cell):
             s.cell = np.asarray(self.cell, float)
-        _name_chains(s, self.molecules)
+        _name_chains(s, self.molecules, self.molecule_copies)
         return s
 
 
-def _name_chains(s, molecules) -> None:
+def _name_chains(s, molecules, copies=None) -> None:
     """Give the beads the chains they were mapped from, which no .gro holds."""
-    of_bead = [b.chain for mol in molecules for b in mol.beads]
+    copies = copies or [1] * len(molecules)
+    of_bead = [b.chain for mol, c in zip(molecules, copies, strict=True)
+               for b in mol.beads * c]  # fmt: skip
     if not any(of_bead):
         return
     of_bead += [""] * (s.natoms - len(of_bead))
@@ -693,8 +707,8 @@ def solvate(m: Sirahized, padding: float = 10.0, box=None, salt: float = 0.15,
     water = water[~(near.reshape(-1, 4) <= clash**2).any(axis=1)]
     water = _without_overlaps(water, box)
 
-    charge = sum(c * count for mol, count in zip(m.molecules, [1] * len(m.molecules), strict=True)
-                 for c in mol.charges)  # fmt: skip
+    charge = sum(count * sum(mol.charges)
+                 for mol, count in zip(m.molecules, m.molecule_copies, strict=True))  # fmt: skip
     net = round(charge)
     counter = abs(net) if neutralize else 0
     pairs = int(round(len(water) * salt / (WATERS_PER_PAIR * SALT_OF_THAT)))
@@ -712,7 +726,8 @@ def solvate(m: Sirahized, padding: float = 10.0, box=None, salt: float = 0.15,
     keep = np.setdiff1d(np.arange(len(water)), chosen)
     out = Sirahized(m.molecules, np.concatenate([solute, water[keep].reshape(-1, 3), ions]),
                     np.diag(box), m.nrexcl,
-                    [("WT4", int(len(keep))), ("NaW", int(na)), ("ClW", int(cl))])  # fmt: skip
+                    [("WT4", int(len(keep))), ("NaW", int(na)), ("ClW", int(cl))],
+                    copies=list(m.copies))  # fmt: skip
     if log is not None:
         volume = float(np.prod(box / 10))
         log(f"Solvated: {len(keep)} WT4, {na} NaW and {cl} ClW in {volume:.1f} nm^3 "

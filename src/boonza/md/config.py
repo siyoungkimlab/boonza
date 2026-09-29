@@ -82,13 +82,15 @@ MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
                  "protein_extent", "hmr")  # fmt: skip
-#: Settings that only a Martini run has.
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini",)
+#: Settings that only a Martini run has.
 MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
-                "opm", "shift_nm", "cg_selection", "neutral_termini", "lipid_itp",
+                "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
+#: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
+CG_ONLY = ("cg_selection",)
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -705,7 +707,15 @@ def finish(args) -> None:
     # so only a value that differs from the default counts as one asked for
     given = {k for k in getattr(args, "specified", ())
              if k not in DEFAULTS or getattr(args, k, None) != DEFAULTS[k]}  # fmt: skip
-    if args.model != "sirah":
+    if args.model == "sirah":
+        # boonza restrains phi and psi all-atom and BB-BB-BB-BB under Martini;
+        # SIRAH's backbone is three beads a residue, held by torsion terms of
+        # its own, so there is nothing here to add and nothing it lacks
+        if args.dihedral_restraint != "none":
+            raise ValueError("model = 'sirah' takes no dihedral restraints: SIRAH holds its "
+                             "backbone with torsion terms of its own, where Martini needs a "
+                             "network or restraints to keep a fold")  # fmt: skip
+    else:
         wrong = [k for k in SIRAH_ONLY if k in given]
         if wrong:
             raise ValueError(f"{', '.join(sorted(wrong))} needs model = 'sirah'")
@@ -715,6 +725,11 @@ def finish(args) -> None:
             raise ValueError(f"{', '.join(sorted(wrong))} needs a Martini model; "
                              f"give model = 'martini3' or 'martini2'")  # fmt: skip
     if args.model == "aa":
+        wrong = [k for k in CG_ONLY if k in given]
+        if wrong:
+            raise ValueError(f"{', '.join(sorted(wrong))} maps a structure onto beads, so it "
+                             "needs a coarse-grained model: give model = 'martini3', "
+                             "'martini2' or 'sirah'")  # fmt: skip
         if args.solvate == "membrane":
             raise ValueError("solvate = 'membrane' builds a coarse-grained bilayer, so it "
                              "needs model = 'martini3' or 'martini2'")  # fmt: skip

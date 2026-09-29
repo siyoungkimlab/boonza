@@ -64,6 +64,15 @@ class ProbeMap:
                 w.writerow([chain, resid, name, *(f"{v:.4f}" for v in self.contacts[k])])
 
 
+#: What a coarse-grained box holds besides the protein and the probes, and so
+#: is no target: Martini's water and ions, SIRAH's WT4 and WLS water and its
+#: own ions (a bead of each).  Neither model's water is water to
+#: :func:`boonza.analyze.classify`, which knows it by an oxygen and two
+#: hydrogens, so it is named here.
+SOLVENT_NAMES = ("W", "ION", "NA", "CL", "HOH", "WT4", "WLS", "NaW", "KW", "ClW",
+                 "MgX", "CaX", "ZnX")  # fmt: skip
+
+
 def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1,
                    periodic: bool = True) -> ProbeMap:  # fmt: skip
     """How often each residue of ``system`` touches each of ``probes``.
@@ -91,7 +100,7 @@ def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1
         chain_of = np.asarray(own.residues["chain"])
         per_atom = names[res]
         is_probe = np.isin(per_atom, probes)
-        is_target = ~is_probe & ~np.isin(per_atom, ["W", "ION", "NA", "CL", "HOH"])
+        is_target = ~is_probe & ~np.isin(per_atom, SOLVENT_NAMES)
         target_res = np.unique(res[is_target])
         if labels is None:
             labels = [(chains[chain_of[r]], int(resid[r]), names[r]) for r in target_res]

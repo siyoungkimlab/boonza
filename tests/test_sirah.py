@@ -213,13 +213,14 @@ def test_a_run_can_be_built_dry(tmp_path):
                          "--workdir", str(tmp_path / "m")])  # fmt: skip
 
 
-def test_swim_cannot_swim_sirah_yet(tmp_path):
+def test_swim_refuses_a_ligand_library_in_sirah(tmp_path):
+    """SIRAH swims dipeptide probes, as Martini does: an arbitrary small molecule
+    is not something either model parameterizes."""
     from boonza.md.swim import main
 
-    code = main([str(Path(__file__).parent / "data" / "1TEN.pdb"), "--model", "sirah",
+    code = main([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--ligands", "library.sdf",
                  "--workdir", str(tmp_path / "swim")])  # fmt: skip
     assert code == 1
-    assert not (tmp_path / "swim").exists() or not list((tmp_path / "swim").iterdir())
 
 
 def test_coordinates_are_taken_unrounded_when_they_are_there(tmp_path):
@@ -448,6 +449,8 @@ def test_the_carried_force_field(tmp_path):
         sirah.read("nothing.itp")
     out = sirah.unpack(tmp_path)
     assert (out / "wt416.gro").is_file()  # the water box, for solvation to come
+    # what the archive holds is the force field, not what a file browser left
+    assert not [f for f in sirah.contents() if Path(f).name.startswith(".")]
 
 
 def test_water_fills_the_box_as_sirah_equilibrated_it(crambin_all_atom):
@@ -641,3 +644,111 @@ def test_sirah_viewing_can_keep_its_own_names(crambin_all_atom):
     assert len(m.for_viewing(built, backbone_as_ca=False).select("name GC").ids) == len(
         built.select("name GC").ids
     )
+
+
+# ---- probes swimming in SIRAH -------------------------------------------------------
+
+
+def test_the_sirah_probe_library():
+    """The same 105 dipeptides as Martini's, mapped onto SIRAH beads, so a
+    surface mapped in one model reads against the other."""
+    from boonza.martini.probes import probe_charge as martini_charge
+    from boonza.sirah.probes import PROBE_RESIDUES, probe, probe_charge, probe_sequences
+
+    sequences = probe_sequences()
+    assert len(sequences) == 105 == len(PROBE_RESIDUES) * (len(PROBE_RESIDUES) + 1) // 2
+    for sequence in sequences:
+        assert probe_charge(sequence) == pytest.approx(martini_charge(sequence))
+    ek = probe("EK")
+    assert len(ek.molecules) == 1 and ek.molecules[0].name == "probe_EK"
+    assert {b.residue for b in ek.molecules[0].beads} == {"EK"}  # the probe's own name
+    assert probe_charge("EK") == pytest.approx(0.0)  # Glu -1 and Lys +1
+    assert probe_charge("RR") == pytest.approx(2.0)
+    assert probe_charge("HH") == pytest.approx(0.0)  # histidine is neutral at pH 7
+    assert np.allclose(ek.positions.mean(0), 0, atol=1e-6)  # centered, for placing
+    assert probe("EK") is not probe("EK")  # a copy each time, for the caller to move
+
+
+def test_a_probe_is_built_from_conventional_names():
+    """SIRAH maps beads onto named atoms -- serine's HG, tryptophan's HE1 -- so
+    every probe maps only because the builder names them as a force field does."""
+    from boonza.sirah.probes import probe
+
+    for sequence in ("SS", "TT", "WW", "YY", "HH"):
+        beads = probe(sequence).molecules[0].beads
+        assert len(beads) > 6, sequence  # a backbone bead each, and side chains
+
+
+def test_a_prepared_sirah_swim(tmp_path):
+    """`boonza swim --model sirah`: one directory per group, its probes in a box
+    of WT4 water, and settings `boonza md` accepts."""
+    import json
+
+    from boonza.md.cgswim import prepare
+
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah",
+                            "--workdir", str(tmp_path / "swim"), "--padding-nm", "1.0",
+                            "--production-ns", "10"])  # fmt: skip
+    sims = prepare(args, ["EK", "LL", "RR"], types=2, copies=2, log=lambda *_: None)
+    assert len(sims) == 2
+    d = sims[0]
+    written = json.loads((d / "probes.json").read_text())
+    assert written["copies"] == 2 and written["align"] == "name GC"
+    top = (d / "sirah" / "topol.top").read_text()
+    for name in written["probes"]:
+        # the molecule is probe_EK, so that a probe called KW cannot be taken
+        # for SIRAH's potassium, while its beads are the residue EK
+        assert f"probe_{name} 2" in top and f'#include "probe_{name}.itp"' in top
+    assert "WT4" in top and (d / "sirah" / "sirah.ff" / "forcefield.itp").is_file()
+    settings = parse_arguments(["--config", str(d / "md.toml")])
+    assert settings.model == "sirah" and settings.solvate == "none"
+    assert settings.integration_fs == 20.0  # SIRAH's own step, not Martini's
+    assert settings.repulsion_selection == "resname " + " ".join(written["probes"])
+    assert not settings.elastic  # SIRAH holds its backbone itself
+    assert Path(settings.input_structure) == (d / "sirah" / "topol.top").resolve()
+
+
+def test_a_sirah_swim_is_neutral_and_runs(crambin_all_atom, tmp_path):
+    from boonza.md.cgswim import build_sirah
+    from boonza.sirah import OPENMM_OPTIONS, sirahize
+    from boonza.sirah.probes import probe
+
+    pytest.importorskip("openmm")
+    protein = sirahize(crambin_all_atom)
+    probes = [probe("RR"), probe("EE")]
+    box = np.full(3, float(np.ptp(protein.positions, axis=0).max()) + 20.0)
+    m = build_sirah(protein, probes, 2, box, np.random.default_rng(0), salt=0.15)
+    assert m.molecule_copies == [1, 2, 2]
+    charge = sum(c * sum(mol.charges)
+                 for mol, c in zip(m.molecules, m.molecule_copies, strict=True))  # fmt: skip
+    (_, _), (_, na), (_, cl) = m.solvent
+    assert charge + na - cl == pytest.approx(0)
+    s = m.system()
+    assert s.natoms == m.nbeads
+    assert {"RR", "EE"} <= {str(n) for n in s.residues["name"]}
+    assert np.isfinite(boonza.openmm_energies(s, **OPENMM_OPTIONS)["total"])
+
+
+def test_a_swim_run_finds_the_view_beside_its_topology(tmp_path):
+    """The run reads a topology, which carries no view; swim writes one where it
+    builds, and the run copies it in so a viewer has the beads to look at."""
+    from boonza.md.cgswim import prepare
+    from boonza.md.prepare import build_sirah_system
+
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--padding-nm", "1.0",
+                            "--workdir", str(tmp_path / "swim")])  # fmt: skip
+    (d,) = prepare(args, ["EK"], types=1, copies=1, log=lambda *_: None)
+    assert (d / "sirah" / "view.dms").is_file() and (d / "sirah" / "view.mae").is_file()
+    run = parse_arguments(["--config", str(d / "md.toml")])
+    s, _ = build_sirah_system(run, tmp_path, log=lambda *_: None)
+    view = boonza.load(tmp_path / "view.dms")
+    assert view.natoms == s.natoms
+    assert len(view.select("name CA").ids) == len(s.select("name GC").ids) > 40
+
+
+def test_sirahs_solvent_is_not_a_target_of_the_probes():
+    """WT4 is water, though no oxygen and two hydrogens say so; a probe map
+    counts the residues of the protein, not the box it swims in."""
+    from boonza.probemap import SOLVENT_NAMES
+
+    assert {"WT4", "NaW", "ClW", "W", "ION"} <= set(SOLVENT_NAMES)

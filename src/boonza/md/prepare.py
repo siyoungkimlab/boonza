@@ -403,6 +403,27 @@ def _coordinates_beside(top: Path) -> Path:
                      f"{top.stem}.dms, .mae or .gro (or cg.gro)")  # fmt: skip
 
 
+def _views_beside(top: Path, workdir: Path, log=print) -> int:
+    """Copy the view files written beside a built topology into the run.
+
+    ``boonza swim`` writes ``view.dms`` and ``view.mae`` where it builds each
+    simulation -- the beads to look at, the backbone named CA and no elastic
+    network -- and the run reads the topology, which carries no such thing.
+    A topology built somewhere else has none, and none is written.
+    """
+    import shutil
+
+    copied = []
+    for suffix in (".dms", ".mae"):
+        here = top.parent / f"view{suffix}"
+        if here.is_file():
+            shutil.copyfile(here, workdir / f"view{suffix}")
+            copied.append(here.name)
+    if copied:
+        log(f"Copied {' and '.join(copied)} from beside the topology")
+    return len(copied)
+
+
 def _composition(text: str) -> dict:
     """``POPC:7,CHOL:3`` as shares per lipid."""
     out = {}
@@ -472,9 +493,10 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
     """A SIRAH system from a topology that is already built.
 
     SIRAH keeps its parameters in the topology, as Martini does, so nothing
-    here matches templates.  boonza does not yet map a structure to SIRAH
-    beads or fill a box with its water; SIRAH's own tools do that (cgconv.pl,
-    then pdb2gmx or tleap, then a WT4 box), and what they write runs here.
+    here matches templates: a structure is mapped onto beads and filled with
+    WT4 water here (:func:`boonza.sirah.sirahize`, :func:`boonza.sirah.solvate`),
+    and a topology built by SIRAH's own tools (cgconv.pl, then pdb2gmx or
+    tleap) runs as it is.
     """
     path = Path(args.input_structure) if args.input_structure else None
     if path is None:
@@ -522,6 +544,7 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
     gro = _coordinates_beside(path)
     log(f"SIRAH: {path.name} with {gro.name}, as built")
     s = load(path, coordinates=gro)
+    _views_beside(path, workdir, log)
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])
     if getattr(args, "monitor_selection", None) is not None:
@@ -554,6 +577,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
         gro = _coordinates_beside(path)
         log(f"Martini {version}: {path.name} with {gro.name}, as built")
         s = load(path, coordinates=gro)
+        _views_beside(path, workdir, log)
         s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
         info = components(s, [])
         if getattr(args, "monitor_selection", None) is not None:

@@ -37,6 +37,8 @@ SECTIONS = [
     ("Martini", ["martinize", "Martinized", "martini.parameters", "martini.solvate",
                  "martini.bilayer", "martini.lipid_templates", "martini.equilibrate",
                  "probe_contacts", "ProbeMap"]),
+    ("SIRAH", ["sirah.sirahize", "sirah.Sirahized", "sirah.solvate", "sirah.map_structure",
+               "sirah.unpack"]),
 ]  # fmt: skip
 CLASSES_WITH_MEMBERS = {"System", "AtomSel", "Atom", "Bond", "Residue", "Chain", "Ct",
                         "TermTable", "ParamTable", "Term", "OverrideTable", "Trajectory",
