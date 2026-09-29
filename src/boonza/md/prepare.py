@@ -484,18 +484,20 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
     if path.suffix.lower() not in (".top", ".itp"):
         from ..sirah import sirahize
 
-        if mode != "none":
-            raise ValueError(
-                f"model = 'sirah' maps {path.name} onto beads, but cannot fill a box with its "
-                "WT4 water yet: run it with solvate = 'none' (--no-solvate), or bring a "
-                "topology and coordinates that are already solvated"
-            )
+        if mode not in ("none", "box"):
+            raise ValueError(f"model = 'sirah' fills a box with WT4 water or none at all, "
+                             f"not solvate = {mode!r}")  # fmt: skip
         aa = load_input(path, log, hydrogens=True)
         _check_nothing_is_dropped(aa, args, path, log)
         built = sirahize(aa, args.cg_selection, termini=args.termini, log=log)
         log(f"SIRAH: {built.nbeads} beads in {len(built.molecules)} molecule(s)")
-        if built.cell is None or not np.any(built.cell):
-            # no water yet, but a periodic box all the same: the run needs one
+        if mode == "box":
+            from ..sirah.build import solvate as solvate_sirah
+
+            built = solvate_sirah(built, padding=10.0 * args.padding_nm, salt=args.saltM,
+                                  seed=args.seed, log=log)  # fmt: skip
+        elif built.cell is None or not np.any(built.cell):
+            # no water, but a periodic box all the same: the run needs one
             edge = float(np.ptp(built.positions, axis=0).max()) + 20.0 * args.padding_nm
             built.positions = built.positions - built.positions.mean(0) + edge / 2
             built.cell = np.diag(np.full(3, edge))

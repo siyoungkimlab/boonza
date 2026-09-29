@@ -521,3 +521,133 @@ def _name_chains(s, molecules) -> None:
     for r, name in enumerate(want):
         s.residue(r).chain = chains[name]
     s._prune_hierarchy()
+
+
+#: SIRAH's water box, as the force field ships it: an equilibrated cube that
+#: tiles to fill any box.
+WATER_BOX = "wt416.gro"
+#: A water whose bead comes this close to the solute is left out, as SIRAH's
+#: own tutorial removes them (Å).
+WATER_CLASH = 3.0
+#: An ion goes no closer than this to the solute (Å).
+ION_DISTANCE = 5.0
+#: One ion pair for this many waters is about 0.15 M, which is how SIRAH's
+#: appendix counts its electrolytes.
+WATERS_PER_PAIR = 34.0
+SALT_OF_THAT = 0.15
+#: The water box's own density (WT4 per nm^3).  WT4 settles a little below it,
+#: at about 2.93 per nm^3 (0.97 g/mL) at 300 K and 1 bar -- boonza and GROMACS
+#: agree on that to three figures on SIRAH's own box -- so a solvated box that
+#: starts a few per cent thin equilibrates rather than collapses.
+TILE_DENSITY = 16 / 1.72**3
+EQUILIBRIUM_DENSITY = 2.93
+
+
+def _water_tile() -> tuple[np.ndarray, float]:
+    """The box's beads (Å, four to a molecule) and its edge."""
+    lines = read(WATER_BOX).splitlines()
+    n = int(lines[1])
+    xyz = np.array([[float(line[20 + 8 * k : 28 + 8 * k]) for k in range(3)]
+                    for line in lines[2 : 2 + n]], float) * 10.0  # fmt: skip
+    edge = float(lines[2 + n].split()[0]) * 10.0
+    return xyz, edge
+
+
+#: Two waters of the equilibrated box come no closer than 3.1 A, so anything
+#: closer than this is two tiles meeting, not water as it packs.
+SEAM = 2.5
+
+
+def _without_overlaps(water: np.ndarray, box: np.ndarray) -> np.ndarray:
+    """Drop one of each pair of waters that only meet because tiles do."""
+    from ..spatial import pairs_within
+
+    if not len(water):
+        return water
+    flat = water.reshape(-1, 3)
+    i, j, _d2 = pairs_within(flat, SEAM, cell=np.diag(box))
+    mine, theirs = i // 4, j // 4
+    across = mine != theirs
+    drop: set[int] = set()
+    for a, b in zip(mine[across].tolist(), theirs[across].tolist(), strict=True):
+        if a not in drop and b not in drop:
+            drop.add(max(a, b))
+    return water[[k for k in range(len(water)) if k not in drop]]
+
+
+def solvate(m: Sirahized, padding: float = 10.0, box=None, salt: float = 0.15,
+            neutralize: bool = True, clash: float = WATER_CLASH,
+            ion_distance: float = ION_DISTANCE, seed: int = 0, fit: bool = True,
+            log=None) -> Sirahized:  # fmt: skip
+    """``m`` in a box of SIRAH's WT4 water, with NaW and ClW ions.
+
+    The water is the force field's own equilibrated box, tiled to fill the
+    cell and cut where it meets the solute: a molecule with any bead within
+    ``clash`` Å of one of the solute's is left out, as SIRAH's tutorial
+    removes them.  Ions replace whole waters at least ``ion_distance`` Å from
+    the solute -- enough to cancel the solute's charge, then pairs until the
+    salt reaches ``salt`` mol/L, counted as SIRAH counts it: one pair for
+    every 34 waters is about 0.15 M.
+
+    ``fit`` grows the box to whole tiles of the water box (1.72 nm), so the
+    water meets itself as it was equilibrated and only the solute displaces
+    any; cutting mid-tile costs a slab of water at every face.
+    """
+    from ..spatial import min_dist2
+
+    rng = np.random.default_rng(seed)
+    solute = np.asarray(m.positions, float)
+    tile, side = _water_tile()
+    if box is None:
+        edge = float(np.ptp(solute, axis=0).max()) + 2 * padding
+        box = np.full(3, edge)
+    box = np.asarray(box, float)
+    if box.ndim == 2:
+        box = np.diag(box).astype(float)
+    if fit:
+        # whole tiles fill without a seam, so only the solute displaces water;
+        # a box cut mid-tile loses a slab of it at every face
+        box = np.ceil(box / side - 1e-9) * side
+    solute = solute - solute.mean(0) + box / 2
+
+    counts = np.ceil(box / side).astype(int)
+    molecules = tile.reshape(-1, 4, 3)
+    waters = []
+    for i in range(counts[0]):
+        for j in range(counts[1]):
+            for k in range(counts[2]):
+                moved = molecules + np.array([i, j, k]) * side
+                # a molecule belongs where its first bead falls, so the tiles
+                # meet without losing the ones that straddle a seam
+                waters.append(moved[np.all((moved[:, 0] >= 0) & (moved[:, 0] < box), axis=1)])
+    water = np.concatenate(waters)
+    near = min_dist2(water.reshape(-1, 3), solute, clash, cell=np.diag(box))
+    water = water[~(near.reshape(-1, 4) <= clash**2).any(axis=1)]
+    water = _without_overlaps(water, box)
+
+    charge = sum(c * count for mol, count in zip(m.molecules, [1] * len(m.molecules), strict=True)
+                 for c in mol.charges)  # fmt: skip
+    net = round(charge)
+    counter = abs(net) if neutralize else 0
+    pairs = int(round(len(water) * salt / (WATERS_PER_PAIR * SALT_OF_THAT)))
+    wanted = counter + 2 * pairs
+    far = np.flatnonzero(
+        min_dist2(water[:, 0], solute, ion_distance, cell=np.diag(box)) > ion_distance**2
+    )
+    if wanted > len(far):
+        raise ValueError(f"no room for {wanted} ions: only {len(far)} waters sit more than "
+                         f"{ion_distance:g} A from the solute")  # fmt: skip
+    chosen = rng.choice(far, size=wanted, replace=False) if wanted else np.array([], int)
+    na = pairs + (counter if net < 0 else 0)
+    cl = pairs + (counter if net > 0 else 0)
+    ions = water[chosen][:, 0]  # an ion is one bead, where the water's first was
+    keep = np.setdiff1d(np.arange(len(water)), chosen)
+    out = Sirahized(m.molecules, np.concatenate([solute, water[keep].reshape(-1, 3), ions]),
+                    np.diag(box), m.nrexcl,
+                    [("WT4", int(len(keep))), ("NaW", int(na)), ("ClW", int(cl))])  # fmt: skip
+    if log is not None:
+        volume = float(np.prod(box / 10))
+        log(f"Solvated: {len(keep)} WT4, {na} NaW and {cl} ClW in {volume:.1f} nm^3 "
+            f"({len(keep) / volume:.2f} WT4/nm^3, where WT4 settles at about "
+            f"{EQUILIBRIUM_DENSITY:.2f} under NPT)")  # fmt: skip
+    return out

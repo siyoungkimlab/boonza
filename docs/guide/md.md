@@ -292,14 +292,13 @@ its parameters in its topology as Martini does, but carries explicit charges
 and runs with **PME** inside 1.2 nm, at the settings of its own mdp files
 (`tutorial/7/md_CGPROT.mdp` of the GROMACS distribution).
 
-boonza carries the force field and maps a structure onto beads itself, so a
-PDB or MAE goes straight in; filling a box with WT4 water is still SIRAH's
-own tools' work, so an unsolvated run says `--no-solvate` and a solvated one
-comes as a topology:
+boonza carries the force field, maps a structure onto beads and fills the box
+with SIRAH's own water, so a PDB or MAE goes straight in:
 
 ```bash
-boonza md protein.pdb --model sirah --no-solvate --production-ns 1000   # mapped here
-boonza md topol.top   --model sirah --production-ns 1000                # already built
+boonza md protein.pdb --model sirah --production-ns 1000    # mapped and solvated here
+boonza md protein.pdb --model sirah --no-solvate            # beads in a box, no water
+boonza md topol.top   --model sirah                         # a topology already built
 ```
 
 The mapping is SIRAH's own: each bead sits on one named atom (`GC` on CA,
@@ -313,8 +312,23 @@ the residues' own charges).
 
 What it writes runs anywhere: `sirah/topol.top`, a molecule `.itp` each, the
 force field in `sirah/sirah.ff`, and coordinates as both `cg.dms` and
-`cg.gro`. That directory is what `gmx solvate -cs sirah.ff/wt416.gro` needs
-to add water, until boonza can.
+`cg.gro`.
+
+**Water and ions.** The box is filled from the force field's own equilibrated
+WT4 box, tiled whole -- the box grows to a multiple of its 1.72 nm edge, so
+the water meets itself as it was equilibrated and only the solute displaces
+any; cut mid-tile, a slab of water goes missing at every face and the fill
+comes out a fifth thin. A WT4 molecule with any bead within 3 Å of the solute
+is left out, as SIRAH's own tutorial removes them. Then NaW and ClW replace
+whole waters at least 5 Å from the solute: enough to cancel its charge, then
+pairs until `saltM` is reached, counted as SIRAH counts it (one pair per 34
+waters is about 0.15 M).
+
+Worth knowing: the shipped `wt416.gro` is about 7% denser than WT4's own
+equilibrium at 300 K and 1 bar. Run that box under NPT and it expands to
+0.972 g/mL, in GROMACS and in boonza alike (147.8 against 147.6 nm³ for the
+same 432 waters) -- so a fresh box that starts a few per cent thin is at the
+right place, and it contracts rather than collapsing.
 
 The coordinates are looked for beside the topology, the least rounded first:
 `topol.dms`, `topol.mae`, `topol.gro`, `topol.pdb`, then `cg.*`. A `.gro`
@@ -344,8 +358,9 @@ it from the hydrogens instead — a histidine with both ring nitrogens
 protonated comes out +1, one with a single hydrogen neutral, residue by
 residue.
 
-Not yet: filling a box with WT4 and its NaW/KW/ClW ions, and `boonza swim`,
-which refuses `--model sirah` rather than quietly martinizing the protein.
+Not yet: `boonza swim`, which refuses `--model sirah` rather than quietly
+martinizing the protein, and SIRAH's DNA, lipids and glycans, whose libraries
+are carried but not yet mapped.
 
 ## Backbone restraints
 

@@ -195,24 +195,22 @@ def test_sirah_refuses_what_belongs_to_martini(capsys):
     assert "needs a Martini model" in capsys.readouterr().err
 
 
-def test_sirah_maps_a_structure_but_cannot_fill_a_box_yet(tmp_path):
-    """boonza maps a structure onto beads and builds its topology; filling the
-    box with WT4 water is still SIRAH's own tools' work, and it says so."""
+def test_a_run_can_be_built_dry(tmp_path):
+    """Without water the beads still get a periodic box, since the run needs
+    one; a membrane is not something SIRAH does here."""
     from boonza.md.prepare import build_sirah_system
 
-    structure = DATA / "1CRN_ph7.pdb"
-    asked = parse_arguments([str(structure), "--model", "sirah",
-                             "--workdir", str(tmp_path / "wet")])  # fmt: skip
-    with pytest.raises(ValueError, match="WT4 water yet"):
-        build_sirah_system(asked, tmp_path / "wet", log=lambda *_: None)
-
-    dry = parse_arguments([str(structure), "--model", "sirah", "--no-solvate",
+    dry = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--no-solvate",
                            "--workdir", str(tmp_path / "dry")])  # fmt: skip
     s, info = build_sirah_system(dry, tmp_path / "dry", log=lambda *_: None)
-    assert s.natoms == PDB2GMX["atoms"]
-    assert (tmp_path / "dry" / "sirah" / "topol.top").is_file()
-    assert np.any(np.asarray(s.cell))  # a box to be periodic in, even without water
+    assert s.natoms == PDB2GMX["atoms"]  # the protein alone
+    assert np.any(np.asarray(s.cell))
     assert [c["id"] for c in info["components"]] == ["component-0"]
+
+    with pytest.raises(SystemExit):  # a bilayer is Martini's, and is refused up front
+        parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah",
+                         "--solvate", "membrane", "--upper", "POPC",
+                         "--workdir", str(tmp_path / "m")])  # fmt: skip
 
 
 def test_swim_cannot_swim_sirah_yet(tmp_path):
@@ -450,3 +448,75 @@ def test_the_carried_force_field(tmp_path):
         sirah.read("nothing.itp")
     out = sirah.unpack(tmp_path)
     assert (out / "wt416.gro").is_file()  # the water box, for solvation to come
+
+
+def test_water_fills_the_box_as_sirah_equilibrated_it(crambin_all_atom):
+    """WT4 comes from the force field's own box, tiled whole so the water meets
+    itself as it was equilibrated; only the solute displaces any."""
+    from boonza.sirah.build import EQUILIBRIUM_DENSITY, TILE_DENSITY, sirahize, solvate
+
+    m = sirahize(crambin_all_atom)
+    wet = solvate(m, padding=10.0, salt=0.15)
+    counts = dict(wet.solvent)
+    box = np.diag(np.asarray(wet.cell)) / 10.0
+    volume = float(np.prod(box))
+    assert counts["WT4"] > 300
+    # the box grew to whole 1.72 nm tiles, so nothing is lost at the faces
+    assert np.allclose(box / 1.72, np.round(box / 1.72), atol=1e-6)
+    density = counts["WT4"] / volume
+    assert 0.85 * EQUILIBRIUM_DENSITY < density < TILE_DENSITY
+    # cut mid-tile instead and a slab of water goes missing at every face
+    loose = solvate(m, padding=10.0, salt=0.15, fit=False)
+    thinner = dict(loose.solvent)["WT4"] / float(np.prod(np.diag(np.asarray(loose.cell)) / 10))
+    assert thinner < density
+
+
+def test_the_ions_neutralize_and_salt_the_box(crambin_all_atom):
+    """Counter-ions first, then pairs: one pair for every 34 waters is SIRAH's
+    own reckoning of 0.15 M."""
+    from boonza.sirah.build import sirahize, solvate
+
+    m = sirahize(crambin_all_atom, termini="Charged")
+    charge = sum(c for mol in m.molecules for c in mol.charges)
+    wet = solvate(m, padding=10.0, salt=0.15)
+    counts = dict(wet.solvent)
+    assert round(charge + counts["NaW"] - counts["ClW"], 6) == 0  # the box is neutral
+    pairs = min(counts["NaW"], counts["ClW"])
+    assert pairs == pytest.approx(counts["WT4"] / 34, rel=0.25)
+
+    salty = dict(solvate(m, padding=10.0, salt=0.30).solvent)
+    assert min(salty["NaW"], salty["ClW"]) > pairs  # more salt, more pairs
+    none = dict(solvate(m, padding=10.0, salt=0.0).solvent)
+    assert min(none["NaW"], none["ClW"]) == 0  # only what neutralizes
+
+
+def test_water_keeps_clear_of_the_solute(crambin_all_atom):
+    from boonza.sirah.build import WATER_CLASH, sirahize, solvate
+    from boonza.spatial import min_dist2
+
+    m = sirahize(crambin_all_atom)
+    wet = solvate(m, padding=10.0, salt=0.15)
+    solute = (
+        wet.nbeads
+        - 4 * dict(wet.solvent)["WT4"]
+        - dict(wet.solvent)["NaW"]
+        - dict(wet.solvent)["ClW"]
+    )
+    xyz = np.asarray(wet.positions)
+    cell = np.asarray(wet.cell)
+    apart = np.sqrt(min_dist2(xyz[solute:], xyz[:solute], 2 * WATER_CLASH, cell=cell).min())
+    assert apart >= WATER_CLASH - 1e-6
+
+
+def test_a_solvated_run_is_built_and_runnable(crambin_all_atom, tmp_path):
+    """`boonza md --model sirah protein.pdb` maps, fills the box and runs."""
+    from boonza.md.prepare import build_sirah_system
+
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    s, info = build_sirah_system(args, tmp_path, log=lambda *_: None)
+    names = {str(n) for n in s.residues["name"]}
+    assert {"WT4", "NaW", "ClW"} <= names
+    assert s.natoms > 1000 and np.any(np.asarray(s.cell))
+    assert (tmp_path / "sirah" / "topol.top").is_file()
+    assert "solv.itp" in (tmp_path / "sirah" / "topol.top").read_text()
