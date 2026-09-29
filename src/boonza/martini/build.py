@@ -155,7 +155,13 @@ class Martinized:
     def system(self, martini_itp=None):
         """The beads as a boonza System, with the Martini force field of
         ``martini_itp`` for nonbonded terms; the file boonza carries for this
-        version of Martini when none is given."""
+        version of Martini when none is given.
+
+        The topology is written out and read back, since that is where Martini
+        keeps its parameters, but the positions are the ones held here: a .gro
+        rounds them to 0.01 Å, and no coordinate file of GROMACS has a chain
+        column, which the beads do carry.
+        """
         import tempfile
 
         from ..io.gromacs import load_top
@@ -163,8 +169,38 @@ class Martinized:
         martini_itp = Path(_nonbonded(martini_itp, self.martini)).resolve()
         with tempfile.TemporaryDirectory() as tmp:
             top = self.save(tmp, martini_itp.name)
-            s = load_top(top, Path(tmp) / "cg.gro", include_dirs=[str(martini_itp.parent)])
+            s = load_top(top, include_dirs=[str(martini_itp.parent)])
+        s.positions = np.asarray(self.positions, float)
+        if self.cell is not None and np.any(self.cell):
+            s.cell = np.asarray(self.cell, float)
+        self._name_chains(s)
         return s
+
+    def _name_chains(self, s) -> None:
+        """Give the beads' residues the chains they came from.
+
+        A molecule's beads know their chain, and the lipids and the solvent
+        have none of their own; a system built from a composition alone knows
+        no chains at all, and keeps the one chain it was read with.
+        """
+        of_bead = []
+        for mol, count in zip(self.molecules, self.molecule_copies, strict=True):
+            mine = [str(n.get("chain", "") or "") for n in mol.nodes]
+            of_bead += mine * count
+        if not any(of_bead):
+            return
+        of_bead += [""] * (s.natoms - len(of_bead))  # lipids, water, ions
+        residue = np.asarray(s.atoms["residue"])
+        first = np.zeros(s.nresidues, np.int64)
+        first[residue[::-1]] = np.arange(s.natoms)[::-1]  # the first bead of each residue
+        want = [of_bead[int(a)] for a in first]
+        chains = {str(s.chains["name"][c]): s.chain(c) for c in range(s.nchains)}
+        for name in dict.fromkeys(want):
+            if name not in chains:
+                chains[name] = s.add_chain(name=name)
+        for r, name in enumerate(want):
+            s.residue(r).chain = chains[name]
+        s._prune_hierarchy()  # the chains the topology was read with are empty now
 
     @property
     def molecule_copies(self) -> list:
@@ -236,7 +272,8 @@ class _Residue:
 
 
 def martinize(system, atoms: str = "protein", *, ss: str | None = None,
-              elastic: bool = False, elastic_fc: float = 700.0, elastic_lower: float = 0.0,
+              elastic: bool = False, elastic_selection: str | None = None,
+              elastic_fc: float = 700.0, elastic_lower: float = 0.0,
               elastic_upper: float = 9.0, elastic_decay: float = 0.0, elastic_power: float = 0.0,
               elastic_min_fc: float = 0.0, res_min_dist: int | None = None,
               cys: str | float = "auto", neutral_termini: bool = False, scfix: bool = True,
@@ -248,7 +285,10 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     unassigned (the backbone then takes the coil terms, as martinize2's
     links give a residue with no secondary structure).  ``elastic`` adds
     martinize2's elastic network between backbone beads ``elastic_lower`` to
-    ``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
+    ``elastic_upper`` Å apart (``-el``/``-eu``), over every molecule or only
+    the residues ``elastic_selection`` picks -- a receptor held rigid while a
+    peptide bound to it stays free, say; a band never joins two molecules
+    either way, since a molecule's bonds are its own, with force constant
     ``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
     ``elastic_power`` (``-ea``/``-ep``), dropping those below
     ``elastic_min_fc`` (``-em``) and those within ``res_min_dist`` residues
@@ -262,6 +302,13 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     """
     ff = force_field(forcefield)
     residues, local = _residues(system, atoms)
+    networked = None
+    if elastic_selection is not None:
+        if not elastic:
+            raise ValueError("elastic_selection has no network to trim: give elastic=True")
+        networked = _residue_keys(system, elastic_selection)
+        if not networked:
+            raise ValueError(f"elastic_selection {elastic_selection!r} selects no residues")
     if not residues:
         raise ValueError(f"no atoms in {atoms!r}")
     unknown = sorted({r.resname for r in residues
@@ -269,7 +316,9 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     if unknown:
         raise ValueError(f"not Martini 3 protein residues: {', '.join(unknown)}; leave them "
                          f"out of atoms={atoms!r}")  # fmt: skip
-    bonds = _inter_residue_bonds(residues, cys, _system_bonds(system, local, residues))
+    known = _system_bonds(system, local, residues)
+    bonds = _inter_residue_bonds(residues, cys, known)
+    _check_links_across_chains(residues, bonds, known)
     groups = _molecules(len(residues), bonds)
     if ss is None:
         ss = _dssp(system, atoms)
@@ -296,7 +345,8 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
                           elastic_decay, elastic_power, elastic_min_fc,
                           ff.variables.get("elastic_network_res_min_dist", 2)
                           if res_min_dist is None else res_min_dist,
-                          int(ff.variables.get("elastic_network_bond_type", 1)))  # fmt: skip
+                          int(ff.variables.get("elastic_network_bond_type", 1)),
+                          networked)  # fmt: skip
         molecules.append(mol)
         names.append(f"molecule_{m}")
         positions.extend(mol.positions)
@@ -394,6 +444,37 @@ def _inter_residue_bonds(residues, cys, known=frozenset()):
             bond = (ra, atom_idx[a], rb, atom_idx[b])
             found.add(bond if ra < rb else (rb, atom_idx[b], ra, atom_idx[a]))
     return sorted(found)
+
+
+def _check_links_across_chains(residues, bonds, known) -> None:
+    """Refuse a covalent link the distance rule invented between two chains.
+
+    Heavy atoms of different residues closer than they can be unbonded are
+    taken as bonded, as martinize2 does, which is how a peptide bond or a
+    disulfide is found.  Between two chains that is a disulfide often enough --
+    insulin, an antibody -- and those are left alone; anything else is almost
+    always a clash in the structure, and it would quietly join a receptor and
+    its ligand into one molecule, one elastic network over both, with the
+    ligand unable to leave.  A link that is truly there belongs in the file's
+    own connectivity, which is taken as given.
+    """
+    guilty = []
+    for a, i, b, j in bonds:
+        if (a, i, b, j) in known or residues[a].chain == residues[b].chain:
+            continue
+        if residues[a].names[i] == residues[b].names[j] == "SG":
+            continue  # a disulfide between two chains is ordinary: insulin, an antibody
+        d = 10 * float(np.linalg.norm(residues[a].xyz[i] - residues[b].xyz[j]))
+        guilty.append(f"{residues[a].chain}/{residues[a].resname}{residues[a].resid} "
+                      f"{residues[a].names[i]} - {residues[b].chain}/{residues[b].resname}"
+                      f"{residues[b].resid} {residues[b].names[j]} ({d:.2f} A)")  # fmt: skip
+    if guilty:
+        more = f" and {len(guilty) - 5} more" if len(guilty) > 5 else ""
+        raise ValueError(
+            "two chains come close enough to look bonded, which would make them one molecule "
+            f"with one elastic network over both: {'; '.join(guilty[:5])}{more}.  Separate them, "
+            "or give the bond in the structure's own connectivity if it is real"
+        )
 
 
 def _molecules(n, bonds) -> list[list[int]]:
@@ -571,9 +652,28 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
     return mol
 
 
-def _rubber_bands(mol, fc, lower, upper, decay, power, min_fc, res_min_dist, bond_type):
-    """vermouth's ApplyRubberBand on the BB beads of one molecule (lengths in nm)."""
-    sel = [k for k, n in enumerate(mol.nodes) if n["atomname"] == "BB"]
+def _residue_keys(system, selection: str) -> set:
+    """(chain, resid, insertion) of every residue ``selection`` touches, which
+    is how a bead says where it came from."""
+    ids = system.select(selection).ids
+    res = system.atoms["residue"][ids]
+    chains, resids = system.chains["name"], system.residues["resid"]
+    of_chain, insertion = system.residues["chain"], system.residues["insertion"]
+    return {(str(chains[of_chain[r]]), int(resids[r]), str(insertion[r]))
+            for r in sorted(set(res.tolist()))}  # fmt: skip
+
+
+def _rubber_bands(mol, fc, lower, upper, decay, power, min_fc, res_min_dist, bond_type,
+                  networked=None):  # fmt: skip
+    """vermouth's ApplyRubberBand on the BB beads of one molecule (lengths in nm).
+
+    ``networked``, when given, is the residues that may carry bands, so the
+    network can hold one molecule and leave another free.
+    """
+    sel = [k for k, n in enumerate(mol.nodes) if n["atomname"] == "BB"
+           and (networked is None
+                or (str(n.get("chain", "") or ""), int(n["input_resid"]),
+                    str(n.get("insertion", "") or "")) in networked)]  # fmt: skip
     if len(sel) < 2:
         return
     from ..spatial import pairs_within

@@ -515,7 +515,7 @@ that carries names needs nothing else to make a legible picture.
 
 ## Martini
 
-### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
 
 Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
 
@@ -524,7 +524,10 @@ default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
 unassigned (the backbone then takes the coil terms, as martinize2's
 links give a residue with no secondary structure).  ``elastic`` adds
 martinize2's elastic network between backbone beads ``elastic_lower`` to
-``elastic_upper`` Å apart (``-el``/``-eu``), with force constant
+``elastic_upper`` Å apart (``-el``/``-eu``), over every molecule or only
+the residues ``elastic_selection`` picks -- a receptor held rigid while a
+peptide bound to it stays free, say; a band never joins two molecules
+either way, since a molecule's bonds are its own, with force constant
 ``elastic_fc`` kJ/mol/nm² (``-ef``), decay ``elastic_decay`` and
 ``elastic_power`` (``-ea``/``-ep``), dropping those below
 ``elastic_min_fc`` (``-em``) and those within ``res_min_dist`` residues
