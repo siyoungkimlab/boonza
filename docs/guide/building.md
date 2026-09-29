@@ -42,6 +42,42 @@ boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
 boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
 ```
 
+## A picture of them
+
+`draw` writes a 2D picture of one molecule or a list of them, as PNG or SVG:
+
+```python
+boonza.draw("CC(=O)Oc1ccccc1C(=O)O", "aspirin.png")
+d = boonza.draw(series, "series.png", names=names, columns=3, mcs=True, align=True)
+d.core  # the SMARTS that was marked, or None if they share nothing
+d.failures  # the SMILES RDKit could not read
+```
+
+```bash
+boonza draw 'CCO' 'c1ccccc1' -o two.png
+boonza draw --input library.smi -o series.png --columns 4 --rows 3 --mcs --align
+```
+
+`--input` reads a file of SMILES, one per line, each with an optional name
+after it; `#` starts a comment. The names become the labels, so a `.smi`
+file needs nothing else to make a legible sheet.
+
+- **Grid.** `--columns` sets how many go across and `--rows` how many down.
+  Without `--rows` every molecule lands on one page, which for a few hundred
+  is a picture nothing can display; with it, the rest go to `series-2.png`,
+  `series-3.png` and so on.
+- **`--mcs`** finds the largest scaffold the molecules share and marks it,
+  which is the one to reach for when you do not already know what they have
+  in common. `--highlight SMARTS` marks something you name instead. When the
+  molecules share nothing, that is said rather than drawn as a picture with
+  no highlight.
+- **`--align`** lays every molecule out with the core the same way up, which
+  is what makes a series comparable at a glance. A molecule without the core
+  keeps its own depiction rather than being forced onto one.
+
+A SMILES that cannot be read is reported and the others are still drawn, so
+one bad line in a library does not cost the rest.
+
 ## Solvate
 
 `solvate(solute, box=None, thickness=5.0, solvent=None, ...)` centers the
