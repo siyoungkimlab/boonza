@@ -465,3 +465,177 @@ def test_a_coarse_grained_swim_follows_the_same_setting(tmp_path):
     assert len(_bonds_of(tmp_path / "on" / "sim_000")) > len(
         _bonds_of(tmp_path / "off" / "sim_000")
     ) + 300  # fmt: skip
+
+
+def test_the_built_system_keeps_its_chains_and_positions():
+    """`Martinized.system()` reads the topology back for its parameters, but a
+    .gro has no chain column and rounds to 0.01 A, so the positions and chains
+    come from the beads themselves."""
+    from boonza.martini import martinize, solvate
+
+    aa = boonza.load(DATA / "1TEN.pdb").clone("protein")
+    peptide = boonza.peptide("KLVFF", conformation="extended")
+    peptide.positions = peptide.positions + (aa.positions.max(0) - aa.positions.min(0)) + 20.0
+    peptide.chains["name"][:] = "B"
+    both = aa.clone()
+    both.append(peptide)
+    m = martinize(both, "protein")
+    s = m.system()
+    assert sorted({str(c) for c in s.chains["name"]}) == ["A", "B"]
+    beads_of_peptide = len(s.select("chain B").ids)
+    assert beads_of_peptide == 15  # 5 residues: a BB each, plus their side chains
+    assert beads_of_peptide < len(s.select("chain A").ids)
+    assert np.array_equal(np.asarray(s.positions), np.asarray(m.positions))
+
+    wet = solvate(m, padding=12.0, salt=0.15).system()
+    assert sorted({str(c) for c in wet.chains["name"]}) == ["", "A", "B"]  # solvent has none
+    assert len(wet.select("chain A").ids) == len(s.select("chain A").ids)
+    assert len(wet.select("resname W ION").ids) > 100
+
+
+def test_a_martini_run_stretches_its_intervals():
+    """0.01 ns is 500 steps at 20 fs against 5000 at 2 fs, so the checkpoint
+    and the monitor move out with the step; anything asked for still wins."""
+    cg = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3"])
+    assert (cg.checkpoint_interval_ns, cg.monitor_interval_ns, cg.confirmation_checks) == (
+        0.1,
+        0.2,
+        3,
+    )
+    aa = parse_arguments([str(DATA / "1TEN.pdb")])
+    assert (aa.checkpoint_interval_ns, aa.monitor_interval_ns, aa.confirmation_checks) == (
+        0.01,
+        0.1,
+        2,
+    )
+    asked = parse_arguments(
+        [
+            str(DATA / "1TEN.pdb"),
+            "--model",
+            "martini3",
+            "--checkpoint-interval-ns",
+            "0.01",
+            "--confirmation-checks",
+            "5",
+        ]  # fmt: skip
+    )
+    assert asked.checkpoint_interval_ns == 0.01 and asked.confirmation_checks == 5
+    assert asked.monitor_interval_ns == 0.2
+
+
+def _bands(m):
+    return [
+        sum(1 for b in mol.interactions["bonds"] if b.meta.get("group") == "Rubber band")
+        for mol in m.molecules
+    ]
+
+
+def _receptor_and_peptide(conformation="helix", touching: float = 3.2):
+    """A receptor with a peptide laid against it as chain B, its closest heavy
+    atom ``touching`` Å away: near enough to be bound, far enough that nothing
+    looks covalently bonded."""
+    from boonza.spatial import min_dist2
+
+    receptor = boonza.load(DATA / "1TEN.pdb").clone("protein")
+    peptide = boonza.peptide("KLVFFAEDVG", conformation=conformation)
+    middle = receptor.positions.mean(0)
+    edge = receptor.positions[np.argmax(np.linalg.norm(receptor.positions - middle, axis=1))]
+    out = (edge - middle) / np.linalg.norm(edge - middle)
+    peptide.positions = peptide.positions - peptide.positions.mean(0) + edge
+    for _ in range(200):  # push it out until it only touches
+        gap = np.sqrt(min_dist2(peptide.positions, receptor.positions, 20.0).min())
+        if gap >= touching:
+            break
+        peptide.positions = peptide.positions + out * (touching - gap + 0.2)
+    peptide.chains["name"][:] = "B"
+    both = receptor.clone()
+    both.append(peptide)
+    return both
+
+
+def test_the_network_never_joins_two_molecules():
+    """A band lives in a molecule's own topology, so a peptide bound to a
+    receptor is never tethered to it and can always leave."""
+    from boonza.martini import martinize
+
+    both = _receptor_and_peptide()
+    m = martinize(both, "protein", elastic=True)
+    assert len(m.molecules) == 2
+    s = m.system()
+    of_atom = np.asarray(s.residues["chain"])[np.asarray(s.atoms["residue"])]
+    names = [str(c) for c in s.chains["name"]]
+    pairs = np.asarray(s.table("stretch_harm").atoms)[:, :2]
+    assert not [1 for i, j in pairs if names[of_atom[i]] != names[of_atom[j]]]
+
+
+def test_holding_the_receptor_and_leaving_the_peptide_free():
+    """A folded peptide picks up a network of its own, which freezes its shape;
+    elastic_selection keeps the receptor rigid and leaves it out."""
+    from boonza.martini import martinize
+
+    both = _receptor_and_peptide("helix")
+    everywhere = _bands(martinize(both, "protein", elastic=True))
+    assert everywhere[0] > 300 and everywhere[1] > 0  # the peptide is held too
+    receptor_only = _bands(martinize(both, "protein", elastic=True, elastic_selection="chain A"))
+    assert receptor_only[0] == everywhere[0]
+    assert receptor_only[1] == 0  # and now it is free to change shape
+
+    extended = _bands(martinize(_receptor_and_peptide("extended"), "protein", elastic=True))
+    assert extended[1] == 0  # an extended peptide has no pair close enough anyway
+
+
+def test_elastic_selection_says_when_it_cannot_work():
+    from boonza.martini import martinize
+
+    both = _receptor_and_peptide()
+    with pytest.raises(ValueError, match="no network to trim"):
+        martinize(both, "protein", elastic=False, elastic_selection="chain A")
+    with pytest.raises(ValueError, match="selects no residues"):
+        martinize(both, "protein", elastic=True, elastic_selection="chain Z")
+
+
+def test_a_run_holds_only_what_it_is_told_to(tmp_path):
+    """The same through `boonza md`'s settings, into the topology it writes."""
+    from boonza.md.prepare import build_martini_system
+
+    both = _receptor_and_peptide("helix")
+    boonza.save(both, tmp_path / "complex.pdb")
+    counts = {}
+    for label, extra in (("all", []), ("receptor", ["--elastic-selection", "chain A"])):
+        where = tmp_path / label
+        args = parse_arguments([str(tmp_path / "complex.pdb"), "--model", "martini3", *extra,
+                                "--workdir", str(where / "run")])  # fmt: skip
+        build_martini_system(args, where, log=lambda *_: None)
+        counts[label] = [
+            len(_bonds_of_itp(where / "martini" / f"molecule_{k}.itp")) for k in (0, 1)
+        ]
+    assert counts["all"][0] == counts["receptor"][0] > 300  # receptor held either way
+    assert counts["all"][1] > counts["receptor"][1]  # the peptide only in the first
+
+
+def _bonds_of_itp(path):
+    section = path.read_text().split("[ bonds ]")[1].split("[", 1)[0]
+    return [ln for ln in section.splitlines() if ln.strip()]
+
+
+def test_a_clash_between_chains_is_not_taken_for_a_bond():
+    """Heavy atoms too close to be unbonded are taken as bonded, as martinize2
+    does.  Between a receptor and its ligand that is a clash, and letting it
+    pass would make them one molecule under one elastic network, with the
+    ligand unable to leave."""
+    from boonza.martini import martinize
+    from boonza.martini.build import _check_links_across_chains, _Residue
+
+    clashing = _receptor_and_peptide("extended", touching=0.9)
+    with pytest.raises(ValueError, match="come close enough to look bonded"):
+        martinize(clashing, "protein", elastic=True)
+
+    def residue(chain, atoms, xyz):
+        return _Residue("CYS", 1, "", chain, list(atoms), ["C"] * len(atoms), np.asarray(xyz))
+
+    two = [residue("A", ["CA", "SG"], [[0, 0, 0], [0.2, 0, 0]]),
+           residue("B", ["CA", "SG"], [[0.6, 0, 0], [0.4, 0, 0]])]  # fmt: skip
+    _check_links_across_chains(two, [(0, 1, 1, 1)], known=frozenset())  # a disulfide: ordinary
+    with pytest.raises(ValueError):
+        _check_links_across_chains(two, [(0, 0, 1, 0)], known=frozenset())
+    _check_links_across_chains(two, [(0, 0, 1, 0)], known={(0, 0, 1, 0)})  # the file says so

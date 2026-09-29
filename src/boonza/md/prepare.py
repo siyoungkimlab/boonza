@@ -447,6 +447,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                              "(.top) instead, or build a membrane without a protein")  # fmt: skip
         aa = load_input(path, log, hydrogens=False)
         protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
+                               elastic_selection=args.elastic_selection,
                                neutral_termini=bool(args.neutral_termini))  # fmt: skip
         log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
             f"{', elastic network' if args.elastic else ''}")  # fmt: skip

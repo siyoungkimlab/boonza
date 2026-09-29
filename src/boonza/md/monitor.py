@@ -90,11 +90,20 @@ def select_target(info: dict, args) -> dict:
 
 
 def _protein_atoms(s) -> np.ndarray:
+    """The atoms of the receptor: residues with a backbone.
+
+    An all-atom residue shows one by holding N, CA and C.  A Martini residue
+    is a bead or a few, whose backbone is the single bead named BB, so there
+    is nothing to cross-check; without this a coarse-grained run finds no
+    receptor at all, and every target looks unbound from the first frame.
+    """
     names, res = s.atoms["name"], s.atoms["residue"]
     backbone: dict[int, set] = {}
     for a in np.flatnonzero(np.isin(names, ["N", "CA", "C"])).tolist():
         backbone.setdefault(int(res[a]), set()).add(str(names[a]))
     aa = [r for r, got in backbone.items() if got == {"N", "CA", "C"}]
+    if not aa:
+        aa = sorted({int(res[a]) for a in np.flatnonzero(names == "BB").tolist()})
     return np.isin(res, aa)
 
 

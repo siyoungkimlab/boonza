@@ -115,7 +115,20 @@ residue blocks, links, modifications and mappings (Apache-2.0, in
    `elastic_upper` Å apart get harmonic bonds, except those within
    `res_min_dist` residues of each other along the bonds (2 by default, as in
    martinize2). The force constant is `elastic_fc` kJ/mol/nm², optionally
-   with martinize2's distance decay.
+   with martinize2's distance decay. A band is a bond of one molecule, so it
+   never joins two of them: a peptide bound to a receptor keeps its own
+   topology and can leave. `elastic_selection` narrows the network to some of
+   the residues -- `"chain A"` holds the receptor and leaves that peptide free,
+   which matters when the peptide is folded enough to pick up bands of its
+   own and would otherwise be frozen in the shape it arrived in.
+
+   Residues whose heavy atoms are too close to be unbonded are taken as
+   bonded, as martinize2 does, which is how a peptide bond or a disulfide is
+   found. Across two chains a disulfide is ordinary (insulin, an antibody),
+   but anything else is almost always a clash, and it would quietly make the
+   two one molecule under one network; boonza refuses that and names the
+   atoms. A link that is real belongs in the structure's own connectivity,
+   which is taken as given.
 
 Options map to martinize2's flags. Distances are in Å here and in nm there:
 
@@ -123,6 +136,7 @@ Options map to martinize2's flags. Distances are in Å here and in nm there:
 |---|---|
 | `ss="..."` / default | `-ss` / `-dssp` |
 | `elastic`, `elastic_fc`, `elastic_lower`, `elastic_upper` | `-elastic`, `-ef`, `-el`, `-eu` |
+| `elastic_selection` | none: martinize2 holds every molecule |
 | `elastic_decay`, `elastic_power`, `elastic_min_fc`, `res_min_dist` | `-ea`, `-ep`, `-em`, `-ermd` |
 | `cys="auto"`, `"none"`, or a distance | `-cys` |
 | `neutral_termini` | `-nt` |
@@ -227,6 +241,13 @@ probe_sequences()  # 105 dipeptides of the 14 probe residues
 probe("EK")  # a martinized Glu-Lys probe, ends neutral, free to bend
 ```
 
+`Martinized.system()` reads the topology back for its parameters but keeps
+the bead positions it holds, so nothing is rounded to a `.gro`'s three
+decimals, and it gives the residues the chains their beads came from, which
+no GROMACS coordinate file has a column for. `boonza md` therefore keeps
+`chain A` and `chain B` through a coarse-grained run, for selections and for
+`--monitor-chain`.
+
 Pharmacophore features of beads come from what each bead stands for, in
 `boonza.martini.features`, which is what `boonza sites --features` uses on a
 coarse-grained run.
@@ -270,4 +291,4 @@ His and cholesterol's core included, to about 10⁻⁶ of their lengths at
 20 fs. It solves coupled constraints with CCMA, and its default tolerance is
 10⁻⁵.
 
-Membranes and Gō models are not yet in boonza.
+Gō models are not yet in boonza.

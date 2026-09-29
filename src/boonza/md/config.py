@@ -51,27 +51,39 @@ MODELS = ("aa", "martini2", "martini3")
 #: What a model changes when the setting was not given, on top of DEFAULTS:
 #: Martini runs hotter, with a long step and its own cut-off, and holds the
 #: protein's fold with an elastic network, which it needs to keep one (pass
-#: --no-elastic to let the protein find its own shape).  Everything else --
-#: the intervals, the monitor, the barostat, the platform -- is shared.
-MODEL_DEFAULTS: dict = {
-    "martini2": {
-        "temperature": 310.0,
-        "integration_fs": 20.0,
-        "cutoff_nm": 1.1,
-        "elastic": True,
-    },  # fmt: skip
-    "martini3": {
-        "temperature": 310.0,
-        "integration_fs": 20.0,
-        "cutoff_nm": 1.1,
-        "elastic": True,
-    },  # fmt: skip
+#: --no-elastic to let the protein find its own shape).
+#:
+#: The monitor's distances move out with the beads.  A bead is wider than an
+#: atom: beads of residues that pack against each other sit 0.35 to 0.7 nm
+#: apart, peaking at 0.53, where all-atom heavy atoms touch at about 0.4.  At
+#: the all-atom cut-offs a bound target reads as detached from the first frame.
+#:
+#: Everything else -- the intervals, the barostat, the platform -- is shared.
+#: A long step also stretches the intervals: 0.01 ns is 500 steps at 20 fs
+#: against 5000 at 2 fs, so a checkpoint every 0.01 ns writes ten times as
+#: often for the same work, and 0.1 ns still costs at most a tenth of a
+#: nanosecond on a crash.  The monitor looks every 0.2 ns and wants three
+#: checks in a row, since a bead diffuses fast and a target that steps away
+#: for 0.2 ns has not left.
+_MARTINI: dict = {
+    "temperature": 310.0,
+    "integration_fs": 20.0,
+    "cutoff_nm": 1.1,
+    "elastic": True,
+    "pocket_cutoff_nm": 0.8,
+    "contact_cutoff_nm": 0.7,
+    "detach_cutoff_nm": 1.2,
+    "checkpoint_interval_ns": 0.1,
+    "monitor_interval_ns": 0.2,
+    "confirmation_checks": 3,
 }
+MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI)}
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
                  "protein_extent", "hmr")  # fmt: skip
 #: Settings that only a Martini run has.
-MARTINI_ONLY = ("elastic", "upper", "lower", "area_per_lipid", "size_nm", "water_nm",
+MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipid",
+                "size_nm", "water_nm",
                 "opm", "shift_nm", "cg_selection", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 
@@ -122,6 +134,7 @@ DEFAULTS: dict = {
     "detach_cutoff_nm": 0.8,
     "confirmation_checks": 2,
     "elastic": False,
+    "elastic_selection": None,
     "upper": None,
     "lower": None,
     "area_per_lipid": 60.0,
@@ -378,6 +391,9 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                     help="lower leaflet (default: as the upper)")  # fmt: skip
     cg.add_argument("--size-nm", dest="size_nm", type=float, nargs="+", metavar="NM",
                     help="the bilayer's x [y] (nm; default: 10)")  # fmt: skip
+    cg.add_argument("--elastic-selection", dest="elastic_selection", metavar="SEL",
+                    help="hold only these residues with the network, e.g. 'chain A' to leave a "
+                         "bound peptide free (default: every molecule)")  # fmt: skip
     cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
                     help="the atoms to coarse-grain (default: protein)")  # fmt: skip
     cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",

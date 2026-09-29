@@ -795,3 +795,93 @@ def test_an_older_checkpoint_counts_production_by_its_clock():
     production, equilibration = 5_000_000, 50_000
     sim, dt = _clocked(production, 0.002, counted=production + equilibration)
     assert _current_steps(sim, dt) == production
+
+
+def _cg_complex(gap: float = 5.5):
+    """A martinized receptor with a small peptide laid against it, solvated:
+    what `boonza md --model martini3 --early-stop` is given."""
+    pytest.importorskip("openmm")
+    import pathlib
+
+    import boonza
+    from boonza.martini import martinize, solvate
+    from boonza.martini.build import Martinized
+    from boonza.md.prepare import _with_production_indices
+
+    data = pathlib.Path(__file__).parent / "data"
+    receptor = martinize(boonza.load(data / "1TEN.pdb").clone("protein"), elastic=True)
+    peptide = martinize(boonza.peptide("KLVFF", conformation="extended"), neutral_termini=True)
+    middle = receptor.positions.mean(0)
+    edge = receptor.positions[np.argmax(np.linalg.norm(receptor.positions - middle, axis=1))]
+    out = (edge - middle) / np.linalg.norm(edge - middle)
+    peptide.positions = peptide.positions - peptide.positions.mean(0) + edge + gap * out
+    box = np.full(3, float(np.ptp(receptor.positions, axis=0).max()) + 25.0)
+    shift = box / 2 - middle
+    m = solvate(
+        Martinized(
+            [*receptor.molecules, *peptide.molecules],
+            np.vstack([receptor.positions + shift, peptide.positions + shift]),
+            np.diag(box),
+            [*receptor.names, "PEP"],
+            receptor.ss,
+            martini=3,
+        ),
+        box=box,
+        salt=0.0,
+    )
+    s = m.system()
+    s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
+    # the peptide keeps its residues' own names, so it is a component, not a
+    # resname: one molecule of its own, after the receptor
+    return _with_production_indices(s, s, components(s, []))
+
+
+def test_the_receptor_of_a_coarse_grained_run():
+    """A Martini residue has one backbone bead and no N, CA or C to check, so
+    the receptor has to be found by that bead; boonza once found none, and
+    every target then looked unbound from the first frame."""
+    import pathlib
+
+    from boonza.md.monitor import _protein_atoms
+
+    s, _ = _cg_complex()
+    assert len(s.select("protein").ids) == 0  # no all-atom backbone to match
+    found = _protein_atoms(s)
+    beads = ~np.isin([str(x) for x in np.asarray(s.residues["name"])[s.atoms["residue"]]],
+                     ["W", "ION"])  # fmt: skip
+    assert found.sum() == beads.sum() > 100  # every bead of the receptor and the peptide
+    aa = boonza.load(pathlib.Path(__file__).parent / "data" / "1TEN.pdb")
+    assert _protein_atoms(aa).sum() == len(aa.select("protein").ids)  # all-atom unchanged
+
+
+def test_early_stop_finds_a_pocket_in_a_coarse_grained_run():
+    """The peptide is bound at the start, so the monitor must say so."""
+    s, info = _cg_complex()
+    peptide = [c for c in info["components"] if len(c["production_atom_indices"]) == 15]
+    assert len(peptide) == 1, "the peptide should be a component of its own"
+    args = parse_arguments(["x.top", "--model", "martini3", "--early-stop",
+                            "--monitor-component", peptide[0]["id"]])  # fmt: skip
+    pos, box = np.asarray(s.positions) / 10.0, np.asarray(s.cell) / 10.0
+    watched = monitor.initialize(s, pos, box, info, args)
+    assert len(watched.pocket_atom_indices) >= 2
+    assert len(watched.pocket_residues) >= 1
+    assert watched.initial_contact_count > 0
+
+    # and at the all-atom distances the same bound peptide reads as detached
+    tight = parse_arguments(["x.top", "--model", "martini3", "--early-stop",
+                             "--monitor-component", peptide[0]["id"],
+                             "--pocket-cutoff-nm", "0.5"])  # fmt: skip
+    with pytest.raises(ValueError, match="not bound at the start"):
+        monitor.initialize(s, pos, box, info, tight)
+
+
+def test_martini_measures_contacts_at_bead_distances():
+    """Beads of residues packed against each other sit about 0.53 nm apart,
+    where all-atom heavy atoms touch at 0.4, so the monitor's distances move
+    out with them -- and anything given by hand still wins."""
+    cg = parse_arguments(["x.pdb", "--model", "martini3"])
+    assert (cg.pocket_cutoff_nm, cg.contact_cutoff_nm, cg.detach_cutoff_nm) == (0.8, 0.7, 1.2)
+    aa = parse_arguments(["x.pdb"])
+    assert (aa.pocket_cutoff_nm, aa.contact_cutoff_nm, aa.detach_cutoff_nm) == (0.5, 0.5, 0.8)
+    asked = parse_arguments(["x.pdb", "--model", "martini2", "--contact-cutoff-nm", "0.5"])
+    assert asked.contact_cutoff_nm == 0.5 and asked.pocket_cutoff_nm == 0.8
