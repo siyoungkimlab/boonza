@@ -241,6 +241,11 @@ probe_sequences()  # 105 dipeptides of the 14 probe residues
 probe("EK")  # a martinized Glu-Lys probe, ends neutral, free to bend
 ```
 
+`Martinized.for_viewing()` gives the same system without its elastic network,
+which `boonza md` writes as `view.dms` and `view.mae`: the bands are bonds
+like any other, and a viewer draws every one of them. Everything else is kept,
+atom for atom and in order, so a trajectory still lines up.
+
 `Martinized.system()` reads the topology back for its parameters but keeps
 the bead positions it holds, so nothing is rounded to a `.gro`'s three
 decimals, and it gives the residues the chains their beads came from, which
