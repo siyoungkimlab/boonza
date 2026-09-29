@@ -710,17 +710,23 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     assert without.elastic_bonds() == []
 
 
-def test_a_martini_run_writes_what_a_viewer_wants(tmp_path):
+@pytest.mark.parametrize("elastic", [[], ["--no-elastic"]])
+def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
+    """Written whether or not there is a network to leave out: the backbone is
+    named CA either way, which is what the file is for."""
     from boonza.md.prepare import build_martini_system
 
-    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *elastic,
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
     view = boonza.load(tmp_path / "view.dms")
     assert (tmp_path / "view.mae").is_file()
-    assert view.natoms == s.natoms and view.nbonds < s.nbonds
+    assert view.natoms == s.natoms
     assert len(view.select("name CA").ids) == len(s.select("name BB").ids)  # for a viewer
     assert [str(r) for r in view.residues["name"]] == [str(r) for r in s.residues["name"]]
+    # the rubber bands are left out where there are any; "elastic" here is the
+    # flag that switches the network off, so an empty one means it is on
+    assert view.nbonds == (s.nbonds if elastic else s.nbonds - 354)
     # the coordinates it carries are the built ones, not a .gro's
     assert np.allclose(np.asarray(view.positions), np.asarray(s.positions))
 

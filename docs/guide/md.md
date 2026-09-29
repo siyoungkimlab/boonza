@@ -356,6 +356,11 @@ Note that SIRAH's own mdp files set `fourierspacing 0.2`, which leaves the
 reciprocal sum about 100 kJ/mol short on a system of a few thousand beads;
 that is a fine setting for forces, and boonza's PME is tighter.
 
+A SIRAH run writes `view.dms` and `view.mae` too, with `GC` named `CA`. There
+the name is simply what the bead is: SIRAH's map places `GC` on the alpha
+carbon itself (`MAP CA => GC`), where Martini's `BB` stands for the whole
+backbone.
+
 Protonation is whatever the topology was built with, since SIRAH's own tools
 choose it: 2.2 has the two neutral histidines (`sHe`, `sHd`) and no charged
 one, while 2.4 adds `sHp` (+1) as well as neutral Asp and Glu. Martini decides
@@ -460,7 +465,7 @@ it is seeded.
 | `final.pdb`, `.mae` | the latest coordinates |
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
-| `view.dms`, `view.mae` | Martini with an elastic network: the system without its rubber bands, which a viewer would otherwise draw as a hairball, and with the backbone bead named `CA` so a viewer traces the chain; same atoms in the same order, so the trajectory lines up with it |
+| `view.dms`, `view.mae` | every coarse-grained run: what to open in a viewer -- the backbone bead named `CA`, so a chain is traced, and no elastic network, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
 | `status.json` | how far the run got, and how it ended |
 | `pocket.json`, `monitor.csv` | with early stop |

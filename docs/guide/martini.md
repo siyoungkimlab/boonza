@@ -242,8 +242,9 @@ probe("EK")  # a martinized Glu-Lys probe, ends neutral, free to bend
 ```
 
 `Martinized.for_viewing()` gives the same system without its elastic network,
-which `boonza md` writes as `view.dms` and `view.mae`: the bands are bonds
-like any other, and a viewer draws every one of them. Everything else is kept,
+which `boonza md` writes as `view.dms` and `view.mae` for every run, network
+or not: the bands are bonds like any other, and a viewer draws every one of
+them. Everything else is kept,
 atom for atom and in order, so a trajectory still lines up.
 
 It also names the backbone bead `CA`, because that is what a viewer traces a

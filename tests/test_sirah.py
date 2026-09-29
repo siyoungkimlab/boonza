@@ -612,3 +612,32 @@ def test_every_library_is_read_together():
     library, bonded = read_residues()
     assert {"sA", "DAX", "NaW"} <= set(library)
     assert bonded.nrexcl == 3
+
+
+def test_a_sirah_run_writes_a_view_with_ca(crambin_all_atom, tmp_path):
+    """SIRAH's GC bead sits on the alpha carbon itself, so naming it CA in the
+    file meant for viewing is what the bead is; a viewer traces a chain through
+    it, and through GC draws beads and no more."""
+    from boonza.md.prepare import build_sirah_system
+
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    s, _ = build_sirah_system(args, tmp_path, log=lambda *_: None)
+    view = boonza.load(tmp_path / "view.dms")
+    assert (tmp_path / "view.mae").is_file()
+    assert view.natoms == s.natoms and view.nbonds == s.nbonds  # nothing dropped, only renamed
+    assert len(view.select("name CA").ids) == len(s.select("name GC").ids) > 40
+    assert not len(view.select("name GC").ids)
+    assert not len(s.select("name CA").ids)  # the run's own record keeps SIRAH's names
+    rest = [str(n) for n in s.atoms["name"] if str(n) != "GC"]
+    assert [str(n) for n in view.atoms["name"] if str(n) != "CA"] == rest
+
+
+def test_sirah_viewing_can_keep_its_own_names(crambin_all_atom):
+    from boonza.sirah import sirahize
+
+    m = sirahize(crambin_all_atom)
+    built = m.system()
+    assert len(m.for_viewing(built, backbone_as_ca=False).select("name GC").ids) == len(
+        built.select("name GC").ids
+    )

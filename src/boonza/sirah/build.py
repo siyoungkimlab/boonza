@@ -15,6 +15,10 @@ import numpy as np
 
 from . import read, unpack
 
+#: The bead SIRAH places on the alpha carbon itself, which a viewer traces a
+#: chain through; its map says MAP CA => GC, so the name is what the bead is.
+ALPHA_BEAD = "GC"
+
 
 @dataclass
 class Bead:
@@ -532,6 +536,22 @@ class Sirahized:
         save_structure(built, out / "cg.dms")  # what boonza reads back, unrounded
         save_structure(built, out / "cg.gro")  # what GROMACS needs, rounded to 0.001 nm
         return out / "topol.top"
+
+    def for_viewing(self, system=None, backbone_as_ca: bool = True):
+        """The system with its alpha-carbon bead named CA: what to open in a viewer.
+
+        SIRAH's ``GC`` sits on the alpha carbon itself -- its map places it
+        there -- so the name is what the bead is, not a convenience; a viewer
+        traces a chain through CA, and through ``GC`` it draws beads and no
+        more.  Everything else is kept, atom for atom and in order, so a
+        trajectory still lines up.  Only these files carry the name.
+        """
+        s = (system if system is not None else self.system()).clone()
+        if backbone_as_ca:
+            names = s.atoms["name"]
+            for a in np.flatnonzero(np.asarray(names) == ALPHA_BEAD).tolist():
+                names[a] = "CA"
+        return s
 
     def system(self):
         """The beads as a boonza System, with SIRAH's parameters on them."""

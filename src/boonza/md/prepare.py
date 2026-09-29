@@ -504,6 +504,10 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
             log(f"Box: {edge / 10:.2f} nm a side, {args.padding_nm:g} nm around the beads")
         built.save(workdir / "sirah")
         s = built.system()
+        viewing = built.for_viewing(s)
+        for suffix in (".dms", ".mae"):
+            save(viewing, workdir / f"view{suffix}")
+        log("Wrote view.dms and view.mae with the alpha-carbon bead named CA")
         s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
         info = components(s, [])
         if getattr(args, "monitor_selection", None) is not None:
@@ -600,13 +604,15 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
     m.save(workdir / "martini", martini_itp=args.martini_itp, system=s)
     if m.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
         (workdir / "martini" / "secondary.txt").write_text(m.ss + "\n")
-    if m.elastic_bonds():
-        # a viewer draws the network as bonds and the protein becomes a hairball;
-        # same atoms in the same order, so a trajectory still lines up with it
-        viewing = m.for_viewing(s)
-        for suffix in (".dms", ".mae"):
-            save(viewing, workdir / f"view{suffix}")
-        log(f"Wrote view.dms and view.mae without the {len(m.elastic_bonds())} rubber bands")
+    # what to open in a viewer: the backbone bead named CA, so a chain is
+    # traced, and no elastic network, which a viewer would draw as a hairball.
+    # Same atoms in the same order, so a trajectory still lines up with it.
+    bands = m.elastic_bonds()
+    viewing = m.for_viewing(s)
+    for suffix in (".dms", ".mae"):
+        save(viewing, workdir / f"view{suffix}")
+    log("Wrote view.dms and view.mae with the backbone as CA"
+        + (f", without the {len(bands)} rubber bands" if bands else ""))  # fmt: skip
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])
     if getattr(args, "monitor_selection", None) is not None:
