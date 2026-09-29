@@ -208,6 +208,20 @@ without it drifts several Å of backbone RMSD in tens of nanoseconds, so
 boonza md protein.pdb --model martini3 --production-ns 5000
 ```
 
+`cg_selection` is `protein`, and Martini has parameters for nothing else
+here, so **a ligand beside the protein cannot be mapped**. Rather than leave
+it out and run the protein alone, boonza refuses and names what it found:
+
+```
+complex.mae holds more than cg_selection 'protein' maps -- chain L: LIG1.
+Martini has parameters for proteins here and none for a ligand...
+```
+
+Give `--cg-selection protein` to say the protein alone is meant, and the run
+goes ahead with a note of what was left behind. A residue too small to map --
+the two-atom arginine some structures open with -- is a note either way, since
+it is a fragment of the structure rather than a molecule of its own.
+
 Early stop works the same way, and its distances move out with the beads:
 `pocket_cutoff_nm` 0.8, `contact_cutoff_nm` 0.7 and `detach_cutoff_nm` 1.2
 under Martini, against 0.5, 0.5 and 0.8 all-atom, because beads of residues
