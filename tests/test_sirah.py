@@ -195,15 +195,24 @@ def test_sirah_refuses_what_belongs_to_martini(capsys):
     assert "needs a Martini model" in capsys.readouterr().err
 
 
-def test_sirah_needs_a_topology(tmp_path):
-    """boonza does not map a structure to SIRAH beads yet, and says how to."""
+def test_sirah_maps_a_structure_but_cannot_fill_a_box_yet(tmp_path):
+    """boonza maps a structure onto beads and builds its topology; filling the
+    box with WT4 water is still SIRAH's own tools' work, and it says so."""
     from boonza.md.prepare import build_sirah_system
 
-    structure = tmp_path / "protein.pdb"
-    structure.write_text("ATOM      1  CA  ALA A   1       0.000   0.000   0.000\nEND\n")
-    args = parse_arguments([str(structure), "--model", "sirah", "--workdir", str(tmp_path / "r")])
-    with pytest.raises(ValueError, match="cgconv"):
-        build_sirah_system(args, tmp_path, log=lambda *_: None)
+    structure = DATA / "1CRN_ph7.pdb"
+    asked = parse_arguments([str(structure), "--model", "sirah",
+                             "--workdir", str(tmp_path / "wet")])  # fmt: skip
+    with pytest.raises(ValueError, match="WT4 water yet"):
+        build_sirah_system(asked, tmp_path / "wet", log=lambda *_: None)
+
+    dry = parse_arguments([str(structure), "--model", "sirah", "--no-solvate",
+                           "--workdir", str(tmp_path / "dry")])  # fmt: skip
+    s, info = build_sirah_system(dry, tmp_path / "dry", log=lambda *_: None)
+    assert s.natoms == PDB2GMX["atoms"]
+    assert (tmp_path / "dry" / "sirah" / "topol.top").is_file()
+    assert np.any(np.asarray(s.cell))  # a box to be periodic in, even without water
+    assert [c["id"] for c in info["components"]] == ["component-0"]
 
 
 def test_swim_cannot_swim_sirah_yet(tmp_path):
@@ -334,3 +343,110 @@ def test_probes_can_be_named_when_there_is_no_probes_json(system, tmp_path):
     labels, pooled = m.side_chains()
     assert labels == ["WT4"]  # not split into letters: it is not a dipeptide code
     assert pooled.max() > 0
+
+
+#: What pdb2gmx -ff sirah builds from the same beads, with no terminus chosen.
+PDB2GMX = {"atoms": 205, "bonds": 219, "pairs": 263, "angles": 285, "propers": 303,
+           "impropers": 37}  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def crambin_all_atom():
+    return boonza.load(DATA / "1CRN_ph7.pdb")
+
+
+def test_beads_sit_where_sirah_puts_them(crambin_all_atom, crambin):
+    """The map places each bead on one named atom, and the library fixes their
+    order: the same beads, in the same order, as cgconv.pl and pdb2gmx give."""
+    from boonza.sirah import map_structure
+
+    beads = map_structure(crambin_all_atom)
+    assert len(beads) == crambin.natoms
+    assert [b.name for b in beads] == [str(n) for n in crambin.atoms["name"]]
+    residue = np.asarray(crambin.atoms["residue"])
+    names = np.array([str(x) for x in np.asarray(crambin.residues["name"])])
+    assert [b.residue for b in beads] == list(names[residue])
+    theirs = np.asarray(crambin.positions)
+    mine = np.array([b.position for b in beads])
+    # their coordinates came through a .gro, which rounds to 0.001 nm
+    assert np.abs(mine - theirs).max() < 0.01
+
+
+def test_the_topology_is_the_one_pdb2gmx_builds(crambin_all_atom):
+    """Bonds from the library, angles and dihedrals from the bonds, 1-4 pairs
+    from the dihedrals, impropers from the library, and crambin's three
+    disulfides: the counts pdb2gmx arrives at, every one."""
+    from boonza.sirah import sirahize
+
+    m = sirahize(crambin_all_atom, termini="None")
+    assert len(m.molecules) == 1
+    mol = m.molecules[0]
+    got = {"atoms": mol.natoms, "bonds": len(mol.bonds), "pairs": len(mol.pairs),
+           "angles": len(mol.angles), "propers": len(mol.dihedrals),
+           "impropers": len(mol.impropers)}  # fmt: skip
+    assert got == PDB2GMX
+    assert set(mol.masses) == {50.0}  # from atomtypes.atp, where SIRAH keeps them
+
+
+def test_the_energies_are_the_ones_that_topology_gives(crambin_all_atom, crambin):
+    """The test that matters: boonza's own topology against the one pdb2gmx
+    built from the same beads, on the same coordinates."""
+    pytest.importorskip("openmm")
+    from boonza.sirah import sirahize
+
+    mine = sirahize(crambin_all_atom, termini="None").system()
+    theirs = crambin.clone()
+    theirs.positions = np.asarray(mine.positions)
+    assert np.allclose(np.asarray(mine.atoms["charge"], float),
+                       np.asarray(theirs.atoms["charge"], float))  # fmt: skip
+    a = boonza.openmm_energies(mine, nonbonded_method="NoCutoff")
+    b = boonza.openmm_energies(theirs, nonbonded_method="NoCutoff")
+    assert set(a) == set(b)
+    for term, value in a.items():
+        assert value == pytest.approx(b[term], rel=1e-9, abs=1e-9), term
+
+
+@pytest.mark.parametrize(("termini", "first_bead_charge"), [
+    ("Charged", 0.60), ("Neutral", 0.40), ("None", 0.13),
+])  # fmt: skip
+def test_the_chain_ends_are_a_choice(crambin_all_atom, termini, first_bead_charge):
+    """SIRAH's .tdb files give charged and neutral ends; 'None' leaves the
+    residues' own charges, which is what pdb2gmx does when asked for none."""
+    from boonza.sirah import sirahize
+
+    mol = sirahize(crambin_all_atom, termini=termini).molecules[0]
+    assert mol.beads[0].name == "GN"
+    assert mol.charges[0] == pytest.approx(first_bead_charge)
+    assert sum(mol.charges) == pytest.approx(sum(mol.charges), abs=0)  # whatever it sums to
+
+
+def test_a_residue_sirah_does_not_know(tmp_path):
+    from boonza.sirah import sirahize
+
+    s = boonza.from_smiles("c1ccccc1O", name="LIG")
+    with pytest.raises(ValueError, match="SIRAH's map has no LIG"):
+        sirahize(s, "all")
+
+
+def test_the_run_directory_carries_its_force_field(crambin_all_atom, tmp_path):
+    """What is written runs elsewhere: the topology, the molecules, the force
+    field beside them, and coordinates in both a lossless and a GROMACS form."""
+    from boonza.sirah import sirahize
+
+    top = sirahize(crambin_all_atom).save(tmp_path / "built")
+    written = {p.name for p in top.parent.iterdir()}
+    assert {"topol.top", "molecule_0.itp", "cg.dms", "cg.gro", "sirah.ff"} <= written
+    ff = {p.name for p in (top.parent / "sirah.ff").iterdir()}
+    assert {"forcefield.itp", "ffnonbonded.itp", "ffbonded.itp", "aminoacids.rtp"} <= ff
+    assert 'forcefield.itp"' in top.read_text()
+
+
+def test_the_carried_force_field(tmp_path):
+    from boonza import sirah
+
+    assert "aminoacids.rtp" in sirah.contents()
+    assert sirah.read("aminoacids.rtp").startswith("[ bondedtypes ]")
+    with pytest.raises(FileNotFoundError, match="not in the carried"):
+        sirah.read("nothing.itp")
+    out = sirah.unpack(tmp_path)
+    assert (out / "wt416.gro").is_file()  # the water box, for solvation to come

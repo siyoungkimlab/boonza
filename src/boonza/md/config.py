@@ -83,6 +83,8 @@ MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
                  "protein_extent", "hmr")  # fmt: skip
 #: Settings that only a Martini run has.
+#: Settings that only a SIRAH run has.
+SIRAH_ONLY = ("termini",)
 MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
                 "opm", "shift_nm", "cg_selection", "neutral_termini", "lipid_itp",
@@ -144,6 +146,7 @@ DEFAULTS: dict = {
     "opm": False,
     "shift_nm": 0.0,
     "cg_selection": "protein",
+    "termini": "Charged",
     "neutral_termini": False,
     "lipid_itp": None,
     "martini_itp": None,
@@ -178,6 +181,7 @@ _INTEGERS = {"seed", "confirmation_checks"}
 _BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini"}
 _CHOICES = {
     "model": MODELS,
+    "termini": ("Charged", "Neutral", "None"),
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
     "protein_extent": PROTEIN_EXTENTS,
@@ -395,6 +399,8 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     cg.add_argument("--elastic-selection", dest="elastic_selection", metavar="SEL",
                     help="hold only these residues with the network, e.g. 'chain A' to leave a "
                          "bound peptide free (default: every molecule)")  # fmt: skip
+    cg.add_argument("--termini", choices=("Charged", "Neutral", "None"),
+                    help="SIRAH: the chain ends (default: Charged)")  # fmt: skip
     cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
                     help="the atoms to coarse-grain (default: protein)")  # fmt: skip
     cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",
@@ -699,6 +705,10 @@ def finish(args) -> None:
     # so only a value that differs from the default counts as one asked for
     given = {k for k in getattr(args, "specified", ())
              if k not in DEFAULTS or getattr(args, k, None) != DEFAULTS[k]}  # fmt: skip
+    if args.model != "sirah":
+        wrong = [k for k in SIRAH_ONLY if k in given]
+        if wrong:
+            raise ValueError(f"{', '.join(sorted(wrong))} needs model = 'sirah'")
     if not args.model.startswith("martini"):
         wrong = [k for k in MARTINI_ONLY if k in given]
         if wrong:

@@ -14,3 +14,8 @@ crambin_cg.dms.gz is 1CRN (crambin) at pH 7 -- the .pqr of SIRAH's own
 tutorial 3 -- mapped by cgconv.pl and built by pdb2gmx -ff sirah, without
 solvent: 205 beads over 46 residues, with Ser, Thr, Tyr, Phe, Arg, Asp, Glu,
 Asn and Cys, which is the chemistry the feature table is checked against.
+
+1CRN_ph7.pdb is crambin with hydrogens at pH 7, the .pqr of SIRAH's tutorial
+3 written as a PDB. sirahize maps it to the 205 beads of crambin_cg.dms.gz,
+whose topology pdb2gmx -ff sirah built from the same beads: the counts and
+energies in tests/test_sirah.py are that topology's.

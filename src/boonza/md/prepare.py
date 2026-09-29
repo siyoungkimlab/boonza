@@ -479,15 +479,37 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
     path = Path(args.input_structure) if args.input_structure else None
     if path is None:
         raise ValueError("model = 'sirah' needs a topology: INPUT_STRUCTURE")
-    if path.suffix.lower() not in (".top", ".itp"):
-        raise ValueError(
-            f"model = 'sirah' runs a topology that is already built, not {path.name}: boonza "
-            "does not map a structure to SIRAH beads yet.  Map it with SIRAH's cgconv.pl and "
-            "build the topology with pdb2gmx -ff sirah (or tleap -f leaprc.sirah), then give "
-            "the .top here"
-        )
     mode = getattr(args, "solvate", "box")
     mode = {True: "box", False: "none"}.get(mode, mode)
+    if path.suffix.lower() not in (".top", ".itp"):
+        from ..sirah import sirahize
+
+        if mode != "none":
+            raise ValueError(
+                f"model = 'sirah' maps {path.name} onto beads, but cannot fill a box with its "
+                "WT4 water yet: run it with solvate = 'none' (--no-solvate), or bring a "
+                "topology and coordinates that are already solvated"
+            )
+        aa = load_input(path, log, hydrogens=True)
+        _check_nothing_is_dropped(aa, args, path, log)
+        built = sirahize(aa, args.cg_selection, termini=args.termini, log=log)
+        log(f"SIRAH: {built.nbeads} beads in {len(built.molecules)} molecule(s)")
+        if built.cell is None or not np.any(built.cell):
+            # no water yet, but a periodic box all the same: the run needs one
+            edge = float(np.ptp(built.positions, axis=0).max()) + 20.0 * args.padding_nm
+            built.positions = built.positions - built.positions.mean(0) + edge / 2
+            built.cell = np.diag(np.full(3, edge))
+            log(f"Box: {edge / 10:.2f} nm a side, {args.padding_nm:g} nm around the beads")
+        built.save(workdir / "sirah")
+        s = built.system()
+        s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
+        info = components(s, [])
+        if getattr(args, "monitor_selection", None) is not None:
+            info["selection"] = select_atoms(s, args.monitor_selection)
+        if check is not None:
+            check(info)
+        _log_built(log, s, "System")
+        return _with_production_indices(s, s, info)
     if "solvate" in getattr(args, "specified", ()) and mode != "none":
         raise ValueError(f"{path.name} is a topology, which is already built; "
                          "it runs with solvate = 'none'")  # fmt: skip
