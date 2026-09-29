@@ -147,9 +147,9 @@ boonza swim protein.pdb --model martini3 --probes RR EK FF --types 3 --copies 6
   carry charge — Arg and Lys +1, Glu −1, His neutral, as at pH 7. Its
   residues take the probe's own name (`EK`), so the analysis can tell probes
   from protein.
-- **The protein** is martinized with an elastic network, which holds its
-  fold while its side chains move. It is free to tumble; the analysis
-  superposes the frames.
+- **The protein** is martinized with an elastic network, as in any Martini run
+  (`--no-elastic` leaves it out), which holds its fold while its side chains
+  move. It is free to tumble; the analysis superposes the frames.
 - **Simulations** hold `--types` probes (10) with `--copies` each (5), so
   the 105 probes are spread over 10 runs of about 50 probe molecules, near
   0.1 M. Probes are dealt round robin, so each run holds a spread of

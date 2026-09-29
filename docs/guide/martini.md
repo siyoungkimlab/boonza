@@ -189,7 +189,7 @@ From the command line the same membrane is built and run by `boonza md`
 
 ```bash
 boonza md receptor_opm.pdb --model martini3 --solvate membrane \
-    --upper POPC:7,CHOL:3 --opm --elastic --barostat membrane --workdir run
+    --upper POPC:7,CHOL:3 --opm --barostat membrane --workdir run
 ```
 
 - **Lipids.** Any molecule type in the lipid files works: phospholipids,
