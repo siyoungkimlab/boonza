@@ -589,6 +589,12 @@ def main(argv=None) -> int:
     if "workdir" not in args.specified:
         args.workdir = "boonza_swim"
     try:
+        if args.model == "sirah":
+            raise ValueError(
+                "model = 'sirah' cannot swim yet: its probes need a mapping onto SIRAH beads, "
+                "which boonza does not have.  'boonza md --model sirah' runs a SIRAH topology, "
+                "and 'boonza swim --model martini3' swims dipeptide probes"
+            )
         if args.model != "aa":  # Martini: dipeptide probes, no ligand library to parameterize
             from .cgswim import prepare as prepare_cg
 

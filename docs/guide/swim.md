@@ -187,11 +187,15 @@ with `--by probe` for the probes themselves and `-o` for the whole table as
 CSV. `boonza.probe_contacts` is the same thing in Python.
 
 `boonza sites` and `boonza poses` work too, and fill in what a
-coarse-grained run needs: `sites --workdir` aligns on `name BB` and takes the
-probes from `probes.json`, and `poses` builds its pocket from `name BB` and
-asks which probe to pose. But they answer a different question — where a
-ligand *settles* — and Martini probes mostly touch and leave, so they often
+coarse-grained run needs: they align on, and build their pocket from, whichever
+backbone beads the model has — `name BB` under Martini, `name GN GC GO` under
+SIRAH — and `sites --workdir` takes the probes from `probes.json`, while
+`poses` asks which probe to pose. But they answer a different question — where
+a ligand *settles* — and Martini probes mostly touch and leave, so they often
 find nothing where `boonza probes` still shows a clear preference.
+
+`boonza probes` is not tied to a swim: `--probes RESNAME ...` names them, so it
+reads any coarse-grained run, SIRAH's included, or molecules of your own.
 
 `sites --features` works on beads too. RDKit types a ligand's atoms, and a
 bead has no element or valence to read, so a Martini probe is typed by what
@@ -218,3 +222,25 @@ and the acceptor are told apart.
 The backbone is left out: every probe carries the same amide backbone, and
 typing it would mark everywhere any probe went. `--feature-backbone` puts it
 back in (donor and acceptor).
+
+**SIRAH is finer here**, and its own type names say what each bead is, so its
+table (`boonza.sirah.features`) needs no guessing either:
+
+| group | beads | families |
+|---|---|---|
+| Ser, Thr hydroxyl | `BOG` the oxygen, `BPG` its hydrogen | acceptor **and** donor, separately |
+| Tyr phenol | `BCE2` the oxygen, `BCE1` its hydrogen | acceptor, donor |
+| Trp indole | `BNE` the nitrogen, `BPE` its hydrogen | acceptor, donor |
+| His ring nitrogens | the protonated one is the positive one | donor, acceptor, by charge |
+| Lys, Arg | the charged nitrogen beads | donor, cation |
+| Asp, Glu | the carboxyl oxygen beads | acceptor, anion |
+| Phe, Tyr, Trp, His | the ring beads | aromatic, at their centre |
+
+Where Martini has one bead that must be called both donor and acceptor, SIRAH
+gives the hydroxyl's oxygen and its hydrogen a bead each, so the two features
+sit a bond apart. On crambin the table finds 17 donors, 17 acceptors, 29
+hydrophobes, 6 cations, 6 anions and 3 aromatics — its Phe13, Tyr29 and Tyr44.
+
+The names are SIRAH 2.2's, plus the protonated histidine of 2.4 (`sHp`). A
+topology built by tleap carries that release's own names throughout; rather
+than quietly find nothing, `--features` refuses and says so.

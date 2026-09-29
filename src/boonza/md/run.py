@@ -193,7 +193,12 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     save(s, paths.solvated_dms)
     for p in (paths.solvated_pdb, paths.solvated_mae):
         save_structure(s, p)
-    if getattr(args, "model", "aa") == "aa":
+    if getattr(args, "model", "aa") == "sirah":
+        # SIRAH carries explicit charges and runs with PME, as its own mdp files do
+        from ..sirah import OPENMM_OPTIONS as SIRAH_OPTIONS
+
+        options = {**SIRAH_OPTIONS, "cutoff": 10.0 * args.cutoff_nm}
+    elif getattr(args, "model", "aa") == "aa":
         options = {"nonbonded_method": "PME", "cutoff": 10.0 * args.cutoff_nm}
     else:  # Martini: GROMACS's reaction field and shifted Lennard-Jones
         from ..martini import OPENMM_OPTIONS

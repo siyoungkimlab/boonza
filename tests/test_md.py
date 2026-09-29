@@ -642,7 +642,8 @@ def test_a_model_brings_its_own_defaults():
     assert aa.forcefields == config.DEFAULT_FORCEFIELDS
 
     cg = parse_arguments(["x.pdb", "--model", "martini3"])
-    assert (cg.temperature, cg.integration_fs, cg.cutoff_nm) == (310.0, 20.0, 1.1)
+    assert (cg.integration_fs, cg.cutoff_nm) == (20.0, 1.1)
+    assert cg.temperature == aa.temperature  # one default temperature, whatever the model
     assert cg.forcefields == ()
 
     # defaults < the model's defaults < the command line
@@ -704,7 +705,8 @@ def test_boonza_md_runs_a_martini_bilayer(tmp_path, model):
     paths = RunPaths(work)
     assert paths.trajectory_dcd.is_file() and paths.checkpoint.is_file()
     saved = config.load_configuration(paths.final_configuration)
-    assert saved["model"] == model and saved["temperature"] == 310.0
+    assert saved["model"] == model
+    assert saved["temperature"] == config.DEFAULTS["temperature"]  # shared by every model
     s = boonza.load(paths.solvated_dms)
     names = set(s.residues["name"].tolist())
     assert "DPPC" in names and "W" in names

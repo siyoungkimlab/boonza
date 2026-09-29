@@ -26,14 +26,23 @@ class ProbeMap:
     frames: int
 
     def side_chains(self) -> tuple[list, np.ndarray]:
-        """The same map with the probes pooled by side chain: a probe counts
-        for both of its residues (XX counts once)."""
-        letters = sorted({c for p in self.probes for c in p})
-        out = np.zeros((len(self.residues), len(letters)))
-        for k, letter in enumerate(letters):
-            columns = [j for j, p in enumerate(self.probes) if letter in p]
+        """The same map with the probes pooled by side chain: a probe counts for
+        both of its residues (XX counts once).
+
+        A dipeptide probe is a two-letter code, so its letters are the side
+        chains.  Anything else -- a molecule with a name of its own -- is its
+        own column, since its letters mean nothing.
+        """
+        labels: list[str] = []
+        for p in self.probes:
+            labels += list(p) if len(p) == 2 and p.isalpha() else [p]
+        labels = sorted(dict.fromkeys(labels))
+        out = np.zeros((len(self.residues), len(labels)))
+        for k, label in enumerate(labels):
+            columns = [j for j, p in enumerate(self.probes)
+                       if (label in p if len(p) == 2 and p.isalpha() else label == p)]  # fmt: skip
             out[:, k] = self.contacts[:, columns].max(axis=1) if columns else 0.0
-        return letters, out
+        return labels, out
 
     def top(self, n: int = 10, by: str = "probe"):
         """The (label, residue, fraction) a probe or side chain touches most."""

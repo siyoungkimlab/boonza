@@ -9,7 +9,8 @@ radians.  Functional forms follow the DMS specification:
 
 * ``stretch_harm``  fc (r - r0)^2
 * ``angle_harm``    fc (theta - theta0)^2, the second atom at the vertex
-* ``dihedral_trig`` fc0 + sum_n fc_n cos(n phi - phi0)
+* ``dihedral_trig`` fc0 + sum_n fc_n cos(n phi - phi0), for n up to 6
+* ``dihedral_periodic`` fc (1 + cos(n phi - phi0)), for any n
 * ``improper_harm`` fc (phi - phi0)^2
 * ``pair_12_6_es``  a/r^12 - b/r^6 + q/r, added to the nonbonded interaction
   (for excluded pairs this becomes an OpenMM exception)
@@ -34,7 +35,8 @@ KCAL = 4.184  # kJ per kcal
 NM = 0.1  # nm per Å
 _ONE_4PI_EPS0 = 138.935456  # kJ nm / (mol e^2)
 _KNOWN = {
-    "stretch_harm", "angle_harm", "dihedral_trig", "improper_harm", "pair_12_6_es",
+    "stretch_harm", "angle_harm", "dihedral_trig", "dihedral_periodic", "improper_harm",
+    "pair_12_6_es",
     "angle_cosine_harm", "angle_restricted", *[f"virtual_lc{n}" for n in range(4, 8)],
     "nonbonded", "exclusion", "constraint_hoh", "virtual_lc2", "virtual_lc3", "virtual_out3",
     "virtual_midpoint", "virtual_fdat3", "posre_harm", "torsiontorsion_cmap",
@@ -152,6 +154,14 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
             const.addGlobalParameter("c", offset * KCAL)
             const.addParticle(0, [])
             add(const, "dihedral_trig_constant")
+    if "dihedral_periodic" in tables:
+        t = tables["dihedral_periodic"]
+        f = mm.PeriodicTorsionForce()
+        for (a, b, c, d), p, fc, n in zip(t.atoms.tolist(), np.radians(t.values("phi0")).tolist(),
+                                          t.values("fc").tolist(),
+                                          t.values("n").tolist(), strict=True):  # fmt: skip
+            f.addTorsion(a, b, c, d, int(n), p, fc * KCAL)
+        add(f, "dihedral_periodic")
     if "improper_harm" in tables:
         t = tables["improper_harm"]
         f = mm.CustomTorsionForce(

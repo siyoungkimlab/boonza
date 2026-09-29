@@ -27,6 +27,7 @@ boonza martinize protein.pdb cg [--elastic] [--ss CODES]   # Martini 3 topology,
 boonza martinize protein.pdb cg --elastic --solvate [--salt 0.15]   # ... in water with NaCl
 boonza md protein.pdb --workdir run   # prepare and run MD; the same command resumes it
 boonza md p.pdb --model martini3 --solvate membrane --upper POPC:7,CHOL:3 --opm   # in a membrane
+boonza md topol.top --model sirah   # a SIRAH topology, coarse-grained with PME
 boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-swimming runs
 boonza swim protein.pdb --model martini3   # coarse-grained, with dipeptide probes
 boonza probes --workdir boonza_swim/sim_*/md [-o probes.csv]   # what each probe touches, per residue

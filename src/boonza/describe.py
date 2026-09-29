@@ -37,6 +37,7 @@ FORMS = {
     "stretch_harm": "fc (r - r0)^2",
     "angle_harm": "fc (theta - theta0)^2",
     "dihedral_trig": "fc0 + sum_n fcn cos(n phi - phi0)",
+    "dihedral_periodic": "fc (1 + cos(n phi - phi0))",
     "improper_harm": "fc (phi - phi0)^2",
     "pair_12_6_es": "aij/r^12 - bij/r^6 + qij/r",
     "posre_harm": "0.5 (fcx (x - x0)^2 + fcy (y - y0)^2 + fcz (z - z0)^2)",

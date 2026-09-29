@@ -93,7 +93,7 @@ Pairwise replacement parameters, keyed by a pair of param ids (NBFIX-style).
 
 ### `boonza.TERM_SCHEMAS`
 
-74 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
+75 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_periodic`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
 
 ### `boonza.NONBONDED_SCHEMAS`
 
@@ -1102,9 +1102,13 @@ once at the middle of the ring rather than six times around it.
 ``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
 case and the second repeats what ``Hydrophobe`` already says.
 
-Martini beads are typed by what they stand for instead, since they have no
-element or valence for RDKit to read (:mod:`boonza.martini.features`);
-``backbone`` then also types the BB beads, which every probe carries.
+Coarse-grained beads are typed by what they stand for instead, since they
+have no element or valence for RDKit to read
+(:mod:`boonza.martini.features`, :mod:`boonza.sirah.features`);
+``backbone`` then also types the backbone beads, which every residue has.
+SIRAH is the finer of the two: its hydroxyl is an oxygen bead and a
+hydrogen bead, so the acceptor and the donor are separate features where
+Martini has one bead that is both.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 

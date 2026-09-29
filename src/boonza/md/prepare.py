@@ -238,6 +238,8 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
     A Martini model takes the other route, :func:`build_martini_system`:
     coarse-grain the input and read the parameters off the beads.
     """
+    if getattr(args, "model", "aa") == "sirah":
+        return build_sirah_system(args, workdir, log, check)
     if getattr(args, "model", "aa") != "aa":
         return build_martini_system(args, workdir, log, check)
     s = load_input(args.input_structure, log)
@@ -382,15 +384,23 @@ def secondary_beside(top) -> str | None:
     return path.read_text().strip() if path.is_file() else None
 
 
+#: Where a topology's coordinates are looked for, in this order.  A .dms or a
+#: .mae holds them as they are; a .gro rounds to 0.001 nm and a .pdb to
+#: 0.001 A, so they come last, and a file of the topology's own name comes
+#: before the cg.* that :meth:`boonza.martini.Martinized.save` writes.
+COORDINATE_SUFFIXES = (".dms", ".mae", ".gro", ".pdb")
+
+
 def _coordinates_beside(top: Path) -> Path:
-    """The coordinates of a Martini topology: ``<stem>.gro``, or the ``cg.gro``
-    that :meth:`boonza.martini.Martinized.save` writes beside ``topol.top``."""
-    for name in (top.with_suffix(".gro").name, "cg.gro", "cg.pdb"):
+    """The coordinates of a topology that is already built, the least rounded first."""
+    names = [top.with_suffix(s).name for s in COORDINATE_SUFFIXES]
+    names += [f"cg{s}" for s in COORDINATE_SUFFIXES]
+    for name in names:
         here = top.parent / name
         if here.is_file():
             return here
-    raise ValueError(f"{top} is a topology, which carries no coordinates; put its .gro "
-                     f"beside it as {top.with_suffix('.gro').name} or cg.gro")  # fmt: skip
+    raise ValueError(f"{top} is a topology, which carries no coordinates; put them beside it as "
+                     f"{top.stem}.dms, .mae or .gro (or cg.gro)")  # fmt: skip
 
 
 def _composition(text: str) -> dict:

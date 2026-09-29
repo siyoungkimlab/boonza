@@ -405,17 +405,32 @@ def _cg_poses_selections(args, system) -> None:
     if not _coarse_grained(system):
         return
     if getattr(args, "proteinsel", None) in (None, DEFAULT_ALIGN, DEFAULT_FIT):
-        args.proteinsel = "name BB"
-        print("the pocket is made of 'name BB' (a coarse-grained system has no CA atoms)")
+        args.proteinsel = _backbone_selection(system)
+        print(f"the pocket is made of {args.proteinsel!r} "
+              "(a coarse-grained system has no CA atoms)")  # fmt: skip
     if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
         raise ValueError("say which probe to pose with --ligandsel, e.g. \"resname EK\": in a "
                          "coarse-grained system the default ligand selection would take the "
                          "protein itself.  'boonza probes' maps every probe at once")  # fmt: skip
 
 
+def _backbone_selection(system) -> str:
+    """The beads a coarse-grained backbone is made of, of those this system has:
+    BB under Martini, GN, GC and GO under SIRAH."""
+    from .md.monitor import CG_BACKBONE
+
+    here = [n for n in CG_BACKBONE if len(system.select(f"name {n}").ids)]
+    return "name " + " ".join(here or CG_BACKBONE)
+
+
 def _coarse_grained(system) -> bool:
-    """A Martini system: backbone beads rather than alpha carbons."""
-    return len(system.select("name CA").ids) == 0 and len(system.select("name BB").ids) >= 3
+    """A coarse-grained system: backbone beads rather than alpha carbons (BB
+    under Martini, GN, GC and GO under SIRAH)."""
+    from .md.monitor import CG_BACKBONE
+
+    if len(system.select("name CA").ids):
+        return False
+    return len(system.select("name " + " ".join(CG_BACKBONE)).ids) >= 3
 
 
 def _cg_selections(args, system, workdirs) -> None:
@@ -429,8 +444,8 @@ def _cg_selections(args, system, workdirs) -> None:
     if not _coarse_grained(system):
         return
     if getattr(args, "alignsel", None) in (None, DEFAULT_ALIGN):
-        args.alignsel = "name BB"
-        print("aligning on 'name BB' (a coarse-grained system has no CA atoms)")
+        args.alignsel = _backbone_selection(system)
+        print(f"aligning on {args.alignsel!r} (a coarse-grained system has no CA atoms)")
     if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
         probes = []
         for d in workdirs or []:
@@ -455,14 +470,15 @@ def _probes(args) -> int:
 
     runs, probes = [], []
     for d in args.workdir:
-        found = None
-        for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
-            if candidate.is_file():
-                found = json.loads(candidate.read_text())["probes"]
-                break
+        found = list(args.probes) if args.probes else None
         if found is None:
-            raise ValueError(f"{d} has no probes.json: it is not a run of "
-                             "'boonza swim --model martini3'")  # fmt: skip
+            for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
+                if candidate.is_file():
+                    found = json.loads(candidate.read_text())["probes"]
+                    break
+        if found is None:
+            raise ValueError(f"{d} has no probes.json, so name the probes with --probes: it is "
+                             "not a run of 'boonza swim --model martini3'")  # fmt: skip
         probes += [p for p in found if p not in probes]
         own = boonza.load(str(Path(d) / "solvated.dms"), without_tables=True)
         runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
@@ -1053,6 +1069,9 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="runs of 'boonza swim --model martini3', each with its probes.json",
     )
+    q.add_argument("--probes", nargs="+", metavar="RESNAME",
+                   help="the probes' residue names, for a run without probes.json (any "
+                        "coarse-grained model, or molecules of your own)")  # fmt: skip
     q.add_argument("--cutoff", type=float, default=6.0, help="contact distance (A)")
     q.add_argument("--stride", type=int, default=1, help="use every Nth frame")
     q.add_argument("--by", choices=("probe", "side-chain"), default="side-chain",

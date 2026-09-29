@@ -282,6 +282,7 @@ class _Terms:
         self.stretch, self.angle, self.dihedral, self.improper = [], [], [], []
         self.pair, self.hoh, self.posre = [], [], []
         self.angle_cosine, self.angle_restricted = [], []  # GROMACS types 2 and 10
+        self.dihedral_periodic = []  # one term of a multiplicity dihedral_trig cannot hold
         self.virtual: dict[str, list] = {}  # table -> (site, *parents, *params)
         self.constraint = []  # [ constraints ]: a fixed distance, not only a bond
 
@@ -335,8 +336,11 @@ def _molecule_terms(top: _Topology, mol: _Molecule, types, charge, mass=None) ->
             lines = [t[5:]] if t[5:] else top.dihedral_params(key, funct)
             for p in lines:
                 phase, k, mult = float(p[0]), float(p[1]) / KJ, int(float(p[2]))
-                if not 0 <= mult <= 6:
-                    raise GromacsError(f"dihedral multiplicity {mult} is beyond 6")
+                if mult < 0:
+                    raise GromacsError(f"dihedral multiplicity {mult} is negative")
+                if mult > 6:  # SIRAH's backbone goes to 9; dihedral_trig stops at 6
+                    out.dihedral_periodic.append((*idx, phase, k, mult))
+                    continue
                 fcs = [0.0] * 7
                 fcs[0] += k
                 fcs[mult] += k
@@ -360,8 +364,17 @@ def _molecule_terms(top: _Topology, mol: _Molecule, types, charge, mass=None) ->
         if explicit:
             aij, bij = _lj_ab(comb, float(explicit[0]), float(explicit[1]))
         elif top.defaults[2]:
-            aij, bij = _lj_ab(comb, *_combine(comb, top.atomtypes[types[i]],
-                                              top.atomtypes[types[j]]))  # fmt: skip
+            # gen-pairs builds the pair from the normal interaction of the two
+            # types, which [ nonbond_params ] overrides where it names them
+            # (SIRAH's GN-GN is 0.325 nm there against 0.42 by the rule), then
+            # scales it by fudgeLJ
+            override = top.nonbond_params.get((bt[i], bt[j], 1)) or \
+                top.nonbond_params.get((types[i], types[j], 1))  # fmt: skip
+            if override:
+                pair = (float(override[0]), float(override[1]))
+            else:
+                pair = _combine(comb, top.atomtypes[types[i]], top.atomtypes[types[j]])
+            aij, bij = _lj_ab(comb, *pair)
             aij, bij = aij * fudge_lj, bij * fudge_lj
         else:
             raise GromacsError(f"no pair parameters for {types[i]}-{types[j]} (gen-pairs no)")
@@ -630,6 +643,7 @@ def _force_field(s: System, top: _Topology, per_mol: dict, types: np.ndarray) ->
             ("angle_cosine", "angle_cosine_harm", 3, ["theta0", "fc"]),
             ("angle_restricted", "angle_restricted", 3, ["theta0", "fc"]),
             ("dihedral", "dihedral_trig", 4, ["phi0"] + [f"fc{k}" for k in range(7)]),
+            ("dihedral_periodic", "dihedral_periodic", 4, ["phi0", "fc", "n"]),
             ("improper", "improper_harm", 4, ["phi0", "fc"]),
             ("pair", "pair_12_6_es", 2, ["aij", "bij", "qij"]),
             ("hoh", "constraint_hoh", 3, ["theta", "r1", "r2"]),
