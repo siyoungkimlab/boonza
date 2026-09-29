@@ -415,3 +415,53 @@ def test_feature_maps_of_a_coarse_grained_run(tmp_path):
     assert len(maps["PosIonizable"].places) > 0  # EK carries Lys
     assert len(maps["NegIonizable"].places) > 0  # and Glu
     assert len(maps["Aromatic"].places) == 0  # neither probe has a ring
+
+
+def test_a_martini_run_holds_the_fold_by_default():
+    """Martini does not keep a fold without an elastic network, so `boonza md
+    --model martini3` turns one on; all-atom runs never have one."""
+    assert parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3"]).elastic is True
+    assert parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini2"]).elastic is True
+    assert parse_arguments([str(DATA / "1TEN.pdb")]).elastic is False
+    off = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--no-elastic"])
+    assert off.elastic is False
+
+
+def test_an_all_atom_run_still_refuses_an_elastic_network(capsys):
+    with pytest.raises(SystemExit):
+        parse_arguments([str(DATA / "1TEN.pdb"), "--elastic"])
+    assert "needs a Martini model" in capsys.readouterr().err
+
+
+def _bonds_of(directory):
+    itp = next((directory / "martini").glob("molecule_*.itp")).read_text()
+    section = itp.split("[ bonds ]")[1].split("[", 1)[0]
+    return [ln for ln in section.splitlines() if ln.strip()]
+
+
+def test_the_network_reaches_the_built_topology(tmp_path):
+    """Not only the setting: the rubber bands are in the topology that runs."""
+    from boonza.md.prepare import build_martini_system
+
+    counts = {}
+    for label, extra in (("on", []), ("off", ["--no-elastic"])):
+        where = tmp_path / label
+        args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *extra,
+                                "--workdir", str(where / "run")])  # fmt: skip
+        build_martini_system(args, where, log=lambda *_: None)
+        counts[label] = len(_bonds_of(where))
+    assert counts["on"] > counts["off"] + 300  # 1TEN gets 354 rubber bands
+
+
+def test_a_coarse_grained_swim_follows_the_same_setting(tmp_path):
+    """swim used to carry its own --no-elastic; boonza md's now serves both."""
+    from boonza.md.swim import main
+
+    for label, extra in (("on", []), ("off", ["--no-elastic"])):
+        root = tmp_path / label
+        assert main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--probes", "EK",
+                     "--types", "1", "--copies", "1", *extra,
+                     "--workdir", str(root)]) == 0  # fmt: skip
+    assert len(_bonds_of(tmp_path / "on" / "sim_000")) > len(
+        _bonds_of(tmp_path / "off" / "sim_000")
+    ) + 300  # fmt: skip

@@ -159,7 +159,7 @@ ligands included.
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
 | `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
-| `elastic`, `cg_selection`, `neutral_termini` | off, `protein`, off | Martini only: an elastic network, which atoms to coarse-grain, and uncharged chain ends |
+| `elastic`, `cg_selection`, `neutral_termini` | **on under Martini**, `protein`, off | Martini only: an elastic network holding the protein's fold, which Martini does not keep without one (`--no-elastic` to leave it out); which atoms to coarse-grain; uncharged chain ends |
 | `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
 | `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
 | `lipid_itp`, `martini_itp` | the carried files | parameter files of your own |
@@ -198,10 +198,13 @@ Settings that belong to the other resolution are refused rather than ignored
 --- `--hmr` or `-f` under Martini, `--elastic` in an all-atom run.
 
 A protein is martinized, solvated and run in one command; nothing needs
-downloading, since boonza carries the parameters:
+downloading, since boonza carries the parameters. The elastic network comes
+with the model, because Martini does not hold a fold without one -- a run
+without it drifts several Å of backbone RMSD in tens of nanoseconds, so
+`--no-elastic` is for when that is what you want:
 
 ```bash
-boonza md protein.pdb --model martini3 --elastic --production-ns 5000
+boonza md protein.pdb --model martini3 --production-ns 5000
 ```
 
 `--solvate membrane` builds a bilayer instead of a box of water, around the
@@ -209,7 +212,7 @@ protein or on its own. The barostat stays something you type, because a
 cylinder or a vesicle is not a planar membrane:
 
 ```bash
-boonza md receptor.pdb --model martini3 --elastic \
+boonza md receptor.pdb --model martini3 \
     --solvate membrane --upper "POPC:7,CHOL:3" --size-nm 12 --opm \
     --barostat membrane --production-ns 5000
 

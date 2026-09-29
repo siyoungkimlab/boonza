@@ -49,11 +49,23 @@ DEFAULT_FORCEFIELDS = (
 #: take their parameters from the topology instead.
 MODELS = ("aa", "martini2", "martini3")
 #: What a model changes when the setting was not given, on top of DEFAULTS:
-#: Martini runs hotter, with a long step and its own cut-off.  Everything
-#: else -- the intervals, the monitor, the barostat, the platform -- is shared.
+#: Martini runs hotter, with a long step and its own cut-off, and holds the
+#: protein's fold with an elastic network, which it needs to keep one (pass
+#: --no-elastic to let the protein find its own shape).  Everything else --
+#: the intervals, the monitor, the barostat, the platform -- is shared.
 MODEL_DEFAULTS: dict = {
-    "martini2": {"temperature": 310.0, "integration_fs": 20.0, "cutoff_nm": 1.1},
-    "martini3": {"temperature": 310.0, "integration_fs": 20.0, "cutoff_nm": 1.1},
+    "martini2": {
+        "temperature": 310.0,
+        "integration_fs": 20.0,
+        "cutoff_nm": 1.1,
+        "elastic": True,
+    },  # fmt: skip
+    "martini3": {
+        "temperature": 310.0,
+        "integration_fs": 20.0,
+        "cutoff_nm": 1.1,
+        "elastic": True,
+    },  # fmt: skip
 }
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
@@ -355,8 +367,9 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     cg = p.add_argument_group("Martini (--model martini3 / martini2)")
     cg.add_argument(
         "--elastic",
-        action="store_true",
-        help="hold the protein's fold with an elastic network",
+        action=argparse.BooleanOptionalAction,
+        help="hold the protein's fold with an elastic network (default: on, since "
+        "Martini does not keep a fold without one)",
     )
     cg.add_argument("--upper", metavar="LIPIDS",
                     help="upper leaflet of the bilayer, e.g. POPC:7,CHOL:3 "
