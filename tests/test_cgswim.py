@@ -694,8 +694,15 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     viewing = m.for_viewing(whole)
     assert viewing.natoms == whole.natoms
     assert viewing.nbonds == whole.nbonds - len(bands)
-    names = [str(n) for n in whole.atoms["name"]]
-    assert [str(n) for n in viewing.atoms["name"]] == names  # same order, for the trajectory
+    # the backbone is named CA in the view, which is what a viewer traces a
+    # chain through; the topology keeps Martini's BB
+    assert len(viewing.select("name CA").ids) == len(whole.select("name BB").ids) > 50
+    assert not len(viewing.select("name BB").ids)
+    assert not len(whole.select("name CA").ids)
+    kept = m.for_viewing(whole, backbone_as_ca=False)
+    assert len(kept.select("name BB").ids) == len(whole.select("name BB").ids)
+    side = [str(n) for n in whole.atoms["name"] if str(n) != "BB"]
+    assert [str(n) for n in viewing.atoms["name"] if str(n) != "CA"] == side  # rest untouched
     for i, j in bands[:5]:
         assert viewing.find_bond(viewing.atom(i), viewing.atom(j)) is None
 
@@ -712,6 +719,8 @@ def test_a_martini_run_writes_what_a_viewer_wants(tmp_path):
     view = boonza.load(tmp_path / "view.dms")
     assert (tmp_path / "view.mae").is_file()
     assert view.natoms == s.natoms and view.nbonds < s.nbonds
+    assert len(view.select("name CA").ids) == len(s.select("name BB").ids)  # for a viewer
+    assert [str(r) for r in view.residues["name"]] == [str(r) for r in s.residues["name"]]
     # the coordinates it carries are the built ones, not a .gro's
     assert np.allclose(np.asarray(view.positions), np.asarray(s.positions))
 

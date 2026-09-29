@@ -37,13 +37,27 @@ class Mapping:
     beads: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
 
 
-def read_map(text: str | None = None) -> dict[str, Mapping]:
+#: The maps boonza reads, and the libraries whose residues they name.
+LIBRARIES = (("sirah_prot.map", "aminoacids.rtp"), ("sirah_dna.map", "dna.rtp"),
+             ("sirah_ions.map", "ligands.rtp"))  # fmt: skip
+
+
+def read_map(text: str | None = None, which=None) -> dict[str, Mapping]:
     """SIRAH's mapping, as ``{all-atom residue: Mapping}``.
+
+    Without ``text`` every map of :data:`LIBRARIES` is read, so proteins, DNA
+    and ions map alike; ``which`` narrows that to some of them.
 
     Several all-atom names can share one coarse-grained residue -- SIRAH 2.2
     maps HIS, HIE, HSE and the protonated HIP and HSP alike, to the neutral
     epsilon tautomer, since it has no charged histidine.
     """
+    if text is None:
+        out: dict[str, Mapping] = {}
+        for name, _library in LIBRARIES:
+            if which is None or name in which:
+                out.update(read_map(read(name)))
+        return out
     out: dict[str, Mapping] = {}
     current: Mapping | None = None
     names: list[str] = []
@@ -84,6 +98,21 @@ RETYPED = {
 }
 
 
+def read_renames(text: str | None = None) -> dict[str, str]:
+    """SIRAH's ``.arn``: beads its map and its library call by different names.
+
+    DNA's sugar bead is ``C1X`` in the map, for the C1' it sits on, and
+    ``O3'`` in the library; GROMACS renames it on the way in, and so does
+    boonza, or the two would not line up.
+    """
+    out = {}
+    for raw in (text if text is not None else read("dna.arn")).splitlines():
+        line = raw.split(";")[0].split()
+        if len(line) >= 3:
+            out[line[1]] = line[2]
+    return out
+
+
 def _in_library_order(entry: Mapping) -> list[tuple[str, tuple[str, ...]]]:
     """The residue's beads in the order its topology lists them.
 
@@ -96,12 +125,14 @@ def _in_library_order(entry: Mapping) -> list[tuple[str, tuple[str, ...]]]:
     known = library.get(entry.residue)
     if known is None:
         return entry.beads
+    renames = read_renames()
+    beads = [(renames.get(bead, bead), atoms) for bead, atoms in entry.beads]
     order = {name: k for k, (name, *_rest) in enumerate(known.atoms)}
-    mapped = {bead for bead, _ in entry.beads}
+    mapped = {bead for bead, _ in beads}
     if mapped != set(order):
         raise ValueError(f"SIRAH's map and its library disagree about {entry.residue}: "
                          f"{sorted(mapped ^ set(order))}")  # fmt: skip
-    return sorted(entry.beads, key=lambda b: order[b[0]])
+    return sorted(beads, key=lambda b: order[b[0]])
 
 
 def map_structure(system, atoms: str = "protein", log=None) -> list[Bead]:
@@ -180,9 +211,17 @@ class Bonded:
 def read_residues(text: str | None = None) -> tuple[dict[str, Residue], Bonded]:
     """SIRAH's residue library: what each coarse-grained residue is made of.
 
+    Without ``text`` every library of :data:`LIBRARIES` is read together.
     Angles and dihedrals are usually left empty there, as they are in any
     GROMACS ``.rtp``: they follow from the bonds, and pdb2gmx generates them.
     """
+    if text is None:
+        residues: dict[str, Residue] = {}
+        bonded = Bonded()
+        for _map, library in LIBRARIES:
+            more, bonded = read_residues(read(library))
+            residues.update(more)
+        return residues, bonded
     residues: dict[str, Residue] = {}
     bonded = Bonded()
     current: Residue | None = None
@@ -241,6 +280,16 @@ class Molecule:
     @property
     def natoms(self) -> int:
         return len(self.beads)
+
+
+def _where(resid: int, name: str) -> tuple[int, str]:
+    """The residue and bead a library entry names: ``+X`` is the next residue's
+    and ``-X`` the one before, as GROMACS's .rtp files write them."""
+    if name.startswith("+"):
+        return resid + 1, name[1:]
+    if name.startswith("-"):
+        return resid - 1, name[1:]
+    return resid, name
 
 
 def _chains_of(beads: list[Bead]) -> list[list[int]]:
@@ -353,6 +402,7 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     beads = map_structure(system, atoms, log)
     library, bonded = read_residues()
     masses = read_masses()
+    _at_the_ends(beads, library, log)  # a nucleotide at a strand's end is its own residue
     n_ter = read_termini(read("aminoacids.n.tdb"))
     c_ter = read_termini(read("aminoacids.c.tdb"))
     if termini == "None":  # the chain ends keep the charges of their residues
@@ -382,13 +432,11 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         for b in {(x.resid, x.residue) for x in mine}:
             resid, resname = b
             for one, two in library[resname].bonds:
-                a = index.get((resid, one.lstrip("+-")))
-                other = index.get((resid + (1 if two.startswith("+") else 0), two.lstrip("+-")))
-                if a is not None and other is not None:
+                a, other = (index.get(_where(resid, n)) for n in (one, two))
+                if a is not None and other is not None and a != other:
                     mol.bonds.append((min(a, other), max(a, other)))
             for imp in library[resname].impropers:
-                got = [index.get((resid + (1 if n.startswith("+") else 0), n.lstrip("+-")))
-                       for n in imp]  # fmt: skip
+                got = [index.get(_where(resid, n)) for n in imp]
                 if all(g is not None for g in got):
                     mol.impropers.append(tuple(got))
         mol.bonds = sorted(set(mol.bonds))
@@ -651,3 +699,41 @@ def solvate(m: Sirahized, padding: float = 10.0, box=None, salt: float = 0.15,
             f"({len(keep) / volume:.2f} WT4/nm^3, where WT4 settles at about "
             f"{EQUILIBRIUM_DENSITY:.2f} under NPT)")  # fmt: skip
     return out
+
+
+def read_variants(text: str | None = None) -> dict[str, dict[str, str]]:
+    """SIRAH's ``.r2b``: the building block a residue takes by where it sits.
+
+    The columns are the main form, the 5' end, the 3' end and a two-terminus
+    form, as GROMACS reads them; ``*`` means there is none.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for raw in (text if text is not None else read("dna.r2b")).splitlines():
+        line = raw.split(";")[0].split()
+        if len(line) >= 4:
+            main, five, three = line[1], line[2], line[3]
+            out[line[0]] = {k: v for k, v in
+                            (("main", main), ("5", five), ("3", three)) if v != "*"}  # fmt: skip
+    return out
+
+
+def _at_the_ends(beads: list[Bead], library, log=None) -> None:
+    """Give the first and last residue of each strand its own building block.
+
+    A nucleotide names one form in the map and another at a chain end -- DAX
+    in the middle, AX5 at the 5' end, AX3 at the 3' -- which SIRAH keeps in a
+    ``.r2b`` table, the way pdb2gmx picks a building block by position.
+    """
+    variants = read_variants()
+    if not variants:
+        return
+    changed = set()
+    for members in _chains_of(beads):
+        ends = {beads[members[0]].resid: "5", beads[members[-1]].resid: "3"}
+        for k in members:
+            want = variants.get(beads[k].residue, {}).get(ends.get(beads[k].resid, "main"))
+            if want and want != beads[k].residue and want in library:
+                changed.add(f"{beads[k].residue}{beads[k].resid} as {want}")
+                beads[k].residue = want
+    if changed and log is not None:
+        log(f"Chain ends: {', '.join(sorted(changed))}")

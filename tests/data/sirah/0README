@@ -19,3 +19,9 @@ Asn and Cys, which is the chemistry the feature table is checked against.
 3 written as a PDB. sirahize maps it to the 205 beads of crambin_cg.dms.gz,
 whose topology pdb2gmx -ff sirah built from the same beads: the counts and
 energies in tests/test_sirah.py are that topology's.
+
+dna_duplex.pdb is the 20-mer DNA duplex of SIRAH's tutorial 2, all-atom, and
+dna_cg.dms.gz is what sirahize makes of it: 238 beads over two strands, the
+same as cgconv.pl and pdb2gmx -ff sirah give, with the same counts and every
+energy term equal. Its 5' and 3' nucleotides take their own building blocks,
+as dna.r2b says, and the sugar bead is renamed C1X -> O3' by dna.arn.

@@ -304,7 +304,12 @@ boonza md topol.top   --model sirah                         # a topology already
 The mapping is SIRAH's own: each bead sits on one named atom (`GC` on CA,
 `GN` on N, `GO` on the carbonyl O, the side chain on the atoms its map
 names), and the beads come out in the order SIRAH's residue library lists
-them. From that library come the bonds, the impropers and the charges; the
+them. **DNA works the same way**, from the same files: a nucleotide at a
+strand's end takes its own building block (`DAX` in the middle, `AX5` at the
+5' end, `AX3` at the 3'), as SIRAH's `.r2b` table says, and the sugar bead is
+renamed `C1X` to `O3'` as its `.arn` file asks. A 20-mer duplex comes out as
+two strands of 238 beads, with the 276 bonds, 342 pairs, 430 angles and 580
+dihedrals pdb2gmx builds, and every energy term equal. From that library come the bonds, the impropers and the charges; the
 angles, the dihedrals and the 1-4 pairs follow from the bonds as pdb2gmx
 generates them, and cysteines whose `BSG` beads are within 2 Å are bridged.
 `--termini` chooses the chain ends (`Charged`, `Neutral`, or `None` to keep
@@ -359,8 +364,9 @@ protonated comes out +1, one with a single hydrogen neutral, residue by
 residue.
 
 Not yet: `boonza swim`, which refuses `--model sirah` rather than quietly
-martinizing the protein, and SIRAH's DNA, lipids and glycans, whose libraries
-are carried but not yet mapped.
+martinizing the protein, and SIRAH's lipids, whose library and mapping files
+are carried (for the atomistic force fields SIRAH maps from) but not yet
+assembled here. Glycans are in SIRAH's AMBER release rather than this one.
 
 ## Backbone restraints
 
@@ -454,7 +460,7 @@ it is seeded.
 | `final.pdb`, `.mae` | the latest coordinates |
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
-| `view.dms`, `view.mae` | Martini with an elastic network: the system without its rubber bands, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
+| `view.dms`, `view.mae` | Martini with an elastic network: the system without its rubber bands, which a viewer would otherwise draw as a hairball, and with the backbone bead named `CA` so a viewer traces the chain; same atoms in the same order, so the trajectory lines up with it |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
 | `status.json` | how far the run got, and how it ended |
 | `pocket.json`, `monitor.csv` | with early stop |

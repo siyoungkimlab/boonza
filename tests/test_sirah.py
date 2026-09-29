@@ -520,3 +520,95 @@ def test_a_solvated_run_is_built_and_runnable(crambin_all_atom, tmp_path):
     assert s.natoms > 1000 and np.any(np.asarray(s.cell))
     assert (tmp_path / "sirah" / "topol.top").is_file()
     assert "solv.itp" in (tmp_path / "sirah" / "topol.top").read_text()
+
+
+#: What pdb2gmx -ff sirah builds from the beads of tests/data/sirah/dna_duplex.pdb.
+PDB2GMX_DNA = {"atoms": 238, "bonds": 276, "pairs": 342, "angles": 430, "propers": 580,
+               "impropers": 0}  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def dna():
+    return boonza.load(DATA / "dna_duplex.pdb")
+
+
+def test_dna_maps_and_builds_as_pdb2gmx_does(dna):
+    """A 20-mer duplex: the same beads in the same order, the same topology, and
+    each strand its own molecule."""
+    from boonza.sirah import map_structure, sirahize
+
+    beads = map_structure(dna, "all")
+    assert len(beads) == PDB2GMX_DNA["atoms"]
+    m = sirahize(dna, "all", termini="None")
+    assert len(m.molecules) == 2  # two strands
+    got = {
+        "atoms": sum(x.natoms for x in m.molecules),
+        "bonds": sum(len(x.bonds) for x in m.molecules),
+        "pairs": sum(len(x.pairs) for x in m.molecules),
+        "angles": sum(len(x.angles) for x in m.molecules),
+        "propers": sum(len(x.dihedrals) for x in m.molecules),
+        "impropers": sum(len(x.impropers) for x in m.molecules),
+    }
+    assert got == PDB2GMX_DNA
+
+
+def test_dna_energies_match_that_topology(dna, tmp_path):
+    """Against the system pdb2gmx built from the same beads, term for term."""
+    pytest.importorskip("openmm")
+    import gzip
+    import shutil
+
+    from boonza.sirah import sirahize
+
+    out = tmp_path / "dna_cg.dms"
+    with gzip.open(DATA / "dna_cg.dms.gz", "rb") as src, out.open("wb") as dst:
+        shutil.copyfileobj(src, dst)
+    theirs = boonza.load(out)
+    mine = sirahize(dna, "all", termini="None").system()
+    assert np.allclose(np.asarray(mine.atoms["charge"], float),
+                       np.asarray(theirs.atoms["charge"], float))  # fmt: skip
+    a = boonza.openmm_energies(mine, nonbonded_method="NoCutoff")
+    b = boonza.openmm_energies(theirs, nonbonded_method="NoCutoff")
+    for term, value in a.items():
+        assert value == pytest.approx(b[term], rel=1e-9, abs=1e-9), term
+
+
+def test_a_nucleotide_at_a_strand_end_is_its_own_residue(dna):
+    """DAX in the middle, AX5 at the 5' end, AX3 at the 3': the .r2b table, the
+    way pdb2gmx picks a building block by position."""
+    from boonza.sirah import map_structure
+    from boonza.sirah.build import read_variants
+
+    variants = read_variants()
+    assert variants["DAX"] == {"main": "DAX", "5": "AX5", "3": "AX3"}
+    beads = map_structure(dna, "all")
+    from boonza.sirah.build import _at_the_ends, read_residues
+
+    library, _ = read_residues()
+    _at_the_ends(beads, library)
+    ends = {b.residue for b in beads if b.resid in (1, 20, 21, 40)}
+    assert any(e.endswith(("3", "5")) for e in ends)
+    middle = {b.residue for b in beads if b.resid == 10}
+    assert all(e.startswith("D") for e in middle)  # DAX, DTX, DGX or DCX
+
+
+def test_the_sugar_bead_is_renamed_as_sirah_renames_it():
+    """The map calls it C1X, for the C1' it sits on, and the library calls it
+    O3'; SIRAH's .arn file is what reconciles them."""
+    from boonza.sirah.build import read_map, read_renames, read_residues
+
+    assert read_renames() == {"C1X": "O3'"}
+    library, _ = read_residues()
+    assert "O3'" in {a[0] for a in library["DCX"].atoms}
+    assert "C1X" in {bead for bead, _ in read_map()["DC"].beads}
+
+
+def test_every_library_is_read_together():
+    """Proteins, DNA and ions map alike, from the maps boonza carries."""
+    from boonza.sirah.build import read_map, read_residues
+
+    mapping = read_map()
+    assert {"ALA", "DA", "DT", "DG", "DC"} <= set(mapping)
+    library, bonded = read_residues()
+    assert {"sA", "DAX", "NaW"} <= set(library)
+    assert bonded.nrexcl == 3
