@@ -159,6 +159,7 @@ ligands included.
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
 | `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
+| `elastic_selection` | every molecule | Martini only: hold only these residues with the elastic network, e.g. `chain A` to leave a bound peptide free |
 | `elastic`, `cg_selection`, `neutral_termini` | **on under Martini**, `protein`, off | Martini only: an elastic network holding the protein's fold, which Martini does not keep without one (`--no-elastic` to leave it out); which atoms to coarse-grain; uncharged chain ends |
 | `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
 | `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
@@ -206,6 +207,24 @@ without it drifts several Å of backbone RMSD in tens of nanoseconds, so
 ```bash
 boonza md protein.pdb --model martini3 --production-ns 5000
 ```
+
+Early stop works the same way, and its distances move out with the beads:
+`pocket_cutoff_nm` 0.8, `contact_cutoff_nm` 0.7 and `detach_cutoff_nm` 1.2
+under Martini, against 0.5, 0.5 and 0.8 all-atom, because beads of residues
+packed against each other sit 0.35 to 0.7 nm apart (peaking at 0.53) where
+heavy atoms touch at about 0.4. The target is named as in an all-atom run,
+by chain, component or selection -- the beads keep the chains they were
+martinized from:
+
+```bash
+boonza md complex.pdb --model martini3 --early-stop --monitor-chain B \
+    --production-ns 5000 --workdir run
+```
+
+The intervals stretch with the step, too: a checkpoint every 0.1 ns rather
+than 0.01 (0.01 ns is 500 steps at 20 fs against 5000 at 2 fs), and the
+monitor looks every 0.2 ns and wants `confirmation_checks` 3 in a row, since
+a bead diffuses fast and a target that steps away for 0.2 ns has not left.
 
 `--solvate membrane` builds a bilayer instead of a box of water, around the
 protein or on its own. The barostat stays something you type, because a
@@ -287,6 +306,11 @@ above `detach_cutoff_nm` (periodic distances). Each check is a line of
 `monitor.csv`, and `status.json` says `detached` as well as `running` and
 `target_reached`. A detached run stays stopped when resumed unless early stop
 is turned off or a larger `production_ns` is given.
+
+Under Martini the receptor is found by its backbone beads, the three
+distances default to 0.8, 0.7 and 1.2 nm rather than 0.5, 0.5 and 0.8 since a
+bead is wider than an atom, and the monitor looks every 0.2 ns for three
+checks in a row ([Martini runs](#martini-runs)).
 
 ### status.json
 

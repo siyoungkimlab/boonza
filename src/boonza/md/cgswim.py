@@ -101,6 +101,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     root.mkdir(parents=True, exist_ok=True)
     aa = load_input(args.input_structure, log, hydrogens=False)
     protein = martinize(aa, args.cg_selection, elastic=elastic,
+                        elastic_selection=args.elastic_selection if elastic else None,
                         neutral_termini=bool(args.neutral_termini))  # fmt: skip
     log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
         f"{', elastic network' if elastic else ''}")  # fmt: skip
@@ -134,7 +135,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                     "input_structure": str((d / "martini" / "topol.top").resolve()),
                     "workdir": str((d / "md").resolve())}  # fmt: skip
         # what built the system, and what only an all-atom run has, are not its settings
-        for key in ("upper", "lower", "size_nm", "opm", "shift_nm", "elastic", "cg_selection",
+        for key in ("upper", "lower", "size_nm", "opm", "shift_nm", "elastic",
+                    "elastic_selection", "cg_selection",
                     "neutral_termini", "lipid_itp", *ALL_ATOM_ONLY):  # fmt: skip
             settings.pop(key, None)
         probes_are = "resname " + " ".join(group)
