@@ -562,10 +562,17 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
         m = mt.solvate(protein, padding=10.0 * args.padding_nm, box=box, salt=args.saltM,
                        seed=args.seed)  # fmt: skip
 
-    m.save(workdir / "martini", martini_itp=args.martini_itp)
+    s = m.system(args.martini_itp)
+    m.save(workdir / "martini", martini_itp=args.martini_itp, system=s)
     if m.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
         (workdir / "martini" / "secondary.txt").write_text(m.ss + "\n")
-    s = m.system(args.martini_itp)
+    if m.elastic_bonds():
+        # a viewer draws the network as bonds and the protein becomes a hairball;
+        # same atoms in the same order, so a trajectory still lines up with it
+        viewing = m.for_viewing(s)
+        for suffix in (".dms", ".mae"):
+            save(viewing, workdir / f"view{suffix}")
+        log(f"Wrote view.dms and view.mae without the {len(m.elastic_bonds())} rubber bands")
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])
     if getattr(args, "monitor_selection", None) is not None:

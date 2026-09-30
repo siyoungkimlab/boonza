@@ -587,7 +587,7 @@ def main(argv=None) -> int:
     args = parse_arguments(argv, parser)
     x = args.extra
     if "workdir" not in args.specified:
-        args.workdir = "swim"
+        args.workdir = "boonza_swim"
     try:
         if args.model != "aa":  # Martini: dipeptide probes, no ligand library to parameterize
             from .cgswim import prepare as prepare_cg

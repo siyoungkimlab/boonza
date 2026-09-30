@@ -250,7 +250,7 @@ def test_the_command_line(tmp_path, capsys):
     assert main(["martinize", str(DATA / "1HHO.pdb"), str(out), "--elastic"]) == 0
     assert "2 molecules, 680 beads" in capsys.readouterr().out
     assert {p.name for p in out.iterdir()} == {"topol.top", "molecule_0.itp", "molecule_1.itp",
-                                               "cg.gro"}  # fmt: skip
+                                               "cg.gro", "cg.dms"}  # fmt: skip
     rubber = [line for line in (out / "molecule_0.itp").read_text().splitlines()
               if line.endswith(" 700")]  # fmt: skip
     assert rubber
@@ -479,7 +479,7 @@ def test_a_bilayer_is_built_by_boonza_md(toy_lipids, tmp_path):
     names = set(s.residues["name"].tolist())
     assert {"TLP", "STR", "W"} <= names
     written = {p.name for p in (tmp_path / "martini").iterdir()}
-    assert written == {"topol.top", "solvent.itp", "cg.gro"}
+    assert written == {"topol.top", "solvent.itp", "cg.gro", "cg.dms"}
 
 
 def test_a_rectangular_bilayer_keeps_both_edges(toy_lipids, tmp_path):

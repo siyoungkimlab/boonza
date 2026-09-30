@@ -62,7 +62,7 @@ the DMS files remain authoritative.
 | `ligands/L000/`, ... | each ligand as placed, and its force-field patch |
 
 Run the simulations as a job array, one line of `simulations.txt` each
-(`sed -n "${SLURM_ARRAY_TASK_ID}p" swim/simulations.txt | bash` with
+(`sed -n "${SLURM_ARRAY_TASK_ID}p" boonza_swim/simulations.txt | bash` with
 `--array=1-100`), or all here, one after another, with `--run`.
 
 ## Which ligands share a simulation
@@ -166,7 +166,7 @@ its `md.toml`, and `probes.json`, which records the probes so that the
 analysis needs no selections of its own:
 
 ```bash
-boonza sites --workdir swim/sim_*/md      # aligns on BB beads, probes as ligands
+boonza sites --workdir boonza_swim/sim_*/md      # aligns on BB beads, probes as ligands
 ```
 
 Martini's resolution is a bead (about 0.47 nm), so the maps say which
@@ -175,8 +175,8 @@ chemistry a pocket likes and where, not how a ligand poses in it.
 ### Reading a coarse-grained swim
 
 ```bash
-boonza probes --workdir swim/sim_*/md -o probes.csv   # what each probe touches
-boonza sites --workdir swim/sim_*/md                  # where probes gather, if they settle
+boonza probes --workdir boonza_swim/sim_*/md -o probes.csv   # what each probe touches
+boonza sites --workdir boonza_swim/sim_*/md                  # where probes gather, if they settle
 boonza poses run/solvated.dms --traj run/trajectory.dcd --ligandsel "resname EK"
 ```
 

@@ -129,7 +129,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         rng = np.random.default_rng([int(args.seed), s])
         system = build(protein, [probe(q) for q in group], copies, box, rng, args.saltM,
                        clearance)  # fmt: skip
-        system.save(d / "martini", martini_itp=args.martini_itp)
+        system.save(d / "martini", martini_itp=args.martini_itp)  # .dms and .gro both
         if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
             (d / "martini" / "secondary.txt").write_text(protein.ss + "\n")
         settings = {**settings_of(args), "model": args.model, "solvate": "none",
