@@ -107,11 +107,25 @@ def snapshot(system, positions, box):
 
 
 def from_file(system, path):
-    """``system`` with the coordinates and box of a structure file of it."""
+    """``system`` with the coordinates and box of a structure file of it.
+
+    The atom names have to line up, not only the count: the positions are
+    pasted on by index, and a .mae puts pseudo particles at the end rather than
+    where they sit (Desmond keeps them in their own block), so a Martini system
+    with a tryptophan virtual site comes back in a different order.  A .dms or
+    a .pdb of the same system keeps it.
+    """
     other = boonza.load(path)
     if other.natoms != system.natoms:
         raise RuntimeError("%s has %d atoms, the system %d"
                            % (path, other.natoms, system.natoms))
+    mine = [str(n) for n in system.atoms["name"]]
+    theirs = [str(n) for n in other.atoms["name"]]
+    if mine != theirs:
+        first = next(i for i, (a, b) in enumerate(zip(mine, theirs)) if a != b)
+        raise RuntimeError("%s is in a different atom order (atom %d is %s there, %s in the "
+                           "system), so its coordinates belong to other atoms"
+                           % (path, first, theirs[first], mine[first]))
     return snapshot(system, other.positions, other.cell)
 
 
@@ -164,6 +178,23 @@ def read_report_csv(path):
             except ValueError:
                 cols[h].append(np.nan)
     return cols
+
+
+def mean(values):
+    """The mean of the numbers among ``values``, or None when there are none.
+
+    A column can parse to all-NaN rather than to nothing: boonza leaves
+    contact_fraction empty on every row of a run whose ligand had no pocket
+    contacts to begin with (initial_contact_count 0, nothing to divide by), and
+    np.nanmean of that warns "Mean of empty slice" and returns NaN.
+    """
+    vals = np.asarray(values, dtype=float)
+    return float(np.nanmean(vals)) if np.isfinite(vals).any() else None
+
+
+def number(value):
+    """``value`` as a float, or None when it is not a number (NaN, a blank cell)."""
+    return float(value) if np.isfinite(value) else None
 
 
 _yaml_cache = {}
@@ -299,19 +330,18 @@ def analyse(workdir):
         row["initial_contact_count"] = last(init)
         row["final_contact_count"] = last(counts)
         if frac.size:
-            row["contact_fraction_mean"] = float(np.nanmean(frac))
-            row["contact_fraction_final"] = float(frac[-1])
+            row["contact_fraction_mean"] = mean(frac)
+            row["contact_fraction_final"] = number(frac[-1])
         if dist.size:
-            row["min_pocket_distance_nm_first"] = float(dist[0])
-            row["min_pocket_distance_nm_final"] = float(dist[-1])
-            row["min_pocket_distance_nm_max"] = float(np.nanmax(dist))
+            row["min_pocket_distance_nm_first"] = number(dist[0])
+            row["min_pocket_distance_nm_final"] = number(dist[-1])
+            row["min_pocket_distance_nm_max"] = (
+                float(np.nanmax(dist)) if np.isfinite(dist).any() else None)  # fmt: skip
 
     state = read_report_csv(os.path.join(workdir, "state.csv"))
     for src, dst in (("Temperature (K)", "mean_temperature_K"),
                      ("Density (g/mL)", "mean_density_g_mL")):
-        vals = np.array(state.get(src, []), dtype=float)
-        if vals.size:
-            row[dst] = float(np.nanmean(vals))
+        row[dst] = mean(state.get(src, []))
 
     perf = read_report_csv(os.path.join(workdir, "performance.csv"))
     nsday = perf.get("ns_per_day", [])
