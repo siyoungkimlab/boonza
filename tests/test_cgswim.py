@@ -679,3 +679,46 @@ def test_a_residue_too_small_to_map_is_only_a_note(tmp_path):
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     build_martini_system(args, tmp_path, log=said.append)
     assert any("too little of a residue to map" in line and "ARG1" in line for line in said)
+
+
+def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
+    """The elastic network is bonds like any other, so a viewer draws it and a
+    protein comes out a hairball.  view.dms and view.mae leave it out, keeping
+    every atom in its place so a trajectory still lines up with them."""
+    from boonza.martini import martinize
+
+    m = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"), elastic=True)
+    whole = m.system()
+    bands = m.elastic_bonds()
+    assert len(bands) > 300
+    viewing = m.for_viewing(whole)
+    assert viewing.natoms == whole.natoms
+    assert viewing.nbonds == whole.nbonds - len(bands)
+    names = [str(n) for n in whole.atoms["name"]]
+    assert [str(n) for n in viewing.atoms["name"]] == names  # same order, for the trajectory
+    for i, j in bands[:5]:
+        assert viewing.find_bond(viewing.atom(i), viewing.atom(j)) is None
+
+    without = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"), elastic=False)
+    assert without.elastic_bonds() == []
+
+
+def test_a_martini_run_writes_what_a_viewer_wants(tmp_path):
+    from boonza.md.prepare import build_martini_system
+
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    view = boonza.load(tmp_path / "view.dms")
+    assert (tmp_path / "view.mae").is_file()
+    assert view.natoms == s.natoms and view.nbonds < s.nbonds
+    # the coordinates it carries are the built ones, not a .gro's
+    assert np.allclose(np.asarray(view.positions), np.asarray(s.positions))
+
+
+def test_the_default_work_directories():
+    assert parse_arguments(["x.pdb"]).workdir == "boonza_md"
+    from boonza.md import swim
+
+    source = swim.main.__code__.co_consts
+    assert any(c == "boonza_swim" for c in source if isinstance(c, str))

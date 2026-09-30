@@ -371,6 +371,7 @@ it is seeded.
 | `final.pdb`, `.mae` | the latest coordinates |
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
+| `view.dms`, `view.mae` | Martini with an elastic network: the system without its rubber bands, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
 | `status.json` | how far the run got, and how it ended |
 | `pocket.json`, `monitor.csv` | with early stop |

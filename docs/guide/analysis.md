@@ -346,7 +346,7 @@ work directory per run:
 
 ```
 boonza sites solvated.dms --traj run*.dcd -o sites/
-boonza sites --workdir swim/sim_*/md -o sites/      # each with its own solvated.dms
+boonza sites --workdir boonza_swim/sim_*/md -o sites/      # each with its own solvated.dms
 ```
 
 ```
@@ -458,7 +458,7 @@ From the command line, `--features` prints what each site asks for and writes
 the maps beside the structures:
 
 ```
-boonza sites --workdir swim/sim_*/md --features -o design/
+boonza sites --workdir boonza_swim/sim_*/md --features -o design/
 ```
 
 ```

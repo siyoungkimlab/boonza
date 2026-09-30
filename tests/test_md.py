@@ -59,7 +59,7 @@ def test_settings_precedence(tmp_path):
     assert "temperature" not in a.specified
     d = parse_arguments(["x.pdb"])
     assert d.forcefields == config.DEFAULT_FORCEFIELDS
-    assert (d.cutoff_nm, d.integration_fs, d.workdir) == (0.9, 2.0, "openmm_md")
+    assert (d.cutoff_nm, d.integration_fs, d.workdir) == (0.9, 2.0, "boonza_md")
     c = parse_arguments(["x", "-f", "aa.charmm.c36m", "-f", "water.tip3p_charmm"])
     assert c.cutoff_nm == 1.2
     m = parse_arguments(["x", "-f", "aa.amber.ff19SB", "-m", "aa.amber.phosaa19SB", "-f",

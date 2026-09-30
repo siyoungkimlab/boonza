@@ -90,7 +90,7 @@ MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipi
 DEFAULTS: dict = {
     "input_structure": None,
     "model": "aa",
-    "workdir": "openmm_md",
+    "workdir": "boonza_md",
     "forcefields": None,
     "ligand_mode": "auto",
     "ligandff": "gaff-2.11",
@@ -817,7 +817,7 @@ def commit_settings(args, path) -> None:
 _TEMPLATE = """\
 # boonza md settings. Options given on the command line override this file.
 input_structure = "protein.pdb"
-workdir = "openmm_md"
+workdir = "boonza_md"
 
 # viparr force fields in priority order (the first matching a molecule wins); a
 # list is a force field with patches merged onto it. The default:

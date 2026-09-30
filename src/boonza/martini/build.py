@@ -133,15 +133,70 @@ class Martinized:
         lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
 
-    def save(self, directory, martini_itp=None) -> Path:
-        """Write ``topol.top``, one ``.itp`` per molecule (``solvent.itp`` for water
-        and ions) and ``cg.gro``; returns the top.
+    def save(self, directory, martini_itp=None, system=None) -> Path:
+        """Write ``topol.top``, one ``.itp`` per molecule (``solvent.itp`` for
+        water and ions), ``cg.dms`` and ``cg.gro``; returns the top.
 
         ``topol.top`` includes ``martini_itp``, the file boonza carries for
         this version of Martini when none is given, so that GROMACS can
         resolve it as written.  ``solvent.itp`` is written for Martini 3
         only: Martini 2 defines its water and ions upstream.
+
+        The coordinates go out twice over: ``cg.dms`` holds them as they are,
+        with the chains the beads came from, and is what boonza reads back;
+        ``cg.gro`` is what GROMACS needs, and rounds them to 0.001 nm.
+        ``system`` is the built system when the caller already has one, which
+        saves building it again; without one, and with parameters named to be
+        resolved somewhere else, only the ``.gro`` is written.
         """
+        from ..io import GromacsError
+        from ..io import save as save_structure
+
+        top = self._write_topology(directory, martini_itp)
+        if system is None:
+            try:
+                system = self.system(martini_itp)
+            except (GromacsError, FileNotFoundError):
+                # the topology names parameters to be resolved elsewhere, so
+                # there is no system to write here; the .gro carries the
+                # coordinates, as it does for GROMACS
+                return top
+        save_structure(system, top.parent / "cg.dms")
+        return top
+
+    def elastic_bonds(self) -> list[tuple[int, int]]:
+        """The rubber bands, as pairs of bead indices in the built system.
+
+        They are bonds of the topology like any other, so a viewer draws them
+        and a protein comes out a hairball; :func:`for_viewing` leaves them
+        out.
+        """
+        out, offset = [], 0
+        for mol, count in zip(self.molecules, self.molecule_copies, strict=True):
+            for _ in range(count):
+                for bond in mol.interactions["bonds"]:
+                    if bond.meta.get("group") == "Rubber band":
+                        i, j = (int(a) + offset for a in bond.atoms)
+                        out.append((min(i, j), max(i, j)))
+                offset += len(mol.nodes)
+        return out
+
+    def for_viewing(self, system=None, martini_itp=None):
+        """The system without its elastic network: what to open in a viewer.
+
+        Everything else is kept, atom for atom and in the same order, so the
+        trajectory still lines up with it.
+        """
+        s = (system if system is not None else self.system(martini_itp)).clone()
+        bands = self.elastic_bonds()
+        if bands:
+            ids = [s.find_bond(s.atom(i), s.atom(j)) for i, j in bands]
+            s.delete_bonds([b for b in ids if b is not None])
+        return s
+
+    def _write_topology(self, directory, martini_itp=None) -> Path:
+        """The topology, its molecules and the .gro, without building a system:
+        what :meth:`system` needs to read its parameters back."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         for k, name in enumerate(self.names):
@@ -168,7 +223,7 @@ class Martinized:
 
         martini_itp = Path(_nonbonded(martini_itp, self.martini)).resolve()
         with tempfile.TemporaryDirectory() as tmp:
-            top = self.save(tmp, martini_itp.name)
+            top = self._write_topology(tmp, martini_itp.name)
             s = load_top(top, include_dirs=[str(martini_itp.parent)])
         s.positions = np.asarray(self.positions, float)
         if self.cell is not None and np.any(self.cell):
