@@ -339,11 +339,18 @@ def test_new_run_and_restarts(tmp_path, dipeptide):
                                   "--dihedral-restraint", "bb"]), log=quiet)  # fmt: skip
     p = RunPaths(work)
     for f in ("solvated_dms", "solvated_pdb", "solvated_mae", "components_json", "system_xml",
-              "integrator_xml", "checkpoint", "final_configuration", "equilibrated_pdb",
-              "equilibrated_mae", "final_pdb", "final_mae", "equilibration_dcd",
-              "equilibration_csv", "trajectory_dcd", "state_csv", "performance_csv",
-              "dihedral_restraints_csv"):  # fmt: skip
+              "integrator_xml", "checkpoint", "final_configuration", "equilibrated_dms",
+              "equilibrated_pdb", "equilibrated_mae", "final_dms", "final_pdb", "final_mae",
+              "equilibration_dcd", "equilibration_csv", "trajectory_dcd", "state_csv",
+              "performance_csv", "dihedral_restraints_csv"):  # fmt: skip
         assert getattr(p, f).is_file(), f
+    # the snapshots: a .dms keeps every atom where it sits and every decimal, a
+    # .pdb rounds to 0.001 A, a .mae moves pseudo particles to the end
+    final, system = boonza.load(p.final_dms), boonza.load(p.solvated_dms)
+    assert [str(n) for n in final.atoms["name"]] == [str(n) for n in system.atoms["name"]]
+    rounded = boonza.load(p.final_pdb)
+    moved = np.abs(np.asarray(final.positions) - np.asarray(rounded.positions))
+    assert moved.max() < 1e-3  # the same frame, to the PDB's own precision
     assert len(p.state_csv.read_text().splitlines()) == 3  # header, 1 and 2 ps
     s = boonza.load(p.solvated_dms)
     assert "DihedralRestraint" in p.system_xml.read_text()

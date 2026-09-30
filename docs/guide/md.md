@@ -491,13 +491,25 @@ it is seeded.
 | `gaff2/`, `gaff2_patch/` | AmberTools files and the GAFF2 patch, when ligands were found |
 | `covalent_*.png` | a 2D drawing of each covalent adduct: blue atoms keep protein types, orange ones are GAFF2 |
 | `equilibration.dcd`, `equilibration.csv` | equilibration |
-| `equilibrated.pdb`, `.mae` | the structure production starts from |
+| `equilibrated.dms`, `.pdb`, `.mae` | the structure production starts from |
 | `trajectory.dcd`, `state.csv` | production (step and time start at 0) |
-| `final.pdb`, `.mae` | the latest coordinates |
+| `final.dms`, `.pdb`, `.mae` | the latest coordinates |
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
 | `view.dms`, `view.mae` | every coarse-grained run: what to open in a viewer -- the backbone bead named `CA`, so a chain is traced, and no elastic network, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
+
+A snapshot goes out in three formats because they are not equivalent. The
+`.dms` keeps every atom where it sits and every decimal, so it is the one to
+measure against: read its coordinates onto the built system by index and they
+belong to the atoms you think they do. A `.pdb` rounds to 0.001 Å, and a `.mae`
+moves pseudo particles to the end of the system -- Desmond holds them in a
+block of their own -- so a Martini system with a tryptophan virtual site comes
+back in a different order, and a `.mae` of one also leaves Martini's two angle
+forms behind (it does carry the virtual site). None of the three carries the
+force field: they are coordinates and bonds, for looking at and for measuring.
+`solvated.dms` is the parameterized system, and `checkpoint.chk` is what a
+restart reads.
 | `status.json` | how far the run got, and how it ended |
 | `pocket.json`, `monitor.csv` | with early stop |
 
