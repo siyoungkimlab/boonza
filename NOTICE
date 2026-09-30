@@ -307,13 +307,15 @@ unchanged: its parameter files, residue libraries, termini and special-bond
 tables, its water and ions with their equilibrated boxes, and the mapping
 files boonza reads to place beads (`tools/CGCONV/maps/*.map`, which are data,
 not code).  The release's own `0README`, which carries the notice below and
-the references, and its `forcefield.doc` and `0ISSUES` travel with it;
-`boonza md --model sirah` and `boonza swim --model sirah` write the whole
-archive beside each topology they build, so a run directory carries the
-notice too.  The CGCONV script itself (`tools/CGCONV/cgconv.pl`, which its
-header licenses under the GNU General Public License version 2) is **not**
-included, nor are the tutorials and example structures; boonza maps
-structures and builds topologies itself.
+the references it asks for, is inside the archive, together with its
+`forcefield.doc` and `0ISSUES`.  The CGCONV script itself
+(`tools/CGCONV/cgconv.pl`, which its header licenses under the GNU General
+Public License version 2) is **not** included, nor are the tutorials and
+example structures; boonza maps structures and builds topologies itself.
+
+A run directory gets only the files its topology includes -- the parameters
+and the solvent -- since that is what a run needs; `boonza.sirah.unpack(dir,
+everything=True)` writes the release as it ships, documentation and all.
 
   The SIRAH force field version Jul. 2020 (c)
   Developed by the Group of Biomolecular Simulations

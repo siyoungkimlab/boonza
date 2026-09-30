@@ -686,12 +686,21 @@ The beads of ``atoms``, each on the atom SIRAH's map names for it.
 A residue the map does not know, or one missing the atom a bead sits on,
 raises rather than coming out with a bead short.
 
-### `boonza.sirah.unpack(directory) -> 'Path'`
+### `boonza.sirah.unpack(directory, everything: 'bool' = False) -> 'Path'`
 
-Write the carried force field into ``directory``/sirah.ff and return it.
+Write the force field a run needs into ``directory``/sirah.ff; return it.
 
 A topology that includes its parameters needs them on disk, and a run
-directory that carries its own is one that moves.
+directory that carries its own is one that moves -- in GROMACS as well as
+here.  What goes out is what the topology includes and what those files
+include in turn, which is the parameters and the solvent: the rest of the
+release is read from the archive where boonza needs it (the residue
+libraries when it builds a topology, the maps when it places beads, the
+water box when it fills one) and has no business in a run directory.
+
+``everything`` writes the release as it ships instead, documentation and
+all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
+the residue libraries.
 
 ## Per-format readers and writers (`boonza.io`)
 

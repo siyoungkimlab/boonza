@@ -317,7 +317,13 @@ the residues' own charges).
 
 What it writes runs anywhere: `sirah/topol.top`, a molecule `.itp` each, the
 force field in `sirah/sirah.ff`, and coordinates as both `cg.dms` and
-`cg.gro`.
+`cg.gro`. `sirah.ff` holds what the topology includes and what those files
+include in turn -- the parameters and the solvent, eight files -- and nothing
+else: the residue libraries, the water box, the mapping files and the
+release's own documentation are read from the archive boonza carries where
+they are needed, not copied into every run. `boonza.sirah.unpack(directory,
+everything=True)` writes the release as it ships, for running SIRAH's own
+tools beside it (pdb2gmx reads the residue libraries).
 
 **Water and ions.** The box is filled from the force field's own equilibrated
 WT4 box, tiled whole -- the box grows to a multiple of its 1.72 nm edge, so

@@ -436,7 +436,10 @@ def test_the_run_directory_carries_its_force_field(crambin_all_atom, tmp_path):
     written = {p.name for p in top.parent.iterdir()}
     assert {"topol.top", "molecule_0.itp", "cg.dms", "cg.gro", "sirah.ff"} <= written
     ff = {p.name for p in (top.parent / "sirah.ff").iterdir()}
-    assert {"forcefield.itp", "ffnonbonded.itp", "ffbonded.itp", "aminoacids.rtp"} <= ff
+    # what the topology includes and what those include in turn, and no more:
+    # the release's libraries, boxes, maps and documentation stay in the archive
+    assert ff == {"forcefield.itp", "ffnonbonded.itp", "ffbonded.itp", "lipid_ffbonded.itp",
+                  "solv.itp", "wls.itp", "wt4.itp", "sirah_ions.itp"}  # fmt: skip
     assert 'forcefield.itp"' in top.read_text()
 
 
@@ -447,10 +450,15 @@ def test_the_carried_force_field(tmp_path):
     assert sirah.read("aminoacids.rtp").startswith("[ bondedtypes ]")
     with pytest.raises(FileNotFoundError, match="not in the carried"):
         sirah.read("nothing.itp")
-    out = sirah.unpack(tmp_path)
-    assert (out / "wt416.gro").is_file()  # the water box, for solvation to come
     # what the archive holds is the force field, not what a file browser left
     assert not [f for f in sirah.contents() if Path(f).name.startswith(".")]
+    out = sirah.unpack(tmp_path)
+    assert (out / "forcefield.itp").is_file()
+    for name in ("aminoacids.rtp", "wt416.gro", "sirah_prot.map", "0README"):
+        assert not (out / name).exists(), name  # read from the archive, not from here
+    everything = sirah.unpack(tmp_path / "all", everything=True)
+    assert (everything / "aminoacids.rtp").is_file()  # for pdb2gmx beside it
+    assert (everything / "wt416.gro").is_file() and (everything / "0README").is_file()
 
 
 def test_water_fills_the_box_as_sirah_equilibrated_it(crambin_all_atom):

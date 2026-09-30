@@ -52,16 +52,48 @@ def read(name: str) -> str:
         ) from None
 
 
-def unpack(directory) -> Path:
-    """Write the carried force field into ``directory``/sirah.ff and return it.
+#: What a built topology includes; :func:`unpack` writes these and whatever
+#: they include in turn.
+INCLUDED = ("forcefield.itp", "solv.itp")
+
+
+def needed(names=INCLUDED) -> list[str]:
+    """``names`` and every file they ``#include``, in the order a run needs them."""
+    import re
+
+    here = {Path(n).name: n for n in _archive().namelist()}
+    out: list[str] = []
+    todo = [n for n in names]
+    while todo:
+        name = todo.pop(0)
+        if name in out or name not in here:
+            continue
+        out.append(name)
+        todo += re.findall(r'#include\s+"([^"]+)"', read(name))
+    return out
+
+
+def unpack(directory, everything: bool = False) -> Path:
+    """Write the force field a run needs into ``directory``/sirah.ff; return it.
 
     A topology that includes its parameters needs them on disk, and a run
-    directory that carries its own is one that moves.
+    directory that carries its own is one that moves -- in GROMACS as well as
+    here.  What goes out is what the topology includes and what those files
+    include in turn, which is the parameters and the solvent: the rest of the
+    release is read from the archive where boonza needs it (the residue
+    libraries when it builds a topology, the maps when it places beads, the
+    water box when it fills one) and has no business in a run directory.
+
+    ``everything`` writes the release as it ships instead, documentation and
+    all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
+    the residue libraries.
     """
     out = Path(directory) / "sirah.ff"
     out.mkdir(parents=True, exist_ok=True)
-    for name in _archive().namelist():
-        (out / Path(name).name).write_bytes(_archive().read(name))
+    names = _archive().namelist() if everything else needed()
+    here = {Path(n).name: n for n in _archive().namelist()}
+    for name in names:
+        (out / Path(name).name).write_bytes(_archive().read(here.get(name, name)))
     return out
 
 
@@ -90,6 +122,6 @@ def __getattr__(name):  # the builder is heavier than the settings above
     raise AttributeError(name)
 
 
-__all__ = ["BACKBONE", "IONS", "OPENMM_OPTIONS", "PARAMETERS", "WATER", "WATERS_PER_ION_PAIR",
-           "Sirahized", "contents", "map_structure", "read", "read_residues", "sirahize",
-           "solvate", "unpack"]  # fmt: skip
+__all__ = ["BACKBONE", "INCLUDED", "IONS", "OPENMM_OPTIONS", "PARAMETERS", "WATER",
+           "WATERS_PER_ION_PAIR", "Sirahized", "contents", "map_structure", "needed", "read",
+           "read_residues", "sirahize", "solvate", "unpack"]  # fmt: skip
