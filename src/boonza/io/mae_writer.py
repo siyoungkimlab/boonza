@@ -374,6 +374,7 @@ _TUPLES = {
     "constraint_hoh": [("ffio_constraints", "hoh", 3, ["theta", "r1", "r2"])],
     "virtual_lc2": [("ffio_virtuals", "lc2", 0, ["c1"])],
     "virtual_lc3": [("ffio_virtuals", "lc3", 0, ["c1", "c2"])],
+    "virtual_lc4": [("ffio_virtuals", "lc4", 0, ["c1", "c2", "c3"])],
     "virtual_out3": [("ffio_virtuals", "out3", 0, ["c1", "c2", "c3"])],
     "posre_harm": [("ffio_restraints", "harm", 1, ["fcx", "fcy", "fcz"])],
     "exclusion": [("ffio_exclusions", None, 2, [])],
@@ -389,6 +390,7 @@ _TUPLES = {
 _CANNOT_CARRY = {
     "dihedral_periodic": "multiplicity above 6, which proper_trig has no column for",
     "angle_restricted": "Martini's restricted bending angle, which no ffio funct covers",
+    "angle_cosine_harm": "an angle harmonic in cos(theta), which no ffio funct covers",
 }
 
 

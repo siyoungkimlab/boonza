@@ -422,9 +422,16 @@ def _already_built(s: System, model: str, path: Path) -> bool:
     let a fold go.
     """
     kind = "sirah" if model == "sirah" else "martini"
-    if "nonbonded" not in s.table_names or bool((s.atoms["anum"] == 1).any()):
-        return False  # a structure to map, not a system to run
+    if bool((s.atoms["anum"] == 1).any()):
+        return False  # a structure with hydrogens: one to map
     here = lambda beads: all(len(s.select(f"name {bead}").ids) for bead in beads)  # noqa: E731
+    if "nonbonded" not in s.table_names:
+        if here(BUILT_BEADS[kind]):
+            raise ValueError(f"{path.name} is coarse-grained already, but carries no parameters: "
+                             "it is a snapshot of a run (its coordinates and bonds, for looking "
+                             "at and for measuring).  Run that run's solvated.dms, which carries "
+                             "them, or the topology beside it")  # fmt: skip
+        return False  # a structure to map, not a system to run
     if here(BUILT_BEADS[kind]):
         return True
     if here(VIEWED_BEADS[kind]):

@@ -827,3 +827,17 @@ def test_the_gromacs_form_is_written_only_when_it_is_asked_for(model, tmp_path):
             assert (d / built / "sirah.ff").is_dir() is wanted
         settings = parse_arguments(["--config", str(d / "md.toml")])
         assert Path(settings.input_structure).name == "cg.dms"
+
+
+def test_a_snapshot_is_not_a_system_to_run(tmp_path):
+    """final.dms holds a run's coordinates and bonds, not its parameters, so it
+    says so rather than being coarse-grained a second time."""
+    from boonza.martini import martinize
+    from boonza.md.prepare import build_martini_system, save_structure
+
+    m = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"), elastic=True)
+    save_structure(m.system(), tmp_path / "final.dms")  # as a run writes its snapshots
+    args = parse_arguments([str(tmp_path / "final.dms"), "--model", "martini3", "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    with pytest.raises(ValueError, match="carries no parameters"):
+        build_martini_system(args, tmp_path, log=lambda *_: None)

@@ -567,3 +567,26 @@ def test_the_two_martinis_are_not_mixed(tmp_path):
         bilayer(itps, {"DPPC": 1}, size=80.0, martini=2, protein=protein)
     with pytest.raises(ValueError, match="martini must be one of"):
         bilayer(itps, {"DPPC": 1}, size=60.0, martini=4)
+
+
+def test_a_mae_carries_martinis_virtual_site_but_not_its_angles(tmp_path):
+    """The .mae format holds a 4-point virtual site (ffio_virtuals funct lc4),
+    which a tryptophan bead needs; Martini's two angle forms have no funct there,
+    and saying so beats "Failed to process dms table"."""
+    import warnings
+
+    from boonza.martini import martinize
+
+    s = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein")).system()
+    assert len(s.table("virtual_lc4")) and len(s.table("angle_restricted"))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        boonza.save(s, tmp_path / "beads.mae")
+    said = " ".join(str(w.message) for w in caught)
+    assert "angle_restricted" in said and "angle_cosine_harm" in said
+    assert "virtual_lc4" not in said  # carried, not dropped
+    back = boonza.load(tmp_path / "beads.mae")
+    assert len(back.table("virtual_lc4")) == len(s.table("virtual_lc4"))
+    for prop in ("c1", "c2", "c3"):
+        assert np.allclose(back.table("virtual_lc4").values(prop),
+                           s.table("virtual_lc4").values(prop))  # fmt: skip
