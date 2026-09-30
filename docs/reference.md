@@ -93,7 +93,7 @@ Pairwise replacement parameters, keyed by a pair of param ids (NBFIX-style).
 
 ### `boonza.TERM_SCHEMAS`
 
-74 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
+75 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_periodic`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
 
 ### `boonza.NONBONDED_SCHEMAS`
 
@@ -648,6 +648,60 @@ only the frames of the runs that carried that probe.
 
 Contacts as a fraction of frames, residues down and probes across.
 
+## SIRAH
+
+### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, log=None) -> 'Sirahized'`
+
+Map ``system`` onto SIRAH beads and build the topology of each chain.
+
+The beads come from SIRAH's map, their topology from its residue library,
+and the angles, dihedrals and 1-4 pairs follow from the bonds, the way
+pdb2gmx generates them.  ``termini`` is ``"Charged"`` or ``"Neutral"``,
+named as the library's ``.tdb`` files are.
+
+### `class boonza.sirah.Sirahized(molecules: 'list[Molecule]', positions: 'np.ndarray', cell: 'np.ndarray | None' = None, nrexcl: 'int' = 3, solvent: 'list[tuple[str, int]]' = <factory>, copies: 'list[int]' = <factory>) -> None`
+
+A coarse-grained system: its molecules, its beads' positions, its box.
+
+### `boonza.sirah.solvate(m: 'Sirahized', padding: 'float' = 10.0, box=None, salt: 'float' = 0.15, neutralize: 'bool' = True, clash: 'float' = 3.0, ion_distance: 'float' = 5.0, seed: 'int' = 0, fit: 'bool' = True, log=None) -> 'Sirahized'`
+
+``m`` in a box of SIRAH's WT4 water, with NaW and ClW ions.
+
+The water is the force field's own equilibrated box, tiled to fill the
+cell and cut where it meets the solute: a molecule with any bead within
+``clash`` Å of one of the solute's is left out, as SIRAH's tutorial
+removes them.  Ions replace whole waters at least ``ion_distance`` Å from
+the solute -- enough to cancel the solute's charge, then pairs until the
+salt reaches ``salt`` mol/L, counted as SIRAH counts it: one pair for
+every 34 waters is about 0.15 M.
+
+``fit`` grows the box to whole tiles of the water box (1.72 nm), so the
+water meets itself as it was equilibrated and only the solute displaces
+any; cutting mid-tile costs a slab of water at every face.
+
+### `boonza.sirah.map_structure(system, atoms: 'str' = 'protein', log=None) -> 'list[Bead]'`
+
+The beads of ``atoms``, each on the atom SIRAH's map names for it.
+
+A residue the map does not know, or one missing the atom a bead sits on,
+raises rather than coming out with a bead short.
+
+### `boonza.sirah.unpack(directory, everything: 'bool' = False) -> 'Path'`
+
+Write the force field a run needs into ``directory``/sirah.ff; return it.
+
+A topology that includes its parameters needs them on disk, and a run
+directory that carries its own is one that moves -- in GROMACS as well as
+here.  What goes out is what the topology includes and what those files
+include in turn, which is the parameters and the solvent: the rest of the
+release is read from the archive where boonza needs it (the residue
+libraries when it builds a topology, the maps when it places beads, the
+water box when it fills one) and has no business in a run directory.
+
+``everything`` writes the release as it ships instead, documentation and
+all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
+the residue libraries.
+
 ## Per-format readers and writers (`boonza.io`)
 
 ### `boonza.io.load_cif(path, guess_bonds: 'bool' = True, struct_conn: 'bool' = True) -> 'System'`
@@ -1102,9 +1156,13 @@ once at the middle of the ring rather than six times around it.
 ``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
 case and the second repeats what ``Hydrophobe`` already says.
 
-Martini beads are typed by what they stand for instead, since they have no
-element or valence for RDKit to read (:mod:`boonza.martini.features`);
-``backbone`` then also types the BB beads, which every probe carries.
+Coarse-grained beads are typed by what they stand for instead, since they
+have no element or valence for RDKit to read
+(:mod:`boonza.martini.features`, :mod:`boonza.sirah.features`);
+``backbone`` then also types the backbone beads, which every residue has.
+SIRAH is the finer of the two: its hydroxyl is an oxygen bead and a
+hydrogen bead, so the acceptor and the donor are separate features where
+Martini has one bead that is both.
 
 ### `boonza.ligand_rmsd(mobile, reference, ligand: 'str' = 'not (polymer or water or ions) and noh', reference_ligand=None, fit: 'str' = 'protein and name CA and not resname NMA NME ACE', reference_fit=None, align: 'str | None' = 'order', positions=None, heavy_only: 'bool' = True, bond_orders: 'bool' = False, apply: 'bool' = False) -> 'LigandRMSD'`
 
@@ -1237,9 +1295,10 @@ A peptide built from a one-letter sequence (through RDKit).
 
 ``conformation``: "helix", "sheet", "extended", "polyproline", one
 (phi, psi) pair, or one pair per residue (degrees).  The chain is built
-by RDKit with PDB atom and residue names, every peptide bond is set
-trans, and phi/psi are set residue by residue (proline's phi is fixed by
-its ring).  With ``optimize`` the structure is minimized with MMFF94
+by RDKit with PDB atom and residue names -- hydrogens included, which
+RDKit itself does not name -- every peptide bond is set trans, and
+phi/psi are set residue by residue (proline's phi is fixed by its
+ring).  With ``optimize`` the structure is minimized with MMFF94
 while phi/psi are held, so side chains relax without losing the
 backbone (omega included).  Termini are free amine and acid, as RDKit
 builds them.

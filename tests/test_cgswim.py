@@ -82,7 +82,7 @@ def test_probes_are_placed_clear_of_everything():
 def test_a_prepared_simulation(tmp_path):
     """One directory per group: the built topology, settings `boonza md` accepts,
     and the probes written down for the analysis."""
-    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--gromacs",
                             "--workdir", str(tmp_path / "swim"), "--production-ns", "10",
                             "--seed", "1"])  # fmt: skip
     sims = prepare(args, ["EK", "LL", "RR"], types=2, copies=2, log=lambda *_: None)
@@ -102,7 +102,9 @@ def test_a_prepared_simulation(tmp_path):
     assert settings.repulsion_selection == "resname " + " ".join(written["probes"])
     assert settings.production_ns == 10.0
     assert not settings.forcefields  # nothing all-atom came along
-    assert Path(settings.input_structure) == (d / "martini" / "topol.top").resolve()
+    # the run reads the built system, which carries its parameters; the topology
+    # beside it is what GROMACS would read
+    assert Path(settings.input_structure) == (d / "martini" / "cg.dms").resolve()
     assert (tmp_path / "swim" / "assignment.csv").is_file()
     assert (tmp_path / "swim" / "simulations.txt").read_text().count("boonza md") == 2
 
@@ -447,7 +449,7 @@ def test_the_network_reaches_the_built_topology(tmp_path):
     for label, extra in (("on", []), ("off", ["--no-elastic"])):
         where = tmp_path / label
         args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *extra,
-                                "--workdir", str(where / "run")])  # fmt: skip
+                                "--gromacs", "--workdir", str(where / "run")])  # fmt: skip
         build_martini_system(args, where, log=lambda *_: None)
         counts[label] = len(_bonds_of(where))
     assert counts["on"] > counts["off"] + 300  # 1TEN gets 354 rubber bands
@@ -460,7 +462,7 @@ def test_a_coarse_grained_swim_follows_the_same_setting(tmp_path):
     for label, extra in (("on", []), ("off", ["--no-elastic"])):
         root = tmp_path / label
         assert main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--probes", "EK",
-                     "--types", "1", "--copies", "1", *extra,
+                     "--types", "1", "--copies", "1", "--gromacs", *extra,
                      "--workdir", str(root)]) == 0  # fmt: skip
     assert len(_bonds_of(tmp_path / "on" / "sim_000")) > len(
         _bonds_of(tmp_path / "off" / "sim_000")
@@ -491,6 +493,26 @@ def test_the_built_system_keeps_its_chains_and_positions():
     assert sorted({str(c) for c in wet.chains["name"]}) == ["", "A", "B"]  # solvent has none
     assert len(wet.select("chain A").ids) == len(s.select("chain A").ids)
     assert len(wet.select("resname W ION").ids) > 100
+
+
+def test_the_written_system_is_what_the_run_reads(tmp_path):
+    """cg.dms is what a run started from a built simulation reads, so it has to
+    carry the chains an early-stop target is named by, and the positions."""
+    from boonza.martini import martinize, solvate
+
+    aa = boonza.load(DATA / "1TEN.pdb").clone("protein")
+    peptide = boonza.peptide("KLVFF", conformation="extended")
+    peptide.positions = peptide.positions + (aa.positions.max(0) - aa.positions.min(0)) + 20.0
+    peptide.chains["name"][:] = "L"
+    both = aa.clone()
+    both.append(peptide)
+    m = solvate(martinize(both, "protein", elastic=True), padding=12.0, salt=0.15, seed=0)
+    s = m.system()
+    m.save(tmp_path / "martini", system=s)
+    back = boonza.load(tmp_path / "martini" / "cg.dms")
+    assert len(back.select("chain L").ids) == len(s.select("chain L").ids) == 15
+    assert back.nbonds == s.nbonds  # the elastic network among them
+    assert np.allclose(np.asarray(back.positions), np.asarray(s.positions))
 
 
 def test_a_martini_run_stretches_its_intervals():
@@ -604,7 +626,7 @@ def test_a_run_holds_only_what_it_is_told_to(tmp_path):
     for label, extra in (("all", []), ("receptor", ["--elastic-selection", "chain A"])):
         where = tmp_path / label
         args = parse_arguments([str(tmp_path / "complex.pdb"), "--model", "martini3", *extra,
-                                "--workdir", str(where / "run")])  # fmt: skip
+                                "--gromacs", "--workdir", str(where / "run")])  # fmt: skip
         build_martini_system(args, where, log=lambda *_: None)
         counts[label] = [
             len(_bonds_of_itp(where / "martini" / f"molecule_{k}.itp")) for k in (0, 1)
@@ -694,8 +716,15 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     viewing = m.for_viewing(whole)
     assert viewing.natoms == whole.natoms
     assert viewing.nbonds == whole.nbonds - len(bands)
-    names = [str(n) for n in whole.atoms["name"]]
-    assert [str(n) for n in viewing.atoms["name"]] == names  # same order, for the trajectory
+    # the backbone is named CA in the view, which is what a viewer traces a
+    # chain through; the topology keeps Martini's BB
+    assert len(viewing.select("name CA").ids) == len(whole.select("name BB").ids) > 50
+    assert not len(viewing.select("name BB").ids)
+    assert not len(whole.select("name CA").ids)
+    kept = m.for_viewing(whole, backbone_as_ca=False)
+    assert len(kept.select("name BB").ids) == len(whole.select("name BB").ids)
+    side = [str(n) for n in whole.atoms["name"] if str(n) != "BB"]
+    assert [str(n) for n in viewing.atoms["name"] if str(n) != "CA"] == side  # rest untouched
     for i, j in bands[:5]:
         assert viewing.find_bond(viewing.atom(i), viewing.atom(j)) is None
 
@@ -703,15 +732,23 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     assert without.elastic_bonds() == []
 
 
-def test_a_martini_run_writes_what_a_viewer_wants(tmp_path):
+@pytest.mark.parametrize("elastic", [[], ["--no-elastic"]])
+def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
+    """Written whether or not there is a network to leave out: the backbone is
+    named CA either way, which is what the file is for."""
     from boonza.md.prepare import build_martini_system
 
-    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *elastic,
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
     view = boonza.load(tmp_path / "view.dms")
     assert (tmp_path / "view.mae").is_file()
-    assert view.natoms == s.natoms and view.nbonds < s.nbonds
+    assert view.natoms == s.natoms
+    assert len(view.select("name CA").ids) == len(s.select("name BB").ids)  # for a viewer
+    assert [str(r) for r in view.residues["name"]] == [str(r) for r in s.residues["name"]]
+    # the rubber bands are left out where there are any; "elastic" here is the
+    # flag that switches the network off, so an empty one means it is on
+    assert view.nbonds == (s.nbonds if elastic else s.nbonds - 354)
     # the coordinates it carries are the built ones, not a .gro's
     assert np.allclose(np.asarray(view.positions), np.asarray(s.positions))
 
@@ -722,3 +759,71 @@ def test_the_default_work_directories():
 
     source = swim.main.__code__.co_consts
     assert any(c == "boonza_swim" for c in source if isinstance(c, str))
+
+
+def test_a_coarse_grained_swim_needs_a_model_it_can_map(tmp_path):
+    """boonza martinizes as Martini 3, so a Martini 2 swim would label a Martini 3
+    system as Martini 2 rather than build one."""
+    from boonza.md.swim import main
+
+    code = main([str(DATA / "1TEN.pdb"), "--model", "martini2", "--probes", "EK",
+                 "--workdir", str(tmp_path / "swim")])  # fmt: skip
+    assert code == 1
+    assert not any((tmp_path / "swim").glob("sim_*/martini"))
+
+
+@pytest.mark.parametrize("model", ["martini3", "sirah"])
+def test_an_all_atom_structure_is_still_mapped(model, tmp_path):
+    """A structure has no force field on it, so it is coarse-grained as before;
+    only a file that already carries beads and their parameters runs as it is."""
+    from boonza.md.prepare import build_martini_system, build_sirah_system
+
+    name = "1CRN_ph7.pdb" if model == "sirah" else "1TEN.pdb"
+    where = DATA / "sirah" / name if model == "sirah" else DATA / name
+    args = parse_arguments([str(where), "--model", model, "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    build = build_sirah_system if model == "sirah" else build_martini_system
+    s, _ = build(args, tmp_path, log=lambda *_: None)
+    beads = "GN GC GO" if model == "sirah" else "BB"
+    assert len(s.select(f"name {beads}").ids) > 40  # mapped, not run as it is
+    assert not len(s.select("hydrogen").ids)
+
+
+def test_a_parameterized_structure_is_mapped_too(tmp_path):
+    """Heavy atoms with a force field on them are still a structure to map: it is
+    the model's own beads that say a file is one boonza built."""
+    from boonza.md.prepare import build_martini_system
+
+    aa = boonza.load(DATA / "1TEN.pdb")
+    heavy = aa.clone(aa.select("not hydrogen").ids)
+    table = heavy.add_nonbonded_from_schema()  # a force field, of a kind, and no beads
+    param = table.params.add_param(sigma=3.0, epsilon=0.1)
+    for atom in range(heavy.natoms):
+        table.add_term([atom], param)
+    boonza.save(heavy, tmp_path / "heavy.dms")
+    args = parse_arguments([str(tmp_path / "heavy.dms"), "--model", "martini3", "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    assert len(s.select("name BB").ids) > 40
+
+
+@pytest.mark.parametrize("model", ["martini3", "sirah"])
+def test_the_gromacs_form_is_written_only_when_it_is_asked_for(model, tmp_path):
+    """A run reads cg.dms, which carries the parameters; --gromacs adds the same
+    system in GROMACS's form beside it, for running or checking it there."""
+    from boonza.md.cgswim import prepare
+
+    name = "sirah/1CRN_ph7.pdb" if model == "sirah" else "1TEN.pdb"
+    built = "sirah" if model == "sirah" else "martini"
+    for flag, wanted in ((None, False), ("--gromacs", True)):
+        where = tmp_path / (flag or "default")
+        args = parse_arguments([str(DATA / name), "--model", model, *([flag] if flag else []),
+                                "--padding-nm", "1.0", "--workdir", str(where)])  # fmt: skip
+        (d,) = prepare(args, ["EK"], types=1, copies=1, log=lambda *_: None)
+        assert (d / built / "cg.dms").is_file()  # what the run reads, either way
+        assert (d / built / "topol.top").is_file() is wanted
+        assert (d / built / "cg.gro").is_file() is wanted
+        if model == "sirah":
+            assert (d / built / "sirah.ff").is_dir() is wanted
+        settings = parse_arguments(["--config", str(d / "md.toml")])
+        assert Path(settings.input_structure).name == "cg.dms"

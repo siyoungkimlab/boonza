@@ -124,53 +124,72 @@ least `--clearance` Å (3) from the protein's and the other ligands' heavy
 atoms. Placement is seeded by `seed` and the simulation's number, so it is
 reproducible. The box is then filled with water and ions as `boonza md` does.
 
-## Coarse-grained probes (`--model martini3`)
+## Coarse-grained probes (`--model martini3`, `--model sirah`)
 
-Martini has no general way to parameterize a small molecule, so a
-coarse-grained swim uses **dipeptides** as probes instead of a ligand
+Neither Martini nor SIRAH has a general way to parameterize a small molecule,
+so a coarse-grained swim uses **dipeptides** as probes instead of a ligand
 library: every amino acid is already parameterized, so a probe needs nothing
 new.
 
 ```bash
 boonza swim protein.pdb --model martini3 --production-ns 500
 boonza swim protein.pdb --model martini3 --probes RR EK FF --types 3 --copies 6
+boonza swim protein.pdb --model sirah --production-ns 500
 ```
+
+The probes are the same 105 in either model, so a surface mapped in one reads
+against the other; what differs is the resolution and how the protein is held.
 
 - **The probes** are the 105 dipeptides of 14 residues: Arg, Gln, Glu, His,
   Ile, Leu, Lys, Met, Phe, Pro, Ser, Thr, Trp and Tyr. Ala, Gly and Val are
   too small to say much, Asp and Asn are left to Glu and Gln, and Cys is
-  left out. XY and YX are one probe, since in Martini they differ only in
-  which backbone bead carries which side chain. `--probes` takes a list
-  instead.
+  left out. XY and YX are one probe: they differ only in which backbone bead
+  carries which side chain. `--probes` takes a list instead.
 - **Each probe is free**: no secondary structure, no side-chain corrections
-  and no elastic network. Both ends are neutral, so only the side chains
-  carry charge — Arg and Lys +1, Glu −1, His neutral, as at pH 7. Its
-  residues take the probe's own name (`EK`), so the analysis can tell probes
-  from protein.
+  and no elastic network. Both ends are neutral (SIRAH's `Neutral` termini),
+  so only the side chains carry charge — Arg and Lys +1, Glu −1, His neutral,
+  as at pH 7, and the two models agree probe for probe. Its residues take the
+  probe's own name (`EK`), so the analysis can tell probes from protein. In
+  the topology the molecule is `probe_EK`, since a probe named `KW` would
+  otherwise be SIRAH's potassium.
 - **The protein** is martinized with an elastic network, as in any Martini run
   (`--no-elastic` leaves it out), which holds its fold while its side chains
-  move. It is free to tumble; the analysis superposes the frames.
+  move; SIRAH is sirahized and holds its backbone with torsion terms of its
+  own, so it needs neither a network nor restraints (`--termini` chooses its
+  chain ends). It is free to tumble; the analysis superposes the frames.
 - **Simulations** hold `--types` probes (10) with `--copies` each (5), so
   the 105 probes are spread over 10 runs of about 50 probe molecules, near
   0.1 M. Probes are dealt round robin, so each run holds a spread of
   chemistry rather than all the Arg probes together.
 - **Repulsion is on by default** here, unlike an all-atom swim: probe
   clusters would otherwise read as hotspots. `--no-repulsion` turns it off.
-- **`--dihedral-restraint bb` or `ss`** holds the protein's BB-BB-BB-BB
-  torsions, as in an all-atom swim it holds phi and psi; the probes are left
-  free. It is worth adding when the protein is built without an elastic
-  network (`--no-elastic`), since Martini leaves loops free.
+- **`--dihedral-restraint bb` or `ss`** (Martini) holds the protein's
+  BB-BB-BB-BB torsions, as in an all-atom swim it holds phi and psi; the
+  probes are left free. It is worth adding when the protein is built without
+  an elastic network (`--no-elastic`), since Martini leaves loops free. A
+  SIRAH run takes no dihedral restraints, having its own.
+- **The water** is Martini's W beads, or SIRAH's WT4 with NaW and ClW ions;
+  the box is filled as `boonza md` fills it for that model.
 
-Each simulation directory holds the built topology (`martini/topol.top`),
-its `md.toml`, and `probes.json`, which records the probes so that the
-analysis needs no selections of its own:
+Each simulation directory holds the built system as `martini/cg.dms` or
+`sirah/cg.dms` -- beads with every parameter on them, which is what the run
+reads. With it go `md.toml`, `view.dms` and `view.mae` (the beads to look at:
+the backbone named CA and no rubber bands, copied into the run directory), and
+`probes.json`, which records the probes so that the analysis needs no
+selections of its own. `--gromacs` adds the GROMACS form of the same system
+(`topol.top`, a molecule `.itp` each, `cg.gro`, and for SIRAH the force field
+it includes), for running or checking a simulation there:
 
 ```bash
-boonza sites --workdir boonza_swim/sim_*/md      # aligns on BB beads, probes as ligands
+boonza sites --workdir boonza_swim/sim_*/md   # aligns on the backbone beads, probes as ligands
 ```
 
 Martini's resolution is a bead (about 0.47 nm), so the maps say which
-chemistry a pocket likes and where, not how a ligand poses in it.
+chemistry a pocket likes and where, not how a ligand poses in it. SIRAH is
+finer — two to five beads a side chain, and its hydroxyl hydrogens are beads
+of their own — so the same run says more about direction, for about twice the
+beads (crambin in the same 5.2 nm box of water: 1016 beads in Martini, 1713 in
+SIRAH) and PME rather than a reaction field.
 
 ### Reading a coarse-grained swim
 
@@ -187,11 +206,15 @@ with `--by probe` for the probes themselves and `-o` for the whole table as
 CSV. `boonza.probe_contacts` is the same thing in Python.
 
 `boonza sites` and `boonza poses` work too, and fill in what a
-coarse-grained run needs: `sites --workdir` aligns on `name BB` and takes the
-probes from `probes.json`, and `poses` builds its pocket from `name BB` and
-asks which probe to pose. But they answer a different question — where a
-ligand *settles* — and Martini probes mostly touch and leave, so they often
+coarse-grained run needs: they align on, and build their pocket from, whichever
+backbone beads the model has — `name BB` under Martini, `name GN GC GO` under
+SIRAH — and `sites --workdir` takes the probes from `probes.json`, while
+`poses` asks which probe to pose. But they answer a different question — where
+a ligand *settles* — and Martini probes mostly touch and leave, so they often
 find nothing where `boonza probes` still shows a clear preference.
+
+`boonza probes` is not tied to a swim: `--probes RESNAME ...` names them, so it
+reads any coarse-grained run, SIRAH's included, or molecules of your own.
 
 `sites --features` works on beads too. RDKit types a ligand's atoms, and a
 bead has no element or valence to read, so a Martini probe is typed by what
@@ -218,3 +241,25 @@ and the acceptor are told apart.
 The backbone is left out: every probe carries the same amide backbone, and
 typing it would mark everywhere any probe went. `--feature-backbone` puts it
 back in (donor and acceptor).
+
+**SIRAH is finer here**, and its own type names say what each bead is, so its
+table (`boonza.sirah.features`) needs no guessing either:
+
+| group | beads | families |
+|---|---|---|
+| Ser, Thr hydroxyl | `BOG` the oxygen, `BPG` its hydrogen | acceptor **and** donor, separately |
+| Tyr phenol | `BCE2` the oxygen, `BCE1` its hydrogen | acceptor, donor |
+| Trp indole | `BNE` the nitrogen, `BPE` its hydrogen | acceptor, donor |
+| His ring nitrogens | the protonated one is the positive one | donor, acceptor, by charge |
+| Lys, Arg | the charged nitrogen beads | donor, cation |
+| Asp, Glu | the carboxyl oxygen beads | acceptor, anion |
+| Phe, Tyr, Trp, His | the ring beads | aromatic, at their centre |
+
+Where Martini has one bead that must be called both donor and acceptor, SIRAH
+gives the hydroxyl's oxygen and its hydrogen a bead each, so the two features
+sit a bond apart. On crambin the table finds 17 donors, 17 acceptors, 29
+hydrophobes, 6 cations, 6 anions and 3 aromatics — its Phe13, Tyr29 and Tyr44.
+
+The names are SIRAH 2.2's, plus the protonated histidine of 2.4 (`sHp`). A
+topology built by tleap carries that release's own names throughout; rather
+than quietly find nothing, `--features` refuses and says so.

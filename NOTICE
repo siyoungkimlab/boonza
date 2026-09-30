@@ -299,3 +299,30 @@ published there.  Enamine states no licence with the files themselves; its
 site terms (https://enamine.net/terms-of-use) restrict redistributing
 catalogue content.  The structures themselves come from the published
 fragment sets cited above.
+
+------------------------------------------------------------------------
+src/boonza/data/sirah/sirah_x2.2.zip is part of the SIRAH force field,
+release of July 2020 (sirah_x2.2_20-07.ff, https://www.sirahff.com),
+unchanged: its parameter files, residue libraries, termini and special-bond
+tables, its water and ions with their equilibrated boxes, and the mapping
+files boonza reads to place beads (`tools/CGCONV/maps/*.map`, which are data,
+not code).  The release's own `0README`, which carries the notice below and
+the references it asks for, is inside the archive, together with its
+`forcefield.doc` and `0ISSUES`.  The CGCONV script itself
+(`tools/CGCONV/cgconv.pl`, which its header licenses under the GNU General
+Public License version 2) is **not** included, nor are the tutorials and
+example structures; boonza maps structures and builds topologies itself.
+
+A run directory gets only the files its topology includes -- the parameters
+and the solvent -- since that is what a run needs; `boonza.sirah.unpack(dir,
+everything=True)` writes the release as it ships, documentation and all.
+
+  The SIRAH force field version Jul. 2020 (c)
+  Developed by the Group of Biomolecular Simulations
+  Institut Pasteur de Montevideo
+
+  Legal declaimer: Copyright (c) 2014, Montevideo, Uruguay.
+
+The release states no licence beyond that notice.  Please cite SIRAH when
+you use it; `src/boonza/data/sirah/README.md` lists the references the
+release asks for, as does the `0README` inside the archive.

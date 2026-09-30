@@ -152,7 +152,7 @@ ligands included.
 
 | Setting | Default | |
 |---|---|---|
-| `model` (`--model`) | `aa` | `martini3` or `martini2` coarse-grain instead; see [Martini runs](#martini-runs) |
+| `model` (`--model`) | `aa` | `martini3`, `martini2` or `sirah` coarse-grain instead; see [Martini runs](#martini-runs) and [SIRAH runs](#sirah-runs) |
 | `forcefields` (`-f`, `-m`) | see above | viparr force fields, or OpenMM XML files (all-atom only) |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
@@ -161,6 +161,7 @@ ligands included.
 | `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
 | `elastic_selection` | every molecule | Martini only: hold only these residues with the elastic network, e.g. `chain A` to leave a bound peptide free |
 | `elastic`, `cg_selection`, `neutral_termini` | **on under Martini**, `protein`, off | Martini only: an elastic network holding the protein's fold, which Martini does not keep without one (`--no-elastic` to leave it out); which atoms to coarse-grain; uncharged chain ends |
+| `gromacs` | off | coarse-grained only: write the built system in GROMACS's form too (`topol.top`, an `.itp` per molecule, `cg.gro`, and for SIRAH the force field it includes), for running or checking it there; boonza runs from `cg.dms`, which carries the parameters |
 | `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
 | `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
 | `lipid_itp`, `martini_itp` | the carried files | parameter files of your own |
@@ -187,12 +188,18 @@ rerunning the command, `status.json`, the reporters, the early-stop monitor --
 is shared; what changes is how the system is built and which numbers it starts
 from:
 
-| | `aa` | `martini3` / `martini2` |
-|---|---|---|
-| parameters | force fields, applied by viparr or OpenMM | carried by the beads, from the topology |
-| `temperature` | 298 K | 310 K |
-| `integration_fs` | 2 | 20, reached through 2, 5 and 10 fs |
-| `cutoff_nm` | 0.9 | 1.1, with GROMACS's reaction field and shifted Lennard-Jones |
+| | `aa` | `martini3` / `martini2` | `sirah` |
+|---|---|---|---|
+| parameters | force fields, applied by viparr or OpenMM | carried by the beads, from the topology | the same |
+| `integration_fs` | 2 | 20, reached through 2, 5 and 10 fs | 20, the same way |
+| `cutoff_nm` | 0.9 | 1.1, with GROMACS's reaction field and shifted Lennard-Jones | 1.2, with PME and shifted Lennard-Jones |
+| `checkpoint_interval_ns` | 0.01 | 0.1 | 0.1 |
+| `monitor_interval_ns`, `confirmation_checks` | 0.1, 2 | 0.2, 3 | 0.2, 3 |
+| pocket, contact, detach (nm) | 0.5, 0.5, 0.8 | 0.8, 0.7, 1.2 | 0.8, 0.7, 1.2 |
+
+`temperature` is **not** among them: one default (298 K) serves every model.
+Each force field's own papers run at their own -- 310 K for Martini membranes,
+300 K for SIRAH -- which is a number to give rather than to inherit.
 
 Anything given by hand still wins: the model only fills what you left out.
 Settings that belong to the other resolution are refused rather than ignored
@@ -279,6 +286,122 @@ batch schedulers make) starts a new run. A restart loads `system.xml`,
 rewritten only after the restart passes its checks. The time step cannot
 change on a restart.
 
+## SIRAH runs
+
+`--model sirah` runs a [SIRAH](https://www.sirahff.com) system. SIRAH keeps
+its parameters in its topology as Martini does, but carries explicit charges
+and runs with **PME** inside 1.2 nm, at the settings of its own mdp files
+(`tutorial/7/md_CGPROT.mdp` of the GROMACS distribution).
+
+boonza carries the force field, maps a structure onto beads and fills the box
+with SIRAH's own water, so a PDB or MAE goes straight in:
+
+```bash
+boonza md protein.pdb --model sirah --production-ns 1000    # mapped and solvated here
+boonza md protein.pdb --model sirah --no-solvate            # beads in a box, no water
+boonza md topol.top   --model sirah                         # a topology already built
+boonza md sirah/cg.dms --model sirah                        # a system boonza built, as it is
+```
+
+The mapping is SIRAH's own: each bead sits on one named atom (`GC` on CA,
+`GN` on N, `GO` on the carbonyl O, the side chain on the atoms its map
+names), and the beads come out in the order SIRAH's residue library lists
+them. **DNA works the same way**, from the same files: a nucleotide at a
+strand's end takes its own building block (`DAX` in the middle, `AX5` at the
+5' end, `AX3` at the 3'), as SIRAH's `.r2b` table says, and the sugar bead is
+renamed `C1X` to `O3'` as its `.arn` file asks. A 20-mer duplex comes out as
+two strands of 238 beads, with the 276 bonds, 342 pairs, 430 angles and 580
+dihedrals pdb2gmx builds, and every energy term equal. From that library come the bonds, the impropers and the charges; the
+angles, the dihedrals and the 1-4 pairs follow from the bonds as pdb2gmx
+generates them, and cysteines whose `BSG` beads are within 2 Å are bridged.
+`--termini` chooses the chain ends (`Charged`, `Neutral`, or `None` to keep
+the residues' own charges).
+
+What it writes is `sirah/cg.dms`, the built system with its parameters on it;
+with `--gromacs`, `sirah/topol.top`, a molecule `.itp` each, the force field in
+`sirah/sirah.ff` and `cg.gro` go out too, and that directory runs anywhere.
+`sirah.ff` holds what the topology includes and what those files
+include in turn -- the parameters and the solvent, eight files -- and nothing
+else: the residue libraries, the water box, the mapping files and the
+release's own documentation are read from the archive boonza carries where
+they are needed, not copied into every run. `boonza.sirah.unpack(directory,
+everything=True)` writes the release as it ships, for running SIRAH's own
+tools beside it (pdb2gmx reads the residue libraries).
+
+**`cg.dms` is the whole system**, parameters included: boonza's own format
+holds every table the topology gave it, so a run started from it needs neither
+the topology nor the force field beside it (delete both and it still runs).
+That is what a run reads, and what a coarse-grained `boonza swim` points its
+simulations at. A file that carries beads and a force field runs as it is
+under `--model sirah` or `--model martini3`, rather than being mapped again --
+except `view.dms`, which is refused, since its backbone bead is named CA and a
+Martini view carries no elastic network.
+
+**`--gromacs`** (off by default) writes the same system in GROMACS's form
+beside it as well -- `topol.top`, an `.itp` per molecule, `cg.gro`, and for
+SIRAH the eight files the topology includes -- for running it in GROMACS or
+checking boonza against it (`gmx grompp -f md.mdp -p topol.top -c cg.gro`).
+Without it, only `cg.dms` is written, since that is all a run needs.
+
+**Water and ions.** The box is filled from the force field's own equilibrated
+WT4 box, tiled whole -- the box grows to a multiple of its 1.72 nm edge, so
+the water meets itself as it was equilibrated and only the solute displaces
+any; cut mid-tile, a slab of water goes missing at every face and the fill
+comes out a fifth thin. A WT4 molecule with any bead within 3 Å of the solute
+is left out, as SIRAH's own tutorial removes them. Then NaW and ClW replace
+whole waters at least 5 Å from the solute: enough to cancel its charge, then
+pairs until `saltM` is reached, counted as SIRAH counts it (one pair per 34
+waters is about 0.15 M).
+
+Worth knowing: the shipped `wt416.gro` is about 7% denser than WT4's own
+equilibrium at 300 K and 1 bar. Run that box under NPT and it expands to
+0.972 g/mL, in GROMACS and in boonza alike (147.8 against 147.6 nm³ for the
+same 432 waters) -- so a fresh box that starts a few per cent thin is at the
+right place, and it contracts rather than collapsing.
+
+The coordinates are looked for beside the topology, the least rounded first:
+`topol.dms`, `topol.mae`, `topol.gro`, `topol.pdb`, then `cg.*`. A `.gro`
+keeps three decimals in nm and a `.pdb` three in Å, so a `.dms` or `.mae` of
+the same name is preferred where there is one.
+
+Its energies are GROMACS's. For an 8-residue helix in 224 WT4 waters, term by
+term (kJ/mol): bonds 2225.27 against 2225.28, angles 428.59 against 428.59,
+dihedrals 314.42 against 314.42, Lennard-Jones 206934.43 against 206934, and
+the total within 1 part in 10⁵. The topology boonza builds is the one pdb2gmx
+builds: for crambin, the same 205 beads, 219 bonds, 263 pairs, 285 angles,
+303 proper and 37 improper dihedrals, and every energy term equal to the last
+digit. Two things had to be fixed to get there: a
+dihedral of multiplicity above 6, which SIRAH's backbone uses (`dihedral_trig`
+holds up to 6, as msys's does, so higher terms go in `dihedral_periodic`), and
+1-4 interactions generated by `gen-pairs`, which follow `[ nonbond_params ]`
+where it names the pair rather than the combination rule.
+
+Note that SIRAH's own mdp files set `fourierspacing 0.2`, which leaves the
+reciprocal sum about 100 kJ/mol short on a system of a few thousand beads;
+that is a fine setting for forces, and boonza's PME is tighter.
+
+A SIRAH run writes `view.dms` and `view.mae` too, with `GC` named `CA`. There
+the name is simply what the bead is: SIRAH's map places `GC` on the alpha
+carbon itself (`MAP CA => GC`), where Martini's `BB` stands for the whole
+backbone.
+
+Protonation is whatever the topology was built with, since SIRAH's own tools
+choose it: 2.2 has the two neutral histidines (`sHe`, `sHd`) and no charged
+one, while 2.4 adds `sHp` (+1) as well as neutral Asp and Glu. Martini decides
+it from the hydrogens instead — a histidine with both ring nitrogens
+protonated comes out +1, one with a single hydrogen neutral, residue by
+residue.
+
+`boonza swim --model sirah` swims dipeptide probes around a SIRAH protein, as
+`--model martini3` does around a martinized one; see
+[Coarse-grained probes](swim.md#coarse-grained-probes---model-martini3---model-sirah).
+Dihedral restraints are refused here, since SIRAH's backbone holds its fold
+with torsion terms of its own where Martini needs a network or restraints.
+
+Not yet: SIRAH's lipids, whose library and mapping files are carried (for the
+atomistic force fields SIRAH maps from) but not yet assembled here. Glycans
+are in SIRAH's AMBER release rather than this one.
+
 ## Backbone restraints
 
 `dihedral_restraint = "bb"` restrains every backbone phi and psi across an
@@ -296,7 +419,9 @@ the secondary structure from `secondary.txt`, which boonza writes beside
 the topology it builds; without it, use `"bb"`. Note that Martini already
 holds helices with its own dihedral, and sheets with short elastic bonds,
 so these restraints matter most for a protein built without an elastic
-network, or for the loops that Martini leaves free.
+network, or for the loops that Martini leaves free. A SIRAH run takes no
+dihedral restraints at all: its backbone is three beads a residue, held by
+torsion terms of the force field's own.
 
 ## Stopping when a binder leaves
 
@@ -371,7 +496,7 @@ it is seeded.
 | `final.pdb`, `.mae` | the latest coordinates |
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
-| `view.dms`, `view.mae` | Martini with an elastic network: the system without its rubber bands, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
+| `view.dms`, `view.mae` | every coarse-grained run: what to open in a viewer -- the backbone bead named `CA`, so a chain is traced, and no elastic network, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
 | `status.json` | how far the run got, and how it ended |
 | `pocket.json`, `monitor.csv` | with early stop |

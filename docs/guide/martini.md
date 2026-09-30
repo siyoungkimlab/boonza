@@ -231,7 +231,7 @@ Run membranes with semi-isotropic pressure: OpenMM's
 
 `boonza swim --model martini3` maps a protein's surface with dipeptide
 probes, which need no parameterization of their own; see
-[swim](swim.md#coarse-grained-probes---model-martini3).
+[swim](swim.md#coarse-grained-probes---model-martini3---model-sirah).
 `boonza.martini.probes` builds them:
 
 ```python
@@ -242,9 +242,19 @@ probe("EK")  # a martinized Glu-Lys probe, ends neutral, free to bend
 ```
 
 `Martinized.for_viewing()` gives the same system without its elastic network,
-which `boonza md` writes as `view.dms` and `view.mae`: the bands are bonds
-like any other, and a viewer draws every one of them. Everything else is kept,
+which `boonza md` writes as `view.dms` and `view.mae` for every run, network
+or not: the bands are bonds like any other, and a viewer draws every one of
+them. Everything else is kept,
 atom for atom and in order, so a trajectory still lines up.
+
+It also names the backbone bead `CA`, because that is what a viewer traces a
+chain through -- with `BB` most of them draw beads and nothing more. That is a
+name for looking at, not for working with, and only these files carry it: the
+bead stands for the whole backbone (N, CA, C and O together), and consecutive
+ones sit about 0.35 nm apart where alpha carbons sit 0.38 apart, so anything
+measured as `CA` geometry would be quietly wrong. The topology, the run's own
+`solvated.dms` and every selection keep Martini's `BB`. Pass
+`backbone_as_ca=False` to leave it.
 
 `Martinized.system()` reads the topology back for its parameters but keeps
 the bead positions it holds, so nothing is rounded to a `.gro`'s three
