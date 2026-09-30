@@ -299,6 +299,7 @@ with SIRAH's own water, so a PDB or MAE goes straight in:
 boonza md protein.pdb --model sirah --production-ns 1000    # mapped and solvated here
 boonza md protein.pdb --model sirah --no-solvate            # beads in a box, no water
 boonza md topol.top   --model sirah                         # a topology already built
+boonza md sirah/cg.dms --model sirah                        # a system boonza built, as it is
 ```
 
 The mapping is SIRAH's own: each bead sits on one named atom (`GC` on CA,
@@ -324,6 +325,16 @@ release's own documentation are read from the archive boonza carries where
 they are needed, not copied into every run. `boonza.sirah.unpack(directory,
 everything=True)` writes the release as it ships, for running SIRAH's own
 tools beside it (pdb2gmx reads the residue libraries).
+
+**`cg.dms` is the whole system**, parameters included: boonza's own format
+holds every table the topology gave it, so a run started from it needs neither
+the topology nor the force field beside it (delete both and it still runs).
+That is what a coarse-grained `boonza swim` points its simulations at; the
+topology and `sirah.ff` are there for GROMACS, and `save(directory,
+forcefield=False)` leaves the force field out. A file that carries beads and a
+force field runs as it is under `--model sirah` or `--model martini3`, rather
+than being mapped again -- except `view.dms`, which is refused, since its
+backbone bead is named CA and a Martini view carries no elastic network.
 
 **Water and ions.** The box is filled from the force field's own equilibrated
 WT4 box, tiled whole -- the box grows to a multiple of its 1.72 nm edge, so

@@ -523,12 +523,14 @@ class Sirahized:
         lines += [f"{n} {c}" for n, c in self.solvent if c]
         return "\n".join(lines) + "\n"
 
-    def save(self, directory, forcefield: bool = True) -> Path:
+    def save(self, directory, forcefield: bool = True, system=None) -> Path:
         """Write the topology, its molecules and the force field it needs.
 
-        With ``forcefield`` the carried files are written to ``sirah.ff``
-        beside the topology, so the directory runs anywhere, in GROMACS as
-        well as here.
+        With ``forcefield`` the files the topology includes are written to
+        ``sirah.ff`` beside it, so the directory runs in GROMACS as well as
+        here; ``cg.dms`` carries the parameters itself, so a run of boonza's
+        own needs neither.  ``system`` is the built system when the caller
+        already has one, which saves building it again.
         """
         from ..io import save as save_structure
 
@@ -539,7 +541,7 @@ class Sirahized:
         for k, mol in enumerate(self.molecules):
             (out / f"{mol.name}.itp").write_text(self.itp(k))
         (out / "topol.top").write_text(self.top())
-        built = self.system()
+        built = self.system() if system is None else system
         save_structure(built, out / "cg.dms")  # what boonza reads back, unrounded
         save_structure(built, out / "cg.gro")  # what GROMACS needs, rounded to 0.001 nm
         return out / "topol.top"

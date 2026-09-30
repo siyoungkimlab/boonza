@@ -106,6 +106,18 @@ def build_sirah(protein, probes, copies: int, box, rng, salt: float = 0.15,
     return solvate(system, box=box, salt=salt, seed=int(rng.integers(1 << 30)), log=log)
 
 
+def _built_system(system, martini_itp=None):
+    """The mapped system with its parameters on it, or None when they are named
+    to be resolved somewhere else (a bare ``--martini-itp``) and cannot be read
+    here.  Without them there is no ``cg.dms``: the topology is what runs."""
+    from ..io import GromacsError
+
+    try:
+        return system.system() if martini_itp is None else system.system(martini_itp)
+    except (GromacsError, FileNotFoundError):
+        return None
+
+
 def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             clearance: float = CLEARANCE, log=print, repel: bool = True,
             elastic: bool = True) -> list[Path]:  # fmt: skip
@@ -175,21 +187,28 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             system = build_sirah(protein, probes, copies, box, rng, args.saltM, clearance,
                                  log=log if s == 0 else None)  # fmt: skip
             built = d / "sirah"
-            system.save(built)  # the force field beside it, .dms and .gro both
-            viewing = system.for_viewing()
+            whole = _built_system(system)
+            system.save(built, system=whole)  # the force field beside it, .dms and .gro both
         else:
             system = build(protein, probes, copies, box, rng, args.saltM, clearance)
             built = d / "martini"
-            system.save(built, martini_itp=args.martini_itp)  # .dms and .gro both
-            viewing = system.for_viewing(martini_itp=args.martini_itp)
+            whole = _built_system(system, args.martini_itp)
+            system.save(built, martini_itp=args.martini_itp, system=whole)  # .dms and .gro
             if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
                 (built / "secondary.txt").write_text(protein.ss + "\n")
-        # what to open in a viewer: the backbone named CA and no rubber bands.
-        # The run reads the topology, which carries neither, so it copies these.
-        for suffix in (".dms", ".mae"):
-            save(viewing, built / f"view{suffix}")
+        if whole is not None:
+            # what to open in a viewer: the backbone named CA and no rubber bands
+            viewing = (system.for_viewing(whole) if sirah else
+                       system.for_viewing(whole, martini_itp=args.martini_itp))  # fmt: skip
+            for suffix in (".dms", ".mae"):
+                save(viewing, built / f"view{suffix}")
+        # the run reads cg.dms, which carries every parameter the topology gave
+        # it, so it needs neither the topology nor the force field beside it;
+        # with parameters named to be resolved elsewhere there is no cg.dms to
+        # read, and the run reads the topology as GROMACS would
+        run_from = built / ("cg.dms" if whole is not None else "topol.top")
         settings = {**settings_of(args), "model": args.model, "solvate": "none",
-                    "input_structure": str((built / "topol.top").resolve()),
+                    "input_structure": str(run_from.resolve()),
                     "workdir": str((d / "md").resolve())}  # fmt: skip
         # what built the system, and what only an all-atom run has, are not its
         # settings; nor is the other model's (a SIRAH run takes no elastic network)

@@ -102,7 +102,9 @@ def test_a_prepared_simulation(tmp_path):
     assert settings.repulsion_selection == "resname " + " ".join(written["probes"])
     assert settings.production_ns == 10.0
     assert not settings.forcefields  # nothing all-atom came along
-    assert Path(settings.input_structure) == (d / "martini" / "topol.top").resolve()
+    # the run reads the built system, which carries its parameters; the topology
+    # beside it is what GROMACS would read
+    assert Path(settings.input_structure) == (d / "martini" / "cg.dms").resolve()
     assert (tmp_path / "swim" / "assignment.csv").is_file()
     assert (tmp_path / "swim" / "simulations.txt").read_text().count("boonza md") == 2
 
@@ -493,6 +495,26 @@ def test_the_built_system_keeps_its_chains_and_positions():
     assert len(wet.select("resname W ION").ids) > 100
 
 
+def test_the_written_system_is_what_the_run_reads(tmp_path):
+    """cg.dms is what a run started from a built simulation reads, so it has to
+    carry the chains an early-stop target is named by, and the positions."""
+    from boonza.martini import martinize, solvate
+
+    aa = boonza.load(DATA / "1TEN.pdb").clone("protein")
+    peptide = boonza.peptide("KLVFF", conformation="extended")
+    peptide.positions = peptide.positions + (aa.positions.max(0) - aa.positions.min(0)) + 20.0
+    peptide.chains["name"][:] = "L"
+    both = aa.clone()
+    both.append(peptide)
+    m = solvate(martinize(both, "protein", elastic=True), padding=12.0, salt=0.15, seed=0)
+    s = m.system()
+    m.save(tmp_path / "martini", system=s)
+    back = boonza.load(tmp_path / "martini" / "cg.dms")
+    assert len(back.select("chain L").ids) == len(s.select("chain L").ids) == 15
+    assert back.nbonds == s.nbonds  # the elastic network among them
+    assert np.allclose(np.asarray(back.positions), np.asarray(s.positions))
+
+
 def test_a_martini_run_stretches_its_intervals():
     """0.01 ns is 500 steps at 20 fs against 5000 at 2 fs, so the checkpoint
     and the monitor move out with the step; anything asked for still wins."""
@@ -748,3 +770,38 @@ def test_a_coarse_grained_swim_needs_a_model_it_can_map(tmp_path):
                  "--workdir", str(tmp_path / "swim")])  # fmt: skip
     assert code == 1
     assert not any((tmp_path / "swim").glob("sim_*/martini"))
+
+
+@pytest.mark.parametrize("model", ["martini3", "sirah"])
+def test_an_all_atom_structure_is_still_mapped(model, tmp_path):
+    """A structure has no force field on it, so it is coarse-grained as before;
+    only a file that already carries beads and their parameters runs as it is."""
+    from boonza.md.prepare import build_martini_system, build_sirah_system
+
+    name = "1CRN_ph7.pdb" if model == "sirah" else "1TEN.pdb"
+    where = DATA / "sirah" / name if model == "sirah" else DATA / name
+    args = parse_arguments([str(where), "--model", model, "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    build = build_sirah_system if model == "sirah" else build_martini_system
+    s, _ = build(args, tmp_path, log=lambda *_: None)
+    beads = "GN GC GO" if model == "sirah" else "BB"
+    assert len(s.select(f"name {beads}").ids) > 40  # mapped, not run as it is
+    assert not len(s.select("hydrogen").ids)
+
+
+def test_a_parameterized_structure_is_mapped_too(tmp_path):
+    """Heavy atoms with a force field on them are still a structure to map: it is
+    the model's own beads that say a file is one boonza built."""
+    from boonza.md.prepare import build_martini_system
+
+    aa = boonza.load(DATA / "1TEN.pdb")
+    heavy = aa.clone(aa.select("not hydrogen").ids)
+    table = heavy.add_nonbonded_from_schema()  # a force field, of a kind, and no beads
+    param = table.params.add_param(sigma=3.0, epsilon=0.1)
+    for atom in range(heavy.natoms):
+        table.add_term([atom], param)
+    boonza.save(heavy, tmp_path / "heavy.dms")
+    args = parse_arguments([str(tmp_path / "heavy.dms"), "--model", "martini3", "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
+    assert len(s.select("name BB").ids) > 40

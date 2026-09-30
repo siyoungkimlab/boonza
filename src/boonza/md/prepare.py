@@ -403,24 +403,55 @@ def _coordinates_beside(top: Path) -> Path:
                      f"{top.stem}.dms, .mae or .gro (or cg.gro)")  # fmt: skip
 
 
-def _views_beside(top: Path, workdir: Path, log=print) -> int:
-    """Copy the view files written beside a built topology into the run.
+#: The beads that say a coarse-grained file of each model is one boonza built,
+#: and the ones that say it is the file written for viewing instead.
+BUILT_BEADS = {"martini": ("BB",), "sirah": ("GN", "GC", "GO")}
+VIEWED_BEADS = {"martini": ("CA", "SC1"), "sirah": ("CA", "GN", "GO")}
+
+
+def _already_built(s: System, model: str, path: Path) -> bool:
+    """Whether the input is a coarse-grained system boonza built: beads with a
+    force field on them, which run as they are.
+
+    A ``cg.dms`` carries every parameter the topology gave it -- boonza's own
+    format holds them all -- so a run needs neither the topology nor the force
+    field files beside it.  A structure is mapped as before: without a force
+    field, or with hydrogens, there is nothing built to run.  The file written
+    for viewing is refused rather than run, since its backbone bead is named CA
+    and a Martini view carries no elastic network, so running it would quietly
+    let a fold go.
+    """
+    kind = "sirah" if model == "sirah" else "martini"
+    if "nonbonded" not in s.table_names or bool((s.atoms["anum"] == 1).any()):
+        return False  # a structure to map, not a system to run
+    here = lambda beads: all(len(s.select(f"name {bead}").ids) for bead in beads)  # noqa: E731
+    if here(BUILT_BEADS[kind]):
+        return True
+    if here(VIEWED_BEADS[kind]):
+        raise ValueError(f"{path.name} is the file written for viewing, whose backbone bead is "
+                         "named CA (and a Martini view carries no elastic network); run the "
+                         "cg.dms beside it, which carries the parameters")  # fmt: skip
+    return False
+
+
+def _views_beside(where: Path, workdir: Path, log=print) -> int:
+    """Copy the view files written beside a built system into the run.
 
     ``boonza swim`` writes ``view.dms`` and ``view.mae`` where it builds each
     simulation -- the beads to look at, the backbone named CA and no elastic
-    network -- and the run reads the topology, which carries no such thing.
-    A topology built somewhere else has none, and none is written.
+    network -- and what the run reads, a ``cg.dms`` or a topology, carries no
+    such thing.  A system built somewhere else has none, and none is written.
     """
     import shutil
 
     copied = []
     for suffix in (".dms", ".mae"):
-        here = top.parent / f"view{suffix}"
-        if here.is_file():
+        here = where.parent / f"view{suffix}"
+        if here.is_file() and here.resolve() != where.resolve():
             shutil.copyfile(here, workdir / f"view{suffix}")
             copied.append(here.name)
     if copied:
-        log(f"Copied {' and '.join(copied)} from beside the topology")
+        log(f"Copied {' and '.join(copied)} from beside {where.name}")
     return len(copied)
 
 
@@ -509,7 +540,13 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
         if mode not in ("none", "box"):
             raise ValueError(f"model = 'sirah' fills a box with WT4 water or none at all, "
                              f"not solvate = {mode!r}")  # fmt: skip
-        aa = load_input(path, log, hydrogens=True)
+        aa = load_input(path, log, hydrogens=False)
+        if _already_built(aa, "sirah", path):
+            return _run_as_built(aa, args, path, workdir, "SIRAH", log, check)
+        if not (aa.atoms["anum"] == 1).any():
+            raise ValueError(f"{path} has no hydrogens: SIRAH puts beads on named hydrogens "
+                             "(serine's HG, tryptophan's HE1), so add them, with protonation "
+                             "states, first")  # fmt: skip
         _check_nothing_is_dropped(aa, args, path, log)
         built = sirahize(aa, args.cg_selection, termini=args.termini, log=log)
         log(f"SIRAH: {built.nbeads} beads in {len(built.molecules)} molecule(s)")
@@ -555,6 +592,25 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
     return _with_production_indices(s, s, info)
 
 
+def _run_as_built(s: System, args, path: Path, workdir: Path, model: str, log, check):
+    """Run a coarse-grained system boonza built, as it is: it carries its own
+    parameters, so there is nothing to map and nothing to resolve."""
+    mode = getattr(args, "solvate", "box")
+    mode = {True: "box", False: "none"}.get(mode, mode)
+    if "solvate" in getattr(args, "specified", ()) and mode != "none":
+        raise ValueError(f"{path.name} is a coarse-grained system that is already built; "
+                         "it runs with solvate = 'none'")  # fmt: skip
+    log(f"{model}: {path.name}, as built ({s.natoms} beads with their parameters)")
+    _views_beside(path, workdir, log)
+    info = components(s, [])
+    if getattr(args, "monitor_selection", None) is not None:
+        info["selection"] = select_atoms(s, args.monitor_selection)
+    if check is not None:
+        check(info)
+    _log_built(log, s, "System")
+    return _with_production_indices(s, s, info)
+
+
 def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[System, dict]:
     """The coarse-grained system: the input martinized, then water and ions or
     a bilayer around it, or a topology that was already built.
@@ -589,11 +645,14 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
 
     protein = None
     if path is not None:
+        aa = load_input(path, log, hydrogens=False)
+        if _already_built(aa, args.model, path):  # beads with their parameters on them
+            return _run_as_built(aa, args, path, workdir, f"Martini {version}", log, check)
         if version != 3:
             raise ValueError(f"model = '{args.model}' cannot coarse-grain {path.name}: boonza "
                              "martinizes proteins as Martini 3.  Give a Martini 2 topology "
-                             "(.top) instead, or build a membrane without a protein")  # fmt: skip
-        aa = load_input(path, log, hydrogens=False)
+                             "(.top) or a built Martini 2 system (cg.dms) instead, or build a "
+                             "membrane without a protein")  # fmt: skip
         _check_nothing_is_dropped(aa, args, path, log)
         protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
                                elastic_selection=args.elastic_selection,

@@ -171,11 +171,14 @@ against the other; what differs is the resolution and how the protein is held.
 - **The water** is Martini's W beads, or SIRAH's WT4 with NaW and ClW ions;
   the box is filled as `boonza md` fills it for that model.
 
-Each simulation directory holds the built topology (`martini/topol.top`, or
-`sirah/topol.top` with the force field beside it), its `md.toml`, `view.dms`
-and `view.mae` (the beads to look at: the backbone named CA and no rubber
-bands, copied into the run directory), and `probes.json`, which records the
-probes so that the analysis needs no selections of its own:
+Each simulation directory holds the built system as `martini/cg.dms` or
+`sirah/cg.dms` -- beads with every parameter on them, which is what the run
+reads -- with the GROMACS form of the same thing beside it (`topol.top`, a
+molecule `.itp` each, `cg.gro`, and for SIRAH the force field it includes).
+With it go `md.toml`, `view.dms` and `view.mae` (the beads to look at: the
+backbone named CA and no rubber bands, copied into the run directory), and
+`probes.json`, which records the probes so that the analysis needs no
+selections of its own:
 
 ```bash
 boonza sites --workdir boonza_swim/sim_*/md   # aligns on the backbone beads, probes as ligands

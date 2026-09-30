@@ -713,7 +713,9 @@ def test_a_prepared_sirah_swim(tmp_path):
     assert settings.integration_fs == 20.0  # SIRAH's own step, not Martini's
     assert settings.repulsion_selection == "resname " + " ".join(written["probes"])
     assert not settings.elastic  # SIRAH holds its backbone itself
-    assert Path(settings.input_structure) == (d / "sirah" / "topol.top").resolve()
+    # the run reads cg.dms, which carries every parameter; topol.top and the
+    # force field beside it are what GROMACS would read
+    assert Path(settings.input_structure) == (d / "sirah" / "cg.dms").resolve()
 
 
 def test_a_sirah_swim_is_neutral_and_runs(crambin_all_atom, tmp_path):
@@ -760,3 +762,40 @@ def test_sirahs_solvent_is_not_a_target_of_the_probes():
     from boonza.probemap import SOLVENT_NAMES
 
     assert {"WT4", "NaW", "ClW", "W", "ION"} <= set(SOLVENT_NAMES)
+
+
+def test_a_built_system_runs_without_its_topology(crambin_all_atom, tmp_path):
+    """cg.dms carries every parameter the topology gave it, so a run needs
+    neither the topology nor the force field files beside it."""
+    from boonza.md.prepare import build_sirah_system
+    from boonza.sirah import sirahize
+    from boonza.sirah.build import solvate
+
+    built = solvate(sirahize(crambin_all_atom), padding=10.0, seed=0)
+    built.save(tmp_path / "built")
+    for gone in [tmp_path / "built" / "topol.top", *(tmp_path / "built" / "sirah.ff").iterdir()]:
+        gone.unlink()
+    args = parse_arguments([str(tmp_path / "built" / "cg.dms"), "--model", "sirah",
+                            "--no-solvate", "--workdir", str(tmp_path / "run")])  # fmt: skip
+    s, info = build_sirah_system(args, tmp_path / "run", log=lambda *_: None)
+    assert s.natoms == built.nbeads
+    assert {"WT4", "NaW", "ClW"} <= {str(n) for n in s.residues["name"]}
+    assert "dihedral_periodic" in s.tables  # the parameters came with the file
+    pytest.importorskip("openmm")
+    from boonza.sirah import OPENMM_OPTIONS
+
+    assert np.isfinite(boonza.openmm_energies(s, **OPENMM_OPTIONS)["total"])
+
+
+def test_the_file_for_viewing_is_not_a_file_to_run(crambin_all_atom, tmp_path):
+    """Its backbone bead is named CA, and a Martini view has no elastic network:
+    running one would quietly let a fold go."""
+    from boonza.md.prepare import build_sirah_system
+    from boonza.sirah import sirahize
+
+    m = sirahize(crambin_all_atom)
+    boonza.save(m.for_viewing(), tmp_path / "view.dms")
+    args = parse_arguments([str(tmp_path / "view.dms"), "--model", "sirah", "--no-solvate",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    with pytest.raises(ValueError, match="written for viewing"):
+        build_sirah_system(args, tmp_path / "run", log=lambda *_: None)
