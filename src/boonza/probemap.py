@@ -26,14 +26,23 @@ class ProbeMap:
     frames: int
 
     def side_chains(self) -> tuple[list, np.ndarray]:
-        """The same map with the probes pooled by side chain: a probe counts
-        for both of its residues (XX counts once)."""
-        letters = sorted({c for p in self.probes for c in p})
-        out = np.zeros((len(self.residues), len(letters)))
-        for k, letter in enumerate(letters):
-            columns = [j for j, p in enumerate(self.probes) if letter in p]
+        """The same map with the probes pooled by side chain: a probe counts for
+        both of its residues (XX counts once).
+
+        A dipeptide probe is a two-letter code, so its letters are the side
+        chains.  Anything else -- a molecule with a name of its own -- is its
+        own column, since its letters mean nothing.
+        """
+        labels: list[str] = []
+        for p in self.probes:
+            labels += list(p) if len(p) == 2 and p.isalpha() else [p]
+        labels = sorted(dict.fromkeys(labels))
+        out = np.zeros((len(self.residues), len(labels)))
+        for k, label in enumerate(labels):
+            columns = [j for j, p in enumerate(self.probes)
+                       if (label in p if len(p) == 2 and p.isalpha() else label == p)]  # fmt: skip
             out[:, k] = self.contacts[:, columns].max(axis=1) if columns else 0.0
-        return letters, out
+        return labels, out
 
     def top(self, n: int = 10, by: str = "probe"):
         """The (label, residue, fraction) a probe or side chain touches most."""
@@ -53,6 +62,15 @@ class ProbeMap:
             w.writerow(["chain", "resid", "residue", *self.probes])
             for k, (chain, resid, name) in enumerate(self.residues):
                 w.writerow([chain, resid, name, *(f"{v:.4f}" for v in self.contacts[k])])
+
+
+#: What a coarse-grained box holds besides the protein and the probes, and so
+#: is no target: Martini's water and ions, SIRAH's WT4 and WLS water and its
+#: own ions (a bead of each).  Neither model's water is water to
+#: :func:`boonza.analyze.classify`, which knows it by an oxygen and two
+#: hydrogens, so it is named here.
+SOLVENT_NAMES = ("W", "ION", "NA", "CL", "HOH", "WT4", "WLS", "NaW", "KW", "ClW",
+                 "MgX", "CaX", "ZnX")  # fmt: skip
 
 
 def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1,
@@ -82,7 +100,7 @@ def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1
         chain_of = np.asarray(own.residues["chain"])
         per_atom = names[res]
         is_probe = np.isin(per_atom, probes)
-        is_target = ~is_probe & ~np.isin(per_atom, ["W", "ION", "NA", "CL", "HOH"])
+        is_target = ~is_probe & ~np.isin(per_atom, SOLVENT_NAMES)
         target_res = np.unique(res[is_target])
         if labels is None:
             labels = [(chains[chain_of[r]], int(resid[r]), names[r]) for r in target_res]

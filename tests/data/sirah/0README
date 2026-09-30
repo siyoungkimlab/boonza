@@ -1,0 +1,27 @@
+peptide_wt4.dms.gz is an 8-residue helix (AEALKAIE) mapped to SIRAH beads with
+SIRAH's own cgconv.pl, its topology built by GROMACS pdb2gmx -ff sirah, and
+224 WT4 waters added by gmx solvate from the force field's own wt416.gro box:
+930 beads with the parameters boonza read out of that topology.
+
+The energies in tests/test_sirah.py are GROMACS 2024.6's for these very
+coordinates, with PME converged (fourierspacing 0.08, ewald_rtol 1e-6) rather
+than SIRAH's own mdp setting of 0.2, which leaves the reciprocal sum about
+100 kJ/mol short on a system this size.
+
+The SIRAH force field itself is not here: get it from https://www.sirahff.com.
+
+crambin_cg.dms.gz is 1CRN (crambin) at pH 7 -- the .pqr of SIRAH's own
+tutorial 3 -- mapped by cgconv.pl and built by pdb2gmx -ff sirah, without
+solvent: 205 beads over 46 residues, with Ser, Thr, Tyr, Phe, Arg, Asp, Glu,
+Asn and Cys, which is the chemistry the feature table is checked against.
+
+1CRN_ph7.pdb is crambin with hydrogens at pH 7, the .pqr of SIRAH's tutorial
+3 written as a PDB. sirahize maps it to the 205 beads of crambin_cg.dms.gz,
+whose topology pdb2gmx -ff sirah built from the same beads: the counts and
+energies in tests/test_sirah.py are that topology's.
+
+dna_duplex.pdb is the 20-mer DNA duplex of SIRAH's tutorial 2, all-atom, and
+dna_cg.dms.gz is what sirahize makes of it: 238 beads over two strands, the
+same as cgconv.pl and pdb2gmx -ff sirah give, with the same counts and every
+energy term equal. Its 5' and 3' nucleotides take their own building blocks,
+as dna.r2b says, and the sugar bead is renamed C1X -> O3' by dna.arn.

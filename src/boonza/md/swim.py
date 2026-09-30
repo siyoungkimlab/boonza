@@ -565,11 +565,12 @@ def main(argv=None) -> int:
                    help="SDF or DMS file of ligands (with or without a force field), or a "
                         "library boonza ships: AstexMiniFrag, Essential320")  # fmt: skip
     g.add_argument("--types", type=int,
-                   help="ligand types per simulation (default: 5; Martini probes: 10)")  # fmt: skip
+                   help="ligand types per simulation (default: 5; probes: 10)")  # fmt: skip
     g.add_argument("--copies", type=int,
-                   help="copies of each ligand type (default: 3; Martini probes: 5)")  # fmt: skip
+                   help="copies of each ligand type (default: 3; probes: 5)")  # fmt: skip
     g.add_argument("--probes", nargs="+", metavar="XY",
-                   help="Martini: the dipeptide probes (default: all 105 of them)")  # fmt: skip
+                   help="the dipeptide probes of a coarse-grained swim (default: all "
+                        "105)")  # fmt: skip
     g.add_argument("--jobs", type=int, help="ligands parameterized at once (default: 1)")
     g.add_argument(
         "--clearance",
@@ -589,7 +590,7 @@ def main(argv=None) -> int:
     if "workdir" not in args.specified:
         args.workdir = "boonza_swim"
     try:
-        if args.model != "aa":  # Martini: dipeptide probes, no ligand library to parameterize
+        if args.model != "aa":  # dipeptide probes, no ligand library to parameterize
             from .cgswim import prepare as prepare_cg
 
             if "ligands" in x:

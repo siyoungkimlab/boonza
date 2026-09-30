@@ -19,7 +19,12 @@ from pathlib import Path
 
 import numpy as np
 
+from ..martini.features import MARTINI_NAMES  # noqa: F401  (kept for the vocabulary below)
+from ..sirah import BACKBONE as SIRAH_BACKBONE
 from .config import MONITOR_SELECTORS
+
+#: The bead a coarse-grained residue keeps its backbone in.
+CG_BACKBONE = ("BB", *SIRAH_BACKBONE)
 
 FIELDS = (
     "production_time_ns",
@@ -92,10 +97,11 @@ def select_target(info: dict, args) -> dict:
 def _protein_atoms(s) -> np.ndarray:
     """The atoms of the receptor: residues with a backbone.
 
-    An all-atom residue shows one by holding N, CA and C.  A Martini residue
-    is a bead or a few, whose backbone is the single bead named BB, so there
-    is nothing to cross-check; without this a coarse-grained run finds no
-    receptor at all, and every target looks unbound from the first frame.
+    An all-atom residue shows one by holding N, CA and C.  A coarse-grained
+    residue is a bead or a few, and its backbone is one of them -- BB under
+    Martini, GN, GC and GO under SIRAH -- so there is nothing to cross-check;
+    without this a coarse-grained run finds no receptor at all, and every
+    target looks unbound from the first frame.
     """
     names, res = s.atoms["name"], s.atoms["residue"]
     backbone: dict[int, set] = {}
@@ -103,7 +109,7 @@ def _protein_atoms(s) -> np.ndarray:
         backbone.setdefault(int(res[a]), set()).add(str(names[a]))
     aa = [r for r, got in backbone.items() if got == {"N", "CA", "C"}]
     if not aa:
-        aa = sorted({int(res[a]) for a in np.flatnonzero(names == "BB").tolist()})
+        aa = sorted({int(res[a]) for a in np.flatnonzero(np.isin(names, CG_BACKBONE)).tolist()})
     return np.isin(res, aa)
 
 

@@ -472,12 +472,13 @@ def test_a_bilayer_is_built_by_boonza_md(toy_lipids, tmp_path):
 
     args = parse_arguments(
         ["--model", "martini3", "--solvate", "membrane", "--upper", "TLP:3,STR:1",
-         "--lower", "TLP", "--size-nm", "4", "--water-nm", "1.5",
+         "--lower", "TLP", "--size-nm", "4", "--water-nm", "1.5", "--gromacs",
          "--lipid-itp", str(toy_lipids), "--workdir", str(tmp_path / "run")]
     )  # fmt: skip
     s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
     names = set(s.residues["name"].tolist())
     assert {"TLP", "STR", "W"} <= names
+    # --gromacs: the bilayer in GROMACS's form as well as in the cg.dms a run reads
     written = {p.name for p in (tmp_path / "martini").iterdir()}
     assert written == {"topol.top", "solvent.itp", "cg.gro", "cg.dms"}
 

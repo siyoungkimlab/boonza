@@ -89,3 +89,54 @@ def test_cli_build(tmp_path, capsys):
     assert boonza.load(tmp_path / "phenol.sdf").natoms == 13
     assert main(["build", "--sequence", "AAAA", "-o", str(tmp_path / "ala.pdb")]) == 0
     assert "residues" in capsys.readouterr().out
+
+
+def _within(s, residue: int) -> set:
+    """The bonds of one residue, by atom name."""
+    ids = set(s.residue_atoms(residue).tolist())
+    names = s.atoms["name"]
+    return {tuple(sorted((str(names[i]), str(names[j]))))
+            for i in ids for j in s.bonded_atoms(i).tolist() if j in ids}  # fmt: skip
+
+
+#: Which Amber template each residue the builder makes is: the neutral side
+#: chains RDKit gives (ASH, GLH, LYN) and the tautomer it protonates (HIE).
+_TEMPLATES = {"A": "ALA", "R": "ARG", "N": "ASN", "D": "ASH", "C": "CYS", "Q": "GLN",
+              "E": "GLH", "G": "GLY", "H": "HIE", "I": "ILE", "L": "LEU", "K": "LYN",
+              "M": "MET", "F": "PHE", "P": "PRO", "S": "SER", "T": "THR", "W": "TRP",
+              "Y": "TYR", "V": "VAL"}  # fmt: skip
+
+
+@pytest.mark.parametrize("letter", sorted(_TEMPLATES))
+def test_a_built_residue_is_named_as_the_force_field_names_it(letter):
+    """Every atom, hydrogens included, carries the name ff19SB's template gives
+    it -- RDKit names hydrogens H1, H2, ... and hangs isoleucine's CD1 off CG2."""
+    viparr = pytest.importorskip("boonza.viparr")
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    t = ff.template(_TEMPLATES[letter])
+    names, anum = list(t.names), list(t.anum)
+    want = {tuple(sorted((names[i], names[j]))) for i, j in t.bonds
+            if anum[i] > 0 and anum[j] > 0}  # fmt: skip
+    s = boonza.peptide("G" + letter + "G", conformation="extended", optimize=False)
+    got = _within(s, 1)
+    if letter == "R":  # the builder's arginine is neutral, Amber's guanidinium is not
+        want.discard(("HH12", "NH1"))
+    assert got == want
+
+
+def test_the_ends_of_a_built_peptide_are_named_as_a_pdb_names_them():
+    s = boonza.peptide("AGA", conformation="extended", optimize=False)
+    names = s.atoms["name"]
+    first = [str(names[i]) for i in s.residue_atoms(0).tolist()]
+    last = [str(names[i]) for i in s.residue_atoms(2).tolist()]
+    assert {"H1", "H2"} <= set(first) and "H3" not in first  # a neutral amine
+    assert "H" in last and {"OXT", "HXT"} <= set(last)  # the acid, protonated
+
+
+def test_naming_hydrogens_leaves_a_ligand_alone():
+    from boonza.build import name_hydrogens
+
+    s = boonza.from_smiles("c1ccccc1O", name="PHN")
+    before = [str(n) for n in s.atoms["name"]]
+    assert name_hydrogens(s) == 0  # PHN is in no table of residues
+    assert [str(n) for n in s.atoms["name"]] == before

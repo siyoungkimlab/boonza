@@ -264,7 +264,12 @@ def _ct_block(s, structure_only: bool) -> _Block:
         if name == "nonbonded":
             _nonbonded(s, table, ff)
         elif not _tuple_table(table, ff):
-            warnings.warn(f"Failed to process dms table '{name}'", stacklevel=3)
+            why = _CANNOT_CARRY.get(name)
+            if why:
+                warnings.warn(f"a .mae cannot carry {name} ({why}): its {len(table)} terms "
+                              "are left out, where a .dms keeps them", stacklevel=3)  # fmt: skip
+            else:
+                warnings.warn(f"Failed to process dms table '{name}'", stacklevel=3)
     for name, aux in s.aux_tables.items():
         if name.startswith("cmap"):
             ff.array("ffio_cmap" + name[4:]).add_rows(len(aux), {
@@ -376,6 +381,15 @@ _TUPLES = {
     "inplanewag_harm": [("ffio_inplanewags", "harm", 4, ["w0", "fc"])],
     "pseudopol_fermi": [("ffio_pseudo_polarization", "fermi", 4, ["a", "b", "cutoff"])],
 }  # fmt: skip
+
+
+#: Tables with no place in the format: what a reader should know is missing.
+#: A periodic dihedral of multiplicity 7 or more (SIRAH has them) has no column
+#: in ``proper_trig``, which carries the cosine series only to the sixth term.
+_CANNOT_CARRY = {
+    "dihedral_periodic": "multiplicity above 6, which proper_trig has no column for",
+    "angle_restricted": "Martini's restricted bending angle, which no ffio funct covers",
+}
 
 
 def _tuple_table(table, ff: _Block) -> bool:

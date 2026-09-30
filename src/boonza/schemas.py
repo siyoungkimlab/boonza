@@ -46,6 +46,9 @@ _TERM = [
     # bending, which grows without bound as the angle straightens and so keeps it from doing so
     _s("angle_restricted", "bond", 3, ["theta0", "fc"]),
     _s("dihedral_trig", "bond", 4, ["phi0", *_fc("fc", 0, 6)]),
+    # fc (1 + cos(n phi - phi0)) for one term of any multiplicity: dihedral_trig
+    # holds n up to 6, as msys's does, and SIRAH's backbone goes to 9
+    _s("dihedral_periodic", "bond", 4, ["phi0", "fc", ("n", "int")]),
     _s("dihedral_fourier", "bond", 4, _fc("fc", 0, 12)),
     _s("dihedral6_trig", "bond", 6, ["phi0", "fc0", "fc2", "fc4"]),
     _s("improper_anharm", "bond", 4, ["fc2", "fc4"]),

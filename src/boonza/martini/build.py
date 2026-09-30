@@ -28,6 +28,11 @@ from .ff import (
 )
 from .links import CGMolecule, apply_links
 
+#: What Martini calls the backbone bead, and what a viewer wants it called: a
+#: chain is traced through CA, and with BB most viewers draw beads and no more.
+BACKBONE_BEAD = "BB"
+VIEWING_BACKBONE = "CA"
+
 # vermouth's element masses (AttachMass) and bond radii (MakeBonds), nm
 _MASS = {"H": 1, "C": 12, "N": 14, "O": 16, "S": 32, "P": 31}
 _RADIUS = {"H": 0.120, "C": 0.170, "N": 0.155, "O": 0.152, "S": 0.180, "P": 0.180, "SE": 0.19}
@@ -181,17 +186,27 @@ class Martinized:
                 offset += len(mol.nodes)
         return out
 
-    def for_viewing(self, system=None, martini_itp=None):
+    def for_viewing(self, system=None, martini_itp=None, backbone_as_ca: bool = True):
         """The system without its elastic network: what to open in a viewer.
 
         Everything else is kept, atom for atom and in the same order, so the
-        trajectory still lines up with it.
+        trajectory still lines up with it.  ``backbone_as_ca`` also names the
+        backbone bead ``CA``, which is what a viewer traces a chain through --
+        with ``BB`` most of them draw beads and nothing else.  It is a name for
+        looking at, not for working with: the bead stands for the whole
+        backbone, N, CA, C and O together, and consecutive ones sit about
+        0.35 nm apart where alpha carbons sit 0.38 apart.  The topology keeps
+        Martini's own names.
         """
         s = (system if system is not None else self.system(martini_itp)).clone()
         bands = self.elastic_bonds()
         if bands:
             ids = [s.find_bond(s.atom(i), s.atom(j)) for i, j in bands]
             s.delete_bonds([b for b in ids if b is not None])
+        if backbone_as_ca:
+            names = s.atoms["name"]
+            for a in np.flatnonzero(np.asarray(names) == BACKBONE_BEAD).tolist():
+                names[a] = VIEWING_BACKBONE
         return s
 
     def _write_topology(self, directory, martini_itp=None) -> Path:

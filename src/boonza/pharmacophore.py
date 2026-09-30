@@ -26,6 +26,8 @@ import numpy as np
 from .align import kabsch
 from .martini.features import bead_features, martini_beads
 from .pbc import minimum_image
+from .sirah.features import bead_features as sirah_features
+from .sirah.features import sirah_beads
 from .sites import Density, _join_neighbours, _pairs
 from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids
 
@@ -60,9 +62,13 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES,
     ``ZnBinder`` and ``LumpedHydrophobe`` are left out: the first is a special
     case and the second repeats what ``Hydrophobe`` already says.
 
-    Martini beads are typed by what they stand for instead, since they have no
-    element or valence for RDKit to read (:mod:`boonza.martini.features`);
-    ``backbone`` then also types the BB beads, which every probe carries.
+    Coarse-grained beads are typed by what they stand for instead, since they
+    have no element or valence for RDKit to read
+    (:mod:`boonza.martini.features`, :mod:`boonza.sirah.features`);
+    ``backbone`` then also types the backbone beads, which every residue has.
+    SIRAH is the finer of the two: its hydroxyl is an oxygen bead and a
+    hydrogen bead, so the acceptor and the donor are separate features where
+    Martini has one bead that is both.
     """
     import os
 
@@ -76,6 +82,15 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES,
     if len(lig) and martini_beads(system, lig):
         return [bead_features(system, lig[frag == f], families, backbone)
                 for f in np.unique(frag)]  # fmt: skip
+    if len(lig) and sirah_beads(system, lig):
+        return [sirah_features(system, lig[frag == f], families, backbone)
+                for f in np.unique(frag)]  # fmt: skip
+    if len(lig) and _unnamed_beads(system, lig):
+        raise ValueError(
+            "these beads are typed by neither Martini's nor SIRAH's table, and RDKit needs "
+            "atoms: a SIRAH topology built by tleap carries the AMBER release's own type names, "
+            "which boonza does not map yet"
+        )
     factory = ChemicalFeatures.BuildFeatureFactory(
         os.path.join(RDConfig.RDDataDir, "BaseFeatures.fdef")
     )
@@ -90,6 +105,16 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES,
                 found.append((feature.GetFamily(), order[list(feature.GetAtomIds())]))
         out.append(found)
     return out
+
+
+def _unnamed_beads(system, atoms) -> bool:
+    """Whether these look like coarse-grained beads no table knows: nothing to
+    read as an atom, and a backbone that says the system is not all-atom."""
+    from .md.monitor import CG_BACKBONE
+
+    if len(system.select("name CA").ids):
+        return False
+    return bool(len(system.select("name " + " ".join(CG_BACKBONE)).ids))
 
 
 def feature_points(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
@@ -155,9 +180,11 @@ def feature_maps(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND
               for fam, v in places.items()}  # fmt: skip
     whose = {fam: np.concatenate(v) if any(len(x) for x in v) else np.empty(0, np.int64)
              for fam, v in owners.items()}  # fmt: skip
-    every = np.concatenate([p for p in points.values() if len(p)])
-    if not len(every):
-        raise ValueError(f"ligand {ligand!r} has none of {families}")
+    found = [p for p in points.values() if len(p)]
+    if not found:  # numpy will not concatenate nothing, so say it plainly
+        raise ValueError(f"ligand {ligand!r} carries none of {families}: there is no map to make "
+                         "of it (SIRAH's water and ions carry none, for one)")  # fmt: skip
+    every = np.concatenate(found)
     if volume <= 0:
         hull = every.max(0) - every.min(0)
         volume = float(np.prod(np.maximum(hull, spacing)))

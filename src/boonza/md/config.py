@@ -45,31 +45,24 @@ DEFAULT_FORCEFIELDS = (
 )
 
 #: The resolutions a run can use.  ``aa`` is all-atom, with force fields
-#: applied by viparr or OpenMM; the Martini models coarse-grain the input and
-#: take their parameters from the topology instead.
-MODELS = ("aa", "martini2", "martini3")
-#: What a model changes when the setting was not given, on top of DEFAULTS:
-#: Martini runs hotter, with a long step and its own cut-off, and holds the
-#: protein's fold with an elastic network, which it needs to keep one (pass
-#: --no-elastic to let the protein find its own shape).
+#: applied by viparr or OpenMM; the others are coarse-grained and take their
+#: parameters from the topology instead -- boonza coarse-grains the input
+#: itself for Martini, while a SIRAH topology comes built by SIRAH's tools.
+MODELS = ("aa", "martini2", "martini3", "sirah")
+#: What a model changes when the setting was not given, on top of DEFAULTS.
+#: The temperature is not among them: one default serves every model, and each
+#: force field's own papers run at their own (310 K for Martini membranes,
+#: 300 K for SIRAH), which is a number to give rather than to inherit.
 #:
-#: The monitor's distances move out with the beads.  A bead is wider than an
-#: atom: beads of residues that pack against each other sit 0.35 to 0.7 nm
-#: apart, peaking at 0.53, where all-atom heavy atoms touch at about 0.4.  At
-#: the all-atom cut-offs a bound target reads as detached from the first frame.
-#:
-#: Everything else -- the intervals, the barostat, the platform -- is shared.
-#: A long step also stretches the intervals: 0.01 ns is 500 steps at 20 fs
-#: against 5000 at 2 fs, so a checkpoint every 0.01 ns writes ten times as
-#: often for the same work, and 0.1 ns still costs at most a tenth of a
-#: nanosecond on a crash.  The monitor looks every 0.2 ns and wants three
-#: checks in a row, since a bead diffuses fast and a target that steps away
-#: for 0.2 ns has not left.
-_MARTINI: dict = {
-    "temperature": 310.0,
+#: A long step stretches the intervals: 0.01 ns is 500 steps at 20 fs against
+#: 5000 at 2 fs, so a checkpoint every 0.1 ns writes as often for the same
+#: work.  The monitor's distances move out with the beads, which are wider
+#: than atoms -- beads of residues packed against each other sit 0.35 to
+#: 0.7 nm apart where heavy atoms touch at about 0.4 -- and it looks every
+#: 0.2 ns for three checks in a row, since a bead diffuses fast and a target
+#: that steps away for 0.2 ns has not left.
+_CG = {
     "integration_fs": 20.0,
-    "cutoff_nm": 1.1,
-    "elastic": True,
     "pocket_cutoff_nm": 0.8,
     "contact_cutoff_nm": 0.7,
     "detach_cutoff_nm": 1.2,
@@ -77,15 +70,27 @@ _MARTINI: dict = {
     "monitor_interval_ns": 0.2,
     "confirmation_checks": 3,
 }
-MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI)}
+#: Martini holds a protein's fold with an elastic network, which it needs to
+#: keep one (--no-elastic to let the protein find its own shape), and runs
+#: with GROMACS's reaction field inside 1.1 nm.
+_MARTINI = {**_CG, "cutoff_nm": 1.1, "elastic": True}
+#: SIRAH keeps its own backbone terms instead of a network, and runs with PME
+#: inside 1.2 nm, as its own mdp files do (tutorial 7, md_CGPROT.mdp).
+_SIRAH = {**_CG, "cutoff_nm": 1.2, "production_report_interval_ns": 0.1}
+MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
+                        "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
                  "protein_extent", "hmr")  # fmt: skip
+#: Settings that only a SIRAH run has.
+SIRAH_ONLY = ("termini",)
 #: Settings that only a Martini run has.
 MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
-                "opm", "shift_nm", "cg_selection", "neutral_termini", "lipid_itp",
+                "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
+#: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
+CG_ONLY = ("cg_selection", "gromacs")
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -143,6 +148,8 @@ DEFAULTS: dict = {
     "opm": False,
     "shift_nm": 0.0,
     "cg_selection": "protein",
+    "gromacs": False,
+    "termini": "Charged",
     "neutral_termini": False,
     "lipid_itp": None,
     "martini_itp": None,
@@ -174,9 +181,10 @@ _NUMBERS = {
     "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini"}
+_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs"}
 _CHOICES = {
     "model": MODELS,
+    "termini": ("Charged", "Neutral", "None"),
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
     "protein_extent": PROTEIN_EXTENTS,
@@ -394,8 +402,15 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     cg.add_argument("--elastic-selection", dest="elastic_selection", metavar="SEL",
                     help="hold only these residues with the network, e.g. 'chain A' to leave a "
                          "bound peptide free (default: every molecule)")  # fmt: skip
+    cg.add_argument("--termini", choices=("Charged", "Neutral", "None"),
+                    help="SIRAH: the chain ends (default: Charged)")  # fmt: skip
     cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
                     help="the atoms to coarse-grain (default: protein)")  # fmt: skip
+    cg.add_argument("--gromacs", action=argparse.BooleanOptionalAction,
+                    help="write the built system in GROMACS's form too (topol.top, an .itp per "
+                         "molecule, cg.gro, and the force field it includes), for running or "
+                         "checking it there; boonza runs from cg.dms, which carries the "
+                         "parameters (default: off)")  # fmt: skip
     cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",
                     help="uncharged chain ends")  # fmt: skip
     cg.add_argument("--opm", action="store_true",
@@ -698,11 +713,29 @@ def finish(args) -> None:
     # so only a value that differs from the default counts as one asked for
     given = {k for k in getattr(args, "specified", ())
              if k not in DEFAULTS or getattr(args, k, None) != DEFAULTS[k]}  # fmt: skip
-    if args.model == "aa":
+    if args.model == "sirah":
+        # boonza restrains phi and psi all-atom and BB-BB-BB-BB under Martini;
+        # SIRAH's backbone is three beads a residue, held by torsion terms of
+        # its own, so there is nothing here to add and nothing it lacks
+        if args.dihedral_restraint != "none":
+            raise ValueError("model = 'sirah' takes no dihedral restraints: SIRAH holds its "
+                             "backbone with torsion terms of its own, where Martini needs a "
+                             "network or restraints to keep a fold")  # fmt: skip
+    else:
+        wrong = [k for k in SIRAH_ONLY if k in given]
+        if wrong:
+            raise ValueError(f"{', '.join(sorted(wrong))} needs model = 'sirah'")
+    if not args.model.startswith("martini"):
         wrong = [k for k in MARTINI_ONLY if k in given]
         if wrong:
             raise ValueError(f"{', '.join(sorted(wrong))} needs a Martini model; "
                              f"give model = 'martini3' or 'martini2'")  # fmt: skip
+    if args.model == "aa":
+        wrong = [k for k in CG_ONLY if k in given]
+        if wrong:
+            raise ValueError(f"{', '.join(sorted(wrong))} belongs to a coarse-grained run, "
+                             "which maps a structure onto beads: give model = 'martini3', "
+                             "'martini2' or 'sirah'")  # fmt: skip
         if args.solvate == "membrane":
             raise ValueError("solvate = 'membrane' builds a coarse-grained bilayer, so it "
                              "needs model = 'martini3' or 'martini2'")  # fmt: skip

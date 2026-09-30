@@ -480,6 +480,135 @@ def _unique_names(s: System) -> None:
     s.atoms["name"] = np.array(names)
 
 
+# The hydrogen names the Amber force fields use, read off the ff19SB templates
+# (plus the other carboxyl oxygen): by the heavy atom each hydrogen hangs off,
+# and by how many hang off it, since a serine hydroxyl's hydrogen is HG where a
+# lysine ammonium's are HZ1, HZ2 and HZ3 and a neutral amine's are HZ2 and HZ3.
+# These are the names the PDB and every protein force field use; RDKit names
+# hydrogens H1, H2, ... in the order it adds them, which nothing else reads.
+PDB_HYDROGENS = {
+    "ACE": {"CH3": {3: "H1 H2 H3"}},
+    "ALA": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {3: "HB1 HB2 HB3"}},
+    "ARG": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CG": {2: "HG2 HG3"}, "CD": {2: "HD2 HD3"}, "NE": {1: "HE"},
+            "NH1": {2: "HH11 HH12"}, "NH2": {2: "HH21 HH22"}},
+    "ASN": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "ND2": {2: "HD21 HD22"}},
+    "ASP": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "OD1": {1: "HD1"}, "OD2": {1: "HD2"}},
+    "CYS": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "SG": {1: "HG"}},
+    "GLN": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CG": {2: "HG2 HG3"}, "NE2": {2: "HE21 HE22"}},
+    "GLU": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CG": {2: "HG2 HG3"}, "OE1": {1: "HE1"}, "OE2": {1: "HE2"}},
+    "GLY": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {2: "HA2 HA3"}},
+    "HIS": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CD2": {1: "HD2"}, "CE1": {1: "HE1"}, "ND1": {1: "HD1"}, "NE2": {1: "HE2"}},
+    "HYP": {"CA": {1: "HA"}, "CB": {2: "HB2 HB3"}, "CG": {1: "HG"}, "CD": {2: "HD22 HD23"},
+            "OD1": {1: "HD1"}},
+    "ILE": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {1: "HB"},
+            "CG1": {2: "HG12 HG13"}, "CG2": {3: "HG21 HG22 HG23"},
+            "CD1": {3: "HD11 HD12 HD13"}},
+    "LEU": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CG": {1: "HG"}, "CD1": {3: "HD11 HD12 HD13"}, "CD2": {3: "HD21 HD22 HD23"}},
+    "LYS": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CG": {2: "HG2 HG3"}, "CD": {2: "HD2 HD3"}, "CE": {2: "HE2 HE3"},
+            "NZ": {2: "HZ2 HZ3", 3: "HZ1 HZ2 HZ3"}},
+    "MET": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CG": {2: "HG2 HG3"}, "CE": {3: "HE1 HE2 HE3"}},
+    "NHE": {"N": {2: "HN1 HN2"}},
+    "NME": {"N": {1: "H"}, "CH3": {3: "HH31 HH32 HH33"}},
+    "PHE": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CD1": {1: "HD1"}, "CD2": {1: "HD2"}, "CE1": {1: "HE1"}, "CE2": {1: "HE2"},
+            "CZ": {1: "HZ"}},
+    "PRO": {"N": {2: "H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"}, "CG": {2: "HG2 HG3"},
+            "CD": {2: "HD2 HD3"}},
+    "SER": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "OG": {1: "HG"}},
+    "THR": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {1: "HB"},
+            "CG2": {3: "HG21 HG22 HG23"}, "OG1": {1: "HG1"}},
+    "TRP": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CD1": {1: "HD1"}, "CE3": {1: "HE3"}, "CZ2": {1: "HZ2"}, "CZ3": {1: "HZ3"},
+            "CH2": {1: "HH2"}, "NE1": {1: "HE1"}},
+    "TYR": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {2: "HB2 HB3"},
+            "CD1": {1: "HD1"}, "CD2": {1: "HD2"}, "CE1": {1: "HE1"}, "CE2": {1: "HE2"},
+            "OH": {1: "HH"}},
+    "VAL": {"N": {1: "H", 3: "H1 H2 H3"}, "CA": {1: "HA"}, "CB": {1: "HB"},
+            "CG1": {3: "HG11 HG12 HG13"}, "CG2": {3: "HG21 HG22 HG23"}},
+}  # fmt: skip
+
+# Every amino acid's C terminus, where Amber's own is charged: a builder that
+# leaves the acid protonated puts its hydrogen on OXT, which the PDB calls HXT.
+CTERMINUS = {"OXT": {1: "HXT"}}
+
+# The three-letter names of the protonation states, as a file may write them.
+PDB_ALIASES = {"ASH": "ASP", "GLH": "GLU", "LYN": "LYS", "CYM": "CYS", "CYX": "CYS",
+               "HID": "HIS", "HIE": "HIS", "HIP": "HIS", "HSD": "HIS", "HSE": "HIS",
+               "HSP": "HIS", "MSE": "MET"}  # fmt: skip
+
+
+def name_hydrogens(system: System, selection: str = "all") -> int:
+    """Name the hydrogens in ``selection`` as the PDB and Amber do; count them.
+
+    Each hydrogen is named from the heavy atom it hangs off and from how
+    many share it, so a serine's hydroxyl hydrogen becomes ``HG`` and a
+    glycine's alpha hydrogens ``HA2`` and ``HA3``.  Residues the table does
+    not cover -- ligands, anything nonstandard -- are left alone.  Whichever
+    hydrogen gets which of two equivalent names is arbitrary, as it is in
+    any structure without stereochemistry on the hydrogens.
+    """
+    names = system.atoms["name"]
+    anum = system.atoms["anum"]
+    residue = system.atoms["residue"]
+    resnames = system.residues["name"]
+    chosen = set(system.select(selection).ids.tolist())
+    renamed = 0
+    for r in range(system.nresidues):
+        resname = str(resnames[r]).strip().upper()
+        table = PDB_HYDROGENS.get(PDB_ALIASES.get(resname, resname))
+        if table is None:
+            continue
+        table = {**table, **CTERMINUS}
+        hydrogens: dict[str, list[int]] = {}
+        for i in system.residue_atoms(r).tolist():
+            if anum[i] != 1 or i not in chosen:
+                continue
+            heavy = [b for b in system.bonded_atoms(i).tolist() if anum[b] > 1]
+            if len(heavy) == 1 and residue[heavy[0]] == r:
+                hydrogens.setdefault(str(names[heavy[0]]).strip(), []).append(i)
+        for heavy, ids in hydrogens.items():
+            by_count = table.get(heavy)
+            if by_count is None:
+                continue
+            # An unexpected count -- a neutral amine where the table has an
+            # ammonium -- takes the first of the longest set of names.
+            want = by_count.get(len(ids)) or by_count[max(by_count)]
+            for i, name in zip(ids, want.split(), strict=False):
+                if str(names[i]) != name:
+                    names[i] = name
+                    renamed += 1
+    return renamed
+
+
+def _name_isoleucine(s: System) -> None:
+    """Swap isoleucine's CG1 and CG2, which RDKit names the other way round.
+
+    RDKit hangs CD1 off CG2; every force field hangs it off CG1.
+    """
+    names = s.atoms["name"]
+    for r in range(s.nresidues):
+        if str(s.residues["name"][r]).strip().upper() != "ILE":
+            continue
+        ids = s.residue_atoms(r).tolist()
+        gamma = {str(names[i]).strip(): i for i in ids}
+        one, two, delta = gamma.get("CG1"), gamma.get("CG2"), gamma.get("CD1")
+        if one is None or two is None or delta is None:
+            continue
+        if two in s.bonded_atoms(delta).tolist():
+            names[one], names[two] = "CG2", "CG1"
+
+
 def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool = True,
                 conformers: int = 1) -> System:  # fmt: skip
     """A 3D molecule from a SMILES string (through RDKit).
@@ -522,9 +651,10 @@ def peptide(sequence: str, conformation="helix", seed: int = 0, optimize: bool =
 
     ``conformation``: "helix", "sheet", "extended", "polyproline", one
     (phi, psi) pair, or one pair per residue (degrees).  The chain is built
-    by RDKit with PDB atom and residue names, every peptide bond is set
-    trans, and phi/psi are set residue by residue (proline's phi is fixed by
-    its ring).  With ``optimize`` the structure is minimized with MMFF94
+    by RDKit with PDB atom and residue names -- hydrogens included, which
+    RDKit itself does not name -- every peptide bond is set trans, and
+    phi/psi are set residue by residue (proline's phi is fixed by its
+    ring).  With ``optimize`` the structure is minimized with MMFF94
     while phi/psi are held, so side chains relax without losing the
     backbone (omega included).  Termini are free amine and acid, as RDKit
     builds them.
@@ -584,4 +714,7 @@ def peptide(sequence: str, conformation="helix", seed: int = 0, optimize: bool =
         for a, b, c, d, value in held:  # RDKit handles windows that cross +-180
             ff.MMFFAddTorsionConstraint(a, b, c, d, False, value - 1.0, value + 1.0, 1e4)
         ff.Minimize(maxIts=5000)
-    return from_rdkit(mol, name=f"peptide {seq}")
+    s = from_rdkit(mol, name=f"peptide {seq}")
+    _name_isoleucine(s)  # RDKit hangs CD1 off CG2
+    name_hydrogens(s)  # RDKit names them H1, H2, ...
+    return s

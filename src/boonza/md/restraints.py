@@ -61,7 +61,9 @@ def bead_torsions(s) -> list[tuple[int, str, tuple[int, int, int, int]]]:
 
 def coarse_grained(s) -> bool:
     """A Martini system: backbone beads rather than alpha carbons."""
-    return not len(s.select("name CA").ids) and len(s.select("name BB").ids) >= 4
+    if len(s.select("name CA").ids):
+        return False
+    return len(s.select("name BB").ids) >= 4  # Martini; SIRAH's backbone is three beads
 
 
 def fourier_terms(strength_kj: float):
