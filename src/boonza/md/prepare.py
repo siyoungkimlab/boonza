@@ -434,6 +434,25 @@ def _already_built(s: System, model: str, path: Path) -> bool:
     return False
 
 
+def _write_built(m, directory: Path, system: System, gromacs: bool, log=print,
+                 **save_kwargs) -> Path:  # fmt: skip
+    """Write the built coarse-grained system to ``directory``; return the file a
+    run reads.
+
+    ``cg.dms`` is the system itself, parameters and all, and is what boonza
+    runs.  With ``gromacs`` the same thing goes out in GROMACS's form beside it
+    -- ``topol.top``, an ``.itp`` per molecule, ``cg.gro``, and for SIRAH the
+    force field the topology includes -- for running or checking it there.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if not gromacs:
+        save(system, directory / "cg.dms")
+        return directory / "cg.dms"
+    m.save(directory, system=system, **save_kwargs)
+    log(f"Wrote the GROMACS form of the system too: {directory.name}/topol.top")
+    return directory / "cg.dms"
+
+
 def _views_beside(where: Path, workdir: Path, log=print) -> int:
     """Copy the view files written beside a built system into the run.
 
@@ -561,8 +580,8 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
             built.positions = built.positions - built.positions.mean(0) + edge / 2
             built.cell = np.diag(np.full(3, edge))
             log(f"Box: {edge / 10:.2f} nm a side, {args.padding_nm:g} nm around the beads")
-        built.save(workdir / "sirah")
         s = built.system()
+        _write_built(built, workdir / "sirah", s, bool(args.gromacs), log)
         viewing = built.for_viewing(s)
         for suffix in (".dms", ".mae"):
             save(viewing, workdir / f"view{suffix}")
@@ -684,7 +703,8 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                        seed=args.seed)  # fmt: skip
 
     s = m.system(args.martini_itp)
-    m.save(workdir / "martini", martini_itp=args.martini_itp, system=s)
+    _write_built(m, workdir / "martini", s, bool(args.gromacs), log,
+                 martini_itp=args.martini_itp)  # fmt: skip
     if m.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
         (workdir / "martini" / "secondary.txt").write_text(m.ss + "\n")
     # what to open in a viewer: the backbone bead named CA, so a chain is

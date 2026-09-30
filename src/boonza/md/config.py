@@ -90,7 +90,7 @@ MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipi
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 #: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
-CG_ONLY = ("cg_selection",)
+CG_ONLY = ("cg_selection", "gromacs")
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -148,6 +148,7 @@ DEFAULTS: dict = {
     "opm": False,
     "shift_nm": 0.0,
     "cg_selection": "protein",
+    "gromacs": False,
     "termini": "Charged",
     "neutral_termini": False,
     "lipid_itp": None,
@@ -180,7 +181,7 @@ _NUMBERS = {
     "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini"}
+_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs"}
 _CHOICES = {
     "model": MODELS,
     "termini": ("Charged", "Neutral", "None"),
@@ -405,6 +406,11 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                     help="SIRAH: the chain ends (default: Charged)")  # fmt: skip
     cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
                     help="the atoms to coarse-grain (default: protein)")  # fmt: skip
+    cg.add_argument("--gromacs", action=argparse.BooleanOptionalAction,
+                    help="write the built system in GROMACS's form too (topol.top, an .itp per "
+                         "molecule, cg.gro, and the force field it includes), for running or "
+                         "checking it there; boonza runs from cg.dms, which carries the "
+                         "parameters (default: off)")  # fmt: skip
     cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",
                     help="uncharged chain ends")  # fmt: skip
     cg.add_argument("--opm", action="store_true",
@@ -727,8 +733,8 @@ def finish(args) -> None:
     if args.model == "aa":
         wrong = [k for k in CG_ONLY if k in given]
         if wrong:
-            raise ValueError(f"{', '.join(sorted(wrong))} maps a structure onto beads, so it "
-                             "needs a coarse-grained model: give model = 'martini3', "
+            raise ValueError(f"{', '.join(sorted(wrong))} belongs to a coarse-grained run, "
+                             "which maps a structure onto beads: give model = 'martini3', "
                              "'martini2' or 'sirah'")  # fmt: skip
         if args.solvate == "membrane":
             raise ValueError("solvate = 'membrane' builds a coarse-grained bilayer, so it "

@@ -161,6 +161,7 @@ ligands included.
 | `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
 | `elastic_selection` | every molecule | Martini only: hold only these residues with the elastic network, e.g. `chain A` to leave a bound peptide free |
 | `elastic`, `cg_selection`, `neutral_termini` | **on under Martini**, `protein`, off | Martini only: an elastic network holding the protein's fold, which Martini does not keep without one (`--no-elastic` to leave it out); which atoms to coarse-grain; uncharged chain ends |
+| `gromacs` | off | coarse-grained only: write the built system in GROMACS's form too (`topol.top`, an `.itp` per molecule, `cg.gro`, and for SIRAH the force field it includes), for running or checking it there; boonza runs from `cg.dms`, which carries the parameters |
 | `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
 | `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
 | `lipid_itp`, `martini_itp` | the carried files | parameter files of your own |
@@ -316,9 +317,10 @@ generates them, and cysteines whose `BSG` beads are within 2 Å are bridged.
 `--termini` chooses the chain ends (`Charged`, `Neutral`, or `None` to keep
 the residues' own charges).
 
-What it writes runs anywhere: `sirah/topol.top`, a molecule `.itp` each, the
-force field in `sirah/sirah.ff`, and coordinates as both `cg.dms` and
-`cg.gro`. `sirah.ff` holds what the topology includes and what those files
+What it writes is `sirah/cg.dms`, the built system with its parameters on it;
+with `--gromacs`, `sirah/topol.top`, a molecule `.itp` each, the force field in
+`sirah/sirah.ff` and `cg.gro` go out too, and that directory runs anywhere.
+`sirah.ff` holds what the topology includes and what those files
 include in turn -- the parameters and the solvent, eight files -- and nothing
 else: the residue libraries, the water box, the mapping files and the
 release's own documentation are read from the archive boonza carries where
@@ -329,12 +331,17 @@ tools beside it (pdb2gmx reads the residue libraries).
 **`cg.dms` is the whole system**, parameters included: boonza's own format
 holds every table the topology gave it, so a run started from it needs neither
 the topology nor the force field beside it (delete both and it still runs).
-That is what a coarse-grained `boonza swim` points its simulations at; the
-topology and `sirah.ff` are there for GROMACS, and `save(directory,
-forcefield=False)` leaves the force field out. A file that carries beads and a
-force field runs as it is under `--model sirah` or `--model martini3`, rather
-than being mapped again -- except `view.dms`, which is refused, since its
-backbone bead is named CA and a Martini view carries no elastic network.
+That is what a run reads, and what a coarse-grained `boonza swim` points its
+simulations at. A file that carries beads and a force field runs as it is
+under `--model sirah` or `--model martini3`, rather than being mapped again --
+except `view.dms`, which is refused, since its backbone bead is named CA and a
+Martini view carries no elastic network.
+
+**`--gromacs`** (off by default) writes the same system in GROMACS's form
+beside it as well -- `topol.top`, an `.itp` per molecule, `cg.gro`, and for
+SIRAH the eight files the topology includes -- for running it in GROMACS or
+checking boonza against it (`gmx grompp -f md.mdp -p topol.top -c cg.gro`).
+Without it, only `cg.dms` is written, since that is all a run needs.
 
 **Water and ions.** The box is filled from the force field's own equilibrated
 WT4 box, tiled whole -- the box grows to a multiple of its 1.72 nm edge, so

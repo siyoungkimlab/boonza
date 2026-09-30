@@ -523,7 +523,7 @@ def test_a_solvated_run_is_built_and_runnable(crambin_all_atom, tmp_path):
     """`boonza md --model sirah protein.pdb` maps, fills the box and runs."""
     from boonza.md.prepare import build_sirah_system
 
-    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah",
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--gromacs",
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     s, info = build_sirah_system(args, tmp_path, log=lambda *_: None)
     names = {str(n) for n in s.residues["name"]}
@@ -694,7 +694,7 @@ def test_a_prepared_sirah_swim(tmp_path):
 
     from boonza.md.cgswim import prepare
 
-    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah",
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--gromacs",
                             "--workdir", str(tmp_path / "swim"), "--padding-nm", "1.0",
                             "--production-ns", "10"])  # fmt: skip
     sims = prepare(args, ["EK", "LL", "RR"], types=2, copies=2, log=lambda *_: None)

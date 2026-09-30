@@ -82,7 +82,7 @@ def test_probes_are_placed_clear_of_everything():
 def test_a_prepared_simulation(tmp_path):
     """One directory per group: the built topology, settings `boonza md` accepts,
     and the probes written down for the analysis."""
-    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--gromacs",
                             "--workdir", str(tmp_path / "swim"), "--production-ns", "10",
                             "--seed", "1"])  # fmt: skip
     sims = prepare(args, ["EK", "LL", "RR"], types=2, copies=2, log=lambda *_: None)
@@ -449,7 +449,7 @@ def test_the_network_reaches_the_built_topology(tmp_path):
     for label, extra in (("on", []), ("off", ["--no-elastic"])):
         where = tmp_path / label
         args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *extra,
-                                "--workdir", str(where / "run")])  # fmt: skip
+                                "--gromacs", "--workdir", str(where / "run")])  # fmt: skip
         build_martini_system(args, where, log=lambda *_: None)
         counts[label] = len(_bonds_of(where))
     assert counts["on"] > counts["off"] + 300  # 1TEN gets 354 rubber bands
@@ -462,7 +462,7 @@ def test_a_coarse_grained_swim_follows_the_same_setting(tmp_path):
     for label, extra in (("on", []), ("off", ["--no-elastic"])):
         root = tmp_path / label
         assert main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--probes", "EK",
-                     "--types", "1", "--copies", "1", *extra,
+                     "--types", "1", "--copies", "1", "--gromacs", *extra,
                      "--workdir", str(root)]) == 0  # fmt: skip
     assert len(_bonds_of(tmp_path / "on" / "sim_000")) > len(
         _bonds_of(tmp_path / "off" / "sim_000")
@@ -626,7 +626,7 @@ def test_a_run_holds_only_what_it_is_told_to(tmp_path):
     for label, extra in (("all", []), ("receptor", ["--elastic-selection", "chain A"])):
         where = tmp_path / label
         args = parse_arguments([str(tmp_path / "complex.pdb"), "--model", "martini3", *extra,
-                                "--workdir", str(where / "run")])  # fmt: skip
+                                "--gromacs", "--workdir", str(where / "run")])  # fmt: skip
         build_martini_system(args, where, log=lambda *_: None)
         counts[label] = [
             len(_bonds_of_itp(where / "martini" / f"molecule_{k}.itp")) for k in (0, 1)
@@ -805,3 +805,25 @@ def test_a_parameterized_structure_is_mapped_too(tmp_path):
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     s, _ = build_martini_system(args, tmp_path, log=lambda *_: None)
     assert len(s.select("name BB").ids) > 40
+
+
+@pytest.mark.parametrize("model", ["martini3", "sirah"])
+def test_the_gromacs_form_is_written_only_when_it_is_asked_for(model, tmp_path):
+    """A run reads cg.dms, which carries the parameters; --gromacs adds the same
+    system in GROMACS's form beside it, for running or checking it there."""
+    from boonza.md.cgswim import prepare
+
+    name = "sirah/1CRN_ph7.pdb" if model == "sirah" else "1TEN.pdb"
+    built = "sirah" if model == "sirah" else "martini"
+    for flag, wanted in ((None, False), ("--gromacs", True)):
+        where = tmp_path / (flag or "default")
+        args = parse_arguments([str(DATA / name), "--model", model, *([flag] if flag else []),
+                                "--padding-nm", "1.0", "--workdir", str(where)])  # fmt: skip
+        (d,) = prepare(args, ["EK"], types=1, copies=1, log=lambda *_: None)
+        assert (d / built / "cg.dms").is_file()  # what the run reads, either way
+        assert (d / built / "topol.top").is_file() is wanted
+        assert (d / built / "cg.gro").is_file() is wanted
+        if model == "sirah":
+            assert (d / built / "sirah.ff").is_dir() is wanted
+        settings = parse_arguments(["--config", str(d / "md.toml")])
+        assert Path(settings.input_structure).name == "cg.dms"

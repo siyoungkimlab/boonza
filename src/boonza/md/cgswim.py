@@ -106,6 +106,10 @@ def build_sirah(protein, probes, copies: int, box, rng, salt: float = 0.15,
     return solvate(system, box=box, salt=salt, seed=int(rng.integers(1 << 30)), log=log)
 
 
+def _quiet(*_args, **_kwargs) -> None:
+    """Say nothing: what the first simulation logged holds for the rest."""
+
+
 def _built_system(system, martini_itp=None):
     """The mapped system with its parameters on it, or None when they are named
     to be resolved somewhere else (a bare ``--martini-itp``) and cannot be read
@@ -128,7 +132,9 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     tool, places its own probes and fills the box with its own water.
     """
     from .config import ALL_ATOM_ONLY, MARTINI_ONLY, settings_of, write_settings
-    from .prepare import _check_nothing_is_dropped, load_input
+    from .prepare import _check_nothing_is_dropped, _write_built, load_input
+
+    gromacs = bool(getattr(args, "gromacs", False))
 
     sirah = args.model == "sirah"
     if sirah:
@@ -188,12 +194,14 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                                  log=log if s == 0 else None)  # fmt: skip
             built = d / "sirah"
             whole = _built_system(system)
-            system.save(built, system=whole)  # the force field beside it, .dms and .gro both
+            _write_built(system, built, whole, gromacs or whole is None,
+                         log if s == 0 else _quiet)  # fmt: skip
         else:
             system = build(protein, probes, copies, box, rng, args.saltM, clearance)
             built = d / "martini"
             whole = _built_system(system, args.martini_itp)
-            system.save(built, martini_itp=args.martini_itp, system=whole)  # .dms and .gro
+            _write_built(system, built, whole, gromacs or whole is None,
+                         log if s == 0 else _quiet, martini_itp=args.martini_itp)  # fmt: skip
             if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
                 (built / "secondary.txt").write_text(protein.ss + "\n")
         if whole is not None:

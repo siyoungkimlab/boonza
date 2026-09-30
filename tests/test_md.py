@@ -726,12 +726,13 @@ def test_boonza_md_martinizes_a_protein_and_solvates_it(tmp_path):
     work = tmp_path / "run"
     args = parse_arguments(
         ["tests/data/1HHO.pdb", "--model", "martini3", "--elastic", "--padding-nm", "0.8",
-         "--cg-selection", "protein", "--workdir", str(work), "--seed", "1", *MARTINI_SHORT]
+         "--cg-selection", "protein", "--gromacs", "--workdir", str(work), "--seed", "1",
+         *MARTINI_SHORT]
     )  # fmt: skip
     run_workflow(args, log=quiet)
     s = boonza.load(RunPaths(work).solvated_dms)
     assert s.natoms < 4000  # 1HHO is 4779 atoms all-atom; martinized it is ~680 beads
-    assert (work / "martini" / "topol.top").is_file()  # what GROMACS would need
+    assert (work / "martini" / "topol.top").is_file()  # --gromacs: what GROMACS would need
 
 
 def test_a_martini_run_cannot_be_resumed_as_all_atom(tmp_path):
