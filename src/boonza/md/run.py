@@ -34,8 +34,10 @@ class RunPaths:
             "integrator_xml": "integrator.xml",
             "checkpoint": "checkpoint.chk",
             "final_configuration": "final.toml",
+            "equilibrated_dms": "equilibrated.dms",
             "equilibrated_pdb": "equilibrated.pdb",
             "equilibrated_mae": "equilibrated.mae",
+            "final_dms": "final.dms",
             "final_pdb": "final.pdb",
             "final_mae": "final.mae",
             "equilibration_dcd": "equilibration.dcd",
@@ -151,11 +153,19 @@ def _wake_barostat(system, mm, every: int = 25) -> None:
 
 
 def _save_frame(s, state, stem: Path, title: str) -> None:
+    """The state as ``stem``.dms, .pdb and .mae.
+
+    The ``.dms`` is the one to measure against: it keeps every parameter and
+    every atom where it sits, at full precision.  A ``.pdb`` rounds to 0.001 A,
+    and a ``.mae`` moves pseudo particles to the end of the system -- Desmond
+    holds them in a block of their own -- so coordinates read from one and
+    pasted onto the built system by index would belong to other atoms.
+    """
     from openmm import unit
 
     pos = state.getPositions(asNumpy=True).value_in_unit(unit.angstrom)
     box = np.array(state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.angstrom))
-    for ext in (".pdb", ".mae"):
+    for ext in (".dms", ".pdb", ".mae"):
         save_structure(s, stem.with_suffix(ext), positions=np.asarray(pos), box=box)
 
 
