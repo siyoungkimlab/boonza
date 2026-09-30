@@ -92,7 +92,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     from ..martini import martinize
     from ..martini.probes import probe, probe_sequences
     from .config import ALL_ATOM_ONLY, settings_of, write_settings
-    from .prepare import load_input
+    from .prepare import _check_nothing_is_dropped, load_input
 
     if args.input_structure is None:
         raise ValueError("give the protein structure")
@@ -100,6 +100,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     root = Path(args.workdir)
     root.mkdir(parents=True, exist_ok=True)
     aa = load_input(args.input_structure, log, hydrogens=False)
+    _check_nothing_is_dropped(aa, args, Path(args.input_structure), log)
     protein = martinize(aa, args.cg_selection, elastic=elastic,
                         elastic_selection=args.elastic_selection if elastic else None,
                         neutral_termini=bool(args.neutral_termini))  # fmt: skip

@@ -408,6 +408,92 @@ def _composition(text: str) -> dict:
     return out
 
 
+def _check_nothing_is_dropped(s: System, args, path: Path, log=print) -> None:
+    """Refuse to coarse-grain only part of the input by accident.
+
+    ``cg_selection`` is ``protein`` by default, and Martini has parameters for
+    nothing else here, so a ligand beside the protein is simply not mapped --
+    the run would then be of the protein alone, which is never what a complex
+    was given for.  Choosing the selection says it was meant, and the note
+    still names what was left behind.
+    """
+    from ..martini.build import _RESNAMES, force_field
+
+    mappable = set(force_field("martini3001").blocks)
+    kept = set(s.select(args.cg_selection).ids.tolist())
+    residue = np.asarray(s.atoms["residue"])
+    names = np.asarray(s.residues["name"])
+    chains = np.asarray(s.chains["name"])
+    of_chain = np.asarray(s.residues["chain"])
+    solvent = {"HOH", "WAT", "TIP3", "SOL", "NA", "CL", "K", "MG", "CA", "ZN", "SPC"}
+    left: dict[str, set] = {}
+    fragments: set[str] = set()
+    for r in range(s.nresidues):
+        name = str(names[r]).strip().upper()
+        atoms = np.flatnonzero(residue == r)
+        if name in solvent or not len(atoms) or not set(atoms.tolist()).isdisjoint(kept):
+            continue
+        if _RESNAMES.get(name, name) in mappable:
+            # a residue Martini knows, which the selection did not take whole:
+            # a fragment of the structure rather than a molecule of its own
+            fragments.add(f"{str(chains[of_chain[r]]).strip() or '-'}/{name}{r + 1}")
+            continue
+        left.setdefault(str(chains[of_chain[r]]).strip() or "-", set()).add(name)
+    if fragments:
+        log(f"Note: not coarse-grained, being too little of a residue to map: "
+            f"{', '.join(sorted(fragments)[:5])}"
+            f"{f' and {len(fragments) - 5} more' if len(fragments) > 5 else ''}")  # fmt: skip
+    if not left:
+        return
+    what = "; ".join(f"chain {c}: {', '.join(sorted(n))}" for c, n in sorted(left.items()))
+    if "cg_selection" in getattr(args, "specified", ()):
+        log(f"Note: left out of the coarse-grained system by cg_selection "
+            f"{args.cg_selection!r} -- {what}")  # fmt: skip
+        return
+    raise ValueError(
+        f"{path.name} holds more than cg_selection {args.cg_selection!r} maps -- {what}.  Martini "
+        "has parameters for proteins here and none for a ligand, so those would be dropped and "
+        "the run would be of the rest alone.  Give cg_selection to say that is meant, or bring a "
+        "topology that already holds them (boonza md runs a .top as it is)"
+    )
+
+
+def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[System, dict]:
+    """A SIRAH system from a topology that is already built.
+
+    SIRAH keeps its parameters in the topology, as Martini does, so nothing
+    here matches templates.  boonza does not yet map a structure to SIRAH
+    beads or fill a box with its water; SIRAH's own tools do that (cgconv.pl,
+    then pdb2gmx or tleap, then a WT4 box), and what they write runs here.
+    """
+    path = Path(args.input_structure) if args.input_structure else None
+    if path is None:
+        raise ValueError("model = 'sirah' needs a topology: INPUT_STRUCTURE")
+    if path.suffix.lower() not in (".top", ".itp"):
+        raise ValueError(
+            f"model = 'sirah' runs a topology that is already built, not {path.name}: boonza "
+            "does not map a structure to SIRAH beads yet.  Map it with SIRAH's cgconv.pl and "
+            "build the topology with pdb2gmx -ff sirah (or tleap -f leaprc.sirah), then give "
+            "the .top here"
+        )
+    mode = getattr(args, "solvate", "box")
+    mode = {True: "box", False: "none"}.get(mode, mode)
+    if "solvate" in getattr(args, "specified", ()) and mode != "none":
+        raise ValueError(f"{path.name} is a topology, which is already built; "
+                         "it runs with solvate = 'none'")  # fmt: skip
+    gro = _coordinates_beside(path)
+    log(f"SIRAH: {path.name} with {gro.name}, as built")
+    s = load(path, coordinates=gro)
+    s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
+    info = components(s, [])
+    if getattr(args, "monitor_selection", None) is not None:
+        info["selection"] = select_atoms(s, args.monitor_selection)
+    if check is not None:
+        check(info)
+    _log_built(log, s, "System")
+    return _with_production_indices(s, s, info)
+
+
 def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[System, dict]:
     """The coarse-grained system: the input martinized, then water and ions or
     a bilayer around it, or a topology that was already built.
@@ -446,6 +532,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                              "martinizes proteins as Martini 3.  Give a Martini 2 topology "
                              "(.top) instead, or build a membrane without a protein")  # fmt: skip
         aa = load_input(path, log, hydrogens=False)
+        _check_nothing_is_dropped(aa, args, path, log)
         protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
                                elastic_selection=args.elastic_selection,
                                neutral_termini=bool(args.neutral_termini))  # fmt: skip

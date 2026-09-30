@@ -639,3 +639,43 @@ def test_a_clash_between_chains_is_not_taken_for_a_bond():
     with pytest.raises(ValueError):
         _check_links_across_chains(two, [(0, 0, 1, 0)], known=frozenset())
     _check_links_across_chains(two, [(0, 0, 1, 0)], known={(0, 0, 1, 0)})  # the file says so
+
+
+def test_a_ligand_is_not_quietly_left_behind(tmp_path):
+    """Martini maps proteins and has nothing for a ligand beside one, so a
+    complex would come out as the protein alone: a run of something other than
+    what was given.  It is refused unless the selection says it is meant."""
+    from boonza.md.prepare import build_martini_system
+
+    protein = boonza.load(DATA / "1TEN.pdb").clone("protein")
+    ligand = boonza.from_smiles("c1ccccc1O", name="LIG")
+    ligand.positions = ligand.positions + protein.positions.max(0) + 6.0
+    ligand.chains["name"][:] = "L"
+    both = protein.clone()
+    both.append(ligand)
+    boonza.save(both, tmp_path / "complex.mae")
+
+    args = parse_arguments([str(tmp_path / "complex.mae"), "--model", "martini3",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    with pytest.raises(ValueError, match="chain L: LIG"):
+        build_martini_system(args, tmp_path, log=lambda *_: None)
+
+    said = []
+    chosen = parse_arguments([str(tmp_path / "complex.mae"), "--model", "martini3",
+                              "--cg-selection", "protein",
+                              "--workdir", str(tmp_path / "run2")])  # fmt: skip
+    s, _ = build_martini_system(chosen, tmp_path / "b", log=said.append)
+    assert any("left out" in line and "LIG" in line for line in said)
+    assert "LIG" not in {str(n) for n in s.residues["name"]}
+
+
+def test_a_residue_too_small_to_map_is_only_a_note(tmp_path):
+    """1TEN opens with an arginine of two atoms, which is a fragment of the
+    structure rather than a molecule of its own: it is said, not refused."""
+    from boonza.md.prepare import build_martini_system
+
+    said = []
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    build_martini_system(args, tmp_path, log=said.append)
+    assert any("too little of a residue to map" in line and "ARG1" in line for line in said)
