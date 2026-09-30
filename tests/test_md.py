@@ -714,12 +714,17 @@ def test_boonza_md_runs_a_martini_bilayer(tmp_path, model):
 
 
 def test_boonza_md_martinizes_a_protein_and_solvates_it(tmp_path):
-    """An all-atom PDB in, a coarse-grained trajectory out, with nothing else given."""
+    """An all-atom PDB in, a coarse-grained trajectory out.
+
+    1HHO carries haems, oxygens and a phosphate, which Martini cannot map, so
+    the selection has to say that the protein alone is meant -- without it the
+    run is refused rather than quietly leaving them out.
+    """
     pytest.importorskip("openmm")
     work = tmp_path / "run"
     args = parse_arguments(
         ["tests/data/1HHO.pdb", "--model", "martini3", "--elastic", "--padding-nm", "0.8",
-         "--workdir", str(work), "--seed", "1", *MARTINI_SHORT]
+         "--cg-selection", "protein", "--workdir", str(work), "--seed", "1", *MARTINI_SHORT]
     )  # fmt: skip
     run_workflow(args, log=quiet)
     s = boonza.load(RunPaths(work).solvated_dms)
