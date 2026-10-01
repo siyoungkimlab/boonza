@@ -533,51 +533,107 @@ def _sites(args) -> int:
     if args.workdir:  # each brings its own system: only the protein must match
         runs = []
         for d in args.workdir:
-            # not structure_only: that drops pseudo particles (Martini virtual
-            # sites, CHARMM lone pairs), which the trajectory still carries
-            own = boonza.load(str(Path(d) / "solvated.dms"), without_tables=True)
+            own = _run_system(Path(d) / "solvated.dms", typed=args.features)
             runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
         system = runs[0][0]
     else:
         system = _load(args.system)
         runs = [open_trajectory(path, system) for path in args.traj]
     _cg_selections(args, system, args.workdir)
+    if args.interval_ns is None and args.workdir:
+        args.interval_ns = _interval_of(args.workdir)
+    from .probemap import SOLVENT_NAMES
+
+    pocket_protein = f"not ({args.ligandsel}) and not resname {' '.join(SOLVENT_NAMES)}"
     found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
                          spacing=args.spacing, enrichment=args.enrichment,
-                         min_occupancy=args.min_occupancy, periodic=not args.no_pbc)  # fmt: skip
+                         min_occupancy=args.min_occupancy, periodic=not args.no_pbc,
+                         pocket_protein=pocket_protein, rank=args.rank)  # fmt: skip
     frames = len(found.centroids)
     bulk = int((found.labels < 0).sum())
     topologies = len({own.natoms for own in found.systems}) if found.systems else 1
     extra = f" over {topologies} topologies" if topologies > 1 else ""
     print(f"{len(runs)} runs, {frames} pooled frames{extra}; {100 * bulk / frames:.1f}% in bulk")
-    print(f"{'site':>4} {'occupied':>9} {'runs':>5} {'copies':>7} {'arrivals':>9} {'spread':>7}"
-          f"  centre")  # fmt: skip
-    for k, site in enumerate(found):
-        centre = " ".join(f"{x:7.1f}" for x in site.center)
-        print(f"{k:4d} {100 * site.occupancy:8.1f}% {site.runs:5d} {site.copies:7d} "
-              f"{site.arrivals:9d} {site.spread:6.1f} A  {centre}")  # fmt: skip
-    if not len(found):
-        print("no site is visited more than bulk solvent would explain")
-    rates = []
-    if args.interval_ns:
-        print()
-        for k in range(len(found)):
-            try:
-                rate = boonza.kinetics(system, found, k, interval_ns=args.interval_ns,
-                                       temperature=args.temperature,
-                                       hysteresis=args.hysteresis)  # fmt: skip
-            except ValueError as e:
-                print(f"site {k}: no kinetics ({e})")
-                continue
-            print(rate.summary())
-            rates.append(rate)
-    spots = []
-    if args.features:
+    maps, spots, scored = {}, [], {}
+    if args.features:  # before the table, so one table carries the scores too
+        print("typing each probe's atoms for the feature maps (a second pass over the frames)",
+              flush=True)  # fmt: skip
         maps = boonza.feature_maps(system, runs, reference, ligand=args.ligandsel,
                                    align=args.alignsel, spacing=args.spacing,
                                    periodic=not args.no_pbc,
                                    backbone=args.feature_backbone)  # fmt: skip
         spots = boonza.hotspots(maps, enrichment=2.0 * args.enrichment)
+        from boonza.pharmacophore import DSCORE
+
+        for k, site in enumerate(found):
+            score, philic = boonza.site_score(site, maps)
+            if not np.isnan(score):  # a site with no pocket has nothing to score
+                scored[k] = (philic, score, boonza.site_score(site, maps, DSCORE)[0])
+    rates = {}
+    if args.interval_ns:  # the dwell times come from the frames already in hand
+        for k in range(len(found)):
+            try:
+                rates[k] = boonza.kinetics(system, found, k, interval_ns=args.interval_ns,
+                                           temperature=args.temperature,
+                                           hysteresis=args.hysteresis)  # fmt: skip
+            except ValueError as e:
+                print(f"site {k}: no rates ({e})")
+    pooled = any(site.runs > 1 for site in found)
+
+    def header() -> str:
+        """The table's columns; ``row`` fills them in the same order.
+
+        A column only appears where there is something in it: no scores without
+        ``--features``, no rates without an interval between frames, no ``runs``
+        until more than one run is pooled.
+        """
+        out = [f"{'site':>4}", f"{'occupied':>8}", f"{'pocket':>9}", f"{'burial':>6}"]
+        if scored:
+            out += [f"{'philic':>6}", f"{'score':>6}", f"{'Dscore':>6}"]
+        if pooled:
+            out.append(f"{'runs':>5}")
+        out += [f"{'copies':>6}", f"{'arrivals':>8}"]
+        if rates:
+            out += [f"{'exits':>5}", f"{'stay_ns':>7}", f"{'dG':>6}", f"{'KD_mM':>9}"]
+        return " ".join([*out, "centre"])
+
+    def row(k: int, site) -> str:
+        """Everything measured about one site, in one line: how often it was held,
+        the pocket it sits in, what that pocket asks for, and how fast it fills
+        and empties."""
+        out = [f"{k:4d}", f"{100 * site.occupancy:7.1f}%",
+               f"{(f'{site.volume:.0f} A^3' if site.volume else '-'):>9}",
+               _cell(site.burial if site.volume else None, "6.2f")]  # fmt: skip
+        if scored:
+            philic, score, drug = scored.get(k, (None, None, None))
+            out += [_cell(philic, "6.2f"), _cell(score, "6.2f"), _cell(drug, "6.2f")]
+        if pooled:
+            out.append(f"{site.runs:5d}")
+        out += [f"{site.copies:6d}", f"{site.arrivals:8d}"]
+        if rates:
+            r = rates.get(k)
+            out += [_cell(r and r.events, "5d"), _cell(r and r.residence_ns, "7.1f"),
+                    _cell(r and r.dG, "+6.2f"), _cell(r and 1e3 * r.KD, "9.1e")]  # fmt: skip
+        return " ".join([*out, " ".join(f"{x:7.1f}" for x in site.center)])
+
+    print(header())
+    for k, site in enumerate(found):
+        print(row(k, site))
+    if not len(found):
+        print("no site is visited more than bulk solvent would explain")
+    elif scored:
+        print(f"  score and Dscore are SiteMap's shape -- 0.0733 sqrt(n) + 0.6688 burial"
+              f" - 0.20 philic,\n  and 0.094, 0.60, -0.324 for Dscore -- over the pocket's n"
+              f" cells of {args.spacing:g} A.\n  They rank these pockets against each other, not"
+              f" against SiteMap's own 0.8 and 1.0:\n  its n counts site points of its own grid,"
+              f" ours cells a probe's atoms reached.")  # fmt: skip
+    elif not args.features and any(s.volume for s in found):
+        print("  (--features adds the polar share of each pocket and a SiteMap-shaped score)")
+    if rates:  # the table has the rate a site is read by; this is the rest of it
+        print()
+        for rate in rates.values():
+            print(rate.summary())
+    if args.features:
         print(f"\n{len(spots)} hotspots: what a pocket asks for, and how many molecules agree")
         placed = 0
         for k, site in enumerate(found):
@@ -605,27 +661,296 @@ def _sites(args) -> int:
                     grid.write_dx(out / f"{fam.lower()}.dx")
         doc = {"runs": [str(x) for x in args.traj], "frames": frames, "bulk": bulk,
                "spacing": args.spacing, "enrichment": args.enrichment,
-               "ligand": args.ligandsel, "sites": []}  # fmt: skip
+               "interval_ns": args.interval_ns, "ligand": args.ligandsel, "sites": []}  # fmt: skip
         for k, site in enumerate(found):
             doc["sites"].append({"center": site.center.tolist(), "occupancy": site.occupancy,
+                                 "copy_frames": site.copy_frames, "volume": site.volume,
+                                 "burial": site.burial,
                                  "runs": site.runs, "copies": site.copies,
                                  "arrivals": site.arrivals, "spread": site.spread,
                                  "frames": found.frames(k).tolist()})  # fmt: skip
-        for rate in rates:
+            if k in scored:
+                philic, score, drug = scored[k]
+                doc["sites"][k].update({"philic": philic, "score": score, "dscore": drug})
+        for rate in rates.values():
             doc["sites"][rate.site].update(
                 {"dG": rate.dG, "dG_interval": list(rate.dG_interval), "KD": rate.KD,
                  "k_on": rate.k_on, "k_off": rate.k_off, "residence_ns": rate.residence_ns,
                  "departures": rate.events, "arrivals_measured": rate.arrivals,
                  "bound_ns": rate.bound_ns, "unbound_ns": rate.unbound_ns,
                  "concentration_M": rate.concentration,
+                 "occupancy_from_frames": rate.occupancy,
                  "occupancy_from_rates": rate.occupancy_from_rates,
                  "consistent": rate.consistent})  # fmt: skip
         (out / "sites.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        _write_sites_csv(out / "sites.csv", doc["sites"], args.interval_ns)
         found.density.write_dx(out / "density.dx")
         peak = float(found.density.enrichment.max())
+        shape = None
+        if found.occupancy is not None:  # where the atoms reach: the pockets' shape
+            shape = found.occupancy.density(found.volume)
+            shape.write_dx(out / "occupancy.dx")
+            pockets = 0
+            for k, site in enumerate(found):  # one map per site: its pocket alone
+                if site.cells is None or not len(site.cells):
+                    continue
+                # a mask, not the enrichment: the question a pocket map answers is
+                # where the pocket is, and an isosurface of enrichment inside it
+                # shows the cells the probes visited most, which looks scattered.
+                # occupancy.dx is there for how hot each cell is.
+                mask = np.zeros(found.occupancy.counts.size)
+                mask[site.cells] = 1.0
+                shape.write_dx(out / f"pocket{k}.dx", mask.reshape(found.occupancy.dims))
+                pockets += 1
         extra = " and the feature maps" if spots else ""
-        print(f"\nwrote sites.json and density.dx{extra} to {out} (peak {peak:.0f}x bulk)")
+        where = "sites.json, sites.csv, density.dx" + (", occupancy.dx" if shape else "")
+        print(f"\nwrote {where}{extra} to {out} (centroids peak {peak:.0f}x bulk"
+              + (f", atoms {float(shape.enrichment.max()):.0f}x)" if shape else ")"))  # fmt: skip
+        if shape is not None and pockets:
+            from boonza.sites import POCKET_LEVEL
+
+            print(f"  pocket0.dx..pocket{pockets - 1}.dx are masks of the pockets, one value "
+                  f"inside each: draw them at {POCKET_LEVEL:g}\n  for the whole volume that was "
+                  "reported, which is what sites.pml and sites.tcl do")  # fmt: skip
+        boonza.write_viewer_scripts(out, found.sites)
+        _viewer_hint(args, out, system)
     return 0
+
+
+#: The columns of sites.csv, and the key each one takes from sites.json.  Every
+#: number the three printed tables hold is here, with the units in the name
+#: where the printed line carries them in its text.
+_SITE_COLUMNS = (("site", "site"), ("occupied", "occupancy"), ("of_pool", "copy_frames"),
+                 ("pocket_A3", "volume"), ("burial", "burial"), ("philic", "philic"),
+                 ("score", "score"), ("Dscore", "dscore"), ("runs", "runs"),
+                 ("copies", "copies"), ("arrivals", "arrivals"), ("spread", "spread"),
+                 ("x", "x"), ("y", "y"), ("z", "z"), ("interval_ns", "interval_ns"),
+                 ("dG_kcal", "dG"), ("dG_low", "dG_low"), ("dG_high", "dG_high"),
+                 ("KD_mM", "KD_mM"), ("k_on_per_M_per_ns", "k_on"), ("k_off_per_ns", "k_off"),
+                 ("residence_ns", "residence_ns"), ("departures", "departures"),
+                 ("arrivals_measured", "arrivals_measured"), ("bound_ns", "bound_ns"),
+                 ("unbound_ns", "unbound_ns"), ("concentration_mM", "concentration_mM"),
+                 ("bound_frac_frames", "occupancy_from_frames"),
+                 ("bound_frac_rates", "occupancy_from_rates"),
+                 ("rates_agree", "consistent"))  # fmt: skip
+
+
+def _write_sites_csv(path, sites, interval_ns=None) -> None:
+    """Every number sites.json holds about a site, one row each.
+
+    The three things boonza sites prints -- how often a site was held, its rates,
+    its score -- are one row here, which is what a spreadsheet or a dataframe
+    wants, and the occupancies are fractions rather than the percentages a table
+    reads better in.  A column a run has nothing for -- no score without
+    ``--features``, no rates without an interval between frames -- is left empty
+    rather than filled with a nought that would average into the next plot.
+    """
+    import csv
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([name for name, _ in _SITE_COLUMNS])
+        for k, site in enumerate(sites):
+            row = {**site, "site": k, "interval_ns": interval_ns}
+            row.update(zip("xyz", site["center"], strict=True))
+            low, high = site.get("dG_interval") or (None, None)
+            row.update(dG_low=low, dG_high=high)
+            # the rates are printed in mM, where they are read in M: say which
+            for name, key in (("KD_mM", "KD"), ("concentration_mM", "concentration_M")):
+                if site.get(key) is not None:
+                    row[name] = 1e3 * site[key]
+            writer.writerow([_csv_number(row.get(key)) for _, key in _SITE_COLUMNS])
+
+
+def _cell(value, spec: str) -> str:
+    """A number in its column, or a dash as wide where there is nothing to say.
+
+    A site with no pocket has no burial, and a site nothing left has no rate: a
+    nought in either column would be read as a measurement.
+    """
+    if value is None or value is False or (isinstance(value, float) and not np.isfinite(value)):
+        return f"{'-':>{len(f'{0:{spec}}')}}"  # as wide as the number would have been
+    return f"{value:{spec}}"
+
+
+def _csv_number(value) -> str:
+    """A number as short as it can be said without losing it, and nothing at all
+    for what was not measured."""
+    if value is None:
+        return ""
+    if isinstance(value, bool) or not isinstance(value, float):
+        return str(value)
+    if not np.isfinite(value):
+        return ""  # a rate with no departures to measure it from: not nan, nothing
+    return f"{value:.6g}"
+
+
+def _run_system(path, typed: bool = False):
+    """A run's system for an analysis: its structure, and its force field only
+    where something needs it.
+
+    The tables are the slow part of a .dms and an analysis reads the structure,
+    so they are skipped -- but not ``structure_only``, which would drop the
+    pseudo particles (Martini's virtual sites, CHARMM's lone pairs) the
+    trajectory still carries.
+
+    ``typed`` is for the feature maps: Martini says what a bead stands for in
+    the bead's name, where SIRAH says it in the force field's type, so a SIRAH
+    run has to bring its nonbonded table along to be typed at all.
+    """
+    import boonza
+
+    s = boonza.load(str(path), without_tables=True)
+    if typed and len(s.select("name GN GC GO").ids):
+        return boonza.load(str(path))  # SIRAH: its chemistry is in its types
+    return s
+
+
+def _interval_of(workdirs):
+    """The ns between frames, from the runs' own settings; None if they disagree.
+
+    Every time a rate is reported in -- residence, k_on, k_off, and so dG -- is
+    frames times this, so taking it from the run beats typing it and being out
+    by a factor of ten.
+    """
+    import tomllib
+    from pathlib import Path
+
+    found = set()
+    for d in workdirs:
+        for name in (Path(d) / "final.toml", Path(d) / "md.toml", Path(d).parent / "md.toml"):
+            if name.is_file():
+                try:
+                    settings = tomllib.loads(name.read_text())
+                except (OSError, tomllib.TOMLDecodeError):
+                    continue
+                if "production_report_interval_ns" in settings:
+                    found.add(float(settings["production_report_interval_ns"]))
+                    break
+    if len(found) == 1:
+        interval = found.pop()
+        print(f"frames are {interval:g} ns apart (the runs' own "
+              f"production_report_interval_ns); --interval-ns overrides it")  # fmt: skip
+        return interval
+    if len(found) > 1:
+        print(f"the runs report frames at different intervals ({sorted(found)} ns): no rates "
+              "without --interval-ns")  # fmt: skip
+    return None
+
+
+#: What a box holds that a viewer should throw away: Martini's and SIRAH's
+#: water and ions first, then the all-atom names, in the order they are printed.
+_VIEWER_SOLVENT = ("W", "ION", "WT4", "WLS", "NaW", "KW", "ClW",
+                   "HOH", "WAT", "TIP3", "SOL", "NA", "CL", "K", "SOD", "CLA", "POT")  # fmt: skip
+
+#: The backbone beads that say a coarse-grained file still calls them what the
+#: run does -- a view file written before boonza stopped renaming them does not.
+_VIEWER_BEADS = ("BB", "GC", "GN", "GO")
+
+
+def _solvent_in(system) -> list[str]:
+    """The solvent and ion names the system actually holds.
+
+    Stripping names nothing has is a longer line for the reader to check, and
+    for an all-atom run the coarse-grained names mean nothing at all.
+    """
+    if system is None:
+        return list(_VIEWER_SOLVENT)
+    held = {str(x) for x in system.residues["name"]}
+    return [name for name in _VIEWER_SOLVENT if name in held]
+
+
+def _still_named(dms, beads) -> bool:
+    """Whether a view file calls its beads what the run's system calls them.
+
+    One written before boonza stopped renaming the backbone to ``CA`` holds
+    beads a viewer mis-bonds, which is the one thing the file exists to avoid,
+    so such a run is pointed back at its ``solvated.dms``.  The names come
+    straight out of the .dms, which is a SQLite database, rather than by loading
+    it: this is a hint, not a pass over an all-atom box.
+    """
+    import sqlite3
+
+    if not beads:
+        return True  # an all-atom run renames nothing
+    try:
+        with sqlite3.connect(f"file:{dms}?mode=ro", uri=True) as db:
+            held = {str(row[0]) for row in db.execute("select distinct name from particle")}
+    except sqlite3.Error:  # not readable as one: let the viewer say so
+        return True
+    return bool(set(beads) & held)
+
+
+def _ligand_flag(system, selection: str) -> tuple[str, str]:
+    """``--ligand`` for vizard and for pizard, as short as the system allows.
+
+    A chain of their own says it in two words, which is what a swim gives the
+    probes; a list of 105 residue names is a line no one can read, so it is
+    left to probes.json rather than printed.
+    """
+    if not selection:
+        return "", ""
+    try:
+        ids = system.select(selection).ids
+        chains = {str(system.chains["name"][c]) for c in
+                  {int(system.residues["chain"][r]) for r in
+                   {int(system.atoms["residue"][a]) for a in ids.tolist()}}}  # fmt: skip
+    except Exception:  # noqa: BLE001 - a selection the system cannot answer is not a hint
+        chains = set()
+    if len(chains) == 1:
+        only = chains.pop()
+        if only and len(system.select(f"chain {only}").ids) == len(ids):
+            return f'--ligand "chain {only}"', f'--ligand "chain {only}"'
+    if len(selection) <= 50:
+        names = selection.split()
+        pml = f'--ligand "resn {"+".join(names[1:])}"' if names[:1] == ["resname"] else \
+              f'--ligand "{selection}"'  # fmt: skip
+        return f'--ligand "{selection}"', pml
+    return "", ""  # the names are in probes.json; a truncated flag would be worse
+
+
+def _viewer_hint(args, out, system=None) -> None:
+    """Say how to look at what was just written, with the commands to type.
+
+    Neither VMD nor PyMOL reads a bead file of its own, so the session comes
+    from viswizard -- vizard for VMD, pizard for PyMOL -- and the maps are
+    sourced into it.  ``view.dms`` is what a run writes for this, whatever the
+    model; a run built before boonza stopped renaming beads for a viewer is
+    pointed back at its ``solvated.dms``, which was always right.
+    """
+    from pathlib import Path
+
+    beads = [b for b in _VIEWER_BEADS
+             if system is not None and len(system.select(f"name {b}").ids)]  # fmt: skip
+    here = structure = trajectory = None
+    if getattr(args, "workdir", None):
+        here = Path(args.workdir[0])
+        structure, trajectory = here / "solvated.dms", here / "trajectory.dcd"
+        view = here / "view.dms"
+        if view.is_file() and _still_named(view, beads):
+            structure = view
+    elif getattr(args, "system", None):
+        structure = Path(args.system)
+        trajectory = Path(args.traj[0]) if getattr(args, "traj", None) else None
+    # the scripts name their files in full, so neither viewer has to be in that
+    # directory and nothing has to be changed into it
+    session = f"source {out / 'sites.tcl'}", f"@{out / 'sites.pml'}"
+    print("\nto look at them (viswizard sets the session up; neither viewer reads beads alone):")
+    if structure is None:
+        print(f"  in the session:  {session[0]}     (PyMOL: {session[1]})")
+        return
+    vmd_lig, pml_lig = _ligand_flag(system, args.ligandsel) if system is not None else ("", "")
+    if here is not None:  # one directory: name it once
+        print(f"  D={here}")
+        where = f"$D/{structure.name} $D/{trajectory.name}"
+    else:
+        where = f"{structure}{f' {trajectory}' if trajectory else ''}"
+    strip = _solvent_in(system)
+    both = (("vizard", vmd_lig, f'resname {" ".join(strip)}', session[0]),
+            ("pizard", pml_lig, f'resn {"+".join(strip)}', session[1]))  # fmt: skip
+    for viewer, lig, names, how in both:
+        flags = " ".join(x for x in (lig, f'--strip "{names}"' if strip else "") if x)
+        print(f"  {viewer} {where} {flags}  # then: {how}")
 
 
 def _summarize(args) -> int:
@@ -1111,8 +1436,14 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--spacing", type=float, default=1.0, help="grid spacing (A)")
     q.add_argument("--enrichment", type=float, default=20.0,
                    help="how many times more visited than bulk a site must be")  # fmt: skip
-    q.add_argument("--min-occupancy", type=float, default=0.005,
-                   help="share of pooled frames a site must hold")  # fmt: skip
+    q.add_argument("--min-occupancy", type=float, default=0.05,
+                   help="share of the frames a site must hold something in, whichever "
+                        "ligand it is; not a share of the pooled copy-frames, which the "
+                        "copy count dilutes")  # fmt: skip
+    q.add_argument("--rank", choices=("occupied", "agreement", "burial"), default="occupied",
+                   help="order the sites by dwell, by how many copies chose them (firmer for "
+                        "a library of probes), or by how enclosed their pocket is; never by "
+                        "volume, which moves with --enrichment")  # fmt: skip
     q.add_argument("--feature-backbone", action="store_true",
                    help="with --features on a Martini run, also type the BB beads (an amide: "
                         "donor and acceptor), which every probe carries")  # fmt: skip

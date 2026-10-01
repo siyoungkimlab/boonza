@@ -19,6 +19,7 @@ its error, stay at the coarse level where pockets are many angstroms apart.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -34,11 +35,18 @@ class Site:
 
     center: np.ndarray  # (3,) in the reference's frame
     points: np.ndarray  # rows of the pooled table
-    occupancy: float  # share of all pooled frames
+    occupancy: float  # share of the frames in which anything is here
+    copy_frames: float  # share of the pooled copy-frames, which the copy count dilutes
     runs: int  # independent runs that visited it
     copies: int  # ligand copies that visited it
     arrivals: int  # separate visits: a copy leaving and coming back counts twice
     spread: float  # rms distance of its points from the centre (A)
+    volume: float = 0.0  # A^3 of the pocket it sits in, at the same enrichment
+    burial: float = 0.0  # how enclosed that pocket is: 1 is shut in, 0 is open water
+    cells: np.ndarray | None = None  # the pocket's cells of the occupancy grid
+    grid_dims: np.ndarray | None = None  # that grid's shape, origin and spacing, so the
+    grid_origin: np.ndarray | None = None  # cells can be turned back into coordinates
+    grid_spacing: float = 1.0
 
     def __len__(self) -> int:
         return len(self.points)
@@ -97,6 +105,7 @@ class SiteSet:
     systems: list = field(default_factory=list)  # the system each run was read with
     volume: float = 0.0  # mean box volume of the frames, A^3, not the stored cell
     density: Density | None = None
+    occupancy: Occupancy | None = None  # where the atoms go, not only the centres
 
     def __len__(self) -> int:
         return len(self.sites)
@@ -122,8 +131,140 @@ class SiteSet:
         return "\n".join(out)
 
 
+#: How to order the sites found.  Volume is not among them: it moves with the
+#: enrichment threshold, and a wide shallow groove would outrank a tight deep one.
+_RANKS = {
+    # how much of the run something was there -- dwell, which one sticky copy can carry
+    "occupied": lambda s: (-s.occupancy, -len(s.points), tuple(s.center)),
+    # how many copies chose it, which for a library of probes is the firmer claim:
+    # unlike molecules agreeing beats one molecule staying
+    "agreement": lambda s: (-s.copies, -s.occupancy, tuple(s.center)),
+    # how enclosed the pocket is, for picking somewhere to put a ligand
+    "burial": lambda s: (-s.burial, -s.occupancy, tuple(s.center)),
+}
+
+
+def _no_pockets():
+    """Empty (cells, labels, centres, volumes, burials)."""
+    return (np.empty(0, np.int64), np.empty(0, np.int64), np.empty((0, 3)),
+            np.empty(0), np.empty(0))  # fmt: skip
+
+
+class Occupancy:
+    """Where the ligand's atoms go, counted onto a grid as the frames come.
+
+    The centroid map says where a molecule sits; this says what space it
+    reaches, which is the shape of a pocket.  A deep one keeps its volume as
+    the threshold rises, because the atoms come back to the same cells; a
+    shallow one is wide and low and thins out, because molecules brush it from
+    every direction without settling.
+
+    The grid is fixed from the reference, so the counts can be accumulated in
+    one pass rather than every position kept.
+    """
+
+    def __init__(self, reference, spacing: float = 1.0, margin: float = 12.0):
+        lo = np.asarray(reference, float).min(0) - margin
+        hi = np.asarray(reference, float).max(0) + margin
+        self.origin = lo
+        self.spacing = float(spacing)
+        self.dims = np.maximum(np.ceil((hi - lo) / spacing), 1).astype(np.int64)
+        self.counts = np.zeros(int(self.dims.prod()), np.int64)
+        self.total = 0
+
+    def add(self, xyz) -> None:
+        """Count atom positions, already in the reference's frame."""
+        ijk = np.floor((np.asarray(xyz, float) - self.origin) / self.spacing).astype(np.int64)
+        inside = np.all((ijk >= 0) & (ijk < self.dims), axis=1)
+        ijk = ijk[inside]
+        if not len(ijk):
+            return
+        flat = (ijk[:, 0] * self.dims[1] + ijk[:, 1]) * self.dims[2] + ijk[:, 2]
+        self.counts += np.bincount(flat, minlength=self.counts.size)
+        self.total += len(ijk)
+
+    def density(self, volume: float) -> Density:
+        """The counts as a :class:`Density`, with bulk taken over ``volume`` A^3."""
+        return Density(origin=self.origin, spacing=self.spacing,
+                       counts=self.counts.reshape(self.dims),
+                       expected=self.total * self.spacing**3 / max(volume, 1e-9))  # fmt: skip
+
+    def cell_centres(self) -> np.ndarray:  # noqa: D401
+        """The centre of every cell, in the reference's frame."""
+        ijk = np.array(np.unravel_index(np.arange(self.counts.size), tuple(self.dims))).T
+        return self.origin + (ijk + 0.5) * self.spacing
+
+    def burial(self, cells, protein, reach: float = 10.0, touch: float = 2.6) -> np.ndarray:
+        """Of 26 directions out of each cell, the share that meet ``protein``.
+
+        A pocket is enclosed; a dent on a convex surface is not, and bulk is
+        not at all.  Counting directions rather than neighbours within a radius
+        keeps the number comparable between an all-atom protein and a
+        coarse-grained one, whose beads are fewer and larger.
+        """
+        from .spatial import min_dist2
+
+        xyz = self.cell_centres()[cells]
+        dirs = np.array([(x, y, z) for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1)
+                         if (x, y, z) != (0, 0, 0)], float)  # fmt: skip
+        dirs /= np.linalg.norm(dirs, axis=1)[:, None]
+        steps = np.arange(2.0, reach + 0.1, 1.5)
+        blocked = np.zeros(len(xyz))
+        for u in dirs:
+            pts = (xyz[:, None, :] + u * steps[:, None]).reshape(-1, 3)
+            hit = min_dist2(pts, protein, touch * 2, cell=None).reshape(len(xyz), len(steps))
+            blocked += (hit <= touch**2).any(1)
+        return blocked / len(dirs)
+
+    def pockets(self, threshold: float, volume: float, protein, shell=(2.0, 6.0),
+                buried: float = 0.4, min_volume: float = 20.0):  # fmt: skip
+        """The pockets: enriched, continuous, against ``protein`` and enclosed by it.
+
+        Returns ``(cells, labels, centres, volumes, burials)`` -- the cells of
+        every region, which region each belongs to, and a row per region.  An
+        enriched blob in bulk is not a pocket, which is why the shell and the
+        enclosure come before the clustering rather than after it.
+
+        A region is held together by shared faces, so it is one solid: cells
+        that meet only at a corner are no way through for a molecule, and a
+        surface drawn through them comes out as the scatter they are.
+        """
+        from .spatial import min_dist2
+
+        expected = self.total * self.spacing**3 / max(volume, 1e-9)
+        enriched = self.counts >= max(threshold * expected, 2.0)
+        near = np.sqrt(min_dist2(self.cell_centres(), protein, shell[1] + 1.0, cell=None))
+        candidates = np.flatnonzero(enriched & (near >= shell[0]) & (near <= shell[1]))
+        if not len(candidates):
+            return _no_pockets()
+        held = candidates[self.burial(candidates, protein) >= buried]
+        if not len(held):
+            return _no_pockets()
+        held = _fill_enclosed(held, self.dims, near >= shell[0])
+        # by faces: a pocket is a volume you can move through, and a region
+        # held together at the corners is drawn as a scatter of pieces
+        group, ngroups = _join_neighbours(held, self.dims, faces=True)
+        deep = self.burial(held, protein)
+        xyz = self.cell_centres()[held]
+        keep, labels, centres, volumes, burials = [], [], [], [], []
+        for g in range(ngroups):
+            members = group == g
+            if float(members.sum()) * self.spacing**3 < min_volume:
+                continue
+            keep.append(held[members])
+            labels.append(np.full(int(members.sum()), len(centres)))
+            centres.append(xyz[members].mean(0))
+            volumes.append(float(members.sum()) * self.spacing**3)
+            burials.append(float(deep[members].mean()))
+        if not centres:
+            return _no_pockets()
+        return (np.concatenate(keep), np.concatenate(labels), np.array(centres),
+                np.array(volumes), np.array(burials))  # fmt: skip
+
+
 def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
                      align: str = "protein and name CA", periodic: bool = True,
+                     occupancy: Occupancy | None = None,
                      ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # fmt: skip
     """``(centroids (nframes ncopies, 3), (frame, copy) of each, the box volume of each)``.
 
@@ -169,9 +310,13 @@ def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAU
             anchor = X[fit_at].mean(0)
             for c, atoms in enumerate(copy_at):
                 p = X[atoms]
-                whole = p[0] + minimum_image(p - p[0], box).mean(0)
-                whole = anchor + minimum_image((whole - anchor)[None], box)[0]
+                spread = minimum_image(p - p[0], box)  # the copy made whole, bead by bead
+                whole = p[0] + spread.mean(0)
+                moved = minimum_image((whole - anchor)[None], box)[0] - (whole - anchor)
+                whole = whole + moved
                 out.append(whole @ rot.T + shift)
+                if occupancy is not None:  # the space it reaches, not only its centre
+                    occupancy.add((p[0] + spread + moved) @ rot.T + shift)
                 where.append((frame, c))
                 sizes.append(size)  # one per row, so the three returns line up
             frame += 1
@@ -199,8 +344,44 @@ def _dense_cells(points, spacing: float, threshold: float, volume: float):
     return flat, dense, counts, dims, lo, expected
 
 
-def _join_neighbours(dense, dims):
-    """Group dense cells that touch: 26-connectivity, by connected components."""
+def _fill_enclosed(cells, dims, free):
+    """``cells``, plus every cell they seal off from the rest of the box.
+
+    The cells are where a probe's atoms went, which is a sample: one in the
+    middle of a pocket that no atom happened to visit is still inside the
+    pocket, and a region with a hole in it is not what a molecule sits in.  So a
+    hole is filled -- but only a hole: a gap that still opens to the box is a
+    way out, so two regions with a channel between them stay two regions, and
+    scattered cells a wall away from the main one are left where they are, to
+    stand or fall as pockets of their own.
+
+    The protein counts as a wall, since most of a pocket's lid is protein, and
+    ``free`` (the cells not inside it) is what the fill may take.
+    """
+    body = np.zeros(int(dims.prod()), bool)
+    body[cells] = True
+    empty = np.flatnonzero(free.reshape(-1) & ~body)
+    if not len(empty):
+        return cells
+    group, _ = _join_neighbours(empty, dims)
+    ijk = np.array(np.unravel_index(empty, tuple(dims))).T
+    edge = ((ijk == 0) | (ijk == np.asarray(dims) - 1)).any(1)
+    outside = np.unique(group[edge])
+    holes = empty[~np.isin(group, outside)]
+    if not len(holes):
+        return cells
+    return np.sort(np.concatenate([cells, holes]))
+
+
+def _join_neighbours(dense, dims, faces: bool = False):
+    """Group cells that touch, by connected components.
+
+    ``faces`` joins only cells that share a face, which is what makes a region
+    one solid: cells meeting at a corner or along an edge share no volume, a
+    molecule cannot pass between them, and a surface drawn through them comes
+    out as separate pieces pinched at a point.  Off, cells touching any of the
+    26 ways are joined, which is what a cluster of points wants.
+    """
     if not len(dense):
         return np.zeros(0, np.int64), 0
     rank = np.full(int(dims.prod()) + 1, -1, np.int64)
@@ -215,6 +396,8 @@ def _join_neighbours(dense, dims):
             for dz in (-1, 0, 1):
                 if (dx, dy, dz) <= (0, 0, 0):
                     continue  # each pair once
+                if faces and abs(dx) + abs(dy) + abs(dz) != 1:
+                    continue  # a corner or an edge is not a way through
                 nx, ny, nz = x + dx, y + dy, z + dz
                 ok = ((nx >= 0) & (nx < dims[0]) & (ny >= 0) & (ny < dims[1])
                       & (nz >= 0) & (nz < dims[2]))  # fmt: skip
@@ -240,8 +423,9 @@ def _visits(rows) -> int:
 
 def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
           align: str = "protein and name CA", spacing: float = 1.0,
-          enrichment: float = 20.0, min_occupancy: float = 0.005,
-          periodic: bool = True) -> SiteSet:  # fmt: skip
+          enrichment: float = 20.0, min_occupancy: float = 0.05,
+          periodic: bool = True, pocket_protein: str | None = None,
+          rank: str = "occupied") -> SiteSet:  # fmt: skip
     """Where the ligand is found across ``runs``, most occupied first.
 
     ``runs`` is one trajectory (or array of frames) or a list of them; each is
@@ -249,16 +433,28 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     claim several simulations agree on.  A site is a connected group of grid
     cells the ligand visits at least ``enrichment`` times more often than
     bulk solvent would explain; everything else is bulk, and is labelled -1
-    rather than forced into a site.  Sites below ``min_occupancy`` of the
-    pooled frames are left out.
+    rather than forced into a site.
+
+    ``rank`` orders what is found: ``"occupied"`` by dwell, ``"agreement"`` by how
+    many copies chose it, ``"burial"`` by how enclosed its pocket is.  Not by
+    volume, which moves with ``enrichment``.
+
+    ``min_occupancy`` is the share of the *frames* in which a site has to hold
+    something, whoever it is -- not the share of the pooled copy-frames, which
+    shrinks as copies are added and would leave a molecule parked for a whole
+    run below any threshold in a box of 200 probes (one copy of 210 is 0.5% of
+    the pool whatever it does).  A site occupied by one copy throughout is
+    1.0 either way of counting it; one occupied by four copies a quarter of the
+    time each is 1.0 here and 0.1 there.
     """
     if runs is None or not isinstance(runs, (list, tuple)):
         runs = [runs]
     pairs = _pairs(system, runs)
     reference = reference if reference is not None else pairs[0][0]
     points, where, sizes = [], [], []
+    shape = Occupancy(reference.positions[_ids(reference, align)], spacing)
     for r, (own, run) in enumerate(pairs):
-        xyz, rows, boxes = ligand_centroids(own, run, reference, ligand, align, periodic)
+        xyz, rows, boxes = ligand_centroids(own, run, reference, ligand, align, periodic, shape)
         points.append(xyz)
         where.append(np.column_stack([np.full(len(rows), r), rows[:, 1], rows[:, 0]]))
         sizes.append(boxes)
@@ -280,23 +476,45 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     labels = of_cell[flat]
 
     found = []
-    smallest = max(2, round(min_occupancy * len(points)))
+    # the frames there are to be occupied: one row per (run, frame), counted once
+    # however many copies the box holds
+    all_frames = len(np.unique(where[:, [0, 2]], axis=0))
     for g in range(ngroups):
         members = np.flatnonzero(labels == g)
-        if len(members) < smallest:
+        if len(members) < 2:  # a cell a copy passed through once is not a site
             continue
         rows, xyz = where[members], points[members]
+        held = len(np.unique(rows[:, [0, 2]], axis=0)) / max(all_frames, 1)
+        if held < min_occupancy:
+            continue
         centre = xyz.mean(0)
-        found.append(Site(center=centre, points=members,
-                          occupancy=len(members) / len(points),
+        found.append(Site(center=centre, points=members, occupancy=held,
+                          copy_frames=len(members) / len(points),
                           runs=len(np.unique(rows[:, 0])), copies=len(np.unique(rows[:, 1])),
                           arrivals=_visits(rows),
                           spread=float(np.sqrt(((xyz - centre) ** 2).sum(1).mean()))))  # fmt: skip
-    found.sort(key=lambda s: (-len(s.points), tuple(s.center)))
+    # the pocket each site sits in: enriched, continuous, against the protein and
+    # enclosed by it, which an enriched blob in bulk is not
+    pocket_atoms = _ids(reference, pocket_protein) if pocket_protein else np.empty(0, np.int64)
+    if len(pocket_atoms) >= 4:
+        cells, labels, centres, volumes, burials = shape.pockets(
+            enrichment, volume, np.asarray(reference.positions)[pocket_atoms]
+        )
+        for site in found:
+            if not len(centres):
+                continue
+            near = np.linalg.norm(centres - site.center, axis=1)
+            k = int(np.argmin(near))
+            if near[k] <= 6.0:  # its own pocket, not a neighbour's
+                site.volume, site.burial = float(volumes[k]), float(burials[k])
+                site.cells = cells[labels == k]
+                site.grid_dims, site.grid_origin = shape.dims, shape.origin
+                site.grid_spacing = shape.spacing
+    found.sort(key=_RANKS[rank])
     out = np.full(len(points), -1)
     for k, s in enumerate(found):
         out[s.points] = k
-    return SiteSet(sites=found, labels=out, where=where, centroids=points,
+    return SiteSet(sites=found, labels=out, where=where, centroids=points, occupancy=shape,
                    systems=[own for own, _ in pairs],
                    spacing=float(spacing), enrichment=float(enrichment), volume=volume,
                    density=Density(origin=lo, spacing=float(spacing),
@@ -370,3 +588,103 @@ def site_pocket(system, runs, found: SiteSet, k: int, protein: str = "protein an
     if not seen:
         raise ValueError(f"site {k} has no frames")
     return prot[hits / seen >= share]
+
+
+#: Feature families a map may be written for, and a colour to tell them apart.
+VIEWER_COLORS = {"donor": "skyblue", "acceptor": "salmon", "aromatic": "violet",
+                 "hydrophobe": "yellow", "posionizable": "blue",
+                 "negionizable": "red"}  # fmt: skip
+
+
+#: What a mask is drawn at: half of the one value in it, so the surface is the
+#: whole pocket rather than the cells the probes happened to visit most.
+POCKET_LEVEL = 0.5
+
+
+def write_viewer_scripts(directory, sites, level: float = 50.0) -> list[Path]:
+    """Write ``sites.pml`` and ``sites.tcl`` beside the maps; return what was written.
+
+    They load each pocket as a solid surface, the enrichment maps as isosurfaces
+    at ``level`` times bulk, each feature map beside them (switched off, to turn
+    on one at a time), the hotspots as spheres, and a marker at every site's
+    centre.  ``source <dir>/sites.tcl`` in VMD, ``@<dir>/sites.pml`` in PyMOL -- a
+    session set up by vizard or pizard in either case, since neither viewer reads
+    a bead file on its own.
+
+    The files a script names are written into it in full, so it runs from
+    whatever directory the viewer happens to be in; move the directory and the
+    scripts want writing again.
+    """
+    d = Path(directory)
+    at = d.resolve()
+
+    def file(name: str) -> str:
+        """A path a viewer will take whole, even with a space in it."""
+        path = str(at / name)
+        return f'"{path}"' if " " in path else path
+
+    pml = [
+        f"# boonza sites.  @{at / 'sites.pml'} in a pizard session, from any directory.",
+        f"# Isosurfaces are {level:g}x bulk.  pocketK.dx is a mask of site K's pocket:",
+        f"# 1 inside it, drawn solid at {POCKET_LEVEL:g}, so what you see is the volume that",
+        "# was reported.  occupancy.dx is every cell the atoms reach, bulk included, as",
+        "# enrichment; density.dx is where a molecule's centre sits, off the surface for",
+        "# a dipeptide.",
+    ]
+    tcl = [
+        f"# boonza sites.  source {at / 'sites.tcl'} in a vizard session, from any directory.",
+        f"# Isosurfaces are {level:g}x bulk; a pocket is a mask, drawn solid at "
+        f"{POCKET_LEVEL:g}.",  # fmt: skip
+    ]
+    for k in range(len(sites)):  # each site's own pocket: enclosed, against the protein
+        if not (d / f"pocket{k}.dx").is_file():
+            continue
+        pml += [f"load {file(f'pocket{k}.dx')}, pocket{k}_map",
+                f"isosurface pocket{k}, pocket{k}_map, {POCKET_LEVEL:g}",
+                f"color {'orange' if k % 2 == 0 else 'marine'}, pocket{k}",
+                f"set transparency, 0.4, pocket{k}"]  # fmt: skip
+        tcl += [f"mol new {file(f'pocket{k}.dx')} type dx waitfor all",
+                f"mol modstyle 0 top Isosurface {POCKET_LEVEL:g} 0 0 1 1 1",
+                f"mol rename top pocket{k}"]  # fmt: skip
+    if (d / "occupancy.dx").is_file():  # every pocket at once, and the bulk with it
+        pml += [f"load {file('occupancy.dx')}, occupancy",
+                f"isomesh occupancy_mesh, occupancy, {level:g}",
+                "color grey50, occupancy_mesh", "disable occupancy_mesh"]  # fmt: skip
+        tcl += [f"mol new {file('occupancy.dx')} type dx waitfor all",
+                f"mol modstyle 0 top Isosurface {level:g} 0 0 0 1 1",
+                "mol rename top occupancy", "mol off top"]  # fmt: skip
+    pml += [f"load {file('density.dx')}, density",
+            f"isomesh density_mesh, density, {level:g}",
+            "color grey70, density_mesh", "disable density_mesh"]  # fmt: skip
+    tcl += [f"mol new {file('density.dx')} type dx waitfor all",
+            f"mol modstyle 0 top Isosurface {level:g} 0 0 0 1 1",
+            "mol rename top density", "mol off top"]  # fmt: skip
+    for family, colour in VIEWER_COLORS.items():
+        if not (d / f"{family}.dx").is_file():
+            continue
+        pml += [f"load {file(f'{family}.dx')}, {family}",
+                f"isomesh {family}_mesh, {family}, {level:g}",
+                f"color {colour}, {family}_mesh", f"disable {family}_mesh"]  # fmt: skip
+        tcl += [f"mol new {file(f'{family}.dx')} type dx waitfor all",
+                f"mol modstyle 0 top Isosurface {level:g} 0 0 0 1 1",
+                f"mol rename top {family}", "mol off top"]  # fmt: skip
+    if (d / "hotspots.pdb").is_file():
+        pml += [f"load {file('hotspots.pdb')}, hotspots", "show spheres, hotspots",
+                "set sphere_scale, 0.3, hotspots"]  # fmt: skip
+        tcl += [f"mol new {file('hotspots.pdb')} waitfor all",
+                "mol modstyle 0 top VDW 0.3 12", "mol rename top hotspots"]  # fmt: skip
+    tcl += ["draw materials on", "draw color red"]
+    for k, site in enumerate(sites):
+        x, y, z = (round(float(v), 2) for v in site.center)
+        held = 100 * site.occupancy
+        pml += [f"# site {k}: {held:.1f}% of frames, {site.copies} copies",
+                f"pseudoatom site{k}, pos=[{x}, {y}, {z}], label=site{k}",
+                f"show spheres, site{k}", f"color red, site{k}",
+                f"select around{k}, byres (polymer within 6 of site{k})"]  # fmt: skip
+        tcl += [f"# site {k}: {held:.1f}% of frames, {site.copies} copies",
+                f"draw sphere {{{x} {y} {z}}} radius 1.5 resolution 20"]  # fmt: skip
+    if len(sites):
+        pml += ["deselect", "orient around0", "zoom around0, 4"]
+    (d / "sites.pml").write_text("\n".join(pml) + "\n")
+    (d / "sites.tcl").write_text("\n".join(tcl) + "\n")
+    return [d / "sites.pml", d / "sites.tcl"]

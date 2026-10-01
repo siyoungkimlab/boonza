@@ -88,8 +88,10 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES,
     if len(lig) and _unnamed_beads(system, lig):
         raise ValueError(
             "these beads are typed by neither Martini's nor SIRAH's table, and RDKit needs "
-            "atoms: a SIRAH topology built by tleap carries the AMBER release's own type names, "
-            "which boonza does not map yet"
+            "atoms.  SIRAH's beads are typed by the force field's type rather than by their "
+            "names, so a system read without its tables cannot be typed: load it with them.  "
+            "A SIRAH topology built by tleap carries the AMBER release's own type names, which "
+            "boonza does not map yet"
         )
     factory = ChemicalFeatures.BuildFeatureFactory(
         os.path.join(RDConfig.RDDataDir, "BaseFeatures.fdef")
@@ -244,6 +246,58 @@ def hotspots(maps, enrichment: float = 20.0, min_volume: float = 3.0) -> list[Ho
                                ligands=len(np.unique(owners[members]))))  # fmt: skip
     out.sort(key=lambda h: (-h.ligands, -h.enrichment))
     return out
+
+
+#: Which feature families count as polar, for a pocket's hydrophilic character.
+POLAR = ("Donor", "Acceptor", "PosIonizable", "NegIonizable")
+#: SiteMap's SiteScore and Dscore coefficients (Halgren 2009), on (sqrt(n),
+#: enclosure, philicity).  The shape is theirs; the scale cannot be, since their
+#: n counts site points of their own grid and ours counts cells a probe's atoms
+#: reached, so a number here is for ranking pockets of one run against each
+#: other, not for reading against their 0.8 and 1.0 cut-offs.
+SITESCORE = (0.0733, 0.6688, -0.20)
+DSCORE = (0.094, 0.60, -0.324)
+
+
+def philicity(cells, dims, origin, spacing, maps) -> float:
+    """The polar share of the feature placements in ``cells`` of another grid.
+
+    0 is wholly greasy, 1 wholly polar, and SiteMap's ``p`` is the same ratio
+    over its own site points.
+    """
+    if not len(cells):
+        return float("nan")
+    ijk = np.array(np.unravel_index(cells, tuple(dims))).T
+    xyz = np.asarray(origin, float) + (ijk + 0.5) * spacing
+    polar = apolar = 0.0
+    for family, grid in maps.items():
+        here = np.floor((xyz - grid.origin) / grid.spacing).astype(np.int64)
+        shape = np.asarray(grid.counts.shape)
+        inside = np.all((here >= 0) & (here < shape), axis=1)
+        if not inside.any():
+            continue
+        flat = (here[inside, 0] * shape[1] + here[inside, 1]) * shape[2] + here[inside, 2]
+        total = float(grid.counts.reshape(-1)[flat].sum())
+        if family in POLAR:
+            polar += total
+        else:
+            apolar += total
+    return polar / (polar + apolar) if polar + apolar else float("nan")
+
+
+def site_score(site, maps, weights=SITESCORE) -> tuple[float, float]:
+    """``(score, philicity)`` of a site's pocket, in SiteMap's shape.
+
+    ``a sqrt(n) + b enclosure + c philicity`` over the pocket's cells, its
+    burial and the polar share of the features in it.  Pass ``DSCORE`` for the
+    druggability weighting instead.
+    """
+    if site.cells is None or not len(site.cells) or not maps:
+        return float("nan"), float("nan")
+    p = philicity(site.cells, site.grid_dims, site.grid_origin, site.grid_spacing, maps)
+    a, b, c = weights
+    n = float(len(site.cells))
+    return a * np.sqrt(n) + b * site.burial + c * (0.0 if np.isnan(p) else p), p
 
 
 def write_hotspots(path, spots) -> None:

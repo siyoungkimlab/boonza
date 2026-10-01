@@ -1,11 +1,14 @@
 """Binding sites pooled over runs and copies, and how they feed the pose level."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 import boonza
 from boonza.symmetry import DEFAULT_LIGAND
 
+DATA = Path(__file__).parent / "data"
 TRUE = (np.array([6.0, 0.0, 0.0]), np.array([-2.0, 7.0, 1.0]))
 
 
@@ -50,7 +53,10 @@ def test_sites_are_found_where_they_were_put(swimming):
     for site in found:
         assert min(np.linalg.norm(site.center - t) for t in TRUE) < 0.5
         assert site.runs == 4  # every run agrees, which is the evidence that counts
-        assert 0.2 < site.occupancy < 0.35  # 2 of 3 copies, for 120 of 150 frames
+        # held in 120 of 150 frames, by one copy of the three in the box: the
+        # frames are what a site is occupied for, and what min_occupancy gates on
+        assert 0.75 < site.occupancy < 0.85
+        assert 0.2 < site.copy_frames < 0.35
         assert site.spread < 2.0
         assert site.arrivals >= 4
     assert len(found.labels) == 4 * 150 * 3
@@ -224,3 +230,292 @@ def test_runs_may_bring_their_own_system(swimming):
                                 mixed.sites.index(both), protein="protein and noh",
                                 share=0.3)  # fmt: skip
     assert len(pocket) >= 4
+
+
+def _run_directory(tmp_path, s, run):
+    """A directory shaped like one boonza md wrote: what --workdir reads."""
+    d = tmp_path / "md"
+    d.mkdir()
+    boonza.save(s, d / "solvated.dms")
+    with boonza.open_writer(d / "trajectory.dcd", s.natoms) as w:
+        for x in run:
+            w.write(x, box=s.cell)
+    return d
+
+
+#: A cavity of 1FNA: the open point most enclosed by the protein, found by
+#: taking the grid points 3.4-5.0 A from the nearest atom and keeping the one
+#: with the most atoms within 8 A of it -- 120 of them, which is a pocket.
+CAVITY = np.array([-7.43, 27.22, 12.99])
+
+
+@pytest.fixture(scope="module")
+def buried():
+    """A benzene turning over in a cavity of a protein, which is what a pocket
+    looks like: enriched cells, against the protein, enclosed by it.  A second
+    copy wanders the box, and is bulk."""
+    s = boonza.load(DATA / "1FNA.pdb").clone("protein")
+    middle = np.asarray(s.positions).mean(0)
+    for _ in range(2):
+        s.append(boonza.from_smiles("c1ccccc1"))
+    s.cell = np.diag([60.0, 60.0, 60.0])
+    lig = s.select(DEFAULT_LIGAND).ids
+    frag = np.asarray(s.fragids)[lig]
+    copies = [lig[frag == f] for f in np.unique(frag)]
+    base = s.positions.copy()
+    for c in copies:
+        base[c] -= base[c].mean(0)
+    r = np.random.default_rng(7)
+    frames = []
+    for _ in range(60):
+        x = base.copy()
+        # a molecule held in a pocket still turns and rattles, and it is the
+        # cells its atoms reach that give the pocket its shape
+        u, _, v = np.linalg.svd(r.normal(size=(3, 3)))
+        x[copies[0]] = base[copies[0]] @ (u @ v).T + CAVITY + r.normal(scale=0.6, size=3)
+        x[copies[1]] = base[copies[1]] + middle + r.uniform(-25, 25, size=3)
+        frames.append(x)
+    return s, np.array(frames)
+
+
+def test_the_sites_command_puts_the_scores_in_one_table(tmp_path, buried, capsys):
+    """--features is a second pass over the frames, so it is taken before the table
+    rather than after it: one table carries how often a site was held, its pocket
+    and its score, and nothing a reader is waiting for arrives later."""
+    from boonza.cli import main
+
+    s, frames = buried
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in frames:
+            w.write(x, box=s.cell)
+    assert main(["sites", str(structure), "--traj", str(path), "--features"]) == 0
+    printed = capsys.readouterr().out
+    head = next(line for line in printed.splitlines() if line.split()[:2] == ["site", "occupied"])
+    # one run, so no runs column; no --interval-ns, so no rates
+    assert head.split() == ["site", "occupied", "pocket", "burial", "philic", "score",
+                            "Dscore", "copies", "arrivals", "centre"]  # fmt: skip
+    rows = [line.split() for line in printed.splitlines()
+            if line[:4].strip().isdigit() and "%" in line]  # fmt: skip
+    assert len(rows) == 1  # the parked copy; the wanderer is bulk
+    held, volume, unit, burial, philic, score, drug = rows[0][1:8]
+    assert unit == "A^3" and float(volume) >= 20.0  # a pocket, not a handful of cells
+    assert float(held.rstrip("%")) > 75.0
+    assert float(burial) > 0.9  # in a cavity: every way out of it meets the protein
+    assert float(philic) == 0.0  # a benzene asks for nothing polar
+    assert float(score) > 0.0 and float(drug) > 0.0
+    # and the table comes first, with the hotspots the same pass found after it
+    assert printed.index(head) < printed.index("hotspots")
+    assert "SiteMap's shape" in printed
+
+    capsys.readouterr()
+    assert main(["sites", str(structure), "--traj", str(path)]) == 0
+    plain = capsys.readouterr().out
+    assert "score" not in plain.split("centre")[0]  # no second pass, no scores
+    assert "--features adds" in plain
+
+
+def test_the_sites_command_says_how_to_look_at_a_run(tmp_path, swimming, capsys):
+    """One directory, named once, and a line per viewer with the session command
+    on it.  view.dms is what to open, whatever the model wrote it."""
+    import shutil
+
+    from boonza.cli import _still_named, main
+
+    s, runs = swimming
+    d = _run_directory(tmp_path, s, runs[0])
+    out = tmp_path / "out"
+    assert main(["sites", "--workdir", str(d), "-o", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert f"D={d}" in printed
+    assert "vizard $D/solvated.dms $D/trajectory.dcd" in printed  # no view file yet
+    # no cd: the scripts name their files in full, so either viewer runs them
+    # from wherever it happens to be
+    assert f"# then: source {out / 'sites.tcl'}" in printed
+    assert f"# then: @{out / 'sites.pml'}" in printed
+    tcl = (out / "sites.tcl").read_text()
+    assert f"mol new {(out / 'density.dx').resolve()} type dx" in tcl
+    assert "cd " not in tcl and "cd " not in (out / "sites.pml").read_text()
+
+    shutil.copy2(d / "solvated.dms", d / "view.dms")  # what a run writes for a viewer
+    capsys.readouterr()
+    assert main(["sites", "--workdir", str(d), "-o", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "pizard $D/view.dms $D/trajectory.dcd" in printed
+    # an all-atom run renames nothing, so its view file is always the one to open;
+    # a coarse-grained view written before boonza stopped renaming the backbone
+    # holds beads a viewer mis-bonds, and such a run is sent back to solvated.dms
+    assert _still_named(d / "view.dms", [])
+    assert not _still_named(d / "view.dms", ["BB", "GC"])
+    assert _still_named(d / "nothing.dms", ["BB"])  # unreadable: let the viewer say so
+
+
+def test_the_strip_hint_names_only_what_the_box_holds(swimming):
+    """Stripping names nothing has is a longer line to check, and an all-atom box
+    has no W or WT4 in it at all."""
+    from boonza.cli import _solvent_in
+
+    s, _ = swimming
+    assert _solvent_in(s) == []
+    water = s.clone()
+    water.residue(0).name = "HOH"
+    water.residue(1).name = "NA"
+    assert _solvent_in(water) == ["HOH", "NA"]
+    assert "WT4" in _solvent_in(None)  # nothing to go on: every name boonza writes
+
+
+def test_sites_writes_a_csv_of_what_it_printed(tmp_path, buried, capsys):
+    """One row per site, with everything the three printed tables hold: a
+    spreadsheet or a dataframe wants one file, not three shapes of text."""
+    import csv
+
+    from boonza.cli import main
+
+    s, frames = buried
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in frames:
+            w.write(x, box=s.cell)
+    out = tmp_path / "out"
+    assert main(["sites", str(structure), "--traj", str(path), "--features",
+                 "--interval-ns", "0.1", "-o", str(out)]) == 0  # fmt: skip
+    printed = capsys.readouterr().out
+    # the rate a site is read by is a column of the table, and the rest of what
+    # was measured is printed under it, which is also what the csv columns are
+    head = next(line for line in printed.splitlines() if line.split()[:2] == ["site", "occupied"])
+    assert head.split()[-5:] == ["exits", "stay_ns", "dG", "KD_mM", "centre"]
+    assert "residence" in printed and "KD" in printed and "[L]" in printed
+    assert "bound for" in printed and "by frames" in printed
+
+    rows = list(csv.DictReader((out / "sites.csv").read_text().splitlines()))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["site"] == "0"
+    # the occupancies are fractions here, not the percentages a table reads better in
+    assert 0.75 < float(row["occupied"]) <= 1.0 and float(row["of_pool"]) < 0.6
+    assert float(row["pocket_A3"]) >= 20.0 and float(row["burial"]) > 0.9
+    assert float(row["score"]) > 0.0 and float(row["Dscore"]) > 0.0
+    assert float(row["philic"]) == 0.0
+    for name, value in zip("xyz", CAVITY, strict=True):
+        assert float(row[name]) == pytest.approx(value, abs=1.5)
+    assert float(row["bound_ns"]) > 0.0 and float(row["concentration_mM"]) > 0.0
+    assert float(row["interval_ns"]) == 0.1  # every rate scales with it, so it is written
+    assert 0.0 < float(row["bound_frac_frames"]) <= 1.0
+    # it never left, so there is no rate to report: those columns are empty rather
+    # than a nan or an inf that would average into the next plot
+    assert row["dG_kcal"] == "" and row["KD_mM"] == "" and row["residence_ns"] == ""
+    # nothing to compare the frame count against, so the agreement check passes
+    assert row["bound_frac_rates"] == "" and row["rates_agree"] == "True"
+
+    (out / "sites.csv").unlink()
+    assert main(["sites", str(structure), "--traj", str(path), "-o", str(out)]) == 0
+    capsys.readouterr()
+    plain = list(csv.DictReader((out / "sites.csv").read_text().splitlines()))[0]
+    assert plain["score"] == "" and plain["philic"] == ""  # no --features, no score
+    assert float(plain["pocket_A3"]) >= 20.0  # the pocket is measured either way
+
+
+def test_a_hole_in_a_pocket_is_filled_but_a_channel_is_not():
+    """A cell no atom happened to visit, in the middle of a pocket, is still inside
+    the pocket.  A gap that still opens to the box is a way out, not a hole, so
+    two regions with a channel between them stay two regions."""
+    from boonza.sites import _fill_enclosed
+
+    dims = np.array([9, 9, 9])
+    free = np.ones(dims.prod(), bool)
+    flat = lambda i, j, k: (i * dims[1] + j) * dims[2] + k  # noqa: E731
+
+    shell = [flat(i, j, k) for i in (3, 4, 5) for j in (3, 4, 5) for k in (3, 4, 5)
+             if (i, j, k) != (4, 4, 4)]  # fmt: skip
+    filled = _fill_enclosed(np.array(sorted(shell)), dims, free)
+    assert set(filled.tolist()) == set(shell) | {flat(4, 4, 4)}  # the one cell inside it
+
+    # the same shell with a cell of its wall missing: the middle now reaches the
+    # box, so nothing is sealed and nothing is taken
+    leaky = [c for c in shell if c != flat(3, 4, 4)]
+    assert set(_fill_enclosed(np.array(sorted(leaky)), dims, free).tolist()) == set(leaky)
+
+    # and a cell the protein sits in is never taken, however enclosed it is
+    walled = free.copy()
+    walled[flat(4, 4, 4)] = False
+    assert set(_fill_enclosed(np.array(sorted(shell)), dims, walled).tolist()) == set(shell)
+
+
+def test_a_pocket_map_is_a_mask_of_the_volume_reported(tmp_path, buried, capsys):
+    """An isosurface of enrichment inside a pocket shows the cells the probes
+    visited most, which looks like scatter; the question a pocket map answers is
+    where the pocket is.  So it holds one value, drawn at half of it."""
+    from boonza.cli import main
+    from boonza.sites import POCKET_LEVEL
+
+    s, frames = buried
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in frames:
+            w.write(x, box=s.cell)
+    out = tmp_path / "out"
+    assert main(["sites", str(structure), "--traj", str(path), "-o", str(out)]) == 0
+    printed = capsys.readouterr().out
+    volume = float(printed.split("A^3")[0].split()[-1])
+
+    lines = (out / "pocket0.dx").read_text().splitlines()
+    values = np.array([float(x) for line in lines[7:-1] for x in line.split()])
+    assert set(np.unique(values).tolist()) == {0.0, 1.0}
+    assert float((values == 1.0).sum()) == volume  # at 1 A spacing, a cell is a cubic A
+    assert not (out / "pocket1.dx").exists()  # the wanderer has no pocket
+
+    # and the viewer scripts draw it at half of that one value, as a surface
+    tcl = (out / "sites.tcl").read_text()
+    pml = (out / "sites.pml").read_text()
+    assert f"mol modstyle 0 top Isosurface {POCKET_LEVEL:g}" in tcl
+    assert f"isosurface pocket0, pocket0_map, {POCKET_LEVEL:g}" in pml
+    assert "isomesh density_mesh, density, 50" in pml  # the other maps keep their level
+
+
+def test_a_pocket_is_held_together_by_faces_not_corners():
+    """Two cells meeting at a corner share no volume and are no way through for a
+    molecule, and a surface drawn through them comes out as two pieces pinched at
+    a point -- which is what a pocket looked like in a viewer."""
+    from boonza.sites import _join_neighbours
+
+    dims = np.array([6, 6, 6])
+    flat = lambda i, j, k: (i * dims[1] + j) * dims[2] + k  # noqa: E731
+    corner = np.array(sorted([flat(1, 1, 1), flat(2, 2, 2)]))
+    _, by_corner = _join_neighbours(corner, dims)
+    _, by_face = _join_neighbours(corner, dims, faces=True)
+    assert by_corner == 1 and by_face == 2
+
+    touching = np.array(sorted([flat(1, 1, 1), flat(2, 1, 1)]))  # a shared face
+    assert _join_neighbours(touching, dims, faces=True)[1] == 1
+
+
+def test_the_pocket_a_site_claims_is_one_solid(buried):
+    """Every cell of it can be reached from every other through shared faces, so a
+    surface drawn at the mask's half value is one closed object."""
+    from boonza.sites import _join_neighbours
+
+    s, frames = buried
+    found = boonza.sites(s, [frames], pocket_protein="protein")
+    site = found[0]
+    assert site.volume >= 20.0 and site.cells is not None
+    group, pieces = _join_neighbours(site.cells, site.grid_dims, faces=True)
+    assert pieces == 1
+    assert len(site.cells) * site.grid_spacing**3 == site.volume
+
+
+def test_a_column_with_nothing_in_it_keeps_its_width():
+    """A site with no pocket has no burial and a site nothing left has no rate, and
+    a dash as wide as the number would have been is what keeps the table a table."""
+    from boonza.cli import _cell
+
+    for spec in ("6.2f", "+6.2f", "9.1e", "5d", "7.1f"):
+        wide = len(_cell(1.5 if spec[-1] in "fe" else 2, spec))
+        assert _cell(None, spec) == "-".rjust(wide)
+        assert len(_cell(float("nan"), spec)) == wide
+        assert len(_cell(float("inf"), spec)) == wide
