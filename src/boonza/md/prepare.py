@@ -719,7 +719,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
     viewing = m.for_viewing(s)
     for suffix in (".dms", ".mae"):
         save(viewing, workdir / f"view{suffix}")
-    log("Wrote view.dms and view.mae with the backbone as CA"
+    log("Wrote view.dms and view.mae: what to open in a viewer"
         + (f", without the {len(bands)} rubber bands" if bands else ""))  # fmt: skip
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])
