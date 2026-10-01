@@ -61,12 +61,22 @@ MODELS = ("aa", "martini2", "martini3", "sirah")
 #: 0.7 nm apart where heavy atoms touch at about 0.4 -- and it looks every
 #: 0.2 ns for three checks in a row, since a bead diffuses fast and a target
 #: that steps away for 0.2 ns has not left.
+#:
+#: Frames come ten times as often as an all-atom run's, for the same reason and
+#: one more: how often a frame is written is not a force field's business but a
+#: trade of disk against time resolution, and a bead arrives and leaves faster
+#: than an atom.  Every rate `boonza sites` reports is dwell times counted in
+#: frames, so a visit shorter than the interval is a visit it cannot see; a
+#: coarse-grained box is small enough that the frames cost little.  The same
+#: number for both models also lets runs of each pool into one analysis, which
+#: differing intervals refuse to do.
 _CG = {
     "integration_fs": 20.0,
     "pocket_cutoff_nm": 0.8,
     "contact_cutoff_nm": 0.7,
     "detach_cutoff_nm": 1.2,
     "checkpoint_interval_ns": 0.1,
+    "production_report_interval_ns": 0.1,
     "monitor_interval_ns": 0.2,
     "confirmation_checks": 3,
 }
@@ -76,7 +86,7 @@ _CG = {
 _MARTINI = {**_CG, "cutoff_nm": 1.1, "elastic": True}
 #: SIRAH keeps its own backbone terms instead of a network, and runs with PME
 #: inside 1.2 nm, as its own mdp files do (tutorial 7, md_CGPROT.mdp).
-_SIRAH = {**_CG, "cutoff_nm": 1.2, "production_report_interval_ns": 0.1}
+_SIRAH = {**_CG, "cutoff_nm": 1.2}
 MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.

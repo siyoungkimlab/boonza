@@ -152,7 +152,8 @@ def test_the_analysis_knows_a_coarse_grained_run(tmp_path):
 
     args = Args()
     _cg_selections(args, cg, [str(run)])  # probes.json sits beside the run
-    assert args.alignsel == "name BB"
+    # the probes are left out of the fit: a fit on them is a fit on what moves
+    assert args.alignsel == "(name BB) and not resname EK LL"
     assert args.ligandsel == "resname EK LL"
     unchanged = Args()
     _cg_selections(unchanged, aa, [str(run)])  # all-atom: left alone
@@ -757,6 +758,12 @@ def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
     assert view.nbonds == (s.nbonds if elastic else s.nbonds - 354)
     # the coordinates it carries are the built ones, not a .gro's
     assert np.allclose(np.asarray(view.positions), np.asarray(s.positions))
+    # and the writer every model shares leaves this one alone: Martini's is the
+    # one with the rubber bands taken out, and a copy of the run would put them back
+    from boonza.md.run import RunPaths, _write_view
+
+    _write_view(s, RunPaths(tmp_path), log=lambda *_: None)
+    assert boonza.load(tmp_path / "view.dms").nbonds == view.nbonds
 
 
 def test_the_default_work_directories():
@@ -882,3 +889,38 @@ def test_a_probe_chain_steps_aside_for_a_protein_that_uses_it():
     aa = boonza.load(DATA / "1TEN.pdb").clone("protein")
     aa.chains["name"][:] = "LIG"  # a protein whose own chain is called LIG
     assert probe_chain(martinize(aa, "protein")) == "LIG2"
+
+
+def test_both_coarse_grained_models_write_frames_as_often():
+    """How often a frame is written is a trade of disk against time resolution,
+    not a force field's business: a bead arrives and leaves faster than an atom,
+    and every rate `boonza sites` reports is dwell times counted in frames.  The
+    same interval for both also lets runs of each pool into one analysis."""
+    from boonza.md.config import DEFAULTS, parse_arguments
+
+    for model in ("martini2", "martini3", "sirah"):
+        args = parse_arguments(["x.top", "--model", model])
+        assert args.production_report_interval_ns == 0.1
+        assert args.checkpoint_interval_ns == 0.1  # and it still divides the interval
+    assert DEFAULTS["production_report_interval_ns"] == 1.0  # all-atom boxes are bigger
+    assert parse_arguments(["x.pdb"]).production_report_interval_ns == 1.0
+    # and it is still a setting, not a rule
+    assert parse_arguments(["x.top", "--model", "martini3",
+                            "--production-report-interval-ns", "1"]
+                           ).production_report_interval_ns == 1.0  # fmt: skip
+
+
+def test_a_martini_run_needs_no_tables_to_be_typed(tmp_path):
+    """Its bead names say what each one stands for, so an analysis reads the
+    structure alone however many features it is asked for."""
+    from boonza.cli import _run_system
+    from boonza.martini import martinize
+    from boonza.martini.features import martini_beads
+
+    built = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein")).system()
+    path = tmp_path / "solvated.dms"
+    boonza.save(built, path)
+    for typed in (False, True):
+        s = _run_system(path, typed=typed)
+        assert "nonbonded" not in s.tables
+        assert martini_beads(s, s.select("name BB").ids)
