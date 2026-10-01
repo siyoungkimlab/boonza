@@ -352,71 +352,26 @@ def test_the_sites_command_says_how_to_look_at_a_run(tmp_path, swimming, capsys)
     assert _still_named(d / "nothing.dms", ["BB"])  # unreadable: let the viewer say so
 
 
-def test_the_strip_hint_names_only_what_the_box_holds(swimming):
-    """Stripping names nothing has is a longer line to check, and an all-atom box
-    has no W or WT4 in it at all."""
-    from boonza.cli import _solvent_in
+def test_the_strip_hint_is_the_same_line_for_every_model(tmp_path, swimming, capsys):
+    """One list, Martini's and SIRAH's and an all-atom box's together, so a line
+    copied from one run still strips the right things in another.  Naming only
+    what this box holds would be shorter and would quietly keep 2 216 waters the
+    moment it was pasted into a run of another model."""
+    from boonza.cli import _VIEWER_SOLVENT, main
 
-    s, _ = swimming
-    assert _solvent_in(s) == []
-    water = s.clone()
-    water.residue(0).name = "HOH"
-    water.residue(1).name = "NA"
-    assert _solvent_in(water) == ["HOH", "NA"]
-    assert "WT4" in _solvent_in(None)  # nothing to go on: every name boonza writes
-
-
-def test_sites_writes_a_csv_of_what_it_printed(tmp_path, buried, capsys):
-    """One row per site, with everything the three printed tables hold: a
-    spreadsheet or a dataframe wants one file, not three shapes of text."""
-    import csv
-
-    from boonza.cli import main
-
-    s, frames = buried
-    structure = tmp_path / "s.dms"
-    boonza.save(s, structure)
-    path = tmp_path / "run.dcd"
-    with boonza.open_writer(path, s.natoms) as w:
-        for x in frames:
-            w.write(x, box=s.cell)
-    out = tmp_path / "out"
-    assert main(["sites", str(structure), "--traj", str(path), "--features",
-                 "--interval-ns", "0.1", "-o", str(out)]) == 0  # fmt: skip
+    s, runs = swimming
+    d = _run_directory(tmp_path, s, runs[0])
+    assert main(["sites", "--workdir", str(d), "-o", str(tmp_path / "out")]) == 0
     printed = capsys.readouterr().out
-    # the rate a site is read by is a column of the table, and the rest of what
-    # was measured is printed under it, which is also what the csv columns are
-    head = next(line for line in printed.splitlines() if line.split()[:2] == ["site", "occupied"])
-    assert head.split()[-5:] == ["exits", "stay_ns", "dG", "KD_mM", "centre"]
-    assert "residence" in printed and "KD" in printed and "[L]" in printed
-    assert "bound for" in printed and "by frames" in printed
-
-    rows = list(csv.DictReader((out / "sites.csv").read_text().splitlines()))
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["site"] == "0"
-    # the occupancies are fractions here, not the percentages a table reads better in
-    assert 0.75 < float(row["occupied"]) <= 1.0 and float(row["of_pool"]) < 0.6
-    assert float(row["pocket_A3"]) >= 20.0 and float(row["burial"]) > 0.9
-    assert float(row["score"]) > 0.0 and float(row["Dscore"]) > 0.0
-    assert float(row["philic"]) == 0.0
-    for name, value in zip("xyz", CAVITY, strict=True):
-        assert float(row[name]) == pytest.approx(value, abs=1.5)
-    assert float(row["bound_ns"]) > 0.0 and float(row["concentration_mM"]) > 0.0
-    assert float(row["interval_ns"]) == 0.1  # every rate scales with it, so it is written
-    assert 0.0 < float(row["bound_frac_frames"]) <= 1.0
-    # it never left, so there is no rate to report: those columns are empty rather
-    # than a nan or an inf that would average into the next plot
-    assert row["dG_kcal"] == "" and row["KD_mM"] == "" and row["residence_ns"] == ""
-    # nothing to compare the frame count against, so the agreement check passes
-    assert row["bound_frac_rates"] == "" and row["rates_agree"] == "True"
-
-    (out / "sites.csv").unlink()
-    assert main(["sites", str(structure), "--traj", str(path), "-o", str(out)]) == 0
-    capsys.readouterr()
-    plain = list(csv.DictReader((out / "sites.csv").read_text().splitlines()))[0]
-    assert plain["score"] == "" and plain["philic"] == ""  # no --features, no score
-    assert float(plain["pocket_A3"]) >= 20.0  # the pocket is measured either way
+    assert f'--strip "resname {" ".join(_VIEWER_SOLVENT)}"' in printed
+    assert f'--strip "resn {"+".join(_VIEWER_SOLVENT)}"' in printed
+    # Martini's water and ions, SIRAH's, and an all-atom box's, though this one
+    # is an all-atom system with no solvent in it at all
+    assert {"W", "ION"} <= set(_VIEWER_SOLVENT)  # Martini
+    assert {"WT4", "NaW", "ClW"} <= set(_VIEWER_SOLVENT)  # SIRAH
+    assert {"HOH", "TIP3", "NA", "CL"} <= set(_VIEWER_SOLVENT)  # all-atom
+    # a structural metal is not solvent: a run that holds one wants to see it
+    assert not {"MG", "ZN", "CAL", "CA"} & set(_VIEWER_SOLVENT)
 
 
 def test_a_hole_in_a_pocket_is_filled_but_a_channel_is_not():

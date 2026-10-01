@@ -838,26 +838,17 @@ def _interval_of(workdirs):
     return None
 
 
-#: What a box holds that a viewer should throw away: Martini's and SIRAH's
-#: water and ions first, then the all-atom names, in the order they are printed.
-_VIEWER_SOLVENT = ("W", "ION", "WT4", "WLS", "NaW", "KW", "ClW",
-                   "HOH", "WAT", "TIP3", "SOL", "NA", "CL", "K", "SOD", "CLA", "POT")  # fmt: skip
+#: What a box holds that a viewer should throw away: Martini's water and ions,
+#: then SIRAH's, then an all-atom box's.  Bulk only -- a magnesium or a zinc is
+#: usually part of the structure rather than part of the solvent, and a run that
+#: holds one wants to see it.
+_VIEWER_SOLVENT = ("W", "WF", "WN", "WT4", "WLS", "ION", "NaW", "KW", "ClW",
+                   "HOH", "WAT", "TIP3", "SOL", "SPC", "NA", "CL", "K", "SOD",
+                   "CLA", "POT")  # fmt: skip
 
 #: The backbone beads that say a coarse-grained file still calls them what the
 #: run does -- a view file written before boonza stopped renaming them does not.
 _VIEWER_BEADS = ("BB", "GC", "GN", "GO")
-
-
-def _solvent_in(system) -> list[str]:
-    """The solvent and ion names the system actually holds.
-
-    Stripping names nothing has is a longer line for the reader to check, and
-    for an all-atom run the coarse-grained names mean nothing at all.
-    """
-    if system is None:
-        return list(_VIEWER_SOLVENT)
-    held = {str(x) for x in system.residues["name"]}
-    return [name for name in _VIEWER_SOLVENT if name in held]
 
 
 def _still_named(dms, beads) -> bool:
@@ -945,11 +936,11 @@ def _viewer_hint(args, out, system=None) -> None:
         where = f"$D/{structure.name} $D/{trajectory.name}"
     else:
         where = f"{structure}{f' {trajectory}' if trajectory else ''}"
-    strip = _solvent_in(system)
+    strip = _VIEWER_SOLVENT
     both = (("vizard", vmd_lig, f'resname {" ".join(strip)}', session[0]),
             ("pizard", pml_lig, f'resn {"+".join(strip)}', session[1]))  # fmt: skip
     for viewer, lig, names, how in both:
-        flags = " ".join(x for x in (lig, f'--strip "{names}"' if strip else "") if x)
+        flags = " ".join(x for x in (lig, f'--strip "{names}"') if x)
         print(f"  {viewer} {where} {flags}  # then: {how}")
 
 
