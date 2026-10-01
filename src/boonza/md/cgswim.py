@@ -19,6 +19,40 @@ import numpy as np
 from ..io import save
 
 CLEARANCE = 5.0  # Å between a placed probe and the protein or another probe
+#: The chain the probes go in, as an all-atom swim gives its ligand library one
+#: of its own.  Theirs was the protein's chain once, which made every
+#: chain-based selection ambiguous.
+PROBE_CHAIN = "LIG"
+
+
+def _chains_in(mapped) -> set[str]:
+    """The chains the mapped protein's beads carry, Martini's or SIRAH's."""
+    out: set[str] = set()
+    for mol in mapped.molecules:
+        beads = getattr(mol, "beads", None)
+        out |= ({str(b.chain or "") for b in beads} if beads is not None
+                else {str(n.get("chain", "") or "") for n in mol.nodes})  # fmt: skip
+    return out
+
+
+def probe_chain(mapped) -> str:
+    """A chain for the probes that the protein does not use already."""
+    used = _chains_in(mapped)
+    return next(c for c in (PROBE_CHAIN, *(f"{PROBE_CHAIN}{k}" for k in range(2, 1000)))
+                if c not in used)  # fmt: skip
+
+
+def in_chain(probe, chain: str):
+    """``probe`` with every bead in ``chain``; returns it."""
+    for mol in probe.molecules:
+        beads = getattr(mol, "beads", None)
+        if beads is not None:
+            for bead in beads:
+                bead.chain = chain
+        else:
+            for node in mol.nodes:
+                node["chain"] = chain
+    return probe
 
 
 def groups_of(sequences, types: int) -> list[list[str]]:
@@ -167,6 +201,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                             neutral_termini=bool(args.neutral_termini))  # fmt: skip
         log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
             f"{', elastic network' if elastic else ''}")  # fmt: skip
+    chain = probe_chain(protein)  # the probes', free of the protein's
     extent = float((protein.positions.max(0) - protein.positions.min(0)).max())
     edge = extent + 20.0 * args.padding_nm
     box = np.full(3, edge)
@@ -188,7 +223,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             continue  # started: leave it be
         d.mkdir(exist_ok=True)
         rng = np.random.default_rng([int(args.seed), s])
-        probes = [probe(q) for q in group]
+        probes = [in_chain(probe(q), chain) for q in group]
         if sirah:
             system = build_sirah(protein, probes, copies, box, rng, args.saltM, clearance,
                                  log=log if s == 0 else None)  # fmt: skip
@@ -204,10 +239,13 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                          log if s == 0 else _quiet, martini_itp=args.martini_itp)  # fmt: skip
             if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
                 (built / "secondary.txt").write_text(protein.ss + "\n")
-        if whole is not None:
-            # what to open in a viewer: the backbone named CA and no rubber bands
-            viewing = (system.for_viewing(whole) if sirah else
-                       system.for_viewing(whole, martini_itp=args.martini_itp))  # fmt: skip
+        if whole is not None and not sirah:
+            # what to open in a viewer: the system without its rubber bands,
+            # which a viewer would otherwise draw as a hairball.  The beads keep
+            # their names: a viewer that knows amino acids reads a renamed
+            # "GLU: CA SC1" as a broken residue and draws its own bonds over it.
+            # SIRAH has no network to leave out, so cg.dms is what to open.
+            viewing = system.for_viewing(whole, martini_itp=args.martini_itp)
             for suffix in (".dms", ".mae"):
                 save(viewing, built / f"view{suffix}")
         # the run reads cg.dms, which carries every parameter the topology gave
@@ -225,16 +263,16 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                     "neutral_termini", "lipid_itp", *ALL_ATOM_ONLY,
                     *(MARTINI_ONLY if sirah else ())):  # fmt: skip
             settings.pop(key, None)
-        probes_are = "resname " + " ".join(group)
         if repel and "repulsion_selection" not in args.specified:
-            settings["repulsion_selection"] = probes_are  # probes apart
+            settings["repulsion_selection"] = f"chain {chain}"  # probes apart
         if (settings.get("dihedral_restraint", "none") != "none"
                 and "dihedral_restraint_selection" not in args.specified):  # fmt: skip
-            settings["dihedral_restraint_selection"] = f"not ({probes_are})"  # probes swim
+            settings["dihedral_restraint_selection"] = f"not chain {chain}"  # probes swim
         write_settings(d / "md.toml", settings)
         # what the analysis needs to know about a coarse-grained run
         (d / "probes.json").write_text(json.dumps(
-            {"probes": list(group), "copies": copies, "ligand": "resname " + " ".join(group),
+            {"probes": list(group), "copies": copies, "chain": chain,
+             "ligand": "resname " + " ".join(group),
              "align": "name GC" if sirah else "name BB"}, indent=1) + "\n")  # fmt: skip
     (root / "simulations.txt").write_text(
         "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims)

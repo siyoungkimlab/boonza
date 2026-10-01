@@ -99,7 +99,8 @@ def test_a_prepared_simulation(tmp_path):
         assert f'#include "{name}.itp"' in top
     settings = parse_arguments(["--config", str(d / "md.toml")])
     assert settings.model == "martini3" and settings.solvate == "none"
-    assert settings.repulsion_selection == "resname " + " ".join(written["probes"])
+    # the probes have a chain of their own, as an all-atom swim's ligands do
+    assert settings.repulsion_selection == "chain LIG" == f"chain {written['chain']}"
     assert settings.production_ns == 10.0
     assert not settings.forcefields  # nothing all-atom came along
     # the run reads the built system, which carries its parameters; the topology
@@ -234,7 +235,7 @@ def test_probes_swim_free_of_the_backbone_restraints(tmp_path):
     sims = prepare(args, ["EK", "LL"], types=2, copies=1, log=lambda *_: None)
     settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
     assert settings.dihedral_restraint == "bb"
-    assert settings.dihedral_restraint_selection == "not (resname EK LL)"
+    assert settings.dihedral_restraint_selection == "not chain LIG"  # the probes' chain
 
 
 def _probe_run(tmp_path, frames=6):
@@ -716,17 +717,20 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     viewing = m.for_viewing(whole)
     assert viewing.natoms == whole.natoms
     assert viewing.nbonds == whole.nbonds - len(bands)
-    # the backbone is named CA in the view, which is what a viewer traces a
-    # chain through; the topology keeps Martini's BB
-    assert len(viewing.select("name CA").ids) == len(whole.select("name BB").ids) > 50
-    assert not len(viewing.select("name BB").ids)
-    assert not len(whole.select("name CA").ids)
-    kept = m.for_viewing(whole, backbone_as_ca=False)
-    assert len(kept.select("name BB").ids) == len(whole.select("name BB").ids)
-    side = [str(n) for n in whole.atoms["name"] if str(n) != "BB"]
-    assert [str(n) for n in viewing.atoms["name"] if str(n) != "CA"] == side  # rest untouched
+    # the beads keep their names: a viewer that knows amino acids reads a
+    # renamed "GLU: CA SC1" as a broken residue and draws its own bonds over it
+    assert [str(n) for n in viewing.atoms["name"]] == [str(n) for n in whole.atoms["name"]]
+    assert len(viewing.select("name BB").ids) > 50 and not len(viewing.select("name CA").ids)
     for i, j in bands[:5]:
         assert viewing.find_bond(viewing.atom(i), viewing.atom(j)) is None
+    # which is what the cts say, so the file cannot be run by mistake
+    from boonza.martini.build import VIEWING_MARK
+
+    assert {str(viewing.ct(c).name) for c in range(viewing.ncts)} == {VIEWING_MARK}
+    assert all(str(whole.ct(c).name) != VIEWING_MARK for c in range(whole.ncts))
+    # a viewer that wants a CA trace and perceives no bonds of its own can ask
+    traced = m.for_viewing(whole, backbone_as_ca=True)
+    assert len(traced.select("name CA").ids) == len(whole.select("name BB").ids)
 
     without = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"), elastic=False)
     assert without.elastic_bonds() == []
@@ -734,8 +738,9 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
 
 @pytest.mark.parametrize("elastic", [[], ["--no-elastic"]])
 def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
-    """Written whether or not there is a network to leave out: the backbone is
-    named CA either way, which is what the file is for."""
+    """Written whether or not there is a network to leave out, and with the beads
+    named as the model names them."""
+    from boonza.martini.build import VIEWING_MARK
     from boonza.md.prepare import build_martini_system
 
     args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *elastic,
@@ -744,7 +749,8 @@ def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
     view = boonza.load(tmp_path / "view.dms")
     assert (tmp_path / "view.mae").is_file()
     assert view.natoms == s.natoms
-    assert len(view.select("name CA").ids) == len(s.select("name BB").ids)  # for a viewer
+    assert [str(n) for n in view.atoms["name"]] == [str(n) for n in s.atoms["name"]]
+    assert {str(view.ct(c).name) for c in range(view.ncts)} == {VIEWING_MARK}
     assert [str(r) for r in view.residues["name"]] == [str(r) for r in s.residues["name"]]
     # the rubber bands are left out where there are any; "elastic" here is the
     # flag that switches the network off, so an empty one means it is on
@@ -841,3 +847,38 @@ def test_a_snapshot_is_not_a_system_to_run(tmp_path):
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     with pytest.raises(ValueError, match="carries no parameters"):
         build_martini_system(args, tmp_path, log=lambda *_: None)
+
+
+@pytest.mark.parametrize("model", ["martini3", "sirah"])
+def test_the_probes_have_a_chain_of_their_own(model, tmp_path):
+    """Chain LIG, free of the protein's, as an all-atom swim names its ligand
+    library's: theirs was the protein's chain once, which left every chain-based
+    selection ambiguous."""
+    import json
+
+    from boonza.md.cgswim import prepare
+
+    name = "sirah/1CRN_ph7.pdb" if model == "sirah" else "1TEN.pdb"
+    built = "sirah" if model == "sirah" else "martini"
+    args = parse_arguments([str(DATA / name), "--model", model, "--padding-nm", "1.5",
+                            "--workdir", str(tmp_path / "swim")])  # fmt: skip
+    (d,) = prepare(args, ["EK", "WY"], types=2, copies=2, log=lambda *_: None)
+    s = boonza.load(d / built / "cg.dms")
+    probes = json.loads((d / "probes.json").read_text())
+    assert probes["chain"] == "LIG"
+    res = np.asarray(s.atoms["residue"])
+    rn = np.asarray(s.residues["name"])
+    lig = s.select("chain LIG").ids
+    assert len(lig) and set(rn[res[lig]].tolist()) == set(probes["probes"])
+    # and the protein keeps its own, so neither selection catches the other
+    protein = s.select("not chain LIG and not resname W ION WT4 NaW ClW").ids
+    assert len(protein) and not set(protein.tolist()) & set(lig.tolist())
+
+
+def test_a_probe_chain_steps_aside_for_a_protein_that_uses_it():
+    from boonza.martini import martinize
+    from boonza.md.cgswim import probe_chain
+
+    aa = boonza.load(DATA / "1TEN.pdb").clone("protein")
+    aa.chains["name"][:] = "LIG"  # a protein whose own chain is called LIG
+    assert probe_chain(martinize(aa, "protein")) == "LIG2"

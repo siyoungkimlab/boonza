@@ -149,9 +149,10 @@ against the other; what differs is the resolution and how the protein is held.
   and no elastic network. Both ends are neutral (SIRAH's `Neutral` termini),
   so only the side chains carry charge — Arg and Lys +1, Glu −1, His neutral,
   as at pH 7, and the two models agree probe for probe. Its residues take the
-  probe's own name (`EK`), so the analysis can tell probes from protein. In
-  the topology the molecule is `probe_EK`, since a probe named `KW` would
-  otherwise be SIRAH's potassium.
+  probe's own name (`EK`), so the analysis can tell probes from protein, and
+  they share chain `LIG` (`LIG2`, ... if the protein uses it), as an all-atom
+  swim's ligand library does. In the topology the molecule is `probe_EK`, since
+  a probe named `KW` would otherwise be SIRAH's potassium.
 - **The protein** is martinized with an elastic network, as in any Martini run
   (`--no-elastic` leaves it out), which holds its fold while its side chains
   move; SIRAH is sirahized and holds its backbone with torsion terms of its
@@ -162,7 +163,9 @@ against the other; what differs is the resolution and how the protein is held.
   0.1 M. Probes are dealt round robin, so each run holds a spread of
   chemistry rather than all the Arg probes together.
 - **Repulsion is on by default** here, unlike an all-atom swim: probe
-  clusters would otherwise read as hotspots. `--no-repulsion` turns it off.
+  clusters would otherwise read as hotspots. It is `repulsion_selection =
+  "chain LIG"`, the same setting the all-atom swim writes. `--no-repulsion`
+  turns it off.
 - **`--dihedral-restraint bb` or `ss`** (Martini) holds the protein's
   BB-BB-BB-BB torsions, as in an all-atom swim it holds phi and psi; the
   probes are left free. It is worth adding when the protein is built without
@@ -173,8 +176,9 @@ against the other; what differs is the resolution and how the protein is held.
 
 Each simulation directory holds the built system as `martini/cg.dms` or
 `sirah/cg.dms` -- beads with every parameter on them, which is what the run
-reads. With it go `md.toml`, `view.dms` and `view.mae` (the beads to look at:
-the backbone named CA and no rubber bands, copied into the run directory), and
+reads. With it go `md.toml`, and under Martini `view.dms` and `view.mae` (the
+beads to look at: no rubber bands, names as the model has them, copied into the
+run directory; a SIRAH swim writes none, having no network to leave out), and
 `probes.json`, which records the probes so that the analysis needs no
 selections of its own. `--gromacs` adds the GROMACS form of the same system
 (`topol.top`, a molecule `.itp` each, `cg.gro`, and for SIRAH the force field
