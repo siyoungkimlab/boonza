@@ -318,7 +318,10 @@ def _poses(args) -> int:
     else:
         system, files = _load(args.system), None
         traj = open_trajectory(args.traj, system)
-    _cg_poses_selections(args, system)
+    # probes.json sits beside the run (or a directory up, as swim writes it), and
+    # names the probes the pocket must not be built from
+    beside = [Path(args.system).parent] if getattr(args, "system", None) else []
+    _cg_poses_selections(args, system, beside)
     counts = None
     if args.reference:
         reference = _load(args.reference)
@@ -397,7 +400,7 @@ def _poses(args) -> int:
     return 0
 
 
-def _cg_poses_selections(args, system) -> None:
+def _cg_poses_selections(args, system, workdirs=()) -> None:
     """A coarse-grained pocket is made of backbone beads, and its probes have to
     be named: the default ligand selection would take the protein itself."""
     from .symmetry import DEFAULT_FIT, DEFAULT_LIGAND
@@ -405,7 +408,7 @@ def _cg_poses_selections(args, system) -> None:
     if not _coarse_grained(system):
         return
     if getattr(args, "proteinsel", None) in (None, DEFAULT_ALIGN, DEFAULT_FIT):
-        args.proteinsel = _backbone_selection(system)
+        args.proteinsel = _backbone_selection(system, _probes_of(workdirs))
         print(f"the pocket is made of {args.proteinsel!r} "
               "(a coarse-grained system has no CA atoms)")  # fmt: skip
     if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
@@ -414,13 +417,34 @@ def _cg_poses_selections(args, system) -> None:
                          "protein itself.  'boonza probes' maps every probe at once")  # fmt: skip
 
 
-def _backbone_selection(system) -> str:
+def _probes_of(workdirs) -> list[str]:
+    """The probe residue names of coarse-grained swim runs, from their probes.json."""
+    import json
+    from pathlib import Path
+
+    out: list[str] = []
+    for d in workdirs or []:
+        for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
+            if candidate.is_file():
+                out += json.loads(candidate.read_text())["probes"]
+                break
+    return list(dict.fromkeys(out))
+
+
+def _backbone_selection(system, without=()) -> str:
     """The beads a coarse-grained backbone is made of, of those this system has:
-    BB under Martini, GN, GC and GO under SIRAH."""
+    BB under Martini, GN, GC and GO under SIRAH.
+
+    ``without`` are residue names to leave out -- the probes of a swim, which
+    carry backbone beads of their own.  A fit on every BB bead in the box is a
+    fit on 420 diffusing probes and 85 of protein, which puts every frame in a
+    different frame of reference and leaves a parked probe looking like bulk.
+    """
     from .md.monitor import CG_BACKBONE
 
     here = [n for n in CG_BACKBONE if len(system.select(f"name {n}").ids)]
-    return "name " + " ".join(here or CG_BACKBONE)
+    beads = "name " + " ".join(here or CG_BACKBONE)
+    return f"({beads}) and not resname {' '.join(without)}" if without else beads
 
 
 def _coarse_grained(system) -> bool:
@@ -436,26 +460,18 @@ def _coarse_grained(system) -> bool:
 def _cg_selections(args, system, workdirs) -> None:
     """Fill in what a coarse-grained run needs: the probes of a coarse-grained
     `boonza swim` simulation, and its backbone beads to align on."""
-    import json
-    from pathlib import Path
-
     from .symmetry import DEFAULT_LIGAND
 
     if not _coarse_grained(system):
         return
+    probes = _probes_of(workdirs)
     if getattr(args, "alignsel", None) in (None, DEFAULT_ALIGN):
-        args.alignsel = _backbone_selection(system)
-        print(f"aligning on {args.alignsel!r} (a coarse-grained system has no CA atoms)")
-    if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND):
-        probes = []
-        for d in workdirs or []:
-            for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
-                if candidate.is_file():
-                    probes += json.loads(candidate.read_text())["probes"]
-                    break
-        if probes:
-            args.ligandsel = "resname " + " ".join(dict.fromkeys(probes))
-            print(f"the probes of the run(s): {args.ligandsel}")
+        args.alignsel = _backbone_selection(system, probes)
+        why = ", and a fit on the probes too is a fit on what moves" if probes else ""
+        print(f"aligning on {args.alignsel!r} (a coarse-grained system has no CA atoms{why})")
+    if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND) and probes:
+        args.ligandsel = "resname " + " ".join(probes)
+        print(f"the probes of the run(s): {args.ligandsel}")
 
 
 def _probes(args) -> int:
