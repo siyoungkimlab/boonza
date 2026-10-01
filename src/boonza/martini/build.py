@@ -31,6 +31,10 @@ from .links import CGMolecule, apply_links
 #: What Martini calls the backbone bead, and what a viewer wants it called: a
 #: chain is traced through CA, and with BB most viewers draw beads and no more.
 BACKBONE_BEAD = "BB"
+#: What :meth:`Martinized.for_viewing` calls the cts of the system it returns,
+#: so a file with its elastic network taken out says so and is not run by
+#: mistake (:func:`boonza.md.prepare._already_built` reads it).
+VIEWING_MARK = "boonza view: no elastic network"
 VIEWING_BACKBONE = "CA"
 
 # vermouth's element masses (AttachMass) and bond radii (MakeBonds), nm
@@ -186,17 +190,19 @@ class Martinized:
                 offset += len(mol.nodes)
         return out
 
-    def for_viewing(self, system=None, martini_itp=None, backbone_as_ca: bool = True):
+    def for_viewing(self, system=None, martini_itp=None, backbone_as_ca: bool = False):
         """The system without its elastic network: what to open in a viewer.
 
         Everything else is kept, atom for atom and in the same order, so the
-        trajectory still lines up with it.  ``backbone_as_ca`` also names the
-        backbone bead ``CA``, which is what a viewer traces a chain through --
-        with ``BB`` most of them draw beads and nothing else.  It is a name for
-        looking at, not for working with: the bead stands for the whole
-        backbone, N, CA, C and O together, and consecutive ones sit about
-        0.35 nm apart where alpha carbons sit 0.38 apart.  The topology keeps
-        Martini's own names.
+        trajectory still lines up with it.  Its cts are named ``VIEWING_MARK``,
+        which is how a file that has had bonds taken out of it says so.
+
+        ``backbone_as_ca`` names the backbone bead ``CA`` as well, which is
+        what a viewer traces a chain through -- but it is off by default,
+        because a viewer that knows amino acids reads ``GLU: CA SC1`` as a
+        broken residue and draws its own bonds over it, which is worse than no
+        trace at all.  Turn it on for a viewer that wants a CA trace and
+        perceives no bonds of its own.
         """
         s = (system if system is not None else self.system(martini_itp)).clone()
         bands = self.elastic_bonds()
@@ -207,6 +213,8 @@ class Martinized:
             names = s.atoms["name"]
             for a in np.flatnonzero(np.asarray(names) == BACKBONE_BEAD).tolist():
                 names[a] = VIEWING_BACKBONE
+        for c in range(s.ncts):  # a ct name survives a .dms and a .mae alike
+            s.ct(c).name = VIEWING_MARK
         return s
 
     def _write_topology(self, directory, martini_itp=None) -> Path:

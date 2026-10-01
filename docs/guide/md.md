@@ -334,8 +334,8 @@ the topology nor the force field beside it (delete both and it still runs).
 That is what a run reads, and what a coarse-grained `boonza swim` points its
 simulations at. A file that carries beads and a force field runs as it is
 under `--model sirah` or `--model martini3`, rather than being mapped again --
-except `view.dms`, which is refused, since its backbone bead is named CA and a
-Martini view carries no elastic network.
+except `view.dms`, which is refused: its cts say the elastic network has been
+taken out of it, so a run of it would let the fold go.
 
 **`--gromacs`** (off by default) writes the same system in GROMACS's form
 beside it as well -- `topol.top`, an `.itp` per molecule, `cg.gro`, and for
@@ -380,10 +380,13 @@ Note that SIRAH's own mdp files set `fourierspacing 0.2`, which leaves the
 reciprocal sum about 100 kJ/mol short on a system of a few thousand beads;
 that is a fine setting for forces, and boonza's PME is tighter.
 
-A SIRAH run writes `view.dms` and `view.mae` too, with `GC` named `CA`. There
-the name is simply what the bead is: SIRAH's map places `GC` on the alpha
-carbon itself (`MAP CA => GC`), where Martini's `BB` stands for the whole
-backbone.
+A SIRAH run writes no view file. There would be nothing in it: SIRAH holds its
+fold with torsion terms rather than an elastic network, so a view would be a
+copy of `cg.dms` -- and renaming `GC` to `CA` in it, which boonza used to do,
+makes a viewer that knows amino acids draw its own bonds over beads it reads as
+a broken residue. Open `sirah/cg.dms` (or `solvated.dms`) with the trajectory.
+`Sirahized.for_viewing()` still renames on request, for a viewer that wants a CA
+trace and perceives no bonds of its own.
 
 Protonation is whatever the topology was built with, since SIRAH's own tools
 choose it: 2.2 has the two neutral histidines (`sHe`, `sHd`) and no charged
@@ -496,7 +499,7 @@ it is seeded.
 | `final.dms`, `.pdb`, `.mae` | the latest coordinates |
 | `checkpoint.chk`, `system.xml`, `integrator.xml`, `final.toml` | for restarts |
 | `performance.csv` | where the wall time went |
-| `view.dms`, `view.mae` | every coarse-grained run: what to open in a viewer -- the backbone bead named `CA`, so a chain is traced, and no elastic network, which a viewer would otherwise draw as a hairball; same atoms in the same order, so the trajectory lines up with it |
+| `view.dms`, `view.mae` | a Martini run: the system without its elastic network, which a viewer would otherwise draw as a hairball; same atoms, same names, same order, so the trajectory lines up with it. Its cts say so, and `boonza md` refuses to run it. A SIRAH run writes none -- it has no network to leave out |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
 
 A snapshot goes out in three formats because they are not equivalent. The

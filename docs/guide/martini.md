@@ -247,14 +247,19 @@ or not: the bands are bonds like any other, and a viewer draws every one of
 them. Everything else is kept,
 atom for atom and in order, so a trajectory still lines up.
 
-It also names the backbone bead `CA`, because that is what a viewer traces a
-chain through -- with `BB` most of them draw beads and nothing more. That is a
-name for looking at, not for working with, and only these files carry it: the
-bead stands for the whole backbone (N, CA, C and O together), and consecutive
-ones sit about 0.35 nm apart where alpha carbons sit 0.38 apart, so anything
-measured as `CA` geometry would be quietly wrong. The topology, the run's own
-`solvated.dms` and every selection keep Martini's `BB`. Pass
-`backbone_as_ca=False` to leave it.
+The beads keep their names. `backbone_as_ca=True` renames the backbone bead
+`CA`, which is what a viewer traces a chain through, but it is **off by
+default** and was on once: a viewer that knows amino acids reads a residue of
+`GLU: CA SC1` as a broken one and draws its own bonds over it, which is a worse
+hairball than the rubber bands were (`solvated.dms`, with `BB`, opens fine in
+the same viewer). Turn it on for a viewer that wants a CA trace and perceives
+no bonds of its own, and remember the bead is not an alpha carbon: it stands for
+the whole backbone, and consecutive ones sit about 0.35 nm apart where alpha
+carbons sit 0.38 apart.
+
+The view's cts are named `boonza view: no elastic network`, which is how the
+file says what has been taken out of it -- a `.dms` and a `.mae` both keep a ct
+name -- and how `boonza md` knows to refuse to run it.
 
 `Martinized.system()` reads the topology back for its parameters but keeps
 the bead positions it holds, so nothing is rounded to a `.gro`'s three

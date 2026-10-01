@@ -547,13 +547,16 @@ class Sirahized:
         return out / "topol.top"
 
     def for_viewing(self, system=None, backbone_as_ca: bool = True):
-        """The system with its alpha-carbon bead named CA: what to open in a viewer.
+        """The system with its alpha-carbon bead named CA, for a viewer that
+        wants a CA trace.
 
         SIRAH's ``GC`` sits on the alpha carbon itself -- its map places it
-        there -- so the name is what the bead is, not a convenience; a viewer
-        traces a chain through CA, and through ``GC`` it draws beads and no
-        more.  Everything else is kept, atom for atom and in order, so a
-        trajectory still lines up.  Only these files carry the name.
+        there -- so the name is what the bead is rather than a convenience.
+        Everything else is kept, atom for atom and in order, so a trajectory
+        still lines up.  A run writes no such file: SIRAH holds its fold with
+        torsion terms rather than an elastic network, so there is nothing to
+        leave out, and a viewer that knows amino acids draws its own bonds over
+        beads it takes for a broken residue.  ``cg.dms`` is what to open.
         """
         s = (system if system is not None else self.system()).clone()
         if backbone_as_ca:

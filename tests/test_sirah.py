@@ -625,23 +625,20 @@ def test_every_library_is_read_together():
     assert bonded.nrexcl == 3
 
 
-def test_a_sirah_run_writes_a_view_with_ca(crambin_all_atom, tmp_path):
-    """SIRAH's GC bead sits on the alpha carbon itself, so naming it CA in the
-    file meant for viewing is what the bead is; a viewer traces a chain through
-    it, and through GC draws beads and no more."""
+def test_a_sirah_run_writes_no_view_file(crambin_all_atom, tmp_path):
+    """There would be nothing in it: SIRAH holds its fold with torsion terms
+    rather than an elastic network, so a view would be a copy of cg.dms with the
+    beads renamed -- and a viewer that knows amino acids draws its own bonds over
+    beads it reads as a broken residue.  cg.dms is what to open."""
     from boonza.md.prepare import build_sirah_system
 
     args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--no-solvate",
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     s, _ = build_sirah_system(args, tmp_path, log=lambda *_: None)
-    view = boonza.load(tmp_path / "view.dms")
-    assert (tmp_path / "view.mae").is_file()
-    assert view.natoms == s.natoms and view.nbonds == s.nbonds  # nothing dropped, only renamed
-    assert len(view.select("name CA").ids) == len(s.select("name GC").ids) > 40
-    assert not len(view.select("name GC").ids)
-    assert not len(s.select("name CA").ids)  # the run's own record keeps SIRAH's names
-    rest = [str(n) for n in s.atoms["name"] if str(n) != "GC"]
-    assert [str(n) for n in view.atoms["name"] if str(n) != "CA"] == rest
+    assert not (tmp_path / "view.dms").exists() and not (tmp_path / "view.mae").exists()
+    built = boonza.load(tmp_path / "sirah" / "cg.dms")
+    assert len(built.select("name GC").ids) > 40 and not len(built.select("name CA").ids)
+    assert built.natoms == s.natoms
 
 
 def test_sirah_viewing_can_keep_its_own_names(crambin_all_atom):
@@ -711,7 +708,8 @@ def test_a_prepared_sirah_swim(tmp_path):
     settings = parse_arguments(["--config", str(d / "md.toml")])
     assert settings.model == "sirah" and settings.solvate == "none"
     assert settings.integration_fs == 20.0  # SIRAH's own step, not Martini's
-    assert settings.repulsion_selection == "resname " + " ".join(written["probes"])
+    # the probes have a chain of their own, as an all-atom swim's ligands do
+    assert settings.repulsion_selection == "chain LIG" == f"chain {written['chain']}"
     assert not settings.elastic  # SIRAH holds its backbone itself
     # the run reads cg.dms, which carries every parameter; topol.top and the
     # force field beside it are what GROMACS would read
@@ -739,21 +737,21 @@ def test_a_sirah_swim_is_neutral_and_runs(crambin_all_atom, tmp_path):
     assert np.isfinite(boonza.openmm_energies(s, **OPENMM_OPTIONS)["total"])
 
 
-def test_a_swim_run_finds_the_view_beside_its_topology(tmp_path):
-    """The run reads a topology, which carries no view; swim writes one where it
-    builds, and the run copies it in so a viewer has the beads to look at."""
+def test_a_sirah_swim_writes_the_beads_to_open(tmp_path):
+    """No view file either: cg.dms is the system and the thing to look at, and a
+    run started from it carries nothing to copy in."""
     from boonza.md.cgswim import prepare
     from boonza.md.prepare import build_sirah_system
 
     args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--padding-nm", "1.0",
                             "--workdir", str(tmp_path / "swim")])  # fmt: skip
     (d,) = prepare(args, ["EK"], types=1, copies=1, log=lambda *_: None)
-    assert (d / "sirah" / "view.dms").is_file() and (d / "sirah" / "view.mae").is_file()
+    assert (d / "sirah" / "cg.dms").is_file()
+    assert not (d / "sirah" / "view.dms").exists() and not (d / "sirah" / "view.mae").exists()
     run = parse_arguments(["--config", str(d / "md.toml")])
     s, _ = build_sirah_system(run, tmp_path, log=lambda *_: None)
-    view = boonza.load(tmp_path / "view.dms")
-    assert view.natoms == s.natoms
-    assert len(view.select("name CA").ids) == len(s.select("name GC").ids) > 40
+    assert not (tmp_path / "view.dms").exists()
+    assert len(s.select("name GC").ids) > 40 and not len(s.select("name CA").ids)
 
 
 def test_sirahs_solvent_is_not_a_target_of_the_probes():
@@ -787,15 +785,15 @@ def test_a_built_system_runs_without_its_topology(crambin_all_atom, tmp_path):
     assert np.isfinite(boonza.openmm_energies(s, **OPENMM_OPTIONS)["total"])
 
 
-def test_the_file_for_viewing_is_not_a_file_to_run(crambin_all_atom, tmp_path):
-    """Its backbone bead is named CA, and a Martini view has no elastic network:
-    running one would quietly let a fold go."""
-    from boonza.md.prepare import build_sirah_system
-    from boonza.sirah import sirahize
+def test_the_file_for_viewing_is_not_a_file_to_run(tmp_path):
+    """A Martini view has had its elastic network taken out, which its cts say,
+    so running it would quietly let the fold go."""
+    from boonza.martini import martinize
+    from boonza.md.prepare import build_martini_system
 
-    m = sirahize(crambin_all_atom)
+    m = martinize(boonza.load(DATA.parent / "1TEN.pdb").clone("protein"), elastic=True)
     boonza.save(m.for_viewing(), tmp_path / "view.dms")
-    args = parse_arguments([str(tmp_path / "view.dms"), "--model", "sirah", "--no-solvate",
+    args = parse_arguments([str(tmp_path / "view.dms"), "--model", "martini3", "--no-solvate",
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     with pytest.raises(ValueError, match="written for viewing"):
-        build_sirah_system(args, tmp_path / "run", log=lambda *_: None)
+        build_martini_system(args, tmp_path / "run", log=lambda *_: None)

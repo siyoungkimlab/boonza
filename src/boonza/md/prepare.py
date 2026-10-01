@@ -403,10 +403,8 @@ def _coordinates_beside(top: Path) -> Path:
                      f"{top.stem}.dms, .mae or .gro (or cg.gro)")  # fmt: skip
 
 
-#: The beads that say a coarse-grained file of each model is one boonza built,
-#: and the ones that say it is the file written for viewing instead.
+#: The beads that say a coarse-grained file of each model is one boonza built.
 BUILT_BEADS = {"martini": ("BB",), "sirah": ("GN", "GC", "GO")}
-VIEWED_BEADS = {"martini": ("CA", "SC1"), "sirah": ("CA", "GN", "GO")}
 
 
 def _already_built(s: System, model: str, path: Path) -> bool:
@@ -421,6 +419,8 @@ def _already_built(s: System, model: str, path: Path) -> bool:
     and a Martini view carries no elastic network, so running it would quietly
     let a fold go.
     """
+    from ..martini.build import VIEWING_MARK
+
     kind = "sirah" if model == "sirah" else "martini"
     if bool((s.atoms["anum"] == 1).any()):
         return False  # a structure with hydrogens: one to map
@@ -432,13 +432,11 @@ def _already_built(s: System, model: str, path: Path) -> bool:
                              "at and for measuring).  Run that run's solvated.dms, which carries "
                              "them, or the topology beside it")  # fmt: skip
         return False  # a structure to map, not a system to run
-    if here(BUILT_BEADS[kind]):
-        return True
-    if here(VIEWED_BEADS[kind]):
-        raise ValueError(f"{path.name} is the file written for viewing, whose backbone bead is "
-                         "named CA (and a Martini view carries no elastic network); run the "
-                         "cg.dms beside it, which carries the parameters")  # fmt: skip
-    return False
+    if any(str(s.ct(c).name) == VIEWING_MARK for c in range(s.ncts)):
+        raise ValueError(f"{path.name} is the file written for viewing, which has had the elastic "
+                         "network taken out of it (its cts say so), so a run of it would let the "
+                         "fold go; run the cg.dms beside it")  # fmt: skip
+    return here(BUILT_BEADS[kind])
 
 
 def _write_built(m, directory: Path, system: System, gromacs: bool, log=print,
@@ -589,10 +587,10 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
             log(f"Box: {edge / 10:.2f} nm a side, {args.padding_nm:g} nm around the beads")
         s = built.system()
         _write_built(built, workdir / "sirah", s, bool(args.gromacs), log)
-        viewing = built.for_viewing(s)
-        for suffix in (".dms", ".mae"):
-            save(viewing, workdir / f"view{suffix}")
-        log("Wrote view.dms and view.mae with the alpha-carbon bead named CA")
+        # no view file: SIRAH holds its fold with torsion terms rather than an
+        # elastic network, so there is nothing to leave out of one, and beads
+        # renamed for a viewer are beads a viewer mis-bonds (sirah/cg.dms is
+        # what to open)
         s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
         info = components(s, [])
         if getattr(args, "monitor_selection", None) is not None:
