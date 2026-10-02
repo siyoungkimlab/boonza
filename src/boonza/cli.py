@@ -513,7 +513,25 @@ def _cg_selections(args, system, workdirs) -> None:
         why = ", and a fit on the probes too is a fit on what moves" if probes else ""
         print(f"aligning on {args.alignsel!r} (a coarse-grained system has no CA atoms{why})")
     if getattr(args, "ligandsel", None) in (None, DEFAULT_LIGAND) and probes:
-        args.ligandsel = "resname " + " ".join(probes)
+        # A probe is named after its sequence, and a one-residue probe of a
+        # tryptophan is called W -- which is what Martini calls its water.  Asked
+        # for the probes by name alone, a run of the single-residue library hands
+        # back every water bead in the box as a ligand, and then nothing is a
+        # site because the whole box is.  The probes of a swim are a chain of
+        # their own, so name that too; a run from before they were given one has
+        # the solvent named out instead.
+        import re
+
+        from .md.cgswim import PROBE_CHAIN
+        from .probemap import SOLVENT_NAMES
+
+        names = "resname " + " ".join(probes)
+        theirs = sorted(c for c in {str(x).strip() for x in system.chains["name"]}
+                        if re.fullmatch(PROBE_CHAIN + r"\d*", c))  # fmt: skip
+        if theirs:
+            args.ligandsel = f"({names}) and chain {' '.join(theirs)}"
+        else:
+            args.ligandsel = f"({names}) and not resname {' '.join(SOLVENT_NAMES)}"
         print(f"the probes of the run(s): {args.ligandsel}")
 
 
