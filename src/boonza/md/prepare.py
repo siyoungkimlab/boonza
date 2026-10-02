@@ -572,7 +572,8 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
                              "(serine's HG, tryptophan's HE1), so add them, with protonation "
                              "states, first")  # fmt: skip
         _check_nothing_is_dropped(aa, args, path, log)
-        built = sirahize(aa, args.cg_selection, termini=args.termini, log=log)
+        built = sirahize(aa, args.cg_selection, termini=args.termini, log=log,
+                         strict=bool(getattr(args, "strict_mapping", False)))  # fmt: skip
         log(f"SIRAH: {built.nbeads} beads in {len(built.molecules)} molecule(s)")
         if mode == "box":
             from ..sirah.build import solvate as solvate_sirah

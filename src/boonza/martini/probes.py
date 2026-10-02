@@ -82,7 +82,7 @@ def ordered_sequences(residues=PROBE_RESIDUES) -> list[str]:
 
 
 @cache
-def _built(sequence: str):
+def _built(sequence: str, forcefield: str = "martini3001"):
     from .. import peptide
     from .build import martinize
 
@@ -90,7 +90,8 @@ def _built(sequence: str):
     # carboxyl, two on Lys's amine); mapping the heavy atoms alone gives the
     # charged forms of pH 7, with His neutral
     m = martinize(peptide(sequence, conformation="extended"), "protein and not element H",
-                  ss=False, scfix=False, neutral_termini=True)  # fmt: skip
+                  ss=False, scfix=False, neutral_termini=True,
+                  forcefield=forcefield)  # fmt: skip
     if len(m.molecules) != 1:
         raise ValueError(f"{sequence} did not martinize into one molecule")
     for node in m.molecules[0].nodes:  # the probe's own residue name, not the protein's
@@ -100,14 +101,18 @@ def _built(sequence: str):
     return m
 
 
-def probe(sequence: str):
-    """The martinized dipeptide ``sequence`` (e.g. ``"EK"``), centered on its beads.
+def probe(sequence: str, forcefield: str = "martini3001"):
+    """The martinized probe ``sequence`` (``"EK"``, or ``"E"``), centered on its beads.
 
-    Built once and copied, so the caller may move it.
+    ``forcefield`` is the Martini the probe is made of, and it has to be the one
+    the protein is made of: the two meet only through their bead types.
+
+    Built once a sequence and version, and copied, so the caller may move it.
     """
-    return copy.deepcopy(_built(sequence.upper()))
+    return copy.deepcopy(_built(sequence.upper(), forcefield))
 
 
-def probe_charge(sequence: str) -> float:
+def probe_charge(sequence: str, forcefield: str = "martini3001") -> float:
     """The probe's charge: its side chains', since both ends are neutral."""
-    return sum(float(n["charge"]) for n in _built(sequence.upper()).molecules[0].nodes)
+    return sum(float(n["charge"])
+               for n in _built(sequence.upper(), forcefield).molecules[0].nodes)  # fmt: skip

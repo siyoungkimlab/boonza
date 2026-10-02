@@ -784,15 +784,26 @@ def test_the_default_work_directories():
     assert any(c == "boonza_swim" for c in source if isinstance(c, str))
 
 
-def test_a_coarse_grained_swim_needs_a_model_it_can_map(tmp_path):
-    """boonza martinizes as Martini 3, so a Martini 2 swim would label a Martini 3
-    system as Martini 2 rather than build one."""
+def test_a_coarse_grained_swim_maps_the_martini_it_is_asked_for(tmp_path):
+    """--model martini2 builds a Martini 2 system rather than labelling a Martini 3
+    one: its beads are typed by martini22's blocks, placed by martini22's own
+    mappings, and sized by Martini 2's parameter file."""
     from boonza.md.swim import main
 
-    code = main([str(DATA / "1TEN.pdb"), "--model", "martini2", "--probes", "EK",
-                 "--workdir", str(tmp_path / "swim")])  # fmt: skip
-    assert code == 1
-    assert not any((tmp_path / "swim").glob("sim_*/martini"))
+    out = tmp_path / "swim"
+    assert main([str(DATA / "1TEN.pdb"), "--model", "martini2", "--probes", "EK",
+                 "--workdir", str(out)]) == 0  # fmt: skip
+    beads = sorted(out.glob("sim_*/martini/cg.dms"))
+    assert beads
+    cg = boonza.load(beads[0])
+    types = {str(t) for t in np.unique(np.asarray(cg.atoms["type"]))}
+    assert {"P4", "Qd", "Qa"} <= types  # Martini 2's water and ions, not Martini 3's W/TQ5
+    assert not types & {"W", "TQ5", "SQ4p"}
+    # and the beads are as wide as Martini 2 makes them, read from C6 and C12
+    from boonza.sites import particle_radii
+
+    radii = particle_radii(cg, np.arange(cg.natoms), "sigma")
+    assert sorted(np.unique(np.round(radii, 4)).tolist()) == [2.15, 2.35]
 
 
 @pytest.mark.parametrize("model", ["martini3", "sirah"])

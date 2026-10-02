@@ -517,7 +517,14 @@ that carries names needs nothing else to make a legible picture.
 
 ### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
 
-Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
+Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
+
+``forcefield`` is the version: ``"martini3001"`` or ``"martini22"``, each
+read from vermouth's own files for it.  Martini 2.2 leans on secondary
+structure where Martini 3 does not, names its residues as CHARMM does
+(``HSD`` and not ``HIS``, which boonza renames to), and cuts a tryptophan's
+rings and reads a phenylalanine's along other lines, so it maps a residue
+onto beads by its own rules.
 
 ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
 default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
@@ -650,16 +657,18 @@ Contacts as a fraction of frames, residues down and probes across.
 
 ## SIRAH
 
-### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, log=None) -> 'Sirahized'`
+### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, strict: 'bool' = False, log=None) -> 'Sirahized'`
 
 Map ``system`` onto SIRAH beads and build the topology of each chain.
 
 The beads come from SIRAH's map, their topology from its residue library,
 and the angles, dihedrals and 1-4 pairs follow from the bonds, the way
 pdb2gmx generates them.  ``termini`` is ``"Charged"`` or ``"Neutral"``,
-named as the library's ``.tdb`` files are.
+named as the library's ``.tdb`` files are.  ``strict`` refuses a structure
+missing an atom a bead sits on, where the default places the bead against
+the bead it bonds to and says so.
 
-### `class boonza.sirah.Sirahized(molecules: 'list[Molecule]', positions: 'np.ndarray', cell: 'np.ndarray | None' = None, nrexcl: 'int' = 3, solvent: 'list[tuple[str, int]]' = <factory>, copies: 'list[int]' = <factory>) -> None`
+### `class boonza.sirah.Sirahized(molecules: 'list[Molecule]', positions: 'np.ndarray', cell: 'np.ndarray | None' = None, nrexcl: 'int' = 3, solvent: 'list[tuple[str, int]]' = <factory>, copies: 'list[int]' = <factory>, ss: 'str' = '') -> None`
 
 A coarse-grained system: its molecules, its beads' positions, its box.
 
@@ -679,12 +688,14 @@ every 34 waters is about 0.15 M.
 water meets itself as it was equilibrated and only the solute displaces
 any; cutting mid-tile costs a slab of water at every face.
 
-### `boonza.sirah.map_structure(system, atoms: 'str' = 'protein', log=None) -> 'list[Bead]'`
+### `boonza.sirah.map_structure(system, atoms: 'str' = 'protein', log=None, strict: 'bool' = False) -> 'list[Bead]'`
 
 The beads of ``atoms``, each on the atom SIRAH's map names for it.
 
-A residue the map does not know, or one missing the atom a bead sits on,
-raises rather than coming out with a bead short.
+A residue the map does not know raises: dropping it would change the chain.
+A bead whose atom the structure does not have is placed against the bead the
+library bonds it to and reported, since at coarse-grained resolution that is
+a guess the next minimisation settles; ``strict`` raises for those too.
 
 ### `boonza.sirah.unpack(directory, everything: 'bool' = False) -> 'Path'`
 
@@ -902,11 +913,11 @@ The poses of a trajectory, most populated first.
 
 The kinetics of one site, with what they rest on.
 
-### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float') -> None`
+### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', copy_frames: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float', volume: 'float' = 0.0, burial: 'float' = 0.0, cells: 'np.ndarray | None' = None, grid_dims: 'np.ndarray | None' = None, grid_origin: 'np.ndarray | None' = None, grid_spacing: 'float' = 1.0) -> None`
 
 One place the ligand is found, and the evidence for it.
 
-### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', systems: 'list' = <factory>, volume: 'float' = 0.0, density: 'Density | None' = None) -> None`
+### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', systems: 'list' = <factory>, volume: 'float' = 0.0, density: 'Density | None' = None, occupancy: 'Occupancy | None' = None, drift: 'np.ndarray | None' = None, drift_runs: 'np.ndarray | None' = None) -> None`
 
 The sites of a set of runs, most occupied first.
 
@@ -1133,7 +1144,7 @@ Rates rest on completed events.  A dwell the trajectory cut short counts
 its time and not its ending, so a run stopped early -- by the wall clock
 or by ``--early-stop`` -- biases nothing.
 
-### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True) -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'`
+### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True, occupancy: 'Occupancy | None' = None, radius: 'str | None' = 'sigma', drift: 'list | None' = None) -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'`
 
 ``(centroids (nframes ncopies, 3), (frame, copy) of each, the box volume of each)``.
 
@@ -1411,7 +1422,15 @@ place by being there for the ligand rather than by happening to be close
 when the reference was taken.  Hand the result to :func:`boonza.poses` as
 ``pocket=`` and the pose level stops depending on a reference at all.
 
-### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.005, periodic: 'bool' = True) -> 'SiteSet'`
+### `boonza.site_score(site, maps, weights=(0.0733, 0.6688, -0.2)) -> 'tuple[float, float]'`
+
+``(score, philicity)`` of a site's pocket, in SiteMap's shape.
+
+``a sqrt(n) + b enclosure + c philicity`` over the pocket's cells, its
+burial and the polar share of the features in it.  Pass ``DSCORE`` for the
+druggability weighting instead.
+
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma') -> 'SiteSet'`
 
 Where the ligand is found across ``runs``, most occupied first.
 
@@ -1420,8 +1439,33 @@ treated as independent evidence, and a site visited by several runs is a
 claim several simulations agree on.  A site is a connected group of grid
 cells the ligand visits at least ``enrichment`` times more often than
 bulk solvent would explain; everything else is bulk, and is labelled -1
-rather than forced into a site.  Sites below ``min_occupancy`` of the
-pooled frames are left out.
+rather than forced into a site.
+
+``rank`` orders what is found: ``"pocket"`` (the default) by how much room the
+pocket has and how enclosed it is, ``"occupied"`` by dwell, ``"agreement"`` by
+how many copies chose it, ``"burial"`` by enclosure alone.  Dwell is the
+tempting one and the wrong one: a sticky patch of surface holds something for
+most of a run without being anywhere a ligand could sit.
+
+The result carries ``drift``: how far each frame's ``align`` atoms end up from
+the reference's once superposed.  Every site and every pocket is measured in
+the reference's frame, so a protein that changes shape measures its pockets
+against a shape the run no longer has.
+
+``radius`` is how much room each ligand particle is taken to occupy on the
+occupancy grid: ``"sigma"`` (half the sigma of its own nonbonded term),
+``"rmin"`` (half of 2**(1/6) sigma, where that potential is deepest), or
+``None`` to count only the cell its centre fell in.  A bead is several atoms
+across, so counting centres asks the map a question finer than the model
+answers, and the noise comes back as a pocket in pieces.
+
+``min_occupancy`` is the share of the *frames* in which a site has to hold
+something, whoever it is -- not the share of the pooled copy-frames, which
+shrinks as copies are added and would leave a molecule parked for a whole
+run below any threshold in a box of 200 probes (one copy of 210 is 0.5% of
+the pool whatever it does).  A site occupied by one copy throughout is
+1.0 either way of counting it; one occupied by four copies a quarter of the
+time each is 1.0 here and 0.1 there.
 
 ### `boonza.solvate(solute: 'System', solvent=None, box=None, thickness: 'float' = 5.0, min_solute_dist: 'float' = 2.4, min_solvent_dist: 'float' = 1.0, solvent_selection: 'str' = 'oxygen', center_selection: 'str' = 'all', remove_buried: 'bool' = False) -> 'System'`
 
@@ -1502,3 +1546,18 @@ Write the hotspots as pseudo-atoms: one per peak, named for what it wants.
 ``DON``, ``ACC``, ``ARO``, ``HYD``, ``CAT``, ``ANI``, with the enrichment
 in the B-factor column and the tolerance radius as the occupancy, so a
 viewer can size and colour them without being told anything else.
+
+### `boonza.write_viewer_scripts(directory, sites, level: 'float' = 50.0) -> 'list[Path]'`
+
+Write ``sites.pml`` and ``sites.tcl`` beside the maps; return what was written.
+
+They load each pocket as a solid surface, the enrichment maps as isosurfaces
+at ``level`` times bulk, each feature map beside them (switched off, to turn
+on one at a time), the hotspots as spheres, and a marker at every site's
+centre.  ``source <dir>/sites.tcl`` in VMD, ``@<dir>/sites.pml`` in PyMOL -- a
+session set up by vizard or pizard in either case, since neither viewer reads
+a bead file on its own.
+
+The files a script names are written into it in full, so it runs from
+whatever directory the viewer happens to be in; move the directory and the
+scripts want writing again.
