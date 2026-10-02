@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from ..io import save
+from .swim import concentration_of, copies_for
 
 CLEARANCE = 5.0  # Å between a placed probe and the protein or another probe
 #: The chain the probes go in, as an all-atom swim gives its ligand library one
@@ -158,7 +159,7 @@ def _built_system(system, martini_itp=None):
 
 def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             clearance: float = CLEARANCE, log=print, repel: bool = True,
-            elastic: bool = True) -> list[Path]:  # fmt: skip
+            elastic: bool = True, conc_mM: float | None = None) -> list[Path]:  # fmt: skip
     """Write one ``boonza md`` coarse-grained simulation per group of probes into
     ``args.workdir``; returns their directories.
 
@@ -206,8 +207,22 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     edge = extent + 20.0 * args.padding_nm
     box = np.full(3, edge)
     parts = groups_of(sequences, types)
-    log(f"{len(sequences)} dipeptide probes in {len(parts)} simulations of "
-        f"{min(len(g) for g in parts)}-{max(len(g) for g in parts)} types, {copies} copies each, "
+    sizes = [len(g) for g in parts]
+    if conc_mM is not None:
+        # one number of copies for every type and every simulation, so the
+        # simulations that hold a type more land a little above the asked for
+        copies = copies_for(conc_mM, edge, sum(sizes) / len(sizes))
+        got = [concentration_of(copies, edge, n) for n in (min(sizes), max(sizes))]
+        asked = f"{conc_mM:g} mM asked"
+        if copies == 1 and got[0] > 1.2 * conc_mM:
+            log(f"One copy of each type is {got[0]:.0f}-{got[1]:.0f} mM, which is more than the "
+                f"{conc_mM:g} mM asked for: fewer types a simulation (--types) or a larger box "
+                "(--padding-nm) is what lowers it")  # fmt: skip
+        else:
+            log(f"{copies} copies of each type: {got[0]:.0f}-{got[1]:.0f} mM ({asked})")
+    kind = "amino acid" if max(len(q) for q in sequences) == 1 else "dipeptide"
+    log(f"{len(sequences)} {kind} probes in {len(parts)} simulations of "
+        f"{min(sizes)}-{max(sizes)} types, {copies} copies each, "
         f"in a {edge / 10:.1f} nm box")  # fmt: skip
     with (root / "assignment.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
@@ -231,6 +246,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             whole = _built_system(system)
             _write_built(system, built, whole, gromacs or whole is None,
                          log if s == 0 else _quiet)  # fmt: skip
+            if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
+                (built / "secondary.txt").write_text(protein.ss + "\n")
         else:
             system = build(protein, probes, copies, box, rng, args.saltM, clearance)
             built = d / "martini"
@@ -272,6 +289,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         # what the analysis needs to know about a coarse-grained run
         (d / "probes.json").write_text(json.dumps(
             {"probes": list(group), "copies": copies, "chain": chain,
+             "concentration_mM": round(concentration_of(copies, edge, len(group)), 1),
              "ligand": "resname " + " ".join(group),
              "align": "name GC" if sirah else "name BB"}, indent=1) + "\n")  # fmt: skip
     (root / "simulations.txt").write_text(

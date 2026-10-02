@@ -6,7 +6,14 @@ import numpy as np
 import pytest
 
 import boonza
-from boonza.martini.probes import LETTERS, PROBE_RESIDUES, probe, probe_charge, probe_sequences
+from boonza.martini.probes import (
+    LETTERS,
+    PROBE_PREFIX,
+    PROBE_RESIDUES,
+    probe,
+    probe_charge,
+    probe_sequences,
+)
 from boonza.md.cgswim import build, groups_of, place, prepare
 from boonza.md.config import parse_arguments
 
@@ -46,7 +53,8 @@ def test_probes_are_free_to_bend():
                 if t.meta.get("group", "").startswith("SC-BB-BB-SC")]  # fmt: skip
     assert not [t for t in mol.interactions["bonds"] if t.meta.get("group") == "Rubber band"]
     assert {n["resname"] for n in mol.nodes} == {"WY"}  # its own name, not TRP/TYR
-    assert m.names == ["WY"]
+    # the molecule is prefixed: a probe named W would lose to Martini's water
+    assert m.names == ["probe_WY"]
 
 
 def test_probes_are_built_once():
@@ -95,8 +103,10 @@ def test_a_prepared_simulation(tmp_path):
     assert written["copies"] == 2 and written["align"] == "name BB"
     top = (d / "martini" / "topol.top").read_text()
     for name in written["probes"]:
-        assert f"{name} 2" in top  # two copies of each probe
-        assert f'#include "{name}.itp"' in top
+        # the molecule is prefixed, the residue is not: one would clash with
+        # Martini's own water, the other is what selects the probe
+        assert f"{PROBE_PREFIX}{name} 2" in top  # two copies of each probe
+        assert f'#include "{PROBE_PREFIX}{name}.itp"' in top
     settings = parse_arguments(["--config", str(d / "md.toml")])
     assert settings.model == "martini3" and settings.solvate == "none"
     # the probes have a chain of their own, as an all-atom swim's ligands do
@@ -120,7 +130,7 @@ def test_the_built_system_is_neutral_and_runs(tmp_path):
     box = np.full(3, float(np.ptp(protein.positions, axis=0).max()) + 20.0)
     m = build(protein, probes, 2, box, np.random.default_rng(0), salt=0.15)
     counts = dict(zip(m.names, m.molecule_copies, strict=True))
-    assert counts["RR"] == counts["EE"] == 2
+    assert counts["probe_RR"] == counts["probe_EE"] == 2
     charge = sum(c * sum(float(n["charge"]) for n in mol.nodes)
                  for mol, c in zip(m.molecules, m.molecule_copies, strict=True))  # fmt: skip
     (_, _), (_, na), (_, cl) = m.solvent
@@ -924,3 +934,218 @@ def test_a_martini_run_needs_no_tables_to_be_typed(tmp_path):
         s = _run_system(path, typed=typed)
         assert "nonbonded" not in s.tables
         assert martini_beads(s, s.select("name BB").ids)
+
+
+def test_copies_from_a_concentration():
+    """Every probe type gets the same number of copies, so only some
+    concentrations can be asked for and the answer is the nearest of them."""
+    from boonza.md.cgswim import concentration_of, copies_for
+
+    edge = 91.0  # a 9.1 nm box
+    assert copies_for(450, edge, 105) == 2
+    assert concentration_of(2, edge, 105) == pytest.approx(462.7, abs=0.5)
+    assert copies_for(100, edge, 10) == 5  # fewer types a box, so more of each
+    assert concentration_of(5, edge, 10) == pytest.approx(110.2, abs=0.5)
+    for want in (50, 120, 300, 480, 900):
+        got = copies_for(want, edge, 20)
+        assert abs(concentration_of(got, edge, 20) - want) <= concentration_of(1, edge, 20) / 2
+    assert copies_for(1e-6, edge, 105) == 1  # never none at all
+    with pytest.raises(ValueError, match="positive"):
+        copies_for(0, edge, 105)
+    # twice the box edge is eight times the volume, so an eighth of the copies
+    assert copies_for(450, 2 * edge, 105) == 8 * copies_for(450, edge, 105)
+
+
+def test_a_swim_takes_a_concentration_instead_of_copies(tmp_path):
+    """--conc-mM says what the box should hold; the copies follow, the same for
+    every type, and each simulation writes down what it came to."""
+    import json
+
+    from boonza.md.cgswim import concentration_of, prepare
+
+    said = []
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--padding-nm", "1.0",
+                            "--workdir", str(tmp_path / "swim"), "--seed", "1"])  # fmt: skip
+    sims = prepare(args, ["EK", "LL", "RR", "WW"], types=2, conc_mM=200.0, log=said.append)
+    line = next(x for x in said if "copies of each type" in x)
+    assert "200 mM asked" in line
+    docs = [json.loads((d / "probes.json").read_text()) for d in sims]
+    copies = docs[0]["copies"]
+    assert copies >= 1 and line.startswith(f"{copies} copies of each type")
+    assert 100.0 < docs[0]["concentration_mM"] < 400.0  # the nearest whole copies can get
+    for doc in docs:  # the same copies everywhere, however many types a simulation holds
+        assert doc["copies"] == copies
+        assert doc["concentration_mM"] > 0
+    # a simulation holding more types holds more probe, in the same box
+    by_types = {len(doc["probes"]): doc["concentration_mM"] for doc in docs}
+    if len(by_types) > 1:
+        assert sorted(by_types) == sorted(by_types, key=by_types.get)
+    assert concentration_of(copies, 100.0, 2) < concentration_of(copies, 100.0, 4)
+
+
+def test_a_swim_refuses_a_concentration_and_copies_at_once(tmp_path):
+    from boonza.md.swim import main
+
+    code = main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--conc-mM", "200",
+                 "--copies", "3", "--workdir", str(tmp_path / "swim")])  # fmt: skip
+    assert code == 1
+    # and it is not only for probes: a concentration is a count over a volume,
+    # so a library of ligands of every size takes it just the same
+    from boonza.md.swim import concentration_of, copies_for
+
+    assert copies_for(200, 60.0, 5) == copies_for(200, 60.0, 5)
+    assert concentration_of(copies_for(200, 60.0, 5), 60.0, 5) == pytest.approx(200, rel=0.15)
+
+
+def test_the_single_amino_acid_library():
+    """Eighteen probes, one residue each: every amino acid but alanine and glycine,
+    which are too small to report anything -- Martini maps both onto a single bead,
+    and in SIRAH alanine's side chain is part of its alpha carbon while glycine has
+    none at all.  A whole residue, not a side chain cut off its backbone: the beads
+    were parameterized with the backbone attached."""
+    from boonza.martini.probes import PROBE_RESIDUES, SINGLE_RESIDUES, single_sequences
+
+    assert len(SINGLE_RESIDUES) == 18
+    assert not {"ALA", "GLY"} & set(SINGLE_RESIDUES)
+    assert set(PROBE_RESIDUES) < set(SINGLE_RESIDUES)  # the dipeptides' residues and more
+    letters = single_sequences()
+    assert len(letters) == 18 and all(len(x) == 1 for x in letters)
+    assert len(set(letters)) == 18
+
+
+@pytest.mark.parametrize("model", ["martini3", "sirah"])
+def test_a_single_amino_acid_probe_carries_a_whole_charge(model):
+    """Its charge is its side chain's, and nothing is left dangling: +1 for arginine
+    and lysine, -1 for aspartate and glutamate, zero for the rest."""
+    import importlib
+
+    probes = importlib.import_module(
+        "boonza.sirah.probes" if model == "sirah" else "boonza.martini.probes"
+    )
+    want = {"R": 1.0, "K": 1.0, "D": -1.0, "E": -1.0}
+    for letter in probes.single_sequences():
+        s = probes.probe(letter).system()
+        q = float(np.asarray(s.atoms["charge"], float).sum())
+        assert q == pytest.approx(want.get(letter, 0.0), abs=1e-6)
+        assert {str(n) for n in s.residues["name"]} == {letter}  # its own name, to select by
+
+
+def test_a_single_residue_probe_carries_less_dipole_than_a_dipeptide():
+    """Which is the reason for the library: in SIRAH a dipeptide's two neutral
+    termini sit a residue apart and make 11 to 12 Debye of it, where one residue's
+    are the same bead pair and make half that."""
+    from boonza.sirah.probes import probe
+
+    def dipole(seq):
+        s = probe(seq).system()
+        q = np.asarray(s.atoms["charge"], float)
+        x = np.asarray(s.positions)
+        assert abs(q.sum()) < 1e-6  # only meaningful for a neutral probe
+        return 4.803 * float(np.linalg.norm((q[:, None] * x).sum(0)))
+
+    for one, two in (("L", "LL"), ("F", "FF"), ("S", "SS")):
+        assert dipole(one) < 0.65 * dipole(two)
+
+
+def test_a_swim_swims_the_library_it_is_asked_for(tmp_path):
+    """The eighteen single residues dealt out instead of the 105 dipeptides."""
+    import json
+
+    from boonza.martini.probes import single_sequences
+    from boonza.md.cgswim import prepare
+
+    said = []
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--padding-nm", "1.0",
+                            "--workdir", str(tmp_path / "swim"), "--seed", "1"])  # fmt: skip
+    sims = prepare(args, single_sequences(), types=9, copies=2, log=said.append)
+    assert any("18 amino acid probes" in line for line in said)  # not "dipeptide"
+    names = []
+    for d in sims:
+        doc = json.loads((d / "probes.json").read_text())
+        names += doc["probes"]
+        assert all(len(q) == 1 for q in doc["probes"])
+    assert sorted(names) == sorted(single_sequences())
+
+
+def test_a_coarse_grained_swim_takes_a_library_by_name(tmp_path):
+    """--ligands names the library for every model, so the same eighteen residues
+    or the same 105 dipeptides run as beads or as all-atom ligands and the runs
+    read against each other.  What a coarse-grained swim cannot take is a file of
+    arbitrary ligands, which neither model can map."""
+    from boonza.md.swim import library_sequences, main
+
+    assert len(library_sequences("SingleAminoAcid18")) == 18
+    assert len(library_sequences("Dipeptide105")) == 105
+    assert library_sequences("dipeptide105")[:2] == ["RR", "RQ"]  # whatever its case
+
+    code = main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--ligands", "AstexMiniFrag",
+                 "--workdir", str(tmp_path / "sdf")])  # fmt: skip
+    assert code == 1  # a library of fragments is not something Martini can map
+    code = main([str(DATA / "1TEN.pdb"), "--model", "sirah", "--ligands", "Dipeptide105",
+                 "--probes", "EK", "--workdir", str(tmp_path / "both")])  # fmt: skip
+    assert code == 1  # a library names its own probes
+
+
+def test_a_probe_cannot_take_a_name_the_force_field_already_uses():
+    """Martini's water is a molecule called W, and the second definition of a name
+    silently loses to the first: a tryptophan probe named W would be built as one
+    water bead.  The probes' molecules are prefixed, and their beads keep the
+    sequence as the residue name, which is what selects them."""
+    from boonza.martini import martinize
+    from boonza.martini.probes import PROBE_PREFIX, probe
+
+    m = probe("W")
+    assert m.names == [PROBE_PREFIX + "W"]
+    s = m.system()
+    assert s.natoms == len(m.positions) == 6  # not the one bead water would give
+    assert {str(n) for n in s.residues["name"]} == {"W"}
+
+    # and where the water is, a clash says so rather than failing on a reshape
+    # somewhere else: the topology would build the probe as one water bead
+    protein = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"))
+    box = np.full(3, float(np.ptp(protein.positions, axis=0).max()) + 20.0)
+    system = build(protein, [m], 2, box, np.random.default_rng(0), salt=0.15)
+    assert system.system(None).natoms == len(system.positions)  # prefixed: it builds
+    system.names = [n if n != PROBE_PREFIX + "W" else "W" for n in system.names]
+    with pytest.raises(ValueError, match="a name Martini already uses"):
+        system.system(None)
+
+
+def test_both_ways_round_is_a_library_of_its_own():
+    """SIRAH can tell a probe from its reverse: its chain ends are bead types of
+    their own, so EK carries the glutamate at the positive end of the backbone's
+    dipole and KE at the negative end.  Martini cannot -- both its backbone beads
+    are the same type with no charge -- so there the two are one molecule."""
+    from boonza.martini.probes import ordered_sequences, probe_sequences
+    from boonza.md.swim import library_sequences
+
+    both = ordered_sequences()
+    assert len(both) == 196 == len(set(both)) == 14**2
+    assert {"EK", "KE"} <= set(both)
+    assert set(probe_sequences()) < set(both)  # the folded library is half of it
+    assert len(probe_sequences()) == 105 == 14 * 15 // 2
+    assert library_sequences("Dipeptide196") == both
+
+    def dipole(build, seq):
+        s = build(seq).system()
+        q = np.asarray(s.atoms["charge"], float)
+        x = np.asarray(s.positions)
+        return 4.803 * float(np.linalg.norm((q[:, None] * (x - x.mean(0))).sum(0)))
+
+    from boonza.martini.probes import probe as martini_probe
+    from boonza.sirah.probes import probe as sirah_probe
+
+    # the beads themselves: Martini's two residues are interchangeable, SIRAH's not
+    def blocks(m):
+        s = m.system()
+        nb, res = s.table("nonbonded"), np.asarray(s.atoms["residue"])
+        out = {}
+        for a in range(s.natoms):
+            out.setdefault(int(res[a]), []).append(
+                (str(nb.values("type")[a]), round(float(s.atoms["charge"][a]), 2))
+            )
+        return sorted(tuple(v) for v in out.values())
+
+    assert blocks(martini_probe("EK")) == blocks(martini_probe("KE"))
+    assert blocks(sirah_probe("EK")) != blocks(sirah_probe("KE"))
+    assert dipole(sirah_probe, "EK") < 0.8 * dipole(sirah_probe, "KE")  # 31.7 D against 44.0
