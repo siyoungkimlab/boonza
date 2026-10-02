@@ -139,11 +139,85 @@ def _in_library_order(entry: Mapping) -> list[tuple[str, tuple[str, ...]]]:
     return sorted(beads, key=lambda b: order[b[0]])
 
 
-def map_structure(system, atoms: str = "protein", log=None) -> list[Bead]:
+#: How far from the bead it bonds to a guessed bead is put, in angstroms.  Short,
+#: because the beads that go missing are mostly the polar hydrogens SIRAH gives
+#: beads of their own, and a minimisation moves it anyway.
+GUESS_BOND = 1.2
+
+
+def _guess_position(bead: str, entry, placed: dict, library) -> np.ndarray | None:
+    """Where to put a bead whose atoms the structure does not have.
+
+    Against the bead the library bonds it to, pointing away from the rest of the
+    residue.  At this resolution that is a guess worth making: the bead is 50 to
+    70 daltons of a group that is certainly there, the structure simply did not
+    name the atom it sits on -- a thiol hydrogen that crystallography never saw,
+    a terminal oxygen called something else -- and the first minimisation puts it
+    where the force field wants it.
+    """
+    known = library.get(entry.residue)
+    if not placed or known is None:
+        return None
+    partners = [b if a == bead else a for a, b in known.bonds
+                if bead in (a, b) and not a.startswith(("+", "-"))
+                and not b.startswith(("+", "-"))]  # fmt: skip
+    anchor = next((p for p in partners if p in placed), None)
+    rest = [x for name, x in placed.items() if name != anchor]
+    if anchor is None:  # nothing it bonds to was placed either: the residue's middle
+        return np.mean(list(placed.values()), axis=0)
+    out = np.asarray(placed[anchor], float)
+    if rest:
+        away = out - np.mean(rest, axis=0)
+        size = float(np.linalg.norm(away))
+        if size > 1e-6:
+            return out + GUESS_BOND * away / size
+    return out + np.array([GUESS_BOND, 0.0, 0.0])
+
+
+def disulfide_pairs(system, atoms: str = "protein") -> list[tuple[int, int]]:
+    """``(residue, residue)`` of every disulfide among ``atoms``.
+
+    The structure's own bonds say it where the file has them -- a PDB's CONECT
+    and SSBOND records, a .dms's bond table -- and that is taken as given: it is
+    what the person who prepared the structure decided.  Two sulfurs within
+    :data:`DISULFIDE` say it where the file has no bonds at all to say it with.
+
+    It matters twice over.  A bridged cysteine has no thiol hydrogen and its
+    sulfur is a type of its own, so SIRAH maps it as a different residue; and the
+    bridge itself is a bond the topology needs, without which the fold is held by
+    nothing but its torsions.
+    """
+    ids = system.select(atoms).ids
+    mine = set(ids.tolist())
+    names = np.asarray(system.atoms["name"])
+    residue = np.asarray(system.atoms["residue"])
+    xyz = np.asarray(system.positions)
+    sulfur = [int(a) for a in ids.tolist() if str(names[a]).strip() == "SG"]
+    pairs: set[tuple[int, int]] = set()
+    spoken: set[int] = set()
+    for b in range(system.nbonds):
+        i, j = int(system.bond(b).first.id), int(system.bond(b).second.id)
+        if i in mine and j in mine and str(names[i]).strip() == str(names[j]).strip() == "SG":
+            pairs.add((min(int(residue[i]), int(residue[j])),
+                       max(int(residue[i]), int(residue[j]))))  # fmt: skip
+            spoken.update((i, j))
+    left = [a for a in sulfur if a not in spoken]
+    for a in range(len(left)):  # only where the file said nothing about them
+        for b in range(a + 1, len(left)):
+            i, j = left[a], left[b]
+            if float(np.linalg.norm(xyz[i] - xyz[j])) <= DISULFIDE:
+                pairs.add((min(int(residue[i]), int(residue[j])),
+                           max(int(residue[i]), int(residue[j]))))  # fmt: skip
+    return sorted(pairs)
+
+
+def map_structure(system, atoms: str = "protein", log=None, strict: bool = False) -> list[Bead]:
     """The beads of ``atoms``, each on the atom SIRAH's map names for it.
 
-    A residue the map does not know, or one missing the atom a bead sits on,
-    raises rather than coming out with a bead short.
+    A residue the map does not know raises: dropping it would change the chain.
+    A bead whose atom the structure does not have is placed against the bead the
+    library bonds it to and reported, since at coarse-grained resolution that is
+    a guess the next minimisation settles; ``strict`` raises for those too.
     """
     mapping = read_map()
     ids = system.select(atoms).ids
@@ -155,10 +229,16 @@ def map_structure(system, atoms: str = "protein", log=None) -> list[Bead]:
     res = system.residues
     chains = np.asarray(system.chains["name"])
     unknown, missing, changed = set(), [], set()
+    bridged = {r for pair in disulfide_pairs(system, atoms) for r in pair}
     out: list[Bead] = []
     for r in dict.fromkeys(residue.tolist()):
         here = residue == r
         resname = str(res["name"][r]).strip().upper()
+        if resname in ("CYS", "CYH") and int(r) in bridged:
+            # the distance says it is bridged whatever the file calls it: no
+            # thiol hydrogen, and a sulfur of another type
+            changed.add(f"{resname} as CYX, its sulfur being bridged")
+            resname = "CYX"
         entry = mapping.get(resname)
         if entry is None:
             unknown.add(resname)
@@ -166,24 +246,47 @@ def map_structure(system, atoms: str = "protein", log=None) -> list[Bead]:
         if resname in RETYPED:
             changed.add(f"{resname} as {RETYPED[resname]}")
         where = {str(n).strip(): x for n, x in zip(names[here], xyz[here], strict=True)}
+        placed: dict[str, np.ndarray] = {}
+        gaps = []
         for bead, wanted in _in_library_order(entry):
             found = next((a for a in wanted if a in where), None)
             if found is None:
                 missing.append(f"{resname}{int(res['resid'][r])} has no {' or '.join(wanted)}"
                                f" for bead {bead}")  # fmt: skip
+                gaps.append((bead, len(out)))
+                out.append(None)  # kept in place, so the library's order survives
                 continue
+            placed[bead] = np.asarray(where[found], float)
             out.append(Bead(bead, entry.residue, int(res["resid"][r]),
                             str(chains[res["chain"][r]]).strip(), str(res["insertion"][r]).strip(),
                             np.asarray(where[found], float), found))  # fmt: skip
+        library, _ = read_residues()
+        for bead, slot in gaps:  # after the rest of the residue, which places them
+            guess = _guess_position(bead, entry, placed, library)
+            if guess is None:
+                continue
+            placed[bead] = guess
+            out[slot] = Bead(bead, entry.residue, int(res["resid"][r]),
+                             str(chains[res["chain"][r]]).strip(),
+                             str(res["insertion"][r]).strip(), guess, "")  # fmt: skip
     if unknown:
         raise ValueError(f"SIRAH's map has no {', '.join(sorted(unknown))}; leave them out of "
                          f"atoms={atoms!r}")  # fmt: skip
-    if missing:
+    short = [k for k, b in enumerate(out) if b is None]
+    if missing and (strict or len(short) == len(missing)):
         more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
         raise ValueError("the structure is missing atoms SIRAH maps beads onto: "
-                         + "; ".join(missing[:5]) + more)  # fmt: skip
+                         + "; ".join(missing[:5]) + more
+                         + ("; none of them could be placed from the beads around them"
+                            if not strict else ""))  # fmt: skip
+    out = [b for b in out if b is not None]
+    if missing and log is not None:
+        more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+        log(f"Placed {len(missing) - len(short)} bead(s) the structure has no atom for, "
+            f"against the beads they bond to: {'; '.join(missing[:3])}{more}.  A minimisation "
+            "settles them; --strict-mapping refuses instead")  # fmt: skip
     if changed and log is not None:
-        log(f"Note: SIRAH maps {', '.join(sorted(changed))}")
+        log(f"Note: SIRAH maps {'; '.join(sorted(changed))}")
     return out
 
 
@@ -389,21 +492,26 @@ def read_termini(text: str) -> dict[str, dict[str, tuple[str, float, float]]]:
     return out
 
 
-#: How far apart two BSG beads are taken to be a disulfide (Å), as
-#: ``specbond.dat`` gives it.
-DISULFIDE = 2.0
+#: How far apart two sulfurs are taken to be a disulfide (Å), where the structure
+#: itself does not say.  SIRAH's ``specbond.dat`` gives the bond as 0.2 nm and
+#: GROMACS takes anything within a tenth of it, which is this: at 2.0 exactly --
+#: what the file says, without the tolerance -- every bridge of a crystal
+#: structure is missed, a real S-S measuring 2.03 to 2.08.
+DISULFIDE = 2.2
 
 
 def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
-             disulfides: bool = True, log=None) -> Sirahized:  # fmt: skip
+             disulfides: bool = True, strict: bool = False, log=None) -> Sirahized:  # fmt: skip
     """Map ``system`` onto SIRAH beads and build the topology of each chain.
 
     The beads come from SIRAH's map, their topology from its residue library,
     and the angles, dihedrals and 1-4 pairs follow from the bonds, the way
     pdb2gmx generates them.  ``termini`` is ``"Charged"`` or ``"Neutral"``,
-    named as the library's ``.tdb`` files are.
+    named as the library's ``.tdb`` files are.  ``strict`` refuses a structure
+    missing an atom a bead sits on, where the default places the bead against
+    the bead it bonds to and says so.
     """
-    beads = map_structure(system, atoms, log)
+    beads = map_structure(system, atoms, log, strict)
     library, bonded = read_residues()
     masses = read_masses()
     _at_the_ends(beads, library, log)  # a nucleotide at a strand's end is its own residue
@@ -446,7 +554,15 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         mol.bonds = sorted(set(mol.bonds))
         molecules.append(mol)
     if disulfides:
-        _add_disulfides(molecules, log)
+        res = system.residues
+        chains = np.asarray(system.chains["name"])
+
+        def which(r) -> tuple[str, int, str]:
+            return (str(chains[res["chain"][r]]).strip(), int(res["resid"][r]),
+                    str(res["insertion"][r]).strip())  # fmt: skip
+
+        pairs = [(which(a), which(b)) for a, b in disulfide_pairs(system, atoms)]
+        _add_disulfides(molecules, pairs, log)
     for mol in molecules:
         mol.angles = _angles_from(mol.bonds, mol.natoms)
         mol.dihedrals = _dihedrals_from(mol.bonds, mol.natoms)
@@ -462,21 +578,39 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
                      nrexcl=bonded.nrexcl, ss=ss)  # fmt: skip
 
 
-def _add_disulfides(molecules, log=None) -> None:
-    """Bond the BSG beads of cysteines close enough to be bridged."""
-    found = 0
+def _add_disulfides(molecules, bridges=(), log=None) -> None:
+    """Bond the BSG beads of the cysteines ``bridges`` names.
+
+    The pairs come from the structure -- its own bonds, or its sulfurs' distance
+    where it has none -- rather than from the beads' distance, so a bridge the
+    file declares is made whatever the mapping did with it.  SIRAH builds one
+    molecule a chain, so a bridge between two chains has nowhere to live and is
+    reported instead of made.
+    """
+    want = {tuple(sorted(pair)) for pair in bridges}
+    found, across = 0, []
     for mol in molecules:
-        sg = [k for k, b in enumerate(mol.beads) if b.name == "BSG"]
-        for a in range(len(sg)):
-            for b in range(a + 1, len(sg)):
-                i, j = sg[a], sg[b]
-                d = float(np.linalg.norm(mol.beads[i].position - mol.beads[j].position))
-                if d <= DISULFIDE:
-                    mol.bonds.append((min(i, j), max(i, j)))
-                    found += 1
+        where = {(b.chain, b.resid, b.insertion): k
+                 for k, b in enumerate(mol.beads) if b.name == "BSG"}  # fmt: skip
+        for one, two in want:
+            i, j = where.get(one), where.get(two)
+            if i is None or j is None:
+                continue
+            mol.bonds.append((min(i, j), max(i, j)))
+            found += 1
         mol.bonds = sorted(set(mol.bonds))
-    if found and log is not None:
-        log(f"Disulfides: {found} bridge(s) between BSG beads within {DISULFIDE:g} A")
+    seen = {key for mol in molecules for key in
+            [(b.chain, b.resid, b.insertion) for b in mol.beads if b.name == "BSG"]}  # fmt: skip
+    for one, two in want:
+        if one[0] != two[0] and one in seen and two in seen:
+            across.append(f"{one[0]}/{one[1]}-{two[0]}/{two[1]}")
+    if log is not None:
+        if found:
+            log(f"Disulfides: {found} bridge(s) between BSG beads")
+        if across:
+            log(f"Note: {len(across)} disulfide(s) join two chains ({', '.join(across[:3])}), "
+                "which SIRAH cannot bond: it builds one molecule a chain, so those two are "
+                "held only by the water around them")  # fmt: skip
 
 
 @dataclass
