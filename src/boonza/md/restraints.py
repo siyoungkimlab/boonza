@@ -59,11 +59,44 @@ def bead_torsions(s) -> list[tuple[int, str, tuple[int, int, int, int]]]:
     return out
 
 
-def coarse_grained(s) -> bool:
-    """A Martini system: backbone beads rather than alpha carbons."""
+def sirah_torsions(s) -> list[tuple[int, str, tuple[int, int, int, int]]]:
+    """(residue, kind, beads) for each backbone torsion of a SIRAH chain.
+
+    SIRAH's backbone is three beads a residue -- GN on the amide nitrogen, GC on
+    the alpha carbon, GO on the carbonyl oxygen -- bonded GN-GC-GO-GN(+1), so
+    phi and psi are there as they are all-atom: psi is GN-GC-GO-GN(+1) where
+    all-atom it is N-CA-C-N, and phi is GO(-1)-GN-GC-GO where all-atom it is
+    C-N-CA-C.  A residue whose neighbour is missing, or a chain break, leaves
+    the torsion out, as the bonds say.
+    """
+    names, res = s.atoms["name"], s.atoms["residue"]
+    bead = {}
+    for which in ("GN", "GC", "GO"):
+        for a in np.flatnonzero(names == which).tolist():
+            bead[(int(res[a]), which)] = int(a)
+    out = []
+    for r in sorted({k for k, _ in bead}):
+        here = [bead.get((r, w)) for w in ("GN", "GC", "GO")]
+        if any(b is None for b in here):
+            continue
+        n, ca, o = here
+        after, before = bead.get((r + 1, "GN")), bead.get((r - 1, "GO"))
+        for kind, atoms in (("psi", (n, ca, o, after)), ("phi", (before, n, ca, o))):
+            if atoms[0] is None or atoms[3] is None:
+                continue
+            if all(atoms[k + 1] in s.bonded_atoms(atoms[k]).tolist() for k in range(3)):
+                out.append((r, kind, tuple(atoms)))
+    return out
+
+
+def coarse_grained(s) -> str:
+    """Which coarse-grained backbone this system has: ``"martini"`` (one bead a
+    residue, BB), ``"sirah"`` (three, GN-GC-GO), or ``""`` for atoms."""
     if len(s.select("name CA").ids):
-        return False
-    return len(s.select("name BB").ids) >= 4  # Martini; SIRAH's backbone is three beads
+        return ""
+    if len(s.select("name BB").ids) >= 4:
+        return "martini"
+    return "sirah" if len(s.select("name GC").ids) >= 4 else ""
 
 
 def fourier_terms(strength_kj: float):
@@ -97,8 +130,10 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
     """
     import openmm as mm
 
-    beads = coarse_grained(s)
-    torsions = bead_torsions(s) if beads else backbone_torsions(s)
+    model = coarse_grained(s)
+    beads = bool(model)
+    torsions = {"martini": bead_torsions, "sirah": sirah_torsions,
+                "": backbone_torsions}[model](s)  # fmt: skip
     if selection:
         picked = np.zeros(s.natoms, bool)
         picked[s.select(selection).ids] = True
@@ -113,7 +148,10 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
             first = min((t[0] for t in torsions), default=0)
             structured = ("H", "G", "I", "E", "B")
             chosen = {first + k for k, code in enumerate(secondary) if code in structured}
-            torsions = [t for t in torsions if all(t[0] + k in chosen for k in range(4))]
+            # a Martini torsion spans four residues; a SIRAH one spans two, and
+            # both of them have to be structured for it to be held
+            span = 4 if model == "martini" else 2
+            torsions = [t for t in torsions if all(t[0] + k in chosen for k in range(span))]
         else:
             from ..secondary import dssp
 

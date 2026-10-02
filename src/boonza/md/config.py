@@ -723,15 +723,7 @@ def finish(args) -> None:
     # so only a value that differs from the default counts as one asked for
     given = {k for k in getattr(args, "specified", ())
              if k not in DEFAULTS or getattr(args, k, None) != DEFAULTS[k]}  # fmt: skip
-    if args.model == "sirah":
-        # boonza restrains phi and psi all-atom and BB-BB-BB-BB under Martini;
-        # SIRAH's backbone is three beads a residue, held by torsion terms of
-        # its own, so there is nothing here to add and nothing it lacks
-        if args.dihedral_restraint != "none":
-            raise ValueError("model = 'sirah' takes no dihedral restraints: SIRAH holds its "
-                             "backbone with torsion terms of its own, where Martini needs a "
-                             "network or restraints to keep a fold")  # fmt: skip
-    else:
+    if args.model != "sirah":
         wrong = [k for k in SIRAH_ONLY if k in given]
         if wrong:
             raise ValueError(f"{', '.join(sorted(wrong))} needs model = 'sirah'")

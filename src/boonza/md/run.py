@@ -187,6 +187,24 @@ def _current_steps(simulation, dt) -> int:
     return counted if abs(counted - by_clock) <= max(1, by_clock // 1000) else by_clock
 
 
+def _secondary_for(args, workdir: Path) -> str | None:
+    """The DSSP codes a coarse-grained run is restrained by, if there are any.
+
+    They are taken where the atoms still are -- DSSP cannot read beads -- so a
+    run that mapped its own input has just written them beside the topology it
+    built, and a run of a topology someone else built finds them beside that.
+    """
+    from .prepare import secondary_beside
+
+    here = [Path(args.input_structure)] if args.input_structure else []
+    here += [workdir / model / "topol.top" for model in ("martini", "sirah")]
+    for path in here:
+        codes = secondary_beside(path)
+        if codes:
+            return codes
+    return None
+
+
 def _write_view(s, paths: RunPaths, log=print) -> None:
     """``view.dms`` and ``view.mae``: the file to open in a viewer, whatever the
     model, so one command line looks at any run.
@@ -240,13 +258,12 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     if getattr(args, "barostat", "isotropic") != "none":
         system.addForce(_barostat(args, mm, unit, every=0))  # asleep until NPT
     if args.dihedral_restraint != "none":
-        from .prepare import secondary_beside
         from .restraints import add_dihedral_restraints, plot_well, write_records
 
         records, what = add_dihedral_restraints(
             system, s, args.dihedral_restraint, args.dihedral_restraint_kJ,
             getattr(args, "dihedral_restraint_selection", None),
-            secondary_beside(args.input_structure) if args.input_structure else None,
+            _secondary_for(args, paths.workdir),
         )  # fmt: skip
         write_records(paths.dihedral_restraints_csv, records)
         plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
