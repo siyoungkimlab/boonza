@@ -68,6 +68,7 @@ from .pharmacophore import (  # noqa: E402
     feature_points,
     hotspots,
     ligand_features,
+    site_score,
     wanted,
     write_hotspots,
 )
@@ -82,7 +83,15 @@ from .sequence import (  # noqa: E402
     identity_matrix,
     sequence,
 )
-from .sites import Density, Site, SiteSet, ligand_centroids, site_pocket, sites  # noqa: E402
+from .sites import (  # noqa: E402
+    Density,
+    Site,
+    SiteSet,
+    ligand_centroids,
+    site_pocket,
+    sites,
+    write_viewer_scripts,
+)
 from .summary import Summary, summarize  # noqa: E402
 from .symmetry import (  # noqa: E402
     DRMSD,
@@ -186,7 +195,9 @@ __all__ = [
     "Interactions",
     "feature_maps",
     "hotspots",
+    "site_score",
     "write_hotspots",
+    "write_viewer_scripts",
     "wanted",
     "ligand_features",
     "feature_points",

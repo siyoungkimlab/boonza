@@ -6,6 +6,7 @@ boonza reads, the tables it builds, and what OpenMM makes of them.
 """
 
 import gzip
+import math
 import shutil
 from pathlib import Path
 
@@ -169,8 +170,9 @@ def test_generated_pairs_follow_nonbond_params(tmp_path):
 
 
 def test_what_model_sirah_settles_on():
-    """SIRAH's own mdp files: a 20 fs step, PME inside 1.2 nm, and a frame every
-    0.1 ns.  The temperature is not a model's to choose."""
+    """SIRAH's own mdp files: a 20 fs step and PME inside 1.2 nm.  The frame every
+    0.1 ns is boonza's, for both coarse-grained models alike, and the temperature
+    is not a model's to choose."""
     a = parse_arguments(["x.top", "--model", "sirah"])
     assert a.integration_fs == 20.0
     assert a.cutoff_nm == 1.2
@@ -625,12 +627,16 @@ def test_every_library_is_read_together():
     assert bonded.nrexcl == 3
 
 
-def test_a_sirah_run_writes_no_view_file(crambin_all_atom, tmp_path):
-    """There would be nothing in it: SIRAH holds its fold with torsion terms
-    rather than an elastic network, so a view would be a copy of cg.dms with the
-    beads renamed -- and a viewer that knows amino acids draws its own bonds over
-    beads it reads as a broken residue.  cg.dms is what to open."""
+def test_a_sirah_run_writes_a_view_file_with_the_beads_it_runs(crambin_all_atom, tmp_path):
+    """One command line looks at any run, so a SIRAH run writes view.dms too --
+    but there is nothing to leave out of it: SIRAH holds its fold with torsion
+    terms rather than an elastic network.  So the view is the system itself, beads
+    named as the run names them, since a viewer that knows amino acids draws its
+    own bonds over beads it reads as a broken residue.  The mapping step writes
+    none; the run does, beside its solvated.dms.
+    """
     from boonza.md.prepare import build_sirah_system
+    from boonza.md.run import RunPaths, _write_view
 
     args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--no-solvate",
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
@@ -639,6 +645,13 @@ def test_a_sirah_run_writes_no_view_file(crambin_all_atom, tmp_path):
     built = boonza.load(tmp_path / "sirah" / "cg.dms")
     assert len(built.select("name GC").ids) > 40 and not len(built.select("name CA").ids)
     assert built.natoms == s.natoms
+
+    _write_view(s, RunPaths(tmp_path), log=lambda *_: None)
+    view = boonza.load(tmp_path / "view.dms")
+    assert (tmp_path / "view.mae").is_file()
+    assert view.natoms == s.natoms and view.nbonds == s.nbonds
+    assert [str(n) for n in view.atoms["name"]] == [str(n) for n in s.atoms["name"]]
+    assert len(view.select("name GC").ids) > 40 and not len(view.select("name CA").ids)
 
 
 def test_sirah_viewing_can_keep_its_own_names(crambin_all_atom):
@@ -797,3 +810,91 @@ def test_the_file_for_viewing_is_not_a_file_to_run(tmp_path):
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     with pytest.raises(ValueError, match="written for viewing"):
         build_martini_system(args, tmp_path / "run", log=lambda *_: None)
+
+
+def test_a_sirah_run_is_read_with_the_types_its_features_need(crambin_all_atom, tmp_path):
+    """Martini says what a bead stands for in the bead's name, so its names are
+    enough; SIRAH says it in the force field's type, so a run has to bring its
+    nonbonded table along or there is nothing to type it by.  An analysis skips
+    the tables otherwise, since they are the slow part of a .dms."""
+    from boonza.cli import _run_system
+    from boonza.sirah import sirahize
+    from boonza.sirah.features import bead_types, sirah_beads
+
+    built = sirahize(crambin_all_atom).system()
+    path = tmp_path / "solvated.dms"
+    boonza.save(built, path)
+
+    plain = _run_system(path)
+    assert "nonbonded" not in plain.tables
+    assert not sirah_beads(plain, plain.select("name GN GC GO").ids)  # nothing to read
+
+    typed = _run_system(path, typed=True)
+    assert "nonbonded" in typed.tables
+    assert typed.natoms == built.natoms
+    beads = typed.select("name GN").ids
+    assert sirah_beads(typed, beads) and set(bead_types(typed, beads)) <= {"GN", "GNn", "GNz"}
+
+
+def test_sirah_backbone_torsions_are_phi_and_psi(crambin_all_atom):
+    """SIRAH's backbone is three beads a residue, bonded GN-GC-GO-GN(+1), so phi
+    and psi are there as they are all-atom -- which is what a dihedral restraint
+    holds.  Martini has one bead a residue and a torsion over four of them."""
+    from boonza.md.restraints import coarse_grained, dihedral, sirah_torsions
+    from boonza.sirah import sirahize
+
+    m = sirahize(crambin_all_atom, "protein")
+    s = m.system()
+    assert coarse_grained(s) == "sirah"
+    torsions = sirah_torsions(s)
+    residues = {r for r, _, _ in torsions}
+    assert {k for _, k, _ in torsions} == {"phi", "psi"}
+    assert len(residues) == len(s.select("name GC").ids)  # every residue but the ends
+    assert len(torsions) == 2 * len(residues) - 2  # the first has no phi, the last no psi
+    for _, _, atoms in torsions:  # every one of them a bonded path
+        assert len(set(atoms)) == 4
+        for a, b in zip(atoms[:-1], atoms[1:], strict=True):
+            assert b in s.bonded_atoms(a).tolist()
+        assert -math.pi <= dihedral(s.positions, atoms) <= math.pi
+
+
+def test_a_sirah_run_takes_dihedral_restraints(crambin_all_atom, tmp_path):
+    """It holds its backbone with torsion terms of its own, which is why it needs
+    no elastic network -- but a probe swim wants the fold held still, and the
+    restraint is the only thing boonza has for that.  'ss' needs the DSSP codes,
+    which are taken where the atoms still are and written beside the topology."""
+    import openmm as mm
+
+    from boonza.md.prepare import build_sirah_system, secondary_beside
+    from boonza.md.restraints import add_dihedral_restraints
+
+    args = parse_arguments([str(DATA / "1CRN_ph7.pdb"), "--model", "sirah", "--no-solvate",
+                            "--dihedral-restraint", "ss", "--workdir",
+                            str(tmp_path / "run")])  # fmt: skip
+    assert args.dihedral_restraint == "ss"  # no longer refused
+    s, _ = build_sirah_system(args, tmp_path, log=lambda *_: None)
+    codes = secondary_beside(tmp_path / "sirah" / "topol.top")
+    assert codes and len(codes) == len(s.select("name GC").ids)
+    assert set(codes) <= set("HGIEBTSC")
+
+    # the codes come from the atoms, so they are taken at the mapping and have to
+    # survive everything after it -- filling the box with water above all
+    from boonza.sirah import sirahize
+    from boonza.sirah.build import solvate as solvate_sirah
+
+    mapped = sirahize(crambin_all_atom, "protein")
+    assert mapped.ss == codes
+    assert solvate_sirah(mapped, padding=8.0, seed=1).ss == codes
+
+    omm = mm.System()
+    for _ in range(s.natoms):
+        omm.addParticle(1.0)
+    records, what = add_dihedral_restraints(omm, s, "ss", 20.0, None, codes)
+    held = {r["residue"] for r in records} if records and "residue" in records[0] else None
+    assert records and "helices and sheets" in what
+    structured = sum(c in "HGIEB" for c in codes)
+    assert 0 < len(records) <= 2 * structured
+    assert held is None or len(held) <= structured
+    # and 'bb' holds every residue it can, without needing the codes at all
+    more, _ = add_dihedral_restraints(mm.System(), s, "bb", 20.0, None, None)
+    assert len(more) > len(records)

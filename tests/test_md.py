@@ -534,6 +534,22 @@ def test_split_residue_input_keeps_its_recorded_indices(tmp_path, dipeptide):
         assert (loaded.atoms["anum"][a] == out.atoms["anum"][b]).all()
 
 
+def test_every_run_writes_what_a_viewer_opens(tmp_path, dipeptide):
+    """view.dms is the file to open whatever the model, so one command line looks
+    at any run: `vizard $D/view.dms $D/trajectory.dcd`.  An all-atom box has
+    nothing to leave out of it -- no elastic network a viewer would draw as a
+    hairball -- so its view is the solvated system itself, atom for atom and in
+    the same order, which is what makes the trajectory line up with it."""
+    work = tmp_path / "view"
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT]), log=quiet)
+    p = RunPaths(work)
+    assert p.view_dms.is_file() and p.view_mae.is_file()
+    view, solvated = boonza.load(p.view_dms), boonza.load(p.solvated_dms)
+    assert view.natoms == solvated.natoms and view.nbonds == solvated.nbonds
+    assert [str(n) for n in view.atoms["name"]] == [str(n) for n in solvated.atoms["name"]]
+    assert np.allclose(np.asarray(view.positions), np.asarray(solvated.positions))
+
+
 def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
     """status.json is not only for watched runs: 'has this finished, and where is it'
     should be one file to read whether or not a ligand is being followed."""

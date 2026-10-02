@@ -453,7 +453,13 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         mol.pairs = _pairs_from(mol.dihedrals, mol.bonds, mol.angles)
         mol.impropers = sorted(set(mol.impropers))
     positions = np.array([b.position for b in beads], float)
-    return Sirahized(molecules, positions, np.asarray(system.cell, float), nrexcl=bonded.nrexcl)
+    # DSSP cannot read beads, so the codes are taken here, where the atoms still
+    # are: dihedral_restraint = 'ss' reads them back from secondary.txt
+    from ..martini.build import _dssp
+
+    ss = _dssp(system, atoms) if len(system.select("name CA").ids) else ""
+    return Sirahized(molecules, positions, np.asarray(system.cell, float),
+                     nrexcl=bonded.nrexcl, ss=ss)  # fmt: skip
 
 
 def _add_disulfides(molecules, log=None) -> None:
@@ -483,6 +489,7 @@ class Sirahized:
     nrexcl: int = 3
     solvent: list[tuple[str, int]] = field(default_factory=list)  # WT4, NaW, ClW counts
     copies: list[int] = field(default_factory=list)  # how many of each molecule (1 each)
+    ss: str = ""  # one DSSP code a mapped residue, for dihedral_restraint = 'ss'
 
     @property
     def nbeads(self) -> int:
@@ -732,7 +739,7 @@ def solvate(m: Sirahized, padding: float = 10.0, box=None, salt: float = 0.15,
     out = Sirahized(m.molecules, np.concatenate([solute, water[keep].reshape(-1, 3), ions]),
                     np.diag(box), m.nrexcl,
                     [("WT4", int(len(keep))), ("NaW", int(na)), ("ClW", int(cl))],
-                    copies=list(m.copies))  # fmt: skip
+                    copies=list(m.copies), ss=m.ss)  # fmt: skip
     if log is not None:
         volume = float(np.prod(box / 10))
         log(f"Solvated: {len(keep)} WT4, {na} NaW and {cl} ClW in {volume:.1f} nm^3 "

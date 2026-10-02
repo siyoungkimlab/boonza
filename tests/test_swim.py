@@ -146,7 +146,8 @@ def test_bundled_fragment_libraries():
     names = [x.system.residues["name"].tolist()[0] for x in ligands]
     assert all(n.startswith("Z") for n in names)  # Enamine's catalogue IDs, kept
     assert len(set(names)) == len(names)  # and distinct, so a selection picks one
-    with pytest.raises(FileNotFoundError, match="AstexMiniFrag, Essential320"):
+    # the message lists every library there is, files and built ones alike
+    with pytest.raises(FileNotFoundError, match="AstexMiniFrag, Dipeptide105"):
         swim.find_library("no-such-library")
 
 
@@ -260,3 +261,40 @@ def test_swim_parameterizes_small_molecules_once(tmp_path, protein):
     inp = load_input(sim / "input.dms")
     ffs = swim._load_forcefields(parse_arguments(["--config", str(sim / "md.toml")]).forcefields)
     assert gaff.find_unmatched(inp, ffs) == []  # the simulation needs no GAFF2 of its own
+
+
+def test_the_probe_libraries_are_ligand_libraries_too():
+    """The same chemistry a coarse-grained swim swims, for an all-atom one: the
+    probes are peptides, so they are built here rather than read from a file, and
+    an all-atom run of them reads against a Martini or SIRAH run of the same."""
+    assert "SingleAminoAcid18" in swim.bundled_libraries()
+    assert "Dipeptide105" in swim.bundled_libraries()
+    assert "AstexMiniFrag" in swim.bundled_libraries()  # the files it ships, still
+
+    assert swim.find_library("SingleAminoAcid18") == "SingleAminoAcid18"
+    assert swim.find_library("dipeptide105") == "dipeptide105"  # the name as given
+    with pytest.raises(FileNotFoundError, match="SingleAminoAcid18"):
+        swim.find_library("NoSuchLibrary")  # and the message lists what there is
+
+    one = swim.peptide_library("SingleAminoAcid18")
+    assert len(one) == 18
+    assert [title for title, _ in one] == list(
+        __import__("boonza.martini.probes", fromlist=["x"]).single_sequences()
+    )
+    for title, mol in one:
+        assert len(title) == 1
+        assert (np.asarray(mol.atoms["anum"]) == 1).any()  # all-atom, hydrogens and all
+        assert len({str(n) for n in mol.residues["name"]}) == 1
+
+    assert len(swim.peptide_library("Dipeptide105")) == 105
+    assert all(len(t) == 2 for t, _ in swim.peptide_library("Dipeptide105"))
+
+
+def test_a_built_library_loads_as_ligands():
+    """Each one a Ligand with its own code and SMILES, as a file's entries are."""
+    ligands = swim.load_library("SingleAminoAcid18", [])
+    assert len(ligands) == 18
+    assert [lig.code for lig in ligands[:3]] == ["L000", "L001", "L002"]
+    assert [lig.name for lig in ligands[:3]] == ["R", "N", "D"]  # the sequence is the title
+    assert len({lig.smiles for lig in ligands}) == 18  # eighteen different molecules
+    assert all(lig.source is None for lig in ligands)  # none carries a force field: GAFF2 does

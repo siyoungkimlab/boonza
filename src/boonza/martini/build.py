@@ -248,6 +248,11 @@ class Martinized:
         with tempfile.TemporaryDirectory() as tmp:
             top = self._write_topology(tmp, martini_itp.name)
             s = load_top(top, include_dirs=[str(martini_itp.parent)])
+        if s.natoms != len(self.positions):
+            raise ValueError(f"the topology built {s.natoms} beads where this system holds "
+                             f"{len(self.positions)}: does one of its molecules take a name "
+                             "Martini already uses (W, WF, ION, NA, CL), whose definition wins "
+                             "over a later one?")  # fmt: skip
         s.positions = np.asarray(self.positions, float)
         if self.cell is not None and np.any(self.cell):
             s.cell = np.asarray(self.cell, float)

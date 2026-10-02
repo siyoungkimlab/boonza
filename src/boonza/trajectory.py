@@ -170,6 +170,11 @@ def _class(table: dict, fmt: str, what: str):
     return getattr(importlib.import_module(f".io.{module}", __package__), name)
 
 
+def is_trajectory(path, format: str | None = None) -> bool:
+    """Whether boonza reads this path as a trajectory rather than a structure."""
+    return _format(path, format) in _READERS
+
+
 def open_trajectory(path, system=None, format: str | None = None) -> Trajectory:
     """Open a trajectory: DCD, XTC, TRR, Amber NetCDF, or Desmond DTR/STK.
 
