@@ -62,7 +62,9 @@ MACROS = {
     "lipids": "lipid",
     "legacy_ion": "resname AL BA CA Ca CAL CD CES CLA CL Cl 'Cl-' CO CS CU Cu CU1 CUA HG IN "
     "IOD K 'K+' MG MN3 MO3 MO4 MO5 MO6 NA Na NAW OC7 PB POT PT RB SOD TB TL WO4 YB ZN ZN1 ZN2",
-    "ion": "degree 0 and not atomicnumber 0 1 2 5 6 7 8 10 18 36 54 86",
+    # a lone particle of a heavier element; "not water" is for the coarse-grained,
+    # whose water is one bead bonded to nothing
+    "ion": "degree 0 and not water and not atomicnumber 0 1 2 5 6 7 8 10 18 36 54 86",
     "ions": "ion",
     "sugar": "resname AGLC",
     "solvent": "not (protein or sugar or nucleic or lipid)",

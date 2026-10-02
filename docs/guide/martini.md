@@ -1,8 +1,9 @@
-# Martini 3 coarse-grained proteins
+# Martini coarse-grained proteins
 
-`boonza.martinize` turns an all-atom protein into Martini 3 beads and their
-topology, as martinize2 does, and the result runs in OpenMM with the energies
-GROMACS gives it. GROMACS isn't needed at any step.
+`boonza.martinize` turns an all-atom protein into Martini beads and their
+topology — Martini 3 by default, Martini 2.2 with `forcefield="martini22"` — as
+martinize2 does, and the result runs in OpenMM with the energies GROMACS gives
+it. GROMACS isn't needed at any step.
 
 ```python
 import boonza
@@ -69,11 +70,31 @@ bilayer matches GROMACS 2024.6 term by term, to a potential of -67283.37
 against -67283.4 kJ/mol, and a plain 128-DPPC topology read from disk to
 -28760.11 against -28760.1.
 
-`martinize` builds Martini 3 only, so a Martini 2 *protein* has to come from a
-topology you already have (martinize2's, say), which `boonza md cg/topol.top
---model martini2` will run. The two versions must never be mixed in one system:
-their bead types share names and mean different things, and boonza refuses a
-Martini 3 protein in a Martini 2 membrane rather than building it.
+`martinize` builds either version — `boonza martinize in.pdb cg --model
+martini2`, or `martinize(s, forcefield="martini22")` — from vermouth's files for
+that version, and `--model martini2` on `boonza md` or `boonza swim` maps a
+protein the same way before running it. A topology you already have
+(martinize2's, say) still runs as it did: `boonza md cg/topol.top --model
+martini2`.
+
+Martini 2.2 is not Martini 3 with other numbers. It leans on secondary
+structure, where Martini 3 does not: its backbone bead changes type and its
+terms change with the fold, so the DSSP string is part of the topology. Its
+residues are CHARMM's — `HSD`, `HSE`, `HSP`, and no `HIS` — and boonza renames
+them, because martinize2 given a residue called `HIS` builds the `HSD` block but
+leaves the name, which `martini22`'s `protein_resnames` macro does not list, so
+every link skips that residue and the backbone comes out severed there. It also
+cuts the residues differently: a tryptophan's two rings are split along another
+line and a phenylalanine's is read in another order, so each version has its own
+mappings (`boonza/data/martini/mappings/<version>`). Nothing holds a bead placed
+by the wrong version's rules in a ring its constraints can satisfy, and a run
+started from one dies with a NaN a few steps in. Martini 2 has no mapping for a
+protonated aspartate or glutamate or a neutral lysine, and boonza says so and
+leaves the residue charged.
+
+The two versions must never be mixed in one system: their bead types share names
+and mean different things, and boonza refuses a Martini 3 protein in a Martini 2
+membrane rather than building it.
 
 **Please cite** Martini 2: SJ Marrink et al., *J. Phys. Chem. B* 111,
 7812-7824 (2007), and L Monticelli et al., *J. Chem. Theory Comput.* 4,
@@ -81,9 +102,9 @@ Martini 3 protein in a Martini 2 membrane rather than building it.
 
 ## What martinize does
 
-This is martinize2's method, run on vermouth's own data files: its Martini 3
-residue blocks, links, modifications and mappings (Apache-2.0, in
-`boonza/data/martini`).
+This is martinize2's method, run on vermouth's own data files: the residue
+blocks, links, modifications and mappings of the version asked for (Apache-2.0,
+in `boonza/data/martini`).
 
 1. **Molecules.** Residues are joined by the structure's bonds between
    residues (CONECT and SSBOND records, for instance) and by vermouth's

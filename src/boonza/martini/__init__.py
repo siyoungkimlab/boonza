@@ -13,6 +13,10 @@ LIPIDS = ("martini_v3.0.0_phospholipids_v1.itp", "martini_v3.0_sterols_v1.0.itp"
 #: The versions that can be built, and the files each one is built from.
 VERSIONS = (2, 3)
 NONBONDED_FOR = {3: NONBONDED, 2: "martini_v2.2.itp"}
+#: The force field each version maps a protein with: vermouth's own files, which
+#: is what martinize2 reads.  Martini 2.2 leans on secondary structure where
+#: Martini 3 does not -- its backbone bead changes type with the fold.
+FORCEFIELD_FOR = {3: "martini3001", 2: "martini22"}
 LIPIDS_FOR = {3: LIPIDS, 2: ("martini_v2.0_lipids_all_201506.itp",)}
 #: Martini 2 defines its water and ions upstream, so boonza includes them
 #: rather than writing moleculetypes that would clash: water comes with
@@ -62,7 +66,8 @@ OPENMM_OPTIONS = {
     "lj_shift": True,
 }
 
-__all__ = ["IONS_FOR", "LIPIDS", "LIPIDS_FOR", "NONBONDED", "NONBONDED_FOR", "OPENMM_OPTIONS",
+__all__ = ["FORCEFIELD_FOR", "IONS_FOR", "LIPIDS", "LIPIDS_FOR", "NONBONDED",
+           "NONBONDED_FOR", "OPENMM_OPTIONS",
            "PARAMETERS", "VERSIONS", "Martinized", "bilayer", "convert_dssp_to_martini",
            "equilibrate", "force_field", "lipid_templates", "martinize", "parameters",
            "solvate", "version"]  # fmt: skip

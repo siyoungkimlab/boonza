@@ -129,6 +129,10 @@ class Modification:
     edges: set = field(default_factory=set)
     apply_nodes: dict = field(default_factory=dict)
     apply_meta: dict = field(default_factory=lambda: defaultdict(dict))
+    #: Interactions the modification adds, by section.  Martini 2's phosphorylated
+    #: and protonated variants bring a bond with them, where Martini 3's
+    #: modifications only retype what is already there.
+    interactions: dict = field(default_factory=lambda: defaultdict(list))
 
 
 @dataclass
@@ -325,6 +329,11 @@ def _read_ff_file(path: Path, ff: ForceField) -> None:
                 ctx.nodes[ref] = {**attrs, "atomname": attrs.get("atomname", ref)}
             elif section == "edges":
                 ctx.edges.add(frozenset(tokens[:2]))
+            elif section in NATOMS:
+                atoms, rest = _atoms(tokens, NATOMS[section])
+                params, meta = _params(rest)
+                names = [a for a, _ in atoms]
+                ctx.interactions[section].append(Interaction(names, params, meta))
             else:
                 raise ValueError(f"{path.name}: unsupported modification section {section!r}")
 

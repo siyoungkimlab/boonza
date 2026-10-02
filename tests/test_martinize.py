@@ -83,6 +83,96 @@ def _reference(name):
     return itps, (d / "ss.txt").read_text().strip()
 
 
+#: The cases regenerate.py also writes as Martini 2.2, and what that force field
+#: calls a histidine.
+MARTINI22 = ("2TRX",)
+CHARMM_NAMES = {"HIS": "HSD", "HID": "HSD", "HIE": "HSE", "HIP": "HSP"}
+
+
+@pytest.mark.parametrize("name", MARTINI22)
+def test_the_martini2_topology_is_martinize2s(name, tmp_path):
+    """The same comparison for Martini 2.2, which boonza reads from vermouth's
+    own files as it reads Martini 3's: every bead and every term.
+
+    Its residues are CHARMM's, so the structure is renamed before martinize2 sees
+    it.  boonza renames them itself -- give martinize2 a residue called HIS and it
+    builds the HSD block but leaves the name, which martini22's protein_resnames
+    macro does not list, so every link skips that residue and the backbone comes
+    out severed there.
+    """
+    source, elastic = CASES[name]
+    itps, ss = _reference(f"{name}.martini22")
+    s = _load(source, tmp_path).select("protein").clone()
+    for r in range(s.nresidues):
+        want = CHARMM_NAMES.get(str(s.residues["name"][r]).strip())
+        if want:
+            s.residue(r).name = want
+    m = martinize(s, ss=ss, elastic=elastic, forcefield="martini22")
+    assert m.martini == 2  # so the topology includes Martini 2's parameter file
+    assert len(m.molecules) == len(itps)
+    for k, ref in enumerate(itps):
+        ours_atoms, ours = _parse_itp(m.itp(k))
+        ref_atoms, theirs = _parse_itp(ref)
+        assert ours_atoms == ref_atoms
+        assert dict(ours) == dict(theirs)
+    # which atoms make which bead is the version's own: Martini 2.2 cuts a
+    # tryptophan's two rings along another line and reads a phenylalanine's in
+    # another order, so a bead mapped by Martini 3's rules lands in the wrong
+    # place and the ring constraints it is then held by cannot be satisfied
+    assert np.abs(m.positions - _reference_beads(f"{name}.martini22")).max() < 1e-3
+
+
+def test_martini2_keeps_a_terminus_a_protonation_cost_martinize2(tmp_path):
+    """A terminus and a residue's protonation have nothing to do with each other,
+    so one going unmapped does not take the other with it.
+
+    martinize2 gathers the modifications it found and drops the set when any of
+    them has no mapping for the force field: on a protein with a protonated
+    aspartate under Martini 2.2 -- which has no mapping for one -- its
+    N-terminus comes out uncharged.  boonza applies what it can and says what it
+    could not.
+    """
+    s = _load(CASES["1TEN"][0], tmp_path).select("protein").clone()
+    with pytest.warns(UserWarning, match="ASP-HD2"):
+        m = martinize(s, forcefield="martini22")
+    first = m.molecules[0].nodes[0]
+    assert first["atomname"] == "BB"
+    assert first["atype"] == "Qd" and float(first["charge"]) == 1.0  # the terminus is charged
+    last = [n for n in m.molecules[0].nodes if n["atomname"] == "BB"][-1]
+    assert last["atype"] == "Qa" and float(last["charge"]) == -1.0
+
+
+def test_martini2_keeps_a_histidine_in_the_chain(tmp_path):
+    """boonza gives a residue the name the force field knows it by, so the links
+    find it: without that the backbone has a gap at every histidine, which is
+    what martinize2 hands back for a structure named the Amber way."""
+    s = _load(CASES["2TRX"][0], tmp_path).select("protein").clone()
+    his = [r for r in range(s.nresidues) if str(s.residues["name"][r]).strip() == "HIS"]
+    assert his  # the case is only a case if the protein has one
+    named = s.clone()
+    for r in his:
+        named.residue(r).name = "HSD"
+    plain, charmm = (martinize(x, forcefield="martini22") for x in (s, named))
+    assert [n["atype"] for n in plain.molecules[0].nodes] == \
+           [n["atype"] for n in charmm.molecules[0].nodes]  # fmt: skip
+    for mine, theirs in zip(plain.molecules, charmm.molecules, strict=True):
+        assert len(mine.interactions["bonds"]) == len(theirs.interactions["bonds"])
+        assert len(mine.interactions["angles"]) == len(theirs.interactions["angles"])
+    # and the backbone really is continuous: every residue's BB bonded to the next
+    mol = plain.molecules[0]
+    bb = [k for k, n in enumerate(mol.nodes) if n["atomname"] == "BB"]
+    joined = {frozenset(t.atoms) for kind in ("bonds", "constraints")
+              for t in mol.interactions.get(kind, [])}  # fmt: skip
+    assert all(frozenset((a, b)) in joined for a, b in zip(bb, bb[1:], strict=False))
+
+
+def _reference_beads(name) -> np.ndarray:
+    """Where martinize2 put the beads of that reference run."""
+    cg = gzip.decompress((REF / name / "cg.pdb.gz").read_bytes()).decode()
+    return np.array([[float(line[30:38]), float(line[38:46]), float(line[46:54])]
+                     for line in cg.splitlines() if line.startswith("ATOM")])  # fmt: skip
+
+
 @pytest.mark.parametrize("name", CASES)
 def test_the_topology_is_martinize2s(name, tmp_path):
     """Every bead (type, charge, mass) and every term, #ifdef blocks included,
@@ -96,10 +186,7 @@ def test_the_topology_is_martinize2s(name, tmp_path):
         ref_atoms, theirs = _parse_itp(ref)
         assert ours_atoms == ref_atoms
         assert dict(ours) == dict(theirs)
-    cg = gzip.decompress((REF / name / "cg.pdb.gz").read_bytes()).decode()
-    xyz = np.array([[float(line[30:38]), float(line[38:46]), float(line[46:54])]
-                    for line in cg.splitlines() if line.startswith("ATOM")])  # fmt: skip
-    assert np.abs(m.positions - xyz).max() < 1e-3  # martinize2 writes 3 decimals
+    assert np.abs(m.positions - _reference_beads(name)).max() < 1e-3  # martinize2 writes 3 decimals
 
 
 def test_the_secondary_structure_defaults_to_boonzas_dssp():
@@ -204,7 +291,7 @@ def test_neutral_termini_and_no_disulfides():
 
 def test_what_it_refuses():
     s = boonza.load(DATA / "1HHO.pdb")
-    with pytest.raises(ValueError, match="not Martini 3 protein residues: HEM"):
+    with pytest.raises(ValueError, match="not martini3001 protein residues: HEM"):
         martinize(s, "protein or resname HEM")
     lys = s.select("chain A and resname LYS").ids[0]
     residue = int(np.asarray(s.atoms["residue"])[lys])
@@ -311,6 +398,44 @@ def test_solvated_beads_run(solvated, tmp_path):
     assert integrator.getStepSize().value_in_unit(mm.unit.picosecond) == pytest.approx(0.020)
     sim.step(10)
     assert np.isfinite(sim.context.getState(getEnergy=True).getPotentialEnergy()._value)
+
+
+def test_a_martini2_protein_runs_on_its_own_parameters(tmp_path):
+    """Martini 2.2 as it ships, solvated, minimized and stepped.
+
+    The toy parameters the other runs use would not catch what this does: a bead
+    mapped by the wrong version's rules lands where the ring constraints it is
+    held by cannot be satisfied, and the constraint solver walks the coordinates
+    to NaN -- which a run reports, steps later, as a particle coordinate being
+    NaN.  Martini 2's own settings are Martini 3's: reaction field at 1.1 nm.
+    """
+    pytest.importorskip("openmm")
+    import openmm as mm
+    from openmm import app
+
+    from boonza.martini import NONBONDED_FOR, parameters
+
+    s = boonza.load(DATA / "2TRX.pdb").select("protein and chain A").clone()
+    for r in range(s.nresidues):
+        want = CHARMM_NAMES.get(str(s.residues["name"][r]).strip())
+        if want:
+            s.residue(r).name = want
+    m = solvate(martinize(s, forcefield="martini22", elastic=True), padding=6.0)
+    cg = m.system(parameters(NONBONDED_FOR[2])[0])
+    rings = {t for name in cg.table_names if name.startswith("constraint")
+             for k in range(cg.table(name).nterms)
+             for t in [tuple(int(a) for a in cg.table(name).term(k).atoms)]}  # fmt: skip
+    assert rings  # the case is only a case if something is constrained
+    top, system, pos = boonza.to_openmm(cg, **OPENMM_OPTIONS)
+    sim = app.Simulation(top, system, mm.LangevinMiddleIntegrator(300, 1.0, 0.002),
+                         mm.Platform.getPlatformByName("CPU"))  # fmt: skip
+    sim.context.setPositions(pos)
+    sim.minimizeEnergy(maxIterations=50)
+    equilibrate(sim, steps=5)
+    sim.step(5)
+    state = sim.context.getState(getEnergy=True, getPositions=True)
+    assert np.isfinite(state.getPotentialEnergy()._value)
+    assert np.isfinite(state.getPositions(asNumpy=True)._value).all()
 
 
 TOY_LIPIDS = """[ moleculetype ]

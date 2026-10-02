@@ -90,10 +90,13 @@ def describe_system(s, omm_system) -> str:
     from openmm import unit
 
     nvs = sum(1 for k in range(omm_system.getNumParticles()) if omm_system.isVirtualSite(k))
-    water_res = set(s.atoms["residue"][s.select("water").ids].tolist())
+    wet = np.zeros(s.natoms, bool)
+    wet[s.select("water").ids] = True
+    water_res = set(s.atoms["residue"][wet].tolist())
     frag = s.fragids
     single = np.bincount(frag)[frag] == 1 if len(frag) else frag
-    ions = int((single & (s.atoms["anum"] > 1)).sum()) if len(frag) else 0
+    # a lone particle, water aside: coarse-grained water is one bead too
+    ions = int((single & ~wet & (s.atoms["anum"] > 1)).sum()) if len(frag) else 0
     lines = [
         f"System: {omm_system.getNumParticles()} particles ({nvs} virtual sites)",
         f"  chains: {s.nchains}, residues: {s.nresidues} ({len(water_res)} water, {ions} ion), "

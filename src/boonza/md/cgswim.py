@@ -179,10 +179,6 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
 
     if args.input_structure is None:
         raise ValueError("give the protein structure")
-    if args.model == "martini2":
-        raise ValueError("model = 'martini2' cannot coarse-grain a protein: boonza martinizes "
-                         "as Martini 3, so a coarse-grained swim takes model = 'martini3' or "
-                         "'sirah'")  # fmt: skip
     sequences = list(sequences) if sequences else probe_sequences()
     root = Path(args.workdir)
     root.mkdir(parents=True, exist_ok=True)
@@ -192,15 +188,21 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     if sirah:
         from ..sirah import sirahize
 
-        protein = sirahize(aa, args.cg_selection, termini=args.termini, log=log)
+        protein = sirahize(aa, args.cg_selection, termini=args.termini, log=log,
+                           strict=bool(getattr(args, "strict_mapping", False)))  # fmt: skip
+        made_of = {}  # SIRAH has one version
         log(f"SIRAH: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)")
     else:
-        from ..martini import martinize
+        from ..martini import FORCEFIELD_FOR, martinize
 
+        version = int(args.model.removeprefix("martini"))
+        made_of = {"forcefield": FORCEFIELD_FOR[version]}  # the probes are made of it too
         protein = martinize(aa, args.cg_selection, elastic=elastic,
                             elastic_selection=args.elastic_selection if elastic else None,
-                            neutral_termini=bool(args.neutral_termini))  # fmt: skip
-        log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
+                            neutral_termini=bool(args.neutral_termini),
+                            **made_of)  # fmt: skip
+        log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
+            f"{len(protein.molecules)} molecule(s)"
             f"{', elastic network' if elastic else ''}")  # fmt: skip
     chain = probe_chain(protein)  # the probes', free of the protein's
     extent = float((protein.positions.max(0) - protein.positions.min(0)).max())
@@ -238,7 +240,9 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             continue  # started: leave it be
         d.mkdir(exist_ok=True)
         rng = np.random.default_rng([int(args.seed), s])
-        probes = [in_chain(probe(q), chain) for q in group]
+        # the probes are of the protein's own Martini: the two meet through
+        # their bead types, and those are not the same between the versions
+        probes = [in_chain(probe(q, **made_of), chain) for q in group]
         if sirah:
             system = build_sirah(protein, probes, copies, box, rng, args.saltM, clearance,
                                  log=log if s == 0 else None)  # fmt: skip

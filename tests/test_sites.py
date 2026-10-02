@@ -582,3 +582,28 @@ def test_how_far_the_protein_moved_is_reported(tmp_path, swimming, capsys):
     printed = capsys.readouterr().out
     assert "the protein stayed within" in printed
     assert "no longer has" not in printed
+
+
+@pytest.mark.parametrize(("version", "forcefield", "radii"), [
+    (2, "martini22", [2.15, 2.35]),       # Martini 2's small bead is 0.43 nm, the rest 0.47
+    (3, "martini3001", [1.7, 2.05, 2.35]),  # Martini 3's are 0.34, 0.41 and 0.47
+])  # fmt: skip
+def test_a_bead_is_as_wide_as_its_own_pair(version, forcefield, radii):
+    """How much room a bead takes, for the map the pockets are measured on.
+
+    Both Martinis write their Lennard-Jones per pair of types rather than per
+    type, so a bead's own size is the pair it makes with itself; neither carries
+    a size in ``[ atomtypes ]`` at all.  They write it differently, though --
+    Martini 2.2 declares combination rule 1 and gives C6 and C12, Martini 3
+    rule 2 and gives sigma and epsilon -- and a radius must come out the same
+    either way, which is the bead sizes the papers name.
+    """
+    from boonza.martini import NONBONDED_FOR, martinize, parameters
+    from boonza.sites import RMIN, particle_radii
+
+    s = boonza.load(DATA / "2TRX.pdb").select("protein and chain A").clone()
+    cg = martinize(s, forcefield=forcefield).system(parameters(NONBONDED_FOR[version])[0])
+    ids = np.arange(cg.natoms)
+    sigma = particle_radii(cg, ids, "sigma")
+    assert sorted(np.unique(np.round(sigma, 4)).tolist()) == radii
+    assert np.allclose(particle_radii(cg, ids, "rmin"), sigma * RMIN)

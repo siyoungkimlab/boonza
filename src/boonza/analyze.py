@@ -25,6 +25,11 @@ WATER_NAMES = [
     "TIP4",
     "SPC",
 ]
+#: Martini's water, which is one bead standing for four waters, and its
+#: antifreeze.  A one-residue probe of a tryptophan is called W too, so a
+#: residue counts as this water only when it is that one bead and the bead
+#: carries the name as well.
+CG_WATER_NAMES = ["W", "WF"]
 LIPID_NAMES = ["DLPE", "DMPC", "DPPC", "GPC", "LPPC", "PALM", "PC", "PGCL", "POPC", "POPE", "POPS"]
 
 _BACKBONE = {"CA": ATOM_PROBACK, "C": ATOM_PROBACK, "O": ATOM_PROBACK, "N": ATOM_PROBACK}
@@ -68,6 +73,11 @@ def classify(system) -> tuple[np.ndarray, np.ndarray]:
     o_deg = np.bincount(res[anum == 8], weights=degree[anum == 8], minlength=nres)
     h_deg = np.bincount(res[anum == 1], weights=degree[anum == 1], minlength=nres)
     water |= candidate & (n_oh == 2) & (o_deg == 2) & (h_deg == 2)
+    name = system._atoms.column("name")
+    bead = np.isin(name, CG_WATER_NAMES) & np.isin(
+        system._residues.column("name")[res], CG_WATER_NAMES
+    )
+    water |= (count(bead) == 1) & (count(real) == 1)
     restype[water] = RES_WATER
 
     off, order = system._csr("rescsr", nres, res)
