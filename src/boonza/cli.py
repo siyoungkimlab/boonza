@@ -1105,7 +1105,7 @@ def _martini_files(args):
 
     from .martini import LIPIDS_FOR, NONBONDED_FOR, parameters
 
-    version = int(getattr(args, "martini", 3))
+    version = 2 if getattr(args, "model", "martini3") == "martini2" else 3
     itp = args.martini_itp or str(parameters(NONBONDED_FOR[version])[0])
     lipids = getattr(args, "lipid_itp", None)
     if lipids is None:
@@ -1116,14 +1116,17 @@ def _martini_files(args):
 def _martinize(args) -> int:
     import boonza
 
+    from .martini import FORCEFIELD_FOR
+
     cys = args.cys if args.cys in ("auto", "none") else float(args.cys)
+    version = 2 if args.model == "martini2" else 3
     m = boonza.martinize(_load(args.input), args.selection, ss=args.ss, elastic=args.elastic,
                          elastic_fc=args.elastic_fc, elastic_lower=args.elastic_lower,
                          elastic_upper=args.elastic_upper, elastic_decay=args.elastic_decay,
                          elastic_power=args.elastic_power, elastic_min_fc=args.elastic_min_fc,
                          res_min_dist=args.res_min_dist, cys=cys,
                          neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
-                         extdih=args.extdih)  # fmt: skip
+                         extdih=args.extdih, forcefield=FORCEFIELD_FOR[version])  # fmt: skip
     if args.solvate:
         from .martini import solvate
 
@@ -1329,9 +1332,11 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--no-labels", action="store_true", help="no names under the molecules")
     q.set_defaults(run=_draw)
 
-    q = sub.add_parser("martinize", help="Martini 3 beads and topology for proteins, as martinize2")
+    q = sub.add_parser("martinize", help="Martini beads and topology for proteins, as martinize2")
     q.add_argument("input", help="all-atom structure (hydrogens, if present, set protonation)")
     q.add_argument("output", help="directory for topol.top, molecule_N.itp and cg.gro")
+    q.add_argument("--model", default="martini3", choices=("martini3", "martini2"),
+                   help="which Martini to build (default martini3)")  # fmt: skip
     q.add_argument("--selection", default="protein", help="atoms to coarse-grain")
     q.add_argument("--ss", help="DSSP codes, one per residue (default: boonza's DSSP)")
     q.add_argument("--elastic", action="store_true", help="add an elastic network (-elastic)")

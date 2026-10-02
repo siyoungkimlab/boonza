@@ -93,7 +93,7 @@ MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
                  "protein_extent", "hmr")  # fmt: skip
 #: Settings that only a SIRAH run has.
-SIRAH_ONLY = ("termini",)
+SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
 MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
@@ -129,6 +129,7 @@ DEFAULTS: dict = {
     "performance_interval_ns": 1.0,
     "integration_fs": 2.0,
     "hmr": False,
+    "strict_mapping": False,
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
     "dihedral_restraint_selection": None,
@@ -191,7 +192,8 @@ _NUMBERS = {
     "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs"}
+_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs",
+             "strict_mapping"}  # fmt: skip
 _CHOICES = {
     "model": MODELS,
     "termini": ("Charged", "Neutral", "None"),
@@ -414,6 +416,9 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                          "bound peptide free (default: every molecule)")  # fmt: skip
     cg.add_argument("--termini", choices=("Charged", "Neutral", "None"),
                     help="SIRAH: the chain ends (default: Charged)")  # fmt: skip
+    cg.add_argument("--strict-mapping", dest="strict_mapping", action="store_true",
+                    help="SIRAH: refuse a structure missing an atom a bead sits on, instead "
+                         "of placing that bead against the bead it bonds to")  # fmt: skip
     cg.add_argument("--cg-selection", dest="cg_selection", metavar="SEL",
                     help="the atoms to coarse-grain (default: protein)")  # fmt: skip
     cg.add_argument("--gromacs", action=argparse.BooleanOptionalAction,

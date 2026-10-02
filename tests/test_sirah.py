@@ -346,7 +346,13 @@ def test_probes_can_be_named_when_there_is_no_probes_json(system, tmp_path):
     assert pooled.max() > 0
 
 
-#: What pdb2gmx -ff sirah builds from the same beads, with no terminus chosen.
+#: What pdb2gmx -ff sirah builds from the same beads, with no terminus chosen --
+#: and without crambin's three disulfides, which it does not make: its special
+#: bonds come from specbond.dat, and that step is skipped for a chain it does not
+#: recognise as protein.  SIRAH parameterizes the bridge all the same
+#: (ffbonded.itp pairs Y5Sx with Y5Sx at 0.204 nm), so boonza makes it and says
+#: here what that costs: three bonds, and the angles, dihedrals and 1-4 pairs
+#: that follow from them.
 PDB2GMX = {"atoms": 205, "bonds": 219, "pairs": 263, "angles": 285, "propers": 303,
            "impropers": 37}  # fmt: skip
 
@@ -375,11 +381,11 @@ def test_beads_sit_where_sirah_puts_them(crambin_all_atom, crambin):
 
 def test_the_topology_is_the_one_pdb2gmx_builds(crambin_all_atom):
     """Bonds from the library, angles and dihedrals from the bonds, 1-4 pairs
-    from the dihedrals, impropers from the library, and crambin's three
-    disulfides: the counts pdb2gmx arrives at, every one."""
+    from the dihedrals, impropers from the library: the counts pdb2gmx arrives
+    at, every one, with the disulfides left out as pdb2gmx leaves them out."""
     from boonza.sirah import sirahize
 
-    m = sirahize(crambin_all_atom, termini="None")
+    m = sirahize(crambin_all_atom, termini="None", disulfides=False)
     assert len(m.molecules) == 1
     mol = m.molecules[0]
     got = {"atoms": mol.natoms, "bonds": len(mol.bonds), "pairs": len(mol.pairs),
@@ -395,7 +401,7 @@ def test_the_energies_are_the_ones_that_topology_gives(crambin_all_atom, crambin
     pytest.importorskip("openmm")
     from boonza.sirah import sirahize
 
-    mine = sirahize(crambin_all_atom, termini="None").system()
+    mine = sirahize(crambin_all_atom, termini="None", disulfides=False).system()
     theirs = crambin.clone()
     theirs.positions = np.asarray(mine.positions)
     assert np.allclose(np.asarray(mine.atoms["charge"], float),
@@ -898,3 +904,85 @@ def test_a_sirah_run_takes_dihedral_restraints(crambin_all_atom, tmp_path):
     # and 'bb' holds every residue it can, without needing the codes at all
     more, _ = add_dihedral_restraints(mm.System(), s, "bb", 20.0, None, None)
     assert len(more) > len(records)
+
+
+def test_a_disulfide_is_a_bond_sirah_parameterizes(crambin_all_atom):
+    """SIRAH's answer to a disulfide is a residue of its own and a bond between
+    the sulfurs: `sX` carries no thiol hydrogen and types its BSG Y5Sx, and
+    ffbonded.itp pairs Y5Sx with Y5Sx at 0.204 nm.  Leaving the bond out holds
+    the fold with nothing but torsions, which is what a 2.0 A cutoff did -- every
+    bridge of a crystal structure measures 2.03 to 2.08 and was missed.
+    """
+    from boonza.sirah import sirahize
+    from boonza.sirah.build import DISULFIDE, disulfide_pairs
+
+    assert DISULFIDE > 2.08  # or a real bridge is missed by hundredths of an angstrom
+    pairs = disulfide_pairs(crambin_all_atom)
+    assert len(pairs) == 3  # crambin's three, from the structure's own bonds
+
+    m = sirahize(crambin_all_atom, termini="None")
+    mol = m.molecules[0]
+    sulfur = {k for k, b in enumerate(mol.beads) if b.name == "BSG"}
+    bridges = [(a, b) for a, b in mol.bonds if a in sulfur and b in sulfur]
+    assert len(bridges) == 3
+    for a, b in bridges:  # at the length the force field asks for, 0.204 nm
+        d = float(np.linalg.norm(mol.beads[a].position - mol.beads[b].position))
+        assert 1.9 <= d <= 2.2
+    assert all(mol.types[k] == "Y5Sx" for k in sulfur)  # cystine, not free cysteine
+    assert not [b for b in mol.beads if b.name == "BPG" and b.residue == "sX"]
+
+    without = sirahize(crambin_all_atom, termini="None", disulfides=False).molecules[0]
+    assert len(mol.bonds) == len(without.bonds) + 3
+
+
+def test_a_bridged_cysteine_is_one_whatever_the_file_calls_it(crambin_all_atom):
+    """Its name in a structure is a convention; its sulfur's distance, or a bond
+    the file carries, is the fact.  A file calling a bridged cysteine CYS would
+    otherwise map it as a free one: a thiol hydrogen bead that is not there, and
+    the wrong charge and type on the sulfur."""
+    from boonza.sirah import sirahize
+
+    plain = crambin_all_atom.clone()
+    for r in range(plain.nresidues):
+        if str(plain.residues["name"][r]).strip() == "CYX":
+            plain.residue(r).name = "CYS"
+    said = []
+    renamed = sirahize(plain, termini="None", log=said.append)
+    proper = sirahize(crambin_all_atom, termini="None")
+    assert any("CYS as CYX" in line for line in said)
+    assert renamed.nbeads == proper.nbeads
+    assert renamed.molecules[0].types == proper.molecules[0].types
+    assert np.allclose(renamed.molecules[0].charges, proper.molecules[0].charges)
+    assert renamed.molecules[0].bonds == proper.molecules[0].bonds
+
+
+def test_a_missing_atom_places_its_bead_instead_of_refusing(crambin_all_atom):
+    """At this resolution a bead that cannot be mapped is not a reason to stop: a
+    thiol or hydroxyl hydrogen a crystal structure never saw is 50 daltons of a
+    group that is certainly there.  It is placed against the bead it bonds to and
+    reported, and the first minimisation settles it; --strict-mapping refuses."""
+    from boonza.sirah import sirahize
+    from boonza.sirah.build import map_structure
+
+    names = [str(n).strip() for n in crambin_all_atom.atoms["name"]]
+    res = np.asarray(crambin_all_atom.atoms["residue"])
+    rname = [str(x).strip() for x in crambin_all_atom.residues["name"]]
+    wanted = ("HG", "HG1", "1HG")
+    drop = {a for a in range(crambin_all_atom.natoms)
+            if rname[int(res[a])] in ("SER", "THR") and names[a] in wanted}  # fmt: skip
+    assert drop  # the hydroxyl hydrogens SIRAH puts a bead on
+    cut = crambin_all_atom.clone([a for a in range(crambin_all_atom.natoms) if a not in drop])
+
+    said = []
+    m = sirahize(cut, termini="None", log=said.append)
+    whole = sirahize(crambin_all_atom, termini="None")
+    assert any("Placed" in line and "bond to" in line for line in said)
+    assert m.nbeads == whole.nbeads  # the same beads, none dropped
+    here = {(b.resid, b.name): b.position for b in m.molecules[0].beads}
+    there = {(b.resid, b.name): b.position for b in whole.molecules[0].beads}
+    off = [float(np.linalg.norm(here[k] - there[k])) for k in here]
+    assert max(off) < 2.0  # near enough that a minimisation closes it
+    assert sum(1 for x in off if x > 1e-6) == len(drop)  # and nothing else moved
+
+    with pytest.raises(ValueError, match="missing atoms SIRAH maps beads onto"):
+        map_structure(cut, "protein", None, strict=True)

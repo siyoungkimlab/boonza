@@ -11,6 +11,7 @@ fold.
 from __future__ import annotations
 
 import math
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cache
@@ -51,6 +52,39 @@ _ALIASES = {("ILE", "CD1"): "CD"}
 _TERMINAL_O = ("OXT", "OT2", "O2", "OC2")
 # residue names read as another block, and the .rtp residue giving hydrogen parents
 _RESNAMES = {"CYX": "CYS", "CYM": "CYS"}
+#: What a force field calls a residue another names differently.  Martini 2.2
+#: takes CHARMM's histidines, and at its resolution HSD and HSE are the same four
+#: beads.  Its neutral acids are residues of their own (ASP0, GLU0) rather than
+#: modifications, and no mapping reaches them from an all-atom structure -- not
+#: in vermouth either -- so a protonated aspartate stays charged under Martini 2,
+#: which is what martinize2 does with it.
+INSTEAD_OF = {
+    "martini22": {
+        "residue": {
+            "HIS": "HSD",
+            "HID": "HSD",
+            "HIE": "HSE",
+            "HIP": "HSP",
+            "ASH": "ASP0",
+            "ASPP": "ASP0",
+            "GLH": "GLU0",
+            "GLUP": "GLU0",
+            "LYN": "LSN",
+            "HYP": "PRO",
+            "GLYM": "GLY",
+            "CYSF": "CYS",
+            "CYSG": "CYS",
+            "CYSP": "CYS",
+        },  # fmt: skip
+    },
+}
+
+
+def _instead_of(ff, what: str, name: str, fallback=None):
+    """What ``ff`` calls ``name``, where it calls it something else."""
+    return INSTEAD_OF.get(getattr(ff, "name", ""), {}).get(what, {}).get(name, fallback)
+
+
 _RTP = {"HIS": "HIS", "HSE": "HSE", "HSD": "HSD", "HSP": "HSP", "HIE": "HSE", "HID": "HSD",
         "HIP": "HSP", "ASH": "ASPP", "GLH": "GLUP", "LYN": "LSN"}  # fmt: skip
 
@@ -68,14 +102,14 @@ def convert_dssp_to_martini(sequence: str) -> str:
 @cache
 def force_field(name: str = "martini3001"):
     ff = read_ff(sorted((DATA / name).glob("*.ff")), name)
-    ff.maps = {p.name.split(".")[0].upper(): read_map(p)
-               for p in (DATA / "mappings").glob("*.map")}  # fmt: skip
+    maps = DATA / "mappings" / name  # which atoms make which bead is the version's own
+    ff.maps = {p.name.split(".")[0].upper(): read_map(p) for p in maps.glob("*.map")}
     ff.parents = read_rtp_parents(DATA / "charmm" / "aminoacids.rtp")
     charmm = read_ff([DATA / "charmm" / "modifications.ff"], "charmm")
     ff.mod_parents = {name: {a: b for e in mod.edges for a, b in (tuple(e), tuple(e)[::-1])
                              if a[0] == "H" and b[0] != "H"}
                       for name, mod in charmm.modifications.items()}  # fmt: skip
-    ff.mod_maps = read_modification_mappings(DATA / "mappings" / "modifications.charmm36.mapping")
+    ff.mod_maps = read_modification_mappings(maps / "modifications.charmm36.mapping")
     return ff
 
 
@@ -361,7 +395,14 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
               elastic_min_fc: float = 0.0, res_min_dist: int | None = None,
               cys: str | float = "auto", neutral_termini: bool = False, scfix: bool = True,
               extdih: bool = False, forcefield: str = "martini3001") -> Martinized:  # fmt: skip
-    """Martini 3 beads and topology for the proteins of ``system``, as martinize2 makes them.
+    """Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
+
+    ``forcefield`` is the version: ``"martini3001"`` or ``"martini22"``, each
+    read from vermouth's own files for it.  Martini 2.2 leans on secondary
+    structure where Martini 3 does not, names its residues as CHARMM does
+    (``HSD`` and not ``HIS``, which boonza renames to), and cuts a tryptophan's
+    rings and reads a phenylalanine's along other lines, so it maps a residue
+    onto beads by its own rules.
 
     ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
     default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
@@ -394,10 +435,14 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
             raise ValueError(f"elastic_selection {elastic_selection!r} selects no residues")
     if not residues:
         raise ValueError(f"no atoms in {atoms!r}")
-    unknown = sorted({r.resname for r in residues
-                      if _RESNAMES.get(r.resname, r.resname) not in ff.blocks})  # fmt: skip
+
+    def named(resname: str) -> str:
+        plain = _RESNAMES.get(resname, resname)
+        return _instead_of(ff, "residue", plain, plain)
+
+    unknown = sorted({r.resname for r in residues if named(r.resname) not in ff.blocks})
     if unknown:
-        raise ValueError(f"not Martini 3 protein residues: {', '.join(unknown)}; leave them "
+        raise ValueError(f"not {ff.name} protein residues: {', '.join(unknown)}; leave them "
                          f"out of atoms={atoms!r}")  # fmt: skip
     known = _system_bonds(system, local, residues)
     bonds = _inter_residue_bonds(residues, cys, known)
@@ -417,10 +462,11 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     nter = {r for r, nb in neighbours.items() if len(nb) == 1 and r < min(nb)}
     cter = {r for r, nb in neighbours.items() if len(nb) == 1 and r > max(nb)}
     molecules, names, positions, missing = [], [], [], []
+    unmodified: set[str] = set()
     for m, members in enumerate(groups):
         cg_ss = convert_dssp_to_martini("".join(ss[r] for r in members)) if ss else ""
         mol = _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral_termini,
-                              missing)  # fmt: skip
+                              missing, unmodified)  # fmt: skip
         mol.meta = {"scfix": scfix, "extdih": extdih, "idr": False}
         apply_links(mol, ff.links)
         if elastic:
@@ -438,9 +484,16 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
                                            else "")  # fmt: skip
         raise ValueError(f"{len(missing)} beads have no atoms to place them, so rebuild the "
                          f"missing atoms first: {shown}")  # fmt: skip
+    if unmodified:
+        warnings.warn(f"{ff.name} has no {', '.join(sorted(unmodified))}: those residues keep "
+                      "the form it does have, Martini 2 having no neutral aspartate or "
+                      "glutamate and one histidine", stacklevel=2)  # fmt: skip
     cell = getattr(system, "cell", None)
+    from . import FORCEFIELD_FOR
+
+    version = next((v for v, name in FORCEFIELD_FOR.items() if name == forcefield), 3)
     return Martinized(molecules, np.asarray(positions) * 10, None if cell is None else
-                      np.asarray(cell), names, "".join(ss))  # fmt: skip
+                      np.asarray(cell), names, "".join(ss), martini=version)  # fmt: skip
 
 
 def _residues(system, atoms) -> tuple[list[_Residue], dict]:
@@ -677,16 +730,17 @@ def _weights(ff, res, names, parents, block_name, mods):
 
 
 def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
-                    missing) -> CGMolecule:  # fmt: skip
+                    missing, unmodified=None) -> CGMolecule:  # fmt: skip
     mol = CGMolecule()
     beads_of_atom = {}
     for serial, r in enumerate(members, start=1):
         res = residues[r]
         block_name = _RESNAMES.get(res.resname, res.resname)
+        block_name = _instead_of(ff, "residue", block_name, block_name)
         block = ff.blocks.get(block_name)
         if block is None:
-            raise ValueError(f"residue {res.resname} {res.chain}{res.resid}: not a Martini 3 "
-                             f"protein residue")  # fmt: skip
+            raise ValueError(f"residue {res.resname} {res.chain}{res.resid}: not a "
+                             f"{ff.name} protein residue")  # fmt: skip
         names = _canonical(res, block_name)
         parents = _hydrogen_parents(res)
         mods = _modifications(res, names, parents, block_name)
@@ -709,7 +763,15 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
                 node["cgsecstruct"] = cg_ss[serial - 1]
             index[name] = mol.add_node(node, (w[:, None] * res.xyz).sum(0) / w.sum())
         for mname in mods:
-            mod = ff.modifications[mname]
+            mod = ff.modifications.get(mname)
+            if mod is None:
+                # the structure says this residue is in a form the force field
+                # does not have: Martini 2 has no neutral aspartate or glutamate
+                # and one histidine, where Martini 3 has the tautomers.  It keeps
+                # the form the model knows, which is all the model can say
+                if unmodified is not None:
+                    unmodified.add(mname)
+                continue
             for bead, mattrs in mod.nodes.items():
                 if bead in index:
                     node = mol.nodes[index[bead]]
