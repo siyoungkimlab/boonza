@@ -16,11 +16,17 @@ from __future__ import annotations
 import copy
 from functools import cache
 
-from ..martini.probes import LETTERS, PROBE_RESIDUES, probe_sequences
+from ..martini.probes import (
+    LETTERS,
+    PROBE_RESIDUES,
+    SINGLE_RESIDUES,
+    probe_sequences,
+    single_sequences,
+)
 from .build import sirahize
 
-__all__ = ["LETTERS", "PROBE_RESIDUES", "PROBE_PREFIX", "probe", "probe_charge",
-           "probe_sequences"]  # fmt: skip
+__all__ = ["LETTERS", "PROBE_RESIDUES", "PROBE_PREFIX", "SINGLE_RESIDUES", "probe",
+           "probe_charge", "probe_sequences", "single_sequences"]  # fmt: skip
 
 #: What a probe's molecule is called in the topology.  Its beads keep the
 #: sequence as their residue name, which is what selects them, but the

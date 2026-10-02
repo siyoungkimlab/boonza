@@ -76,6 +76,35 @@ class DRMSD:
     reference_distances: np.ndarray  # (npocket, nligand), Å
 
 
+def molecules_of(system, ids) -> np.ndarray:
+    """A label per atom of ``ids`` saying which molecule it belongs to.
+
+    Bonds say it, except for a particle no bond holds: Martini 3's tryptophan
+    carries a virtual site, one of the beads of its ring, placed from the others
+    rather than bonded to them.  Taken as a molecule of its own it is a probe
+    copy that does not exist -- a centroid, a pose, a feature and a copy count
+    that belong to the ring it sits in -- so it is given to the molecule whose
+    nearest real particle is closest, which for a site inside a ring is the ring.
+    """
+    frag = np.asarray(system.fragids)[np.asarray(ids, np.int64)]
+    ids = np.asarray(ids, np.int64)
+    real = np.asarray(system.atoms["anum"])[ids] > 0
+    whole = {int(f) for f in np.unique(frag[real])}
+    loose = [f for f in np.unique(frag) if int(f) not in whole]
+    if not loose:
+        return frag
+    xyz = np.asarray(system.positions)
+    out = frag.copy()
+
+    def gap(g, point) -> float:
+        return float(np.linalg.norm(xyz[ids[(frag == g) & real]] - point, axis=1).min())
+
+    for f in loose:
+        mine = xyz[ids[frag == f]].mean(0)
+        out[frag == f] = min(whole, key=lambda g: gap(g, mine))
+    return out
+
+
 def _ids(system, sel) -> np.ndarray:
     if sel is None:
         return np.arange(system.natoms)

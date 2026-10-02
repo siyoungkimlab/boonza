@@ -61,12 +61,22 @@ MODELS = ("aa", "martini2", "martini3", "sirah")
 #: 0.7 nm apart where heavy atoms touch at about 0.4 -- and it looks every
 #: 0.2 ns for three checks in a row, since a bead diffuses fast and a target
 #: that steps away for 0.2 ns has not left.
+#:
+#: Frames come ten times as often as an all-atom run's, for the same reason and
+#: one more: how often a frame is written is not a force field's business but a
+#: trade of disk against time resolution, and a bead arrives and leaves faster
+#: than an atom.  Every rate `boonza sites` reports is dwell times counted in
+#: frames, so a visit shorter than the interval is a visit it cannot see; a
+#: coarse-grained box is small enough that the frames cost little.  The same
+#: number for both models also lets runs of each pool into one analysis, which
+#: differing intervals refuse to do.
 _CG = {
     "integration_fs": 20.0,
     "pocket_cutoff_nm": 0.8,
     "contact_cutoff_nm": 0.7,
     "detach_cutoff_nm": 1.2,
     "checkpoint_interval_ns": 0.1,
+    "production_report_interval_ns": 0.1,
     "monitor_interval_ns": 0.2,
     "confirmation_checks": 3,
 }
@@ -76,7 +86,7 @@ _CG = {
 _MARTINI = {**_CG, "cutoff_nm": 1.1, "elastic": True}
 #: SIRAH keeps its own backbone terms instead of a network, and runs with PME
 #: inside 1.2 nm, as its own mdp files do (tutorial 7, md_CGPROT.mdp).
-_SIRAH = {**_CG, "cutoff_nm": 1.2, "production_report_interval_ns": 0.1}
+_SIRAH = {**_CG, "cutoff_nm": 1.2}
 MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
@@ -713,15 +723,7 @@ def finish(args) -> None:
     # so only a value that differs from the default counts as one asked for
     given = {k for k in getattr(args, "specified", ())
              if k not in DEFAULTS or getattr(args, k, None) != DEFAULTS[k]}  # fmt: skip
-    if args.model == "sirah":
-        # boonza restrains phi and psi all-atom and BB-BB-BB-BB under Martini;
-        # SIRAH's backbone is three beads a residue, held by torsion terms of
-        # its own, so there is nothing here to add and nothing it lacks
-        if args.dihedral_restraint != "none":
-            raise ValueError("model = 'sirah' takes no dihedral restraints: SIRAH holds its "
-                             "backbone with torsion terms of its own, where Martini needs a "
-                             "network or restraints to keep a fold")  # fmt: skip
-    else:
+    if args.model != "sirah":
         wrong = [k for k in SIRAH_ONLY if k in given]
         if wrong:
             raise ValueError(f"{', '.join(sorted(wrong))} needs model = 'sirah'")

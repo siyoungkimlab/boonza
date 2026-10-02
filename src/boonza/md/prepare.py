@@ -587,6 +587,8 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
             log(f"Box: {edge / 10:.2f} nm a side, {args.padding_nm:g} nm around the beads")
         s = built.system()
         _write_built(built, workdir / "sirah", s, bool(args.gromacs), log)
+        if built.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
+            (workdir / "sirah" / "secondary.txt").write_text(built.ss + "\n")
         # no view file: SIRAH holds its fold with torsion terms rather than an
         # elastic network, so there is nothing to leave out of one, and beads
         # renamed for a viewer are beads a viewer mis-bonds (sirah/cg.dms is
@@ -719,7 +721,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
     viewing = m.for_viewing(s)
     for suffix in (".dms", ".mae"):
         save(viewing, workdir / f"view{suffix}")
-    log("Wrote view.dms and view.mae with the backbone as CA"
+    log("Wrote view.dms and view.mae: what to open in a viewer"
         + (f", without the {len(bands)} rubber bands" if bands else ""))  # fmt: skip
     s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
     info = components(s, [])

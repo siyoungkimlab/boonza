@@ -312,19 +312,53 @@ def _rdkit(s: System):
 FRAGMENTS = Path(__file__).resolve().parent.parent / "data" / "fragments"
 
 
+#: The probe libraries, which are peptides rather than a file of fragments, so an
+#: all-atom swim can run the chemistry a coarse-grained one does.  They are built
+#: here as RDKit builds them, with a free amine and acid at the ends, which is
+#: what Martini's and SIRAH's neutral termini stand for.
+PEPTIDE_LIBRARIES = {"SingleAminoAcid18": "single_sequences",
+                     "Dipeptide105": "probe_sequences",
+                     "Dipeptide196": "ordered_sequences"}  # fmt: skip
+
+
 def bundled_libraries() -> list[str]:
-    """The ligand libraries shipped with boonza, by name."""
-    return sorted(p.stem for p in FRAGMENTS.glob("*.sdf"))
+    """The ligand libraries boonza offers, by name: the fragment files it ships
+    and the probe libraries it builds."""
+    return sorted([p.stem for p in FRAGMENTS.glob("*.sdf")] + list(PEPTIDE_LIBRARIES))
+
+
+def is_peptide_library(name) -> bool:
+    """Whether ``name`` is one of the probe libraries rather than a file."""
+    return any(k.lower() == str(name).lower() for k in PEPTIDE_LIBRARIES)
+
+
+def library_sequences(name: str) -> list[str]:
+    """The sequences of a named probe library: what a coarse-grained swim swims,
+    and what an all-atom one builds its peptides from."""
+    from ..martini import probes
+
+    which = next(k for k in PEPTIDE_LIBRARIES if k.lower() == str(name).lower())
+    return getattr(probes, PEPTIDE_LIBRARIES[which])()
+
+
+def peptide_library(name: str) -> list[tuple[str, System]]:
+    """``(sequence, molecule)`` of each probe of a named peptide library."""
+    from .. import peptide
+
+    return [(seq, peptide(seq, conformation="extended")) for seq in library_sequences(name)]
 
 
 def find_library(name):
-    """A ligand library: a file of your own, or the name of a bundled one."""
+    """A ligand library: a file of your own, the name of a bundled one, or the
+    name of a probe library, which is built rather than read."""
     path = Path(name).expanduser()
     if path.is_file():
         return path
     for candidate in sorted(FRAGMENTS.glob("*.sdf")):
         if candidate.stem.lower() == str(name).lower():
             return candidate
+    if is_peptide_library(name):
+        return str(name)
     raise FileNotFoundError(
         f"no ligand library {str(name)!r}: give the path to an SDF or DMS file, or one "
         f"of the libraries boonza ships: {', '.join(bundled_libraries())}"
@@ -332,11 +366,14 @@ def find_library(name):
 
 
 def load_library(path, forcefields) -> list[Ligand]:
-    """The ligands of an SDF or DMS file, each named ``code(k)``."""
+    """The ligands of an SDF or DMS file, or of a probe library built here, each
+    named ``code(k)``."""
     from rdkit import Chem
 
+    built = not Path(str(path)).is_file()
+    entries = peptide_library(path) if built else _entries(load(path))
     out = []
-    for k, (title, mol) in enumerate(_entries(load(path))):
+    for k, (title, mol) in enumerate(entries):
         c = code(k)
         has_ff = "nonbonded" in mol.table_names
         shape = mol.clone(structure_only=True)
@@ -474,8 +511,39 @@ def place(protein: System, ligands, copies: int, edge: float, rng, clearance: fl
 # ---- simulations ------------------------------------------------------------------
 
 
+#: Avogadro's number, for the copies a concentration asks for.
+AVOGADRO = 6.02214076e23
+
+
+def copies_for(conc_mM: float, edge: float, types: float) -> int:
+    """Copies of each ligand type that put ``conc_mM`` in a cubic box of ``edge``
+    angstroms holding ``types`` of them.
+
+    A concentration is a count over a volume, so how big the molecule is has
+    nothing to do with it; a dipeptide probe and a fragment of a library are
+    counted the same way, and the size only decides whether the copies will fit.
+
+    Every type gets the same number, so only some concentrations can be asked
+    for: the answer is the nearest of them, and never none at all.  The volume
+    is the box's, before the solute displaces its share of the water and before
+    the barostat settles, so a run measures a little less than it was asked for.
+    """
+    if conc_mM <= 0:
+        raise ValueError("a probe concentration is a positive number of mM")
+    litres = (float(edge) ** 3) * 1e-27
+    molecules = 1e-3 * conc_mM * AVOGADRO * litres
+    return max(1, round(molecules / max(types, 1)))
+
+
+def concentration_of(copies: int, edge: float, types: float) -> float:
+    """The mM that many copies of that many types come to, the other way round."""
+    litres = (float(edge) ** 3) * 1e-27
+    return 1e3 * copies * types / (AVOGADRO * litres)
+
+
 def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
-            clearance: float = 3.0, log=print, repel: bool = False) -> list[Path]:  # fmt: skip
+            clearance: float = 3.0, log=print, repel: bool = False,
+            conc_mM: float | None = None) -> list[Path]:  # fmt: skip
     """Write one ``boonza md`` simulation per group of ligands into
     ``args.workdir``; returns their directories."""
     from .config import forcefield_kind, settings_of, write_settings
@@ -506,6 +574,14 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
     used = set(protein.chains["name"].tolist())  # the ligands' own chain, for the repulsion
     chain = next(c for c in ("LIG", *(f"LIG{k}" for k in range(2, 1000))) if c not in used)
     edge = extent + 20.0 * args.padding_nm
+    if conc_mM is not None:
+        # one number of copies for every ligand and every simulation: what a
+        # concentration asks for is a count, and how big the molecule is has
+        # nothing to do with it -- only with whether the copies will fit
+        copies = copies_for(conc_mM, edge, sum(sizes) / len(sizes))
+        got = [concentration_of(copies, edge, n) for n in (min(sizes), max(sizes))]
+        log(f"{copies} copies of each ligand: {got[0]:.0f}-{got[1]:.0f} mM "
+            f"({conc_mM:g} mM asked)")  # fmt: skip
     with (root / "assignment.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["simulation", "ligand", "name", "smiles", "max_similarity_in_simulation"])
@@ -562,15 +638,21 @@ def main(argv=None) -> int:
     parser = build_parser("boonza swim")
     g = parser.add_argument_group("swim")
     g.add_argument("--ligands",
-                   help="SDF or DMS file of ligands (with or without a force field), or a "
-                        "library boonza ships: AstexMiniFrag, Essential320")  # fmt: skip
+                   help="what to swim: an SDF or DMS file of ligands (all-atom only, with or "
+                        "without a force field), or a library by name -- AstexMiniFrag or "
+                        "Essential320 all-atom, SingleAminoAcid18, Dipeptide105 or "
+                        "Dipeptide196 in any model")  # fmt: skip
     g.add_argument("--types", type=int,
                    help="ligand types per simulation (default: 5; probes: 10)")  # fmt: skip
     g.add_argument("--copies", type=int,
                    help="copies of each ligand type (default: 3; probes: 5)")  # fmt: skip
+    g.add_argument("--conc-mM", dest="conc_mM", type=float, metavar="MM",
+                   help="copies from a ligand concentration instead (mM, as the rates are "
+                        "reported): the copies nearest it that every type can have "
+                        "alike")  # fmt: skip
     g.add_argument("--probes", nargs="+", metavar="XY",
-                   help="the dipeptide probes of a coarse-grained swim (default: all "
-                        "105)")  # fmt: skip
+                   help="the probes of a coarse-grained swim, named (default: the whole "
+                        "library)")  # fmt: skip
     g.add_argument("--jobs", type=int, help="ligands parameterized at once (default: 1)")
     g.add_argument(
         "--clearance",
@@ -590,15 +672,31 @@ def main(argv=None) -> int:
     if "workdir" not in args.specified:
         args.workdir = "boonza_swim"
     try:
+        if "conc_mM" in x and "copies" in x:
+            raise ValueError("give --copies or --conc-mM, not both: the concentration is what "
+                             "sets the copies")  # fmt: skip
         if args.model != "aa":  # dipeptide probes, no ligand library to parameterize
             from .cgswim import prepare as prepare_cg
 
-            if "ligands" in x:
-                raise ValueError(f"model = '{args.model}' swims dipeptide probes, not a ligand "
-                                 "library; choose them with --probes")  # fmt: skip
-            sims = prepare_cg(args, x.get("probes"), x.get("types", 10), x.get("copies", 5),
+            named = x.get("ligands")
+            if named is not None and not is_peptide_library(named):
+                raise ValueError(f"model = '{args.model}' swims peptide probes, which it can "
+                                 "map, not a ligand library: --ligands takes "
+                                 f"{' or '.join(PEPTIDE_LIBRARIES)} here")  # fmt: skip
+            if named is not None and "probes" in x:
+                raise ValueError("give --ligands or --probes, not both: a library names its "
+                                 "own probes")  # fmt: skip
+            chosen = library_sequences(named) if named is not None else x.get("probes")
+            if chosen and args.model.startswith("martini") and len(set(chosen)) == len(chosen):
+                folded = {"".join(sorted(q)) for q in chosen if len(q) == 2}
+                if folded and len(folded) < len([q for q in chosen if len(q) == 2]):
+                    print(f"note: Martini builds XY and YX as one molecule, so these "
+                          f"{len(chosen)} probes are {len(folded)} different ones; "
+                          "Dipeptide105 is that set, and Dipeptide196 is for SIRAH, "
+                          "which tells them apart")  # fmt: skip
+            sims = prepare_cg(args, chosen, x.get("types", 10), x.get("copies", 5),
                               x.get("clearance", 5.0), repel=not x.get("no_repulsion"),
-                              elastic=bool(args.elastic))  # fmt: skip
+                              elastic=bool(args.elastic), conc_mM=x.get("conc_mM"))  # fmt: skip
         else:
             if "ligands" not in x:
                 raise ValueError("give the ligands with --ligands")
@@ -611,6 +709,7 @@ def main(argv=None) -> int:
                 x.get("jobs", 1),
                 x.get("clearance", 3.0),
                 repel=repel,
+                conc_mM=x.get("conc_mM"),
             )
         if x.get("run"):
             for d in sims:

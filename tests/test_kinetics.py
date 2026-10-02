@@ -43,8 +43,10 @@ def _process(nruns=12, nframes=3000, seed=0, wobble=0.5, away=(14.0, 18.0), stop
 
 def _as_site(xyz, where, flags, nruns):
     points = np.flatnonzero(flags)
+    # one copy, so the share of the frames and the share of the pool are the same
     site = Site(center=xyz[points].mean(0), points=points, occupancy=len(points) / len(xyz),
-                runs=nruns, copies=1, arrivals=0, spread=float(flags.mean()))  # fmt: skip
+                copy_frames=len(points) / len(xyz), runs=nruns, copies=1, arrivals=0,
+                spread=float(flags.mean()))  # fmt: skip
     return SiteSet(sites=[site], labels=np.where(flags, 0, -1), where=where, centroids=xyz,
                    spacing=1.0, enrichment=20.0)  # fmt: skip
 

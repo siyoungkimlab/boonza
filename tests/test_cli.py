@@ -44,3 +44,37 @@ def test_validate_knots_describe_dssp(capsys):
     lines = capsys.readouterr().out.strip().splitlines()
     assert lines and set("".join(line.split(": ", 1)[1] for line in lines)) <= set("HEC-")
     assert np.all([": " in line for line in lines])
+
+
+def test_info_reads_a_trajectory(tmp_path, capsys):
+    """A .dcd or .xtc is not a structure, so `boonza info` reads what a trajectory
+    has instead: its frames, their atoms, the time they cover and the box they
+    were under.  Only the first and last frames are read, so it costs the same on
+    a gigabyte as on a megabyte."""
+    import boonza
+    from boonza.cli import main
+    from boonza.trajectory import is_trajectory
+
+    assert is_trajectory("x.dcd") and is_trajectory("x.xtc") and is_trajectory("x.trr")
+    assert not is_trajectory("x.dms") and not is_trajectory("x.pdb")
+
+    s = boonza.peptide("AAA")
+    xyz = np.asarray(s.positions)
+    for suffix in (".dcd", ".xtc"):
+        path = tmp_path / f"run{suffix}"
+        box = np.diag([30.0, 30.0, 30.0])
+        with boonza.open_writer(path, s.natoms) as w:
+            for k in range(4):
+                w.write(xyz + k, box=box * (1 + 0.01 * k))
+        assert main(["info", str(path)]) == 0
+        printed = capsys.readouterr().out
+        assert f"{suffix.lstrip('.')}, 4 frames of {s.natoms} atoms" in printed
+        assert "first frame: box 30.00 x 30.00 x 30.00 A" in printed
+        assert "last frame: box 30.90 x 30.90 x 30.90 A" in printed
+        assert "volume" in printed
+
+    # and a structure is still read as a structure
+    structure = tmp_path / "one.dms"
+    boonza.save(s, structure)
+    assert main(["info", str(structure)]) == 0
+    assert f"{s.natoms} atoms, {s.nbonds} bonds" in capsys.readouterr().out

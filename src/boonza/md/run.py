@@ -29,6 +29,8 @@ class RunPaths:
             "solvated_dms": "solvated.dms",
             "solvated_pdb": "solvated.pdb",
             "solvated_mae": "solvated.mae",
+            "view_dms": "view.dms",
+            "view_mae": "view.mae",
             "components_json": "components.json",
             "system_xml": "system.xml",
             "integrator_xml": "integrator.xml",
@@ -185,6 +187,43 @@ def _current_steps(simulation, dt) -> int:
     return counted if abs(counted - by_clock) <= max(1, by_clock // 1000) else by_clock
 
 
+def _secondary_for(args, workdir: Path) -> str | None:
+    """The DSSP codes a coarse-grained run is restrained by, if there are any.
+
+    They are taken where the atoms still are -- DSSP cannot read beads -- so a
+    run that mapped its own input has just written them beside the topology it
+    built, and a run of a topology someone else built finds them beside that.
+    """
+    from .prepare import secondary_beside
+
+    here = [Path(args.input_structure)] if args.input_structure else []
+    here += [workdir / model / "topol.top" for model in ("martini", "sirah")]
+    for path in here:
+        codes = secondary_beside(path)
+        if codes:
+            return codes
+    return None
+
+
+def _write_view(s, paths: RunPaths, log=print) -> None:
+    """``view.dms`` and ``view.mae``: the file to open in a viewer, whatever the
+    model, so one command line looks at any run.
+
+    A Martini build writes its own before this, without the elastic network a
+    viewer draws as a hairball.  All-atom and SIRAH have nothing to leave out --
+    SIRAH holds its fold with torsion terms -- so theirs is the solvated system
+    under the name every model shares.  Either way the atoms are the same ones
+    in the same order, so a trajectory lines up with it.
+    """
+    from ..io import save
+
+    if paths.view_dms.is_file():  # Martini's own, minus its rubber bands
+        return
+    save(s, paths.view_dms)
+    save_structure(s, paths.view_mae)
+    log("Wrote view.dms and view.mae: what to open in a viewer, with its trajectory")
+
+
 def _new_run(args, paths: RunPaths, src: Path, log):
     """Build a new run's system, OpenMM system and integrator, and write
     its files up to ``final.toml``."""
@@ -203,6 +242,7 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     save(s, paths.solvated_dms)
     for p in (paths.solvated_pdb, paths.solvated_mae):
         save_structure(s, p)
+    _write_view(s, paths, log)
     if getattr(args, "model", "aa") == "sirah":
         # SIRAH carries explicit charges and runs with PME, as its own mdp files do
         from ..sirah import OPENMM_OPTIONS as SIRAH_OPTIONS
@@ -218,13 +258,12 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     if getattr(args, "barostat", "isotropic") != "none":
         system.addForce(_barostat(args, mm, unit, every=0))  # asleep until NPT
     if args.dihedral_restraint != "none":
-        from .prepare import secondary_beside
         from .restraints import add_dihedral_restraints, plot_well, write_records
 
         records, what = add_dihedral_restraints(
             system, s, args.dihedral_restraint, args.dihedral_restraint_kJ,
             getattr(args, "dihedral_restraint_selection", None),
-            secondary_beside(args.input_structure) if args.input_structure else None,
+            _secondary_for(args, paths.workdir),
         )  # fmt: skip
         write_records(paths.dihedral_restraints_csv, records)
         plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
