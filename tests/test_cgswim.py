@@ -778,6 +778,25 @@ def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
     assert boonza.load(tmp_path / "view.dms").nbonds == view.nbonds
 
 
+def test_what_a_probe_called_W_touches_is_not_what_the_water_touches():
+    """The same collision in `boonza probes`: counted by name, every water bead
+    near a residue would count as a tryptophan probe touching it."""
+    from boonza.md.cgswim import PROBE_CHAIN
+    from boonza.probemap import probe_contacts
+
+    # three residues 20 A apart, the probe beside the last, water beside the first
+    xyz = np.array([[0.0, 1, 0], [20.0, 0, 1], [40.0, 1, 1], [43.0, 0, 0], [2.0, 1, 1]])
+    s = boonza.System.from_arrays(xyz, names=["BB", "BB", "BB", "BB", "W"],
+                                  anum=[32] * 5, resnames=["ALA", "ALA", "ALA", "W", "W"],
+                                  resids=[1, 2, 3, 1, 2],
+                                  chains=["A", "A", "A", PROBE_CHAIN, ""],
+                                  cell=np.diag([80.0, 80.0, 80.0]))  # fmt: skip
+    m = probe_contacts(s, [(s, np.asarray(s.positions)[None])], ["W"], cutoff=6.0)
+    counts = dict(zip([r[1] for r in m.residues], m.contacts[:, 0], strict=True))
+    assert counts[3] > 0  # the residue the probe sits beside
+    assert counts[1] == 0  # the one only water sits beside, which is not a probe
+
+
 def test_a_probe_called_W_is_not_the_water_called_W(tmp_path):
     """The probes come from the chain they were put in, not from their names alone.
 
