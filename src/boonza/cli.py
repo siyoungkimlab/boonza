@@ -42,6 +42,10 @@ def _load(path, structure_only=False):
 
 
 def _info(args) -> int:
+    from .trajectory import is_trajectory
+
+    if is_trajectory(args.file):
+        return _trajectory_info(args.file)
     s = _load(args.file)
     print(f"{args.file}: {s.natoms} atoms, {s.nbonds} bonds, {s.nresidues} residues, "
           f"{s.nchains} chains, {s.ncts} cts, {s.nfragments} molecules")  # fmt: skip
@@ -61,6 +65,45 @@ def _info(args) -> int:
                   f"{len(t.params):>7} params{extra}")  # fmt: skip
     if s.aux_tables:
         print("aux tables:", ", ".join(sorted(s.aux_tables)))
+    return 0
+
+
+def _trajectory_info(path) -> int:
+    """What a trajectory holds: its frames, their atoms, the time they cover and
+    the box they were under.
+
+    Only the first and last frames are read, so this costs the same on a
+    gigabyte as on a megabyte.
+    """
+    from pathlib import Path
+
+    from .trajectory import open_trajectory
+
+    traj = open_trajectory(path)
+    size = Path(path).stat().st_size
+    print(f"{path}: {traj.format}, {len(traj)} frames of {traj.natoms} atoms, "
+          f"{size / 1e6:,.1f} MB")  # fmt: skip
+    if not len(traj):
+        return 0
+    first, last = traj[0], traj[len(traj) - 1]
+    if first.time is not None and last.time is not None:
+        span = f"{first.time:g} to {last.time:g} ps"
+        gap = (last.time - first.time) / max(len(traj) - 1, 1)
+        every = f", {gap / 1000:g} ns apart" if len(traj) > 1 else ""
+        steps = (f" (steps {first.step:,} to {last.step:,})"
+                 if first.step is not None and last.step is not None else "")  # fmt: skip
+        print(f"time: {span}{every}{steps}")
+    for label, frame in (("first", first), ("last", last)):
+        if frame.box is None or not np.any(frame.box):
+            print(f"{label} frame: no box")
+            continue
+        box = np.asarray(frame.box, float)
+        edges = " x ".join(f"{x:.2f}" for x in np.diag(box))
+        skew = "" if np.allclose(box, np.diag(np.diag(box))) else " (not orthorhombic)"
+        print(f"{label} frame: box {edges} A{skew}, volume "
+              f"{abs(float(np.linalg.det(box))) / 1000:,.1f} nm^3")  # fmt: skip
+        if len(traj) == 1:
+            break
     return 0
 
 
@@ -548,12 +591,37 @@ def _sites(args) -> int:
     found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
                          spacing=args.spacing, enrichment=args.enrichment,
                          min_occupancy=args.min_occupancy, periodic=not args.no_pbc,
-                         pocket_protein=pocket_protein, rank=args.rank)  # fmt: skip
+                         pocket_protein=pocket_protein, rank=args.rank,
+                         radius=None if args.radius == "point" else args.radius)  # fmt: skip
     frames = len(found.centroids)
     bulk = int((found.labels < 0).sum())
     topologies = len({own.natoms for own in found.systems}) if found.systems else 1
     extra = f" over {topologies} topologies" if topologies > 1 else ""
     print(f"{len(runs)} runs, {frames} pooled frames{extra}; {100 * bulk / frames:.1f}% in bulk")
+    if found.drift is not None and len(found.drift):
+        # every site and every pocket is measured in the reference's frame, so a
+        # protein that changes shape measures them against a shape it no longer has
+        moved = np.asarray(found.drift, float)
+        worst = float(moved.max())
+        where = "the structure the sites are measured in"
+        if worst >= 2.0:
+            print(f"  the protein moved {np.median(moved):.1f} A from {where} "
+                  f"({moved.min():.1f} to {worst:.1f}):\n  its pockets are measured against a "
+                  "shape the run no longer has.  Hold the fold -- Martini's elastic\n  network, "
+                  "--dihedral-restraint ss for SIRAH -- or analyse the frames before it "
+                  "moved")  # fmt: skip
+        else:
+            print(f"  the protein stayed within {worst:.1f} A of {where}")
+    if args.interval_ns:
+        # what the gate comes to in time, which is what makes a site a site: a
+        # probe pauses anywhere for a nanosecond, so a run short enough turns
+        # those pauses into sites, wherever they happened to be
+        sampled = len(np.unique(found.where[:, [0, 2]], axis=0)) * args.interval_ns
+        dwell = args.min_occupancy * sampled
+        if dwell < 2.0:
+            print(f"  {sampled:g} ns sampled, so --min-occupancy {args.min_occupancy:g} asks "
+                  f"for only {dwell:.2f} ns in a place:\n  a probe pauses that long in bulk, "
+                  "so expect sites that are nothing but a pause")  # fmt: skip
     maps, spots, scored = {}, [], {}
     if args.features:  # before the table, so one table carries the scores too
         print("typing each probe's atoms for the feature maps (a second pass over the frames)",
@@ -684,6 +752,8 @@ def _sites(args) -> int:
                  "consistent": rate.consistent})  # fmt: skip
         (out / "sites.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
         _write_sites_csv(out / "sites.csv", doc["sites"], args.interval_ns)
+        if found.drift is not None and len(found.drift):
+            _write_rmsd_csv(out / "rmsd.csv", found, args.interval_ns)
         found.density.write_dx(out / "density.dx")
         peak = float(found.density.enrichment.max())
         shape = None
@@ -703,7 +773,8 @@ def _sites(args) -> int:
                 shape.write_dx(out / f"pocket{k}.dx", mask.reshape(found.occupancy.dims))
                 pockets += 1
         extra = " and the feature maps" if spots else ""
-        where = "sites.json, sites.csv, density.dx" + (", occupancy.dx" if shape else "")
+        where = ("sites.json, sites.csv, rmsd.csv, density.dx"
+                 + (", occupancy.dx" if shape else ""))  # fmt: skip
         print(f"\nwrote {where}{extra} to {out} (centroids peak {peak:.0f}x bulk"
               + (f", atoms {float(shape.enrichment.max()):.0f}x)" if shape else ")"))  # fmt: skip
         if shape is not None and pockets:
@@ -771,6 +842,32 @@ def _cell(value, spec: str) -> str:
     if value is None or value is False or (isinstance(value, float) and not np.isfinite(value)):
         return f"{'-':>{len(f'{0:{spec}}')}}"  # as wide as the number would have been
     return f"{value:{spec}}"
+
+
+def _write_rmsd_csv(path, found, interval_ns=None) -> None:
+    """How far the protein is from the structure the sites are measured in, frame
+    by frame.
+
+    Every site and every pocket lives in the reference's frame of reference, so
+    this is the trace that says how much to believe them: a run that wanders
+    measures its pockets against a shape it has left behind.  It is the backbone
+    the frames were fitted on -- alpha carbons, or the beads a coarse-grained
+    model puts there -- after the fit, so a rigid protein reads near zero however
+    far it has travelled or turned.
+    """
+    import csv
+
+    runs = (found.drift_runs if found.drift_runs is not None
+            else np.zeros(len(found.drift), np.int64))  # fmt: skip
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["run", "frame", "time_ns", "rmsd_A"])
+        counts: dict[int, int] = {}
+        for run, rmsd in zip(runs.tolist(), np.asarray(found.drift, float).tolist(), strict=True):
+            frame = counts.get(run, 0)
+            counts[run] = frame + 1
+            when = f"{(frame + 1) * interval_ns:.6g}" if interval_ns else ""
+            writer.writerow([run, frame, when, f"{rmsd:.3f}"])
 
 
 def _csv_number(value) -> str:
@@ -913,13 +1010,13 @@ def _viewer_hint(args, out, system=None) -> None:
 
     beads = [b for b in _VIEWER_BEADS
              if system is not None and len(system.select(f"name {b}").ids)]  # fmt: skip
-    here = structure = trajectory = None
+    structure = trajectory = None
     if getattr(args, "workdir", None):
-        here = Path(args.workdir[0])
+        here = Path(args.workdir[0])  # as it was given: a relative path stays relative
         structure, trajectory = here / "solvated.dms", here / "trajectory.dcd"
         view = here / "view.dms"
         if view.is_file() and _still_named(view, beads):
-            structure = view
+            structure = view  # what a run writes to be looked at
     elif getattr(args, "system", None):
         structure = Path(args.system)
         trajectory = Path(args.traj[0]) if getattr(args, "traj", None) else None
@@ -931,11 +1028,7 @@ def _viewer_hint(args, out, system=None) -> None:
         print(f"  in the session:  {session[0]}     (PyMOL: {session[1]})")
         return
     vmd_lig, pml_lig = _ligand_flag(system, args.ligandsel) if system is not None else ("", "")
-    if here is not None:  # one directory: name it once
-        print(f"  D={here}")
-        where = f"$D/{structure.name} $D/{trajectory.name}"
-    else:
-        where = f"{structure}{f' {trajectory}' if trajectory else ''}"
+    where = f"{structure}{f' {trajectory}' if trajectory else ''}"
     strip = _VIEWER_SOLVENT
     both = (("vizard", vmd_lig, f'resname {" ".join(strip)}', session[0]),
             ("pizard", pml_lig, f'resn {"+".join(strip)}', session[1]))  # fmt: skip
@@ -1121,7 +1214,7 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("swim", help="ligands swimming around a protein, many simulations "
                    "(boonza swim --help)")  # fmt: skip
 
-    q = sub.add_parser("info", help="summarize a structure file")
+    q = sub.add_parser("info", help="summarize a structure or trajectory file")
     q.add_argument("file")
     q.set_defaults(run=_info)
 
@@ -1431,10 +1524,16 @@ def _parser() -> argparse.ArgumentParser:
                    help="share of the frames a site must hold something in, whichever "
                         "ligand it is; not a share of the pooled copy-frames, which the "
                         "copy count dilutes")  # fmt: skip
-    q.add_argument("--rank", choices=("occupied", "agreement", "burial"), default="occupied",
-                   help="order the sites by dwell, by how many copies chose them (firmer for "
-                        "a library of probes), or by how enclosed their pocket is; never by "
-                        "volume, which moves with --enrichment")  # fmt: skip
+    q.add_argument("--radius", choices=("sigma", "rmin", "point"), default="sigma",
+                   help="how much room a probe particle takes on the occupancy grid: half "
+                        "the sigma of its own nonbonded term (default), half of 2^(1/6) "
+                        "sigma, or point: only the cell its centre fell in")  # fmt: skip
+    q.add_argument("--rank", choices=("pocket", "occupied", "agreement", "burial"),
+                   default="pocket",
+                   help="order the sites by their pocket (how much room, how enclosed; the "
+                        "default), by dwell, by how many copies chose them, or by enclosure "
+                        "alone.  Dwell is the tempting one and the wrong one: a sticky patch "
+                        "holds something all run without being anywhere a ligand fits")  # fmt: skip
     q.add_argument("--feature-backbone", action="store_true",
                    help="with --features on a Martini run, also type the BB beads (an amide: "
                         "donor and acceptor), which every probe carries")  # fmt: skip

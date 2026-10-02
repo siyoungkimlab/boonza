@@ -100,10 +100,12 @@ class Rates:
             f"  residence {stay}, KD {held}, [L] {1e3 * self.concentration:.3g} mM, "
             f"bound for {self.bound_ns:.0f} of {self.bound_ns + self.unbound_ns:.0f} ns"
         )
-        by_rates = (f", {self.occupancy_from_rates:.3f} by rates"
+        # not "occupancy": the table's occupied column is the share of the frames
+        # something is here, where this is the share of the copy-time
+        by_rates = (f", and {self.occupancy_from_rates:.3f} from the rates"
                     if np.isfinite(self.occupancy_from_rates) else "")  # fmt: skip
         out.append(
-            f"  occupancy {self.occupancy:.3f} by frames{by_rates}"
+            f"  which is {self.occupancy:.3f} of the copy-time{by_rates}"
             + ("" if self.consistent else "  <- these disagree: check the boundaries")
         )
         if np.isfinite(self.dG) and self.events < 10:

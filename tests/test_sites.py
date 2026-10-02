@@ -235,7 +235,7 @@ def test_runs_may_bring_their_own_system(swimming):
 def _run_directory(tmp_path, s, run):
     """A directory shaped like one boonza md wrote: what --workdir reads."""
     d = tmp_path / "md"
-    d.mkdir()
+    d.mkdir(parents=True)
     boonza.save(s, d / "solvated.dms")
     with boonza.open_writer(d / "trajectory.dcd", s.natoms) as w:
         for x in run:
@@ -329,8 +329,9 @@ def test_the_sites_command_says_how_to_look_at_a_run(tmp_path, swimming, capsys)
     out = tmp_path / "out"
     assert main(["sites", "--workdir", str(d), "-o", str(out)]) == 0
     printed = capsys.readouterr().out
-    assert f"D={d}" in printed
-    assert "vizard $D/solvated.dms $D/trajectory.dcd" in printed  # no view file yet
+    # the paths as they were given, so a relative workdir stays relative
+    assert f"vizard {d / 'solvated.dms'} {d / 'trajectory.dcd'}" in printed  # no view file
+    assert "D=" not in printed
     # no cd: the scripts name their files in full, so either viewer runs them
     # from wherever it happens to be
     assert f"# then: source {out / 'sites.tcl'}" in printed
@@ -343,7 +344,7 @@ def test_the_sites_command_says_how_to_look_at_a_run(tmp_path, swimming, capsys)
     capsys.readouterr()
     assert main(["sites", "--workdir", str(d), "-o", str(out)]) == 0
     printed = capsys.readouterr().out
-    assert "pizard $D/view.dms $D/trajectory.dcd" in printed
+    assert f"pizard {d / 'view.dms'} {d / 'trajectory.dcd'}" in printed
     # an all-atom run renames nothing, so its view file is always the one to open;
     # a coarse-grained view written before boonza stopped renaming the backbone
     # holds beads a viewer mis-bonds, and such a run is sent back to solvated.dms
@@ -474,3 +475,110 @@ def test_a_column_with_nothing_in_it_keeps_its_width():
         assert _cell(None, spec) == "-".rjust(wide)
         assert len(_cell(float("nan"), spec)) == wide
         assert len(_cell(float("inf"), spec)) == wide
+
+
+def test_a_virtual_site_is_part_of_its_molecule_not_a_copy_of_its_own():
+    """Martini 3's tryptophan carries a virtual site, one bead of its ring, placed
+    from the others rather than bonded to them.  No bond holds it, so counting
+    molecules by bonds alone makes it a probe copy that does not exist: its own
+    centroid, its own features, and one more copy against every site it is near.
+    """
+    from boonza.martini.probes import probe
+    from boonza.symmetry import molecules_of
+
+    s = probe("EW").system()
+    ids = np.arange(s.natoms)
+    anum = np.asarray(s.atoms["anum"])
+    assert len(np.unique(np.asarray(s.fragids))) == 2  # the bonds say two
+    assert (anum == 0).sum() == 1  # the one with no mass and no bonds
+    molecules = molecules_of(s, ids)
+    assert len(np.unique(molecules)) == 1  # one probe, as it was built
+    loose = int(np.flatnonzero(anum == 0)[0])
+    ring = [int(a) for a in ids if str(s.atoms["name"][a]).startswith("SC")]
+    assert molecules[loose] == molecules[ring[0]]  # with the ring it sits in
+
+    whole = probe("FF").system()  # a probe with no virtual site is untouched
+    assert np.array_equal(molecules_of(whole, np.arange(whole.natoms)),
+                          np.asarray(whole.fragids))  # fmt: skip
+
+
+def test_two_clusters_in_one_pocket_are_one_site(buried):
+    """A pocket big enough holds a molecule in two spots a few angstroms apart, and
+    the centroids cluster twice.  That is one site: the pocket is what a ligand
+    would occupy, so the clusters in it are merged rather than reported as two
+    sites with the same volume, the same burial and the same score."""
+    s, frames = buried
+    lig = s.select(DEFAULT_LIGAND).ids
+    frag = np.asarray(s.fragids)[lig]
+    copies = [lig[frag == f] for f in np.unique(frag)]
+    # the parked copy sits in two spots of its cavity, half the frames in each
+    moved = frames.copy()
+    for k in range(0, len(moved), 2):
+        moved[k, copies[0]] = moved[k, copies[0]] + np.array([2.4, 0.0, 0.0])
+    found = boonza.sites(s, [moved], pocket_protein="protein")
+    pockets = [tuple(site.cells.tolist()) for site in found if site.cells is not None]
+    assert len(pockets) == len(set(pockets))  # no pocket is reported twice
+    held = [site for site in found if site.volume]
+    assert len(held) == 1  # one pocket, one site
+    assert held[0].occupancy > 0.75  # and it holds the frames of both spots
+
+
+def test_sites_are_ranked_by_their_pocket_not_by_dwell(buried):
+    """Dwell is the tempting ranking and the wrong one: a sticky patch of surface
+    holds something for most of a run without being anywhere a ligand fits.  On the
+    one protein where the answer is known, ranking by the pocket put the crystal
+    ligand's site first where dwell put it second of two and twelfth of 25."""
+    from boonza.sites import _RANKS
+
+    assert set(_RANKS) == {"pocket", "occupied", "agreement", "burial"}
+    s, frames = buried
+    found = boonza.sites(s, [frames], pocket_protein="protein")
+    assert found.sites  # the default is the pocket, and it is a real ordering
+    keys = [_RANKS["pocket"](site) for site in found]
+    assert keys == sorted(keys)
+    # the key is room times enclosure, so a bigger, more enclosed pocket comes first
+    a, b = _RANKS["pocket"], _RANKS["occupied"]
+    one, two = found[0], found[0]
+    assert a(one)[0] == -one.volume * one.burial
+    assert b(two)[0] == -two.occupancy
+
+
+def test_how_far_the_protein_moved_is_reported(tmp_path, swimming, capsys):
+    """Every site and every pocket is measured in the reference's frame, so a run
+    whose protein changes shape measures them against a shape it has left behind.
+    The fit is done anyway, so what it cost to make the frames line up is free to
+    report -- on screen, and frame by frame in rmsd.csv."""
+    import csv
+
+    from boonza.cli import main
+
+    s, runs = swimming
+    bent = runs[0].copy()
+    # the protein drifts apart over the run, as a coarse-grained one without a
+    # network does: every backbone atom moves out from the centre
+    prot = s.select("protein").ids
+    middle = np.asarray(s.positions)[prot].mean(0)
+    for k in range(len(bent)):
+        push = 0.06 * k  # a few per cent a frame: by the end it has swollen
+        bent[k, prot] = bent[k, prot] + push * (bent[k, prot] - middle) / 10.0
+    d = _run_directory(tmp_path, s, bent)
+    out = tmp_path / "out"
+    assert main(["sites", "--workdir", str(d), "-o", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "the protein moved" in printed and "shape the run no longer has" in printed
+    assert "--dihedral-restraint ss" in printed  # and what to do about it
+
+    rows = list(csv.DictReader((out / "rmsd.csv").read_text().splitlines()))
+    assert len(rows) == len(bent)
+    assert [r["run"] for r in rows] == ["0"] * len(bent)
+    assert [int(r["frame"]) for r in rows] == list(range(len(bent)))
+    walk = [float(r["rmsd_A"]) for r in rows]
+    assert walk[0] < walk[-1] and walk[-1] > 2.0  # it wanders, and the warning fired
+
+    # a run that holds its shape says so instead
+    steady = _run_directory(tmp_path / "steady", s, runs[0])
+    capsys.readouterr()
+    assert main(["sites", "--workdir", str(steady), "-o", str(tmp_path / "out2")]) == 0
+    printed = capsys.readouterr().out
+    assert "the protein stayed within" in printed
+    assert "no longer has" not in printed

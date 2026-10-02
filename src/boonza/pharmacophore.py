@@ -29,7 +29,7 @@ from .pbc import minimum_image
 from .sirah.features import bead_features as sirah_features
 from .sirah.features import sirah_beads
 from .sites import Density, _join_neighbours, _pairs
-from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids
+from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids, molecules_of
 
 FAMILIES = ("Donor", "Acceptor", "Aromatic", "Hydrophobe", "PosIonizable", "NegIonizable")
 CODES = {"Donor": "DON", "Acceptor": "ACC", "Aromatic": "ARO", "Hydrophobe": "HYD",
@@ -78,7 +78,7 @@ def ligand_features(system, ligand: str = DEFAULT_LIGAND, families=FAMILIES,
     from .chem import to_rdkit
 
     lig = _ids(system, ligand)
-    frag = np.asarray(system.fragids)[lig]
+    frag = molecules_of(system, lig)
     if len(lig) and martini_beads(system, lig):
         return [bead_features(system, lig[frag == f], families, backbone)
                 for f in np.unique(frag)]  # fmt: skip
