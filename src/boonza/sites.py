@@ -173,6 +173,28 @@ def _no_pockets():
 #: What half of sigma is multiplied by for the radius where the pair potential
 #: is deepest rather than where it crosses zero: r_min = 2**(1/6) sigma.
 RMIN = 2.0 ** (1.0 / 6.0)
+#: The fewest counts a cell may be called enriched on, whatever the ratio says.
+#:
+#: An enrichment is a ratio and says nothing about how much was counted to get
+#: it: a cell holding two counts where bulk expects a tenth of one clears twenty
+#: times bulk, and two is a thing that happens.  So a floor is needed, and two is
+#: what it is.
+#:
+#: Measured, two is about right.  Asking instead for a count improbable from bulk
+#: -- a Poisson tail at the map's own rate, spread over its cells -- comes to the
+#: same two when set loosely, and when set strictly enough to suppress what a
+#: thin sample passes on luck it takes real pockets with it: over 181
+#: coarse-grained runs of six proteins, five lost theirs, among them pockets
+#: covering half of the crystal ligand.  There is no setting that keeps a sparse
+#: run's pockets and drops its noise, the difference between them being
+#: information the sparse run does not have.
+LEAST_COUNT = 2.0
+#: How enclosed a pocket has to be: the share of 26 directions out of its cells
+#: that meet protein, 0 being open water and 1 shut in.
+BURIED = 0.4
+#: The smallest pocket worth reporting, in cubic angstroms.  Twenty is twenty
+#: cells of a 1 A grid, where a pocket a ligand sits in runs to hundreds.
+MIN_VOLUME = 20.0
 
 
 def particle_radii(system, ids, rule: str = "sigma") -> np.ndarray:
@@ -322,7 +344,7 @@ class Occupancy:
         from .spatial import min_dist2
 
         expected = self.total * self.spacing**3 / max(volume, 1e-9)
-        enriched = self.counts >= max(threshold * expected, 2.0)
+        enriched = self.counts >= max(threshold * expected, LEAST_COUNT)
         near = np.sqrt(min_dist2(self.cell_centres(), protein, shell[1] + 1.0, cell=None))
         candidates = np.flatnonzero(enriched & (near >= shell[0]) & (near <= shell[1]))
         if not len(candidates):
@@ -378,10 +400,16 @@ def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAU
         raise ValueError(f"align {align!r} selects {len(fit)} atoms; at least 3 are needed")
     frag = molecules_of(system, lig)
     copies = [lig[frag == f] for f in np.unique(frag)]
-    # how wide each atom is, so the occupancy map is of where a probe was rather
-    # than of which cell its centres happened to fall in
-    widths = ([particle_radii(system, ids, radius) for ids in copies]
-              if occupancy is not None and radius else None)  # fmt: skip
+    # what the occupancy map is made of: the molecule as one point, its beads as
+    # points, or its beads as the spheres they stand for.  A bead is several atoms
+    # across, so a map of bead centres at 1 A asks the model a question finer than
+    # it answers, and a map of molecule centres asks a coarser one -- the same
+    # question the centroid map already answers.
+    if radius in (None, "point", "beads"):
+        widths = None
+    else:
+        widths = [particle_radii(system, ids, radius) for ids in copies]
+    centre_only = radius == "point"
 
     ref = system if reference is None else reference
     rfit = _ids(ref, align)
@@ -413,9 +441,11 @@ def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAU
                 moved = minimum_image((whole - anchor)[None], box)[0] - (whole - anchor)
                 whole = whole + moved
                 out.append(whole @ rot.T + shift)
-                if occupancy is not None:  # the space it reaches, not only its centre
-                    occupancy.add((p[0] + spread + moved) @ rot.T + shift,
-                                  widths[c] if widths is not None else None)  # fmt: skip
+                if occupancy is not None:
+                    occupancy.add(
+                        out[-1][None] if centre_only else (p[0] + spread + moved) @ rot.T + shift,
+                        None if centre_only else (widths[c] if widths is not None else None),
+                    )
                 where.append((frame, c))
                 sizes.append(size)  # one per row, so the three returns line up
             frame += 1
@@ -439,7 +469,7 @@ def _dense_cells(points, spacing: float, threshold: float, volume: float):
     flat = (ijk[:, 0] * dims[1] + ijk[:, 1]) * dims[2] + ijk[:, 2]
     counts = np.bincount(flat, minlength=int(dims.prod()))
     expected = len(points) * spacing**3 / max(volume, 1e-9)
-    dense = np.flatnonzero(counts >= max(threshold * expected, 2.0))
+    dense = np.flatnonzero(counts >= max(threshold * expected, LEAST_COUNT))
     return flat, dense, counts, dims, lo, expected
 
 
@@ -522,9 +552,10 @@ def _visits(rows) -> int:
 
 def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
           align: str = "protein and name CA", spacing: float = 1.0,
-          enrichment: float = 20.0, min_occupancy: float = 0.05,
+          enrichment: float = 20.0,
           periodic: bool = True, pocket_protein: str | None = None,
-          rank: str = "pocket", radius: str | None = "sigma") -> SiteSet:  # fmt: skip
+          rank: str = "pocket", radius: str | None = "sigma",
+          buried: float = BURIED, min_volume: float = MIN_VOLUME) -> SiteSet:  # fmt: skip
     """Where the ligand is found across ``runs``, most occupied first.
 
     ``runs`` is one trajectory (or array of frames) or a list of them; each is
@@ -545,20 +576,30 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     the reference's frame, so a protein that changes shape measures its pockets
     against a shape the run no longer has.
 
-    ``radius`` is how much room each ligand particle is taken to occupy on the
-    occupancy grid: ``"sigma"`` (half the sigma of its own nonbonded term),
-    ``"rmin"`` (half of 2**(1/6) sigma, where that potential is deepest), or
-    ``None`` to count only the cell its centre fell in.  A bead is several atoms
-    across, so counting centres asks the map a question finer than the model
-    answers, and the noise comes back as a pocket in pieces.
+    ``radius`` is what the occupancy map a pocket is cut from is made of:
 
-    ``min_occupancy`` is the share of the *frames* in which a site has to hold
-    something, whoever it is -- not the share of the pooled copy-frames, which
-    shrinks as copies are added and would leave a molecule parked for a whole
-    run below any threshold in a box of 200 probes (one copy of 210 is 0.5% of
-    the pool whatever it does).  A site occupied by one copy throughout is
-    1.0 either way of counting it; one occupied by four copies a quarter of the
-    time each is 1.0 here and 0.1 there.
+    * ``"point"`` -- the molecule as one point, its own centre;
+    * ``"beads"`` -- every bead as a point, the cell its centre fell in;
+    * ``"sigma"`` -- every bead as a sphere of half the sigma of its own
+      nonbonded term, so the map is the room the molecule took up;
+    * ``"rmin"`` -- the same with half of 2**(1/6) sigma, where that potential is
+      deepest.
+
+    The three say what a molecule is: a position, a set of positions, or a volume.
+    A dipeptide has twice the beads of a single residue, so the choice matters
+    more for the one than the other.
+
+    With ``pocket_protein`` a site has to have a pocket to be reported at all: a
+    place the ligand gathered but that the protein does not enclose is bulk
+    gathering by chance, and there are many of those.  Without one, nothing can
+    be measured against, and every site is returned.
+
+    ``buried`` is how enclosed a pocket has to be, 0 being open water and 1 shut
+    in, and ``min_volume`` the smallest one worth reporting in cubic angstroms.
+    Between them they decide what is a pocket rather than a dent, and so how long
+    a list of them a run comes back with -- which is what a hit has to be found
+    in.
+
     """
     if runs is None or not isinstance(runs, (list, tuple)):
         runs = [runs]
@@ -601,8 +642,6 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
             continue
         rows, xyz = where[members], points[members]
         held = len(np.unique(rows[:, [0, 2]], axis=0)) / max(all_frames, 1)
-        if held < min_occupancy:
-            continue
         centre = xyz.mean(0)
         found.append(Site(center=centre, points=members, occupancy=held,
                           copy_frames=len(members) / len(points),
@@ -614,7 +653,11 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     pocket_atoms = _ids(reference, pocket_protein) if pocket_protein else np.empty(0, np.int64)
     if len(pocket_atoms) >= 4:
         cells, labels, centres, volumes, burials = shape.pockets(
-            enrichment, volume, np.asarray(reference.positions)[pocket_atoms]
+            enrichment,
+            volume,
+            np.asarray(reference.positions)[pocket_atoms],
+            buried=buried,
+            min_volume=min_volume,
         )
         claimed: dict[int, list[int]] = {}
         for i, site in enumerate(found):
@@ -641,6 +684,12 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
             site.grid_spacing = shape.spacing
         if merged:
             found = [s for i, s in enumerate(found) if i not in merged]
+        # a site with no pocket is not somewhere a ligand could sit: bulk solvent
+        # gathers by chance here and there, and with a protein to measure against
+        # those places fail the shell and the enclosure rather than being gated on
+        # how long they were held.  Where there is no protein to measure against,
+        # every site is kept, there being nothing to tell them apart by.
+        found = [s for s in found if s.volume > 0.0]
     found.sort(key=_RANKS[rank])
     out = np.full(len(points), -1)
     for k, s in enumerate(found):
