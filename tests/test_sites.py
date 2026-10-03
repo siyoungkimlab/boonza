@@ -48,13 +48,13 @@ def swimming():
 
 def test_sites_are_found_where_they_were_put(swimming):
     s, runs = swimming
-    found = boonza.sites(s, runs)
+    found = boonza.sites(s, runs, pocket_protein="protein")
     assert len(found) == 2
     for site in found:
         assert min(np.linalg.norm(site.center - t) for t in TRUE) < 0.5
         assert site.runs == 4  # every run agrees, which is the evidence that counts
         # held in 120 of 150 frames, by one copy of the three in the box: the
-        # frames are what a site is occupied for, and what min_occupancy gates on
+        # frames are what a site is occupied for, reported and not gated on
         assert 0.75 < site.occupancy < 0.85
         assert 0.2 < site.copy_frames < 0.35
         assert site.spread < 2.0
@@ -62,7 +62,13 @@ def test_sites_are_found_where_they_were_put(swimming):
     assert len(found.labels) == 4 * 150 * 3
 
 
-def test_bulk_is_bulk_and_not_a_site(swimming):
+def test_bulk_is_bulk_and_not_a_pocket(swimming):
+    """Bulk gathers by chance here and there; what it never does is make a pocket.
+
+    Without a protein to measure against there is nothing to tell a chance
+    gathering from a site, so every one is returned.  With one, the chance
+    gatherings fail the shell and the enclosure and are not reported.
+    """
     s, runs = swimming
     found = boonza.sites(s, runs)
     bulk = (found.labels < 0).mean()
@@ -78,13 +84,32 @@ def test_bulk_is_bulk_and_not_a_site(swimming):
             c = lig[frag == f]
             x[c] = base[c] - base[c].mean(0) + rng.uniform(-18, 18, size=3)
         nowhere.append(x)
-    assert len(boonza.sites(s, np.array(nowhere))) == 0
+    # nothing binds, so nothing is enclosed by the protein: no pockets at all
+    assert len(boonza.sites(s, np.array(nowhere), pocket_protein="protein")) == 0
+    loose = boonza.sites(s, np.array(nowhere))  # and with nothing to measure against
+    assert all(x.volume == 0.0 for x in loose)  # they are gatherings, not pockets
 
 
 def test_enrichment_is_a_threshold_over_bulk(swimming):
     s, runs = swimming
     assert len(boonza.sites(s, runs, enrichment=200.0)) <= len(boonza.sites(s, runs))
-    assert len(boonza.sites(s, runs, min_occupancy=0.9)) == 0  # nothing holds 90%
+    assert len(boonza.sites(s, runs, enrichment=2.0)) >= len(boonza.sites(s, runs))
+
+
+def test_what_the_occupancy_map_is_made_of(swimming):
+    """``radius`` says what a molecule is to the map a pocket is cut from: a point,
+    a set of points, or a volume.  One point per molecule per frame, one per bead,
+    or a sphere per bead -- so the map grows with each, and so do its pockets."""
+    s, runs = swimming
+    sizes = {}
+    for mode in ("point", "beads", "sigma"):
+        found = boonza.sites(s, runs, pocket_protein="protein", radius=mode)
+        sizes[mode] = found.occupancy.total
+    # a benzene of six heavy atoms: six times the deposits of its centre alone
+    # (within a little, since a molecule at the grid's edge can have its centre
+    # outside it and beads inside), and a sphere apiece more again
+    assert 5.9 < sizes["beads"] / sizes["point"] < 6.1
+    assert sizes["sigma"] > 5 * sizes["beads"]
 
 
 def test_a_site_hands_its_frames_to_the_pose_level(swimming):
@@ -217,7 +242,7 @@ def test_runs_may_bring_their_own_system(swimming):
     assert len(fewer.select(DEFAULT_LIGAND).ids) == len(lig) // 3  # one copy left
     assert len(fewer.select("protein").ids) == len(s.select("protein").ids)  # same protein
 
-    mixed = boonza.sites(s, [runs[0], (fewer, trimmed)])
+    mixed = boonza.sites(s, [runs[0], (fewer, trimmed)], pocket_protein="protein")
     assert len(mixed) == 2  # the same two sites, pooled over unlike systems
     assert mixed.systems[0] is s and mixed.systems[1] is fewer
     # the copy that was kept visits one site in both runs; the other site only run 0 reaches
