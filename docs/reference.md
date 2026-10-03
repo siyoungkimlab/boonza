@@ -1526,7 +1526,16 @@ The three say what a molecule is: a position, a set of positions, or a volume.
 A dipeptide has twice the beads of a single residue, so the choice matters
 more for the one than the other.
 
-``shell`` is what a pocket's near edge is measured from.  ``"center"``, the
+``shell`` is what a pocket's near edge is, and ``"none"`` is no near edge: it
+keeps every enriched cell within 6 A of the protein, however close, because a
+cell's counts are evidence that a probe was there and the protein is measured
+in one structure out of a run that moved.  It keeps sampling the other two
+discard -- over 181 coarse-grained runs the best of the three by ligand
+coverage, top-1 54 against 51 -- and merges pockets that a thin wall of
+protein separates, which makes it the worst by DCA, top-1 45 against 50, and
+takes the median pocket from 48 to 58 cubic angstroms.
+
+Otherwise ``shell`` is what the near edge is measured from.  ``"center"``, the
 default, keeps it 2 A from the nearest particle's center; ``"surface"`` keeps
 it clear of that particle's van der Waals surface instead, by the force
 field's own sizes, which is the only way to keep a pocket out of a bead:

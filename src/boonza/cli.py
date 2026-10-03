@@ -638,7 +638,7 @@ def _sites(args) -> int:
             # .dms the run brought with it: its tables are skipped for speed, so
             # asking for the surfaces is asking for them to be read
             own = _run_system(Path(d) / "solvated.dms", typed=args.features,
-                              sizes=args.shell == "surface")  # fmt: skip
+                              sizes=args.shell != "center")  # fmt: skip
             runs.append((own, open_trajectory(str(Path(d) / "trajectory.dcd"), own)))
         system = runs[0][0]
     else:
@@ -1672,14 +1672,17 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--min-volume", dest="min_volume", type=float, default=None, metavar="A3",
                    help="the smallest pocket worth reporting, in cubic angstroms (default "
                         "20, where one a ligand sits in runs to hundreds)")  # fmt: skip
-    q.add_argument("--shell", choices=("center", "surface"), default="center",
+    q.add_argument("--shell", choices=("center", "surface", "none"), default="center",
                    help="what a pocket's near edge is measured from: 2 A from the nearest "
                         "particle's center (default), or clear of its van der Waals surface, "
                         "which is the only way to keep a pocket out of a coarse-grained bead "
                         "-- 2 A from a center is 0.2 A inside a Martini bead.  Off by default: "
                         "over 181 runs it cost ligand coverage (top-1 51 to 48) and "
                         "gained DCA (50 to 54), and took the pocket volume inside the "
-                        "protein from 4% to none")  # fmt: skip
+                        "protein from 4%% to none.  'none' keeps no near edge at all, a "
+                        "protein bead never removing a probe's density: the best of the "
+                        "three by coverage (top-1 54) and the worst by DCA (45), because "
+                        "pockets merge through a thin wall")  # fmt: skip
     q.add_argument("--holo", default=None, metavar="FILE",
                    help="a structure of the same protein with something bound: its backbone "
                         "is superposed on the run's and each pocket is then scored against "

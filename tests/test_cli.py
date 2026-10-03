@@ -78,3 +78,22 @@ def test_info_reads_a_trajectory(tmp_path, capsys):
     boonza.save(s, structure)
     assert main(["info", str(structure)]) == 0
     assert f"{s.natoms} atoms, {s.nbonds} bonds" in capsys.readouterr().out
+
+
+def test_every_command_can_print_its_help():
+    """``--help`` renders for every subcommand, which is not free: argparse
+    %-formats a help string, so a percent sign in one (``4% of the volume``)
+    raises ``unsupported format character`` the moment anyone asks for help, and
+    nothing else ever renders it.  Written after shipping exactly that.
+    """
+    import argparse
+
+    from boonza.cli import _parser
+
+    p = _parser()
+    p.format_help()  # the top level, and then each command's own
+    actions = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)]
+    seen = {name: sub for a in actions for name, sub in a.choices.items()}
+    assert len(seen) > 10  # it would pass vacuously if the commands moved
+    for _name, sub in sorted(seen.items()):
+        sub.format_help()

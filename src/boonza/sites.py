@@ -235,6 +235,34 @@ SHELL = (2.0, 6.0)
 #: its nonbonded tables has none to read and falls back on its elements;
 #: ``boonza sites --shell surface`` reads them.
 SHELL_SURFACE = (0.3, 6.0)
+#: The same band with no near edge at all, which is what ``shell="none"`` asks
+#: for: every enriched cell within ``SHELL_ANY[1]`` of a particle's centre is a
+#: candidate, however close the protein is.
+#:
+#: A probe's density is evidence that a probe was there, and the protein it is
+#: measured against is one structure out of a run that moved: a cell inside a
+#: bead here was open when the probe sat in it, so a near edge of any kind
+#: discards sampling for the reference's convenience.
+#:
+#: Measured over 181 coarse-grained runs it is the best of the three by ligand
+#: coverage -- top-1 54 against 51, oracle 80 against 77 -- and the worst by DCA,
+#: top-1 45 against 50.  Both come from the same thing: pockets merge through the
+#: protein, cells inside a bead touching the open cells on either side of it, so
+#: a thin wall no longer separates two pockets.  The merged pocket covers more of
+#: a ligand and its centre is further from one: over those runs the median pocket
+#: grows from 48 to 58 cubic angstroms, and for SIRAH's single amino acids from
+#: 65 to 126 while the count falls from 19 to 12.
+#:
+#: Of the six runs it finds a hit in where ``"center"`` finds none, five have the
+#: pocket's centre within 1.5 A of a ligand atom and three are no larger than the
+#: median pocket of their own run, which is not something a blob does; two of them
+#: are a cryptic site Martini otherwise never finds.  It loses three, all of them
+#: good pockets destroyed by merging, one holding 95% of its ligand.  So it is
+#: offered: what it recovers is real, and what it costs is real too.
+#:
+#: Filling still will not reach inside the protein, there being no evidence there
+#: to fill with.
+SHELL_ANY = (-np.inf, 6.0)
 
 
 def particle_radii(system, ids, rule: str = "sigma") -> np.ndarray:
@@ -812,7 +840,16 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     A dipeptide has twice the beads of a single residue, so the choice matters
     more for the one than the other.
 
-    ``shell`` is what a pocket's near edge is measured from.  ``"center"``, the
+    ``shell`` is what a pocket's near edge is, and ``"none"`` is no near edge: it
+    keeps every enriched cell within 6 A of the protein, however close, because a
+    cell's counts are evidence that a probe was there and the protein is measured
+    in one structure out of a run that moved.  It keeps sampling the other two
+    discard -- over 181 coarse-grained runs the best of the three by ligand
+    coverage, top-1 54 against 51 -- and merges pockets that a thin wall of
+    protein separates, which makes it the worst by DCA, top-1 45 against 50, and
+    takes the median pocket from 48 to 58 cubic angstroms.
+
+    Otherwise ``shell`` is what the near edge is measured from.  ``"center"``, the
     default, keeps it 2 A from the nearest particle's center; ``"surface"`` keeps
     it clear of that particle's van der Waals surface instead, by the force
     field's own sizes, which is the only way to keep a pocket out of a bead:
@@ -841,8 +878,8 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     in.
 
     """
-    if shell not in ("center", "surface"):
-        raise ValueError(f"shell {shell!r}: 'center' (2 A from a center) or 'surface'")
+    if shell not in ("center", "surface", "none"):
+        raise ValueError(f"shell {shell!r}: 'center' (2 A from a center), 'surface' or 'none'")
     if runs is None or not isinstance(runs, (list, tuple)):
         runs = [runs]
     pairs = _pairs(system, runs)
@@ -903,10 +940,10 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
             # how wide the protein is, whatever the probes were binned as: a
             # probe binned as a point does not make the beads it meets any
             # smaller, so the protein is measured by a rule of its own
-            shell=SHELL_SURFACE if shell == "surface" else SHELL,
+            shell={"surface": SHELL_SURFACE, "none": SHELL_ANY}.get(shell, SHELL),
             radii=(
                 particle_radii(reference, pocket_atoms, radius if radius == "rmin" else "sigma")
-                if shell == "surface"
+                if shell != "center"
                 else None
             ),
         )
