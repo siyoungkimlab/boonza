@@ -688,6 +688,29 @@ def _sites(args) -> int:
             score, philic = boonza.site_score(site, maps)
             if not np.isnan(score):  # a site with no pocket has nothing to score
                 scored[k] = (philic, score, boonza.site_score(site, maps, DSCORE)[0])
+    known = {}
+    if args.holo:  # a crystal structure of the same protein with something bound
+        from boonza.sites import DCA_HIT, coverage, dca, dcc, known_ligand
+
+        # the frame the sites are measured in, which is the first run's own
+        # system where no reference was given
+        frame = reference if reference is not None else (found.systems or [system])[0]
+        lig, how = known_ligand(_load(args.holo), frame, args.holo_ligand)
+        print(f"{Path(args.holo).name}: {how['ligand']}, {how['atoms']} heavy atoms, chain "
+              f"{how['chain']}; its backbone fits this run's to {how['fit_rmsd']:.2f} A "
+              f"over {how['paired']} residues")  # fmt: skip
+        for k, site in enumerate(found):
+            known[k] = (dca(site, lig), dcc(site, lig), coverage(site, lig))
+        hit = [k for k, (d, _, _) in known.items() if d <= DCA_HIT]
+        best = max(known, key=lambda k: known[k][2], default=None)
+        if hit:
+            print(f"  site {hit[0]} is that ligand's, by DCA: its centre is "
+                  f"{known[hit[0]][0]:.1f} A from the nearest of its atoms")  # fmt: skip
+        elif best is not None and known[best][2] > 0:
+            print(f"  no site's centre is within {DCA_HIT:g} A of it; site {best} covers the "
+                  f"most of it, {100 * known[best][2]:.0f}%")  # fmt: skip
+        else:
+            print("  no site is anywhere near it: nothing found what the crystal shows")
     rates = {}
     if args.interval_ns:  # the dwell times come from the frames already in hand
         for k in range(len(found)):
@@ -714,6 +737,8 @@ def _sites(args) -> int:
         out += [f"{'copies':>6}", f"{'arrivals':>8}"]
         if rates:
             out += [f"{'exits':>5}", f"{'stay_ns':>7}", f"{'dG':>6}", f"{'KD_mM':>9}"]
+        if known:
+            out += [f"{'DCA':>6}", f"{'DCC':>6}", f"{'covers':>6}"]
         return " ".join([*out, "centre"])
 
     def row(k: int, site) -> str:
@@ -733,6 +758,13 @@ def _sites(args) -> int:
             r = rates.get(k)
             out += [_cell(r and r.events, "5d"), _cell(r and r.residence_ns, "7.1f"),
                     _cell(r and r.dG, "+6.2f"), _cell(r and 1e3 * r.KD, "9.1e")]  # fmt: skip
+        if known:
+            d, c, cover = known.get(k, (None, None, None))
+            out += [
+                _cell(d, "6.1f"),
+                _cell(c, "6.1f"),
+                (f"{100 * cover:5.0f}%" if cover is not None else _cell(None, "6.1f")),
+            ]
         return " ".join([*out, " ".join(f"{x:7.1f}" for x in site.center)])
 
     print(header())
@@ -791,6 +823,9 @@ def _sites(args) -> int:
             if k in scored:
                 philic, score, drug = scored[k]
                 doc["sites"][k].update({"philic": philic, "score": score, "dscore": drug})
+            if k in known:
+                d, c, cover = known[k]
+                doc["sites"][k].update({"dca_A": d, "dcc_A": c, "covered": cover})
         for rate in rates.values():
             doc["sites"][rate.site].update(
                 {"dG": rate.dG, "dG_interval": list(rate.dG_interval), "KD": rate.KD,
@@ -854,7 +889,8 @@ _SITE_COLUMNS = (("site", "site"), ("occupied", "occupancy"), ("of_pool", "copy_
                  ("unbound_ns", "unbound_ns"), ("concentration_mM", "concentration_mM"),
                  ("bound_frac_frames", "occupancy_from_frames"),
                  ("bound_frac_rates", "occupancy_from_rates"),
-                 ("rates_agree", "consistent"))  # fmt: skip
+                 ("rates_agree", "consistent"),
+                 ("dca_A", "dca_A"), ("dcc_A", "dcc_A"), ("covered", "covered"))  # fmt: skip
 
 
 def _write_sites_csv(path, sites, interval_ns=None) -> None:
@@ -1626,6 +1662,13 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--min-volume", dest="min_volume", type=float, default=None, metavar="A3",
                    help="the smallest pocket worth reporting, in cubic angstroms (default "
                         "20, where one a ligand sits in runs to hundreds)")  # fmt: skip
+    q.add_argument("--holo", default=None, metavar="FILE",
+                   help="a structure of the same protein with something bound: its backbone "
+                        "is superposed on the run's and each pocket is then scored against "
+                        "that ligand (DCA, DCC and the share of it covered)")  # fmt: skip
+    q.add_argument("--holo-ligand", dest="holo_ligand", default=None, metavar="SEL",
+                   help="what was bound in --holo (default: its largest residue that is "
+                        "neither protein, nucleic, solvent nor a buffer salt)")  # fmt: skip
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.add_argument("-o", "--out", help="write sites.json here")
     q.set_defaults(run=_sites, needs=("system and --traj", "or --workdir"))
