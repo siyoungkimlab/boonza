@@ -1430,7 +1430,7 @@ when the reference was taken.  Hand the result to :func:`boonza.poses` as
 burial and the polar share of the features in it.  Pass ``DSCORE`` for the
 druggability weighting instead.
 
-### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0) -> 'SiteSet'`
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0, pocket_enrichment: 'float | None' = None) -> 'SiteSet'`
 
 Where the ligand is found across ``runs``, most occupied first.
 
@@ -1458,6 +1458,16 @@ occupancy grid: ``"sigma"`` (half the sigma of its own nonbonded term),
 ``None`` to count only the cell its centre fell in.  A bead is several atoms
 across, so counting centres asks the map a question finer than the model
 answers, and the noise comes back as a pocket in pieces.
+
+``enrichment`` is asked of two maps, which are not the same question.  A site
+is a place the ligand's *centroids* gather: one sample per copy per frame, on
+a grid over the centroids themselves.  A pocket is the room the ligand's
+*atoms* reached: several deposits per copy per frame -- some fifty times more
+under ``radius="sigma"``, where every bead paints a sphere -- on a grid over
+the protein.  One figure for both says a cell has to beat bulk by the same
+ratio in either, measured from counts that differ by orders of magnitude.
+``pocket_enrichment`` sets the second on its own; left out, it follows the
+first, as it always has.
 
 ``buried`` is how enclosed a pocket has to be, 0 being open water and 1 shut
 in, and ``min_volume`` the smallest one worth reporting in cubic angstroms.

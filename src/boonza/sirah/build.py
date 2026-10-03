@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..cofactors import COFACTOR_FC, COFACTOR_REACH
 from . import read, unpack
 
 #: The bead SIRAH places on the alpha carbon itself, which a viewer traces a
@@ -31,6 +32,8 @@ class Bead:
     insertion: str
     position: np.ndarray  # Å
     source: str  # the atom it was placed on
+    cofactor: bool = False  # an inert bead standing in for a heavy atom of one
+    element: str = ""  # that atom's element, for its mass; only a cofactor's
 
 
 @dataclass
@@ -211,7 +214,34 @@ def disulfide_pairs(system, atoms: str = "protein") -> list[tuple[int, int]]:
     return sorted(pairs)
 
 
-def map_structure(system, atoms: str = "protein", log=None, strict: bool = False) -> list[Bead]:
+def _polymer_resnames(system) -> set:
+    """The residue names the structure's own reading calls a polymer.  What SIRAH
+    has no entry for is not therefore a cofactor: a D-amino acid or a modified
+    residue belongs to the chain, and an inert bead there throws a side chain
+    away in the middle of a protein."""
+    ids = system.select("protein or nucleic").ids
+    if not len(ids):
+        return set()
+    res = np.asarray(system.residues["name"])
+    return {str(res[r]).strip().upper()
+            for r in np.unique(np.asarray(system.atoms["residue"])[ids]).tolist()}  # fmt: skip
+
+
+#: The masses an inert cofactor bead takes, its atom's own.
+_ATOM_MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "P": 30.974, "S": 32.06,
+              "SE": 78.97, "FE": 55.845, "ZN": 65.38, "MG": 24.305, "CA": 40.078,
+              "MN": 54.938, "CU": 63.546, "NI": 58.693, "CO": 58.933, "CD": 112.41,
+              "CL": 35.45, "F": 18.998, "BR": 79.904, "I": 126.90}  # fmt: skip
+
+
+#: What an inert cofactor bead is under SIRAH: the bead its leucine gives a side
+#: chain, which is uncharged and plainly aliphatic.  Its alanine has none to
+#: borrow -- that side chain is folded into the alpha carbon, typed Y2Ca.
+COFACTOR_BEAD = "Y1C"
+
+
+def map_structure(system, atoms: str = "protein", log=None, strict: bool = False,
+                  cofactors: bool = False) -> list[Bead]:  # fmt: skip
     """The beads of ``atoms``, each on the atom SIRAH's map names for it.
 
     A residue the map does not know raises: dropping it would change the chain.
@@ -225,6 +255,7 @@ def map_structure(system, atoms: str = "protein", log=None, strict: bool = False
         raise ValueError(f"no atoms in {atoms!r}")
     residue = np.asarray(system.atoms["residue"])[ids]
     names = np.asarray(system.atoms["name"])[ids]
+    anum = np.asarray(system.atoms["anum"])[ids]
     xyz = np.asarray(system.positions)[ids]
     res = system.residues
     chains = np.asarray(system.chains["name"])
@@ -240,6 +271,19 @@ def map_structure(system, atoms: str = "protein", log=None, strict: bool = False
             changed.add(f"{resname} as CYX, its sulfur being bridged")
             resname = "CYX"
         entry = mapping.get(resname)
+        if entry is None and cofactors and resname not in _polymer_resnames(system):
+            # no residue of SIRAH's, and not part of a chain: one bead per heavy
+            # atom, holding the room up and saying nothing about what fills it
+            for name, x, z in zip(names[here], xyz[here], anum[here], strict=True):
+                if int(z) <= 1:  # a heavy atom each, hydrogens being no part of it
+                    continue
+                from ..elements import symbol
+
+                out.append(Bead(str(name).strip()[:5], resname[:5], int(res["resid"][r]),
+                                str(chains[res["chain"][r]]).strip(),
+                                str(res["insertion"][r]).strip(), x, str(name).strip(),
+                                True, symbol(int(z)).upper()))  # fmt: skip
+            continue
         if entry is None:
             unknown.add(resname)
             continue
@@ -271,7 +315,8 @@ def map_structure(system, atoms: str = "protein", log=None, strict: bool = False
                              str(res["insertion"][r]).strip(), guess, "")  # fmt: skip
     if unknown:
         raise ValueError(f"SIRAH's map has no {', '.join(sorted(unknown))}; leave them out of "
-                         f"atoms={atoms!r}")  # fmt: skip
+                         f"atoms={atoms!r}, give them parameters of their own, or cofactors=True "
+                         "to hold them as inert beads")  # fmt: skip
     short = [k for k, b in enumerate(out) if b is None]
     if missing and (strict or len(short) == len(missing)):
         more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
@@ -383,6 +428,13 @@ class Molecule:
     angles: list[tuple[int, int, int]] = field(default_factory=list)
     dihedrals: list[tuple[int, int, int, int]] = field(default_factory=list)
     impropers: list[tuple[int, int, int, int]] = field(default_factory=list)
+    #: bonds that carry their own length and force constant rather than taking
+    #: them from the force field by bead type: what holds a cofactor, for which
+    #: SIRAH has no bonded entry because it has no such bead pair
+    bond_params: dict = field(default_factory=dict)
+    #: pairs that feel nothing at all: inside a cofactor, where beads sit an
+    #: atom's width apart and would otherwise scatter on the first step
+    exclusions: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def natoms(self) -> int:
@@ -501,7 +553,9 @@ DISULFIDE = 2.2
 
 
 def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
-             disulfides: bool = True, strict: bool = False, log=None) -> Sirahized:  # fmt: skip
+             disulfides: bool = True, strict: bool = False, log=None,
+             cofactors: bool = False, cofactor_fc: float = COFACTOR_FC,
+             cofactor_reach: float = COFACTOR_REACH) -> Sirahized:  # fmt: skip
     """Map ``system`` onto SIRAH beads and build the topology of each chain.
 
     The beads come from SIRAH's map, their topology from its residue library,
@@ -511,7 +565,7 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     missing an atom a bead sits on, where the default places the bead against
     the bead it bonds to and says so.
     """
-    beads = map_structure(system, atoms, log, strict)
+    beads = map_structure(system, atoms, log, strict, cofactors)
     library, bonded = read_residues()
     masses = read_masses()
     _at_the_ends(beads, library, log)  # a nucleotide at a strand's end is its own residue
@@ -530,6 +584,11 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         index = {(b.resid, b.name): k for k, b in enumerate(mine)}
         first, last = mine[0].resid, mine[-1].resid
         for k, b in enumerate(mine):
+            if b.cofactor:  # no residue of SIRAH's: the inert bead, and its own mass
+                mol.types.append(COFACTOR_BEAD)
+                mol.charges.append(0.0)
+                mol.masses.append(float(_ATOM_MASS.get(b.element, 30.0)))
+                continue
             entry = library[b.residue]
             by_name = {name: (kind, charge) for name, kind, charge in entry.atoms}
             kind, charge = by_name[b.name]
@@ -541,7 +600,7 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
             mol.charges.append(charge)
             mol.masses.append(masses.get(kind, 0.0))
             del k
-        for b in {(x.resid, x.residue) for x in mine}:
+        for b in {(x.resid, x.residue) for x in mine if not x.cofactor}:
             resid, resname = b
             for one, two in library[resname].bonds:
                 a, other = (index.get(_where(resid, n)) for n in (one, two))
@@ -553,6 +612,9 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
                     mol.impropers.append(tuple(got))
         mol.bonds = sorted(set(mol.bonds))
         molecules.append(mol)
+    molecules = _bond_coordinated_ions(molecules, cofactor_fc, log)
+    if cofactors:
+        molecules = _attach_cofactors(molecules, cofactor_fc, cofactor_reach, log)
     if disulfides:
         res = system.residues
         chains = np.asarray(system.chains["name"])
@@ -576,6 +638,117 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     ss = _dssp(system, atoms) if len(system.select("name CA").ids) else ""
     return Sirahized(molecules, positions, np.asarray(system.cell, float),
                      nrexcl=bonded.nrexcl, ss=ss)  # fmt: skip
+
+
+def _bond_coordinated_ions(molecules, fc: float, log=None) -> list:
+    """Bond an ion the protein holds to the residues holding it.
+
+    SIRAH maps a zinc, a calcium and a magnesium to ions of its own -- real
+    parameters, which is better than any stand-in -- but an ion is a moleculetype
+    of one bead with no bonded terms, so a structural zinc comes out as a bead
+    that simply diffuses away.  A zinc finger then has nothing holding its loops
+    together and comes apart, the thing the zinc was there to do being the one
+    thing the model does not say.
+
+    So where the structure shows coordination -- protein within
+    :data:`boonza.cofactors.COORDINATION` of the ion, which only a held one is --
+    the ion joins that molecule and is banded to what holds it.  An ion in
+    solvent has nothing that close and is left alone, as it should be.
+    """
+    from ..cofactors import COORDINATION
+
+    loose = [m for m in molecules if m.natoms == 1 and not m.bonds]
+    rest = [m for m in molecules if m not in loose]
+    if not loose or not rest:
+        return molecules
+    out = list(rest)
+    for ion in loose:
+        here = np.asarray(ion.beads[0].position, float)
+        host, best = None, np.inf
+        for m in rest:
+            d = np.linalg.norm(np.asarray([b.position for b in m.beads], float) - here, axis=1)
+            if d.min() < best:
+                host, best = m, d.min()
+        if best > COORDINATION:  # nothing holds it: an ion of the solvent
+            out.append(ion)
+            continue
+        i = host.natoms
+        host.beads += ion.beads
+        host.types += ion.types
+        host.charges += ion.charges
+        host.masses += ion.masses
+        d = np.linalg.norm(np.asarray([b.position for b in host.beads[:i]], float) - here, axis=1)
+        held = np.flatnonzero(d <= COORDINATION).tolist()
+        for j in held:
+            host.bonds.append((int(j), i))
+            host.bond_params[(int(j), i)] = [round(float(d[j]) / 10, 4), fc]
+        host.bonds = sorted(set(host.bonds))
+        if log:
+            b = ion.beads[0]
+            log(f"{b.residue} {b.chain}{b.resid}: bonded to the {len(held)} bead(s) that hold "
+                "it, which an ion of SIRAH's own has no terms for")  # fmt: skip
+    return out
+
+
+def _attach_cofactors(molecules, fc: float, reach: float, log=None) -> list:
+    """Fold each inert cofactor into the molecule that holds it, and hold it there.
+
+    A cofactor is no chain, so it comes out of the grouping as a molecule of its
+    own -- and a moleculetype of its own is somewhere nothing in GROMACS can bond
+    it to the protein it belongs to.  It is appended to the nearest molecule
+    instead, banded to whatever beads coordinate it and banded within itself, with
+    every pair inside it excluded: beads an atom's width apart would otherwise
+    scatter on the first step.
+
+    The bands carry their own length and force constant.  SIRAH reads a bond's
+    parameters from the pair of bead types, and it has no entry for an inert bead
+    against a protein's, there being no such pair in the force field.
+    """
+    from ..cofactors import COORDINATION, anchor_bands, shape_bands
+
+    theirs = [m for m in molecules if all(b.cofactor for b in m.beads)]
+    rest = [m for m in molecules if m not in theirs]
+    if not theirs or not rest:
+        return molecules
+    for cof in theirs:
+        xyz = np.asarray([b.position for b in cof.beads], float)
+        host, best = None, np.inf
+        for m in rest:
+            d = np.linalg.norm(np.asarray([b.position for b in m.beads], float)[:, None]
+                               - xyz[None], axis=2).min()  # fmt: skip
+            if d < best:
+                host, best = m, d
+        start = host.natoms
+        host.beads += cof.beads
+        host.types += cof.types
+        host.charges += cof.charges
+        host.masses += cof.masses
+        here = list(range(start, host.natoms))
+        for a in range(len(here)):
+            for b in range(a + 1, len(here)):
+                host.exclusions.append((here[a], here[b]))
+        for a, b, d in shape_bands(xyz):  # dense, or the body comes apart
+            host.bonds.append((here[a], here[b]))
+            host.bond_params[(here[a], here[b])] = [round(d / 10, 4), fc]
+        protein = np.asarray([b.position for b in host.beads[:start]], float)
+        spine = np.array([b.name == "GC" for b in host.beads[:start]])
+        held = 0
+        # coordination where there is any, and anchors for the body: one bond
+        # through an iron leaves a heme free to swing about it
+        bands = {(int(j), here[i]): d for i, j, d in anchor_bands(xyz, protein, spine, reach)}
+        for a, i in enumerate(here):
+            d = np.linalg.norm(protein - xyz[a], axis=1)
+            for j in np.flatnonzero(d <= COORDINATION).tolist():
+                bands[(int(j), i)] = float(d[j])
+        for (j, i), d in sorted(bands.items()):
+            host.bonds.append((j, i))
+            host.bond_params[(j, i)] = [round(d / 10, 4), fc]
+            held += 1
+        host.bonds = sorted(set(host.bonds))
+        if log:
+            log(f"{cof.beads[0].residue} {cof.beads[0].chain}{cof.beads[0].resid}: "
+                f"{len(here)} inert bead(s) held by {held} band(s)")  # fmt: skip
+    return rest
 
 
 def _add_disulfides(molecules, bridges=(), log=None) -> None:
@@ -649,7 +822,15 @@ class Sirahized:
             if not rows:
                 continue
             out.append(f"\n[ {title} ]")
-            out += [" ".join(f"{a + 1:5d}" for a in row) + f" {funct:5d}" for row in rows]
+            for row in rows:
+                line = " ".join(f"{a + 1:5d}" for a in row) + f" {funct:5d}"
+                extra = mol.bond_params.get(tuple(row)) if title == "bonds" else None
+                if extra:  # a band the force field has no entry for, so it says its own
+                    line += " " + " ".join(str(x) for x in extra)
+                out.append(line)
+        if mol.exclusions:
+            out.append("\n[ exclusions ]")
+            out += [f"{a + 1:5d} {b + 1:5d}" for a, b in mol.exclusions]
         return "\n".join(out) + "\n"
 
     def top(self, forcefield: str = "./sirah.ff") -> str:

@@ -113,9 +113,36 @@ boonza martinize protein.pdb cg --cofactors        # hold them as inert beads
 per heavy atom** — an alanine's side chain in Martini 3, the apolar bead Martini
 2 builds one from, since Martini 2's alanine is a single backbone bead with no
 side chain at all. Each bead carries its atom's own mass, every pair inside the
-cofactor is excluded, its shape is held by bands, and more bands tie it to
-whatever protein beads lie within 2.6 Å of it — the distance a metal
-coordinates at, where nothing merely touching comes nearer than 3.
+cofactor is excluded, its shape is held by bands between the beads, and each bead
+is tethered to the backbone beads within `cofactor_reach` of it. Any coordination
+the structure shows — anything within 2.6 Å, which a metal is well inside and a
+passing contact is not — is bonded too, and that bond is made before the
+molecules are split, so a zinc holding two loops together becomes a crosslink
+rather than landing in a moleculetype of its own where nothing could bond it.
+
+**The bands are dense, and that was measured rather than reasoned.** Three points
+fix a rigid body, so a few bands ought to do — and they do not, because the bands
+are soft. On a heme over 5 ps, banded to two neighbours each and tethered twice,
+it strays 12 Å; and its own shape drifts just as far, which is the tell. A body
+of *n* beads wants about 3*n*−6 independent bands to be rigid — 123 for a heme's
+43 — where two per bead gives 56, many of them redundant around a ring. Tethers
+cannot hold a shape that will not hold itself.
+
+How far the tethers reach is then the lever:
+
+| `cofactor_reach` | bands | the heme strays | its shape drifts | backbone rmsf near it |
+|---|---|---|---|---|
+| 9 Å | 688 | 2.27 Å | 2.12 Å | 0.30 Å |
+| **12 Å** (default) | 1718 | **1.20 Å** | **0.97 Å** | 0.24 Å |
+| 15 Å | 3028 | 0.88 Å | 0.57 Å | 0.22 Å |
+| 20 Å | 4751 | 0.59 Å | 0.47 Å | 0.20 Å |
+
+Twelve is where the returns fall off: the cofactor is held inside a bead's own
+radius and the protein around it is stiffened least. Stiffening it *is* the cost —
+you are trading some local flexibility for a cofactor that stays where it was
+put. And the bands have to stay soft: at 700 kJ/mol/nm² (`cofactor_fc`, the
+elastic network's own) this is stable, while dense *and* stiff blew up on the
+first step.
 
 This is deliberately a statement about **volume and nothing else**: probes cannot
 enter the room the cofactor takes, and no charge or chemistry is invented for it.
@@ -123,6 +150,14 @@ It also cannot distort the fold, which the bands and the elastic network hold.
 Measured on a phospholipase with two structural calciums, through the ramp to
 20 fs and 5 ps of production, the cofactor holds to 1.7–2.1 Å of where the
 structure put it while the protein moves 1.1 Å rms — less than a bead's radius.
+
+Under SIRAH the metals need none of this: it maps a zinc, a calcium and a
+magnesium to ions of its own, with real parameters. What it does not give them is
+any bonded term, an ion being one bead of its own moleculetype — so a structural
+zinc came out as a bead that simply diffuses away, and a zinc finger had nothing
+holding its loops together. boonza now bonds a *coordinated* ion to whatever holds
+it, keeping SIRAH's own type and charge; an ion in solvent has nothing within
+2.6 Å and stays the free ion it is.
 
 Two things it will not do:
 

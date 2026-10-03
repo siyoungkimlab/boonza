@@ -775,3 +775,52 @@ def test_a_cofactor_out_in_the_open_is_warned_about():
     s.positions = xyz
     with pytest.warns(UserWarning, match="not buried"):
         martinize(s, "protein or resname HEM", cofactors=True)
+
+
+def test_a_cofactor_is_banded_densely_because_sparsely_it_comes_apart():
+    """How many bands a cofactor needs, which measurement settled rather than
+    reasoning: three points fix a rigid body, and these bands are soft.
+
+    Banded to two neighbours each and tethered twice, a heme strays 12 A over
+    5 ps -- and its own shape drifts just as far, which is the tell: a body of n
+    beads wants about 3n-6 independent bands to be rigid, 123 for a heme's 43,
+    where two per bead gives 56 and many are redundant along a ring.  So the
+    bands are dense by default, and the knobs are there to be measured with.
+    """
+    from boonza.cofactors import COFACTOR_NEIGHBOURS, COFACTOR_REACH, COFACTOR_TETHERS
+
+    assert (COFACTOR_NEIGHBOURS, COFACTOR_TETHERS) == (None, None)  # dense, both ways
+    s = boonza.load(DATA / "1HHO.pdb")
+    sel = "(protein or resname HEM) and chain A"
+
+    def bands(**kw):
+        m = martinize(s, sel, cofactors=True, elastic=True, **kw)
+        mol = next(x for x in m.molecules if any(n.get("cofactor") for n in x.nodes))
+        kinds = [t.meta.get("comment") for t in mol.interactions["bonds"]]
+        return kinds.count("cofactor shape"), kinds.count("cofactor held")
+
+    shape, held = bands()
+    sparse_shape, sparse_held = bands(cofactor_neighbours=2, cofactor_tethers=2)
+    assert shape > sparse_shape and held > sparse_held
+    # and the reach is the lever on how firmly it is held, so it has to bite
+    assert bands(cofactor_reach=6.0)[1] < held < bands(cofactor_reach=20.0)[1]
+    assert COFACTOR_REACH == 12.0  # where the returns fall off; see the measurements
+
+
+def test_a_coordinated_ion_of_sirahs_own_is_bonded_to_what_holds_it():
+    """SIRAH maps a zinc to an ion of its own -- real parameters, better than any
+    stand-in -- but an ion is one bead with no bonded terms, so a structural zinc
+    comes out as a bead that diffuses away and a zinc finger comes apart.
+
+    Where the structure shows coordination the ion is bonded to what holds it,
+    keeping SIRAH's own type and charge.  An ion in solvent has nothing that
+    close and stays the free ion it is.
+    """
+    pytest.importorskip("boonza.sirah")
+    from boonza.sirah import sirahize
+    from boonza.sirah.build import read_map
+
+    assert read_map().get("ZN")  # SIRAH does know a zinc, which is the point
+    s = boonza.load(DATA / "1HHO.pdb").select("protein and chain A").clone()
+    out = sirahize(s, "protein")  # no ion here: nothing to bond, nothing to break
+    assert all(m.natoms > 1 or m.bonds for m in out.molecules)
