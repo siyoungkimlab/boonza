@@ -212,6 +212,29 @@ BURIED = 0.4
 #: The smallest pocket worth reporting, in cubic angstroms.  Twenty is twenty
 #: cells of a 1 A grid, where a pocket a ligand sits in runs to hundreds.
 MIN_VOLUME = 20.0
+#: How wide a particle is when no force field says: a heavy atom's van der Waals
+#: radius, in angstroms.
+HEAVY_ATOM = 1.7
+#: How close to the protein a pocket lies and how far from it, in angstroms,
+#: measured from the particles' centers -- which is the default.
+SHELL = (2.0, 6.0)
+#: The same band measured from every particle's van der Waals surface, which is
+#: what ``shell="surface"`` asks for: clear of a surface by ``SHELL_SURFACE[0]``
+#: and within ``SHELL_SURFACE[1]`` of a center.  Measured from the centers, 2 A
+#: is outside a heavy atom, which reaches 1.7, and 0.2 A inside a Martini bead,
+#: which reaches 2.15 to 2.35, so at coarse-grained resolution the band begins
+#: inside the protein and a pocket comes out drawn over the beads.
+#:
+#: It is off by default because the two measures of a hit disagree about it.
+#: Over 181 coarse-grained runs it took top-1 from 51 to 48 and the oracle from
+#: 77 to 73 by ligand coverage, and top-1 from 50 to 54 by DCA: it does not move
+#: a pocket's center -- it places it better -- but it shaves the wall-facing
+#: cells a ligand's atoms sit against, which is what coverage counts.  It does
+#: take the volume inside the protein from 4.0% to none at all, in every force
+#: field.  The sizes come from the force field, so a system loaded without
+#: its nonbonded tables has none to read and falls back on its elements;
+#: ``boonza sites --shell surface`` reads them.
+SHELL_SURFACE = (0.3, 6.0)
 
 
 def particle_radii(system, ids, rule: str = "sigma") -> np.ndarray:
@@ -345,14 +368,50 @@ class Occupancy:
             blocked += (hit <= touch**2).any(1)
         return blocked / len(dirs)
 
-    def pockets(self, threshold: float, volume: float, protein, shell=(2.0, 6.0),
-                buried: float = 0.4, min_volume: float = 20.0):  # fmt: skip
+    def clearance(self, protein, radii=None, reach: float = 6.0) -> np.ndarray:
+        """Per cell, how far clear of the nearest of ``protein``'s surfaces it is.
+
+        The distance to a particle's centre less that particle's radius: zero on
+        its surface, negative inside it.  The radius is what makes this a surface
+        rather than a set of points, and the two resolutions differ by more than
+        the question tolerates -- a heavy atom reaches 1.7 A and a Martini bead
+        2.15 to 2.35 -- so a cell 2 A from a centre is outside an atom and inside
+        a bead.  Without ``radii``, every particle is a heavy atom.
+
+        Only cells within ``reach`` of some surface are measured; the rest come
+        back as that bound, which is as much as a shell needs to know.
+        """
+        from .spatial import min_dist2
+
+        xyz = self.cell_centres()
+        radii = np.full(len(protein), HEAVY_ATOM) if radii is None else np.asarray(radii, float)
+        # one search per distinct radius, each taking its group's largest: the
+        # plain nearest-point search again rather than a weighted one
+        bucket = np.ceil(np.asarray(radii) / 0.05) * 0.05
+        out = np.full(len(xyz), np.inf)
+        for r in np.unique(bucket):
+            d = min_dist2(xyz, protein[bucket == r], reach + r + 1.0, cell=None)
+            out = np.minimum(out, np.sqrt(d.astype(float)) - r)
+        return out
+
+    def pockets(self, threshold: float, volume: float, protein, shell=SHELL,
+                buried: float = 0.4, min_volume: float = 20.0, radii=None):  # fmt: skip
         """The pockets: enriched, continuous, against ``protein`` and enclosed by it.
 
         Returns ``(cells, labels, centres, volumes, burials)`` -- the cells of
         every region, which region each belongs to, and a row per region.  An
         enriched blob in bulk is not a pocket, which is why the shell and the
         enclosure come before the clustering rather than after it.
+
+        ``shell`` is the band a pocket lies in: ``shell[0]`` clear of the protein
+        and within ``shell[1]`` of a particle's center.  Without ``radii`` the
+        near edge is measured from the centers, which is what it has always been;
+        with them (:func:`particle_radii`, the force field's own sizes) it is
+        measured from each particle's van der Waals surface, and so is the wall
+        that closes a pocket's holes.  The difference is the whole of
+        ``shell="surface"``: measured from the centers a band starting 2 A out
+        starts 0.2 A inside a Martini bead, so a pocket takes in room no probe
+        can reach.  An all-atom protein measures much the same either way.
 
         A region is held together by shared faces, so it is one solid: cells
         that meet only at a corner are no way through for a molecule, and a
@@ -363,13 +422,20 @@ class Occupancy:
         expected = self.total * self.spacing**3 / max(volume, 1e-9)
         enriched = self.counts >= max(threshold * expected, LEAST_COUNT)
         near = np.sqrt(min_dist2(self.cell_centres(), protein, shell[1] + 1.0, cell=None))
-        candidates = np.flatnonzero(enriched & (near >= shell[0]) & (near <= shell[1]))
+        # from the surfaces when the force field's sizes are given, from the
+        # centers when they are not: the far edge only asks whether a cell is
+        # near the protein, which needs no sizes either way
+        clear = near if radii is None else self.clearance(protein, radii, shell[1])
+        candidates = np.flatnonzero(enriched & (clear >= shell[0]) & (near <= shell[1]))
         if not len(candidates):
             return _no_pockets()
         held = candidates[self.burial(candidates, protein) >= buried]
         if not len(held):
             return _no_pockets()
-        held = _fill_enclosed(held, self.dims, near >= shell[0])
+        # the wall a hole is sealed by is the protein itself: its surfaces when
+        # their sizes are known, and otherwise the near edge of the band, which
+        # is the only thing there is to seal against
+        held = _fill_enclosed(held, self.dims, clear >= (0.0 if radii is not None else shell[0]))
         # by faces: a pocket is a volume you can move through, and a region
         # held together at the corners is drawn as a scatter of pieces
         group, ngroups = _join_neighbours(held, self.dims, faces=True)
@@ -711,7 +777,8 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
           enrichment: float = 20.0,
           periodic: bool = True, pocket_protein: str | None = None,
           rank: str = "pocket", radius: str | None = "sigma",
-          buried: float = BURIED, min_volume: float = MIN_VOLUME) -> SiteSet:  # fmt: skip
+          buried: float = BURIED, min_volume: float = MIN_VOLUME,
+          shell: str = "center") -> SiteSet:  # fmt: skip
     """Where the ligand is found across ``runs``, most occupied first.
 
     ``runs`` is one trajectory (or array of frames) or a list of them; each is
@@ -745,6 +812,23 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     A dipeptide has twice the beads of a single residue, so the choice matters
     more for the one than the other.
 
+    ``shell`` is what a pocket's near edge is measured from.  ``"center"``, the
+    default, keeps it 2 A from the nearest particle's center; ``"surface"`` keeps
+    it clear of that particle's van der Waals surface instead, by the force
+    field's own sizes, which is the only way to keep a pocket out of a bead:
+    2 A from a center is 0.2 A inside a Martini bead.  It is off by default
+    because the two measures of a hit disagree about it: over 181 coarse-grained
+    runs it costs ligand coverage (top-1 51 to 48, oracle 77 to 73) and gains DCA
+    (top-1 50 to 54).  It does not move a pocket's center but shaves the
+    wall-facing cells a ligand's atoms lie against, which is what coverage counts
+    and DCA does not.  It takes the pocket volume inside the protein, 4.0% of it
+    over those runs, to none.
+    It also needs the sizes to exist, and they are in the force field: a system
+    loaded without its nonbonded tables falls back on its elements, which is a
+    heavy atom's 1.7 A where a Martini bead reaches 2.35.  The command line
+    reads them for you; :func:`boonza.load` without ``without_tables=True``
+    does the same for a system of your own.
+
     With ``pocket_protein`` a site has to have a pocket to be reported at all: a
     place the ligand gathered but that the protein does not enclose is bulk
     gathering by chance, and there are many of those.  Without one, nothing can
@@ -757,6 +841,8 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     in.
 
     """
+    if shell not in ("center", "surface"):
+        raise ValueError(f"shell {shell!r}: 'center' (2 A from a center) or 'surface'")
     if runs is None or not isinstance(runs, (list, tuple)):
         runs = [runs]
     pairs = _pairs(system, runs)
@@ -814,6 +900,15 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
             np.asarray(reference.positions)[pocket_atoms],
             buried=buried,
             min_volume=min_volume,
+            # how wide the protein is, whatever the probes were binned as: a
+            # probe binned as a point does not make the beads it meets any
+            # smaller, so the protein is measured by a rule of its own
+            shell=SHELL_SURFACE if shell == "surface" else SHELL,
+            radii=(
+                particle_radii(reference, pocket_atoms, radius if radius == "rmin" else "sigma")
+                if shell == "surface"
+                else None
+            ),
         )
         claimed: dict[int, list[int]] = {}
         for i, site in enumerate(found):

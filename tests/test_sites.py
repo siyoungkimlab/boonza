@@ -692,3 +692,78 @@ def test_a_site_hands_back_the_cells_of_its_pocket():
     site.grid_dims, site.grid_origin, site.grid_spacing = dims, np.zeros(3), 2.0
     assert np.allclose(site.pocket_points(), [[3.0, 3.0, 3.0]])  # (1 + 0.5) * 2
     assert np.allclose(site.pocket_center(), [3.0, 3.0, 3.0])
+
+
+def test_which_edge_a_pocket_is_measured_from_is_asked_for(swimming):
+    """``shell`` is off by default, because it is not free.
+
+    Measuring from the surfaces keeps a pocket out of the beads, which measuring
+    from the centers does not -- but over 181 coarse-grained runs the two measures
+    of a hit disagreed about it, ligand coverage falling (top-1 51 to 48) where
+    DCA rose (50 to 54), so the default stays where it was and the correctness is
+    asked for.
+    """
+    import inspect
+
+    from boonza.sites import SHELL, SHELL_SURFACE, particle_radii, sites
+
+    assert inspect.signature(sites).parameters["shell"].default == "center"
+    assert SHELL[0] > SHELL_SURFACE[0]  # a center is further out than a surface
+    s, runs = swimming
+    with pytest.raises(ValueError, match="center"):
+        sites(s, runs, pocket_protein="protein", shell="from the surface, please")
+    plain = sites(s, runs, pocket_protein="protein")
+    asked = sites(s, runs, pocket_protein="protein", shell="surface")
+    # the same sites either way: what the shell changes is the pocket cut around
+    # them, and in particular whether any of it is inside the protein
+    assert {tuple(x.center.round(3)) for x in asked} == \
+        {tuple(x.center.round(3)) for x in plain}  # fmt: skip
+
+    ids = np.asarray(s.select("protein"), int)
+    xyz, radii = np.asarray(s.positions)[ids], particle_radii(s, ids, "sigma")
+    cells = {}
+    for name, found in (("center", plain), ("surface", asked)):
+        pts = np.concatenate([x.pocket_points() for x in found if len(x.pocket_points())])
+        gap = (np.linalg.norm(pts[:, None] - xyz[None], axis=2) - radii[None]).min(axis=1)
+        assert (gap >= 0.0).all()  # no cell inside a particle either way, here
+        cells[name] = len(pts)
+    # it does something, and which way is the protein's own business: this one is
+    # all-atom, where a surface lies 1.1 to 1.7 A out and a band from the centers
+    # at 2 A is the cautious one.  A Martini bead reaches 2.35 and it is the other
+    # way around, which is the whole point -- see the test below.
+    assert cells["surface"] != cells["center"]
+
+
+def test_a_pocket_keeps_out_of_the_beads_it_is_measured_against():
+    """A pocket is room a probe could occupy, so none of it lies inside the protein.
+
+    The near edge of the band a pocket lies in has to know how wide a particle
+    is.  Measured from the centers, as it was, 2 A clears a heavy atom's 1.7 but
+    lies 0.2 inside a Martini bead's 2.35 -- and the filling that closes a
+    pocket's holes was bounded by the same figure, so it walked inside the beads
+    and the pocket came out drawn over the protein.  That is visible even with
+    the probes binned as points, where nothing else can put a cell there.
+    """
+    from boonza.sites import SHELL_SURFACE as SHELL
+    from boonza.sites import Occupancy
+
+    # two rows of beads with a groove between them, and a probe that sat in it
+    rows = np.array([[x, y, 0.0] for x in np.arange(-12.0, 12.1, 4.7) for y in (-4.0, 4.0)])
+    radii = np.full(len(rows), 2.35)
+    groove = np.array([[x, 0.0, 0.0] for x in np.arange(-8.0, 8.1, 1.0)])
+    grid = Occupancy(rows, spacing=1.0, margin=10.0)
+    for _ in range(40):  # enriched, and often enough to beat the floor of 2
+        grid.add(groove)
+    cells, _, _, _, _ = grid.pockets(2.0, 1e5, rows, shell=SHELL, radii=radii,
+                                     buried=0.0, min_volume=4.0)  # fmt: skip
+    assert len(cells)
+    clear = grid.clearance(rows, radii, SHELL[1])
+    assert clear[cells].min() >= SHELL[0]  # nothing inside a bead, nor hugging one
+    # and what a band from the centers would have allowed: cells inside the beads
+    from boonza.spatial import min_dist2
+
+    centers = np.sqrt(min_dist2(grid.cell_centres(), rows, SHELL[1] + 1.0, cell=None))
+    assert (clear[centers >= 2.0] < 0.0).any()  # 2 A from a center is inside a 2.35 A bead
+    # measured from a particle's surface, which is what clearance is
+    assert clear[np.argmin(np.linalg.norm(grid.cell_centres() - rows[0], axis=1))] \
+        == pytest.approx(-2.35, abs=grid.spacing)  # fmt: skip
