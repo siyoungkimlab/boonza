@@ -220,6 +220,30 @@ find nothing where `boonza probes` still shows a clear preference.
 `boonza probes` is not tied to a swim: `--probes RESNAME ...` names them, so it
 reads any coarse-grained run, SIRAH's included, or molecules of your own.
 
+## Checking a run against a structure that has something bound
+
+```bash
+boonza sites --workdir run/md --holo 4qoc.mae       # score each pocket against its ligand
+```
+
+`--holo` takes a crystal structure of the same protein with a ligand in it. Its
+backbone is superposed on the run's by sequence — residue names the models
+invent are understood, so SIRAH's `sC` and Martini 2's `HSD` pair with a
+`CYS` and a `HIS` — the ligand is carried along by the same transform, and every
+site is then scored against it:
+
+| column | what it is |
+|---|---|
+| `DCA` | the pocket's centre to the nearest ligand atom, in Å; pocket benchmarks count a hit within 4 |
+| `DCC` | the pocket's centre to the ligand's centroid |
+| `covers` | the share of the ligand's heavy atoms inside the pocket — whether it holds the binding mode rather than merely abutting it |
+
+The ligand is found by itself (the largest residue that is neither protein nor
+nucleic nor solvent nor a buffer salt); `--holo-ligand` names it instead. The
+three are `boonza.dca`, `boonza.dcc` and `boonza.coverage` in Python, over a
+`Site` or any set of points, and `boonza.known_ligand` does the superposing.
+
+
 `sites --features` works on beads too. RDKit types a ligand's atoms, and a
 bead has no element or valence to read, so a Martini probe is typed by what
 its beads stand for instead:

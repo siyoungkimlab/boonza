@@ -652,3 +652,43 @@ def test_what_counts_as_a_pocket_can_be_asked_for(swimming, tmp_path):
     assert sum(1 for x in loose if x.volume) >= sum(1 for x in tight if x.volume)
     assert all(x.volume >= 400.0 for x in tight if x.volume)
     assert all(x.burial >= 0.9 for x in tight if x.volume)
+
+
+def test_how_a_pocket_is_scored_against_a_known_ligand():
+    """DCA, DCC and coverage, which is how a pocket is judged against a crystal.
+
+    DCA and DCC are the benchmarks' two measures -- the pocket's centre to the
+    nearest ligand atom, and to its centroid -- and both pass a pocket that only
+    touches one end of the ligand.  Coverage is the one that asks whether the
+    pocket holds the thing: the share of its atoms inside the pocket.
+    """
+    from boonza.sites import coverage, dca, dcc
+
+    # a slab of pocket cells, and a ligand lying along it with one atom off the end
+    cells = np.array([[x, y, 0.0] for x in range(-4, 5) for y in (-1.0, 0.0, 1.0)])
+    ligand = np.array([[x, 0.0, 0.0] for x in range(-3, 4)] + [[20.0, 0.0, 0.0]])
+    assert dca(cells, ligand) == pytest.approx(0.0, abs=1e-9)  # a cell sits on an atom
+    assert dcc(cells, ligand) == pytest.approx(np.linalg.norm(ligand.mean(0)))
+    assert coverage(cells, ligand) == pytest.approx(7 / 8)  # all but the far one
+    assert coverage(cells, ligand, within=0.1) == pytest.approx(7 / 8)
+    # a pocket beside the ligand rather than around it passes DCA and little else
+    beside = np.array([[-4.0, 2.0, 0.0], [-4.0, 2.0, 1.0]])
+    assert dca(beside, ligand) < 3.0
+    assert coverage(beside, ligand) == 0.0
+    assert coverage(np.empty((0, 3)), ligand) == 0.0
+    assert np.isnan(dca(cells, np.empty((0, 3))))
+
+
+def test_a_site_hands_back_the_cells_of_its_pocket():
+    """The pocket's cells as coordinates, which is what scoring one needs."""
+    from boonza.sites import Site
+
+    site = Site(center=np.zeros(3), points=np.empty(0, np.int64), occupancy=0.0,
+                copy_frames=0.0, runs=1, copies=1, arrivals=0, spread=0.0)  # fmt: skip
+    assert not len(site.pocket_points())  # no pocket, no cells
+    assert np.allclose(site.pocket_center(), site.center)  # falls back on the site's own
+    dims = np.array([4, 4, 4])
+    site.cells = np.array([int(np.ravel_multi_index((1, 1, 1), tuple(dims)))])
+    site.grid_dims, site.grid_origin, site.grid_spacing = dims, np.zeros(3), 2.0
+    assert np.allclose(site.pocket_points(), [[3.0, 3.0, 3.0]])  # (1 + 0.5) * 2
+    assert np.allclose(site.pocket_center(), [3.0, 3.0, 3.0])

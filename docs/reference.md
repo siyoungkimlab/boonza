@@ -515,7 +515,7 @@ that carries names needs nothing else to make a legible picture.
 
 ## Martini
 
-### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001') -> 'Martinized'`
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0) -> 'Martinized'`
 
 Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
@@ -525,6 +525,20 @@ structure where Martini 3 does not, names its residues as CHARMM does
 (``HSD`` and not ``HIS``, which boonza renames to), and cuts a tryptophan's
 rings and reads a phenylalanine's along other lines, so it maps a residue
 onto beads by its own rules.
+
+``cofactors`` maps what the force field has no residue for -- a structural
+zinc, an ADP, a heme -- as inert beads rather than refusing it: one uncharged
+apolar bead per heavy atom, every pair inside it excluded, its shape held by
+bands and the whole thing banded to whatever protein beads lie within
+:data:`COORDINATION` of it (``cofactor_fc`` kJ/mol/nm², as the elastic
+network's).  It is there to hold the room up, so that probes cannot enter
+space the cofactor occupies, and to say nothing else: no charge and no
+chemistry are invented, and nothing can distort the fold, which the bands and
+the elastic network hold.  That is honest only while the cofactor is buried,
+where nothing can reach it to read its chemistry wrongly, so one that is not
+is warned about rather than quietly approximated.  A cofactor with parameters
+of its own deserves them instead: include its ``.itp`` and leave it out of
+``atoms``.
 
 ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
 default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
@@ -657,7 +671,7 @@ Contacts as a fraction of frames, residues down and probes across.
 
 ## SIRAH
 
-### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, strict: 'bool' = False, log=None) -> 'Sirahized'`
+### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, strict: 'bool' = False, log=None, cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_reach: 'float' = 12.0) -> 'Sirahized'`
 
 Map ``system`` onto SIRAH beads and build the topology of each chain.
 
@@ -688,7 +702,7 @@ every 34 waters is about 0.15 M.
 water meets itself as it was equilibrated and only the solute displaces
 any; cutting mid-tile costs a slab of water at every face.
 
-### `boonza.sirah.map_structure(system, atoms: 'str' = 'protein', log=None, strict: 'bool' = False) -> 'list[Bead]'`
+### `boonza.sirah.map_structure(system, atoms: 'str' = 'protein', log=None, strict: 'bool' = False, cofactors: 'bool' = False) -> 'list[Bead]'`
 
 The beads of ``atoms``, each on the atom SIRAH's map names for it.
 
@@ -994,6 +1008,37 @@ their atoms are within ``cutoff`` Å; ``level="atom"`` uses atom pairs.
 ``sel2`` the pairs are within ``sel1``, excluding a residue (atom) with
 itself.  With ``periodic``, distances use each frame's box.
 
+### `boonza.coverage(pocket, ligand, within: 'float' = 1.5) -> 'float'`
+
+The share of ``ligand``'s atoms lying inside ``pocket``, 0 to 1.
+
+An atom is inside where a cell of the pocket is ``within`` angstroms of it.
+This is the measure that says whether the pocket holds the binding mode
+rather than merely sitting beside it: a pocket can pass :func:`dca` on one
+corner and cover almost none of the ligand.
+
+Give it the ligand's heavy atoms; hydrogens the model never had would count
+against a coarse-grained pocket for being absent from it.
+
+### `boonza.dca(pocket, ligand) -> 'float'`
+
+Distance from ``pocket``'s centre to the closest atom of ``ligand``, in A.
+
+The DCA of the pocket-prediction benchmarks, which count a prediction right
+within :data:`DCA_HIT`.  ``pocket`` is a :class:`Site` or the points of one,
+``ligand`` the atoms of the known ligand in the same frame of reference --
+which for a holo structure means superposed on the run's own, since every
+site is measured in the reference's frame.
+
+It is the lenient of the two measures: a small pocket beside the ligand
+passes it while enclosing little of it, which is what :func:`coverage` asks.
+
+### `boonza.dcc(pocket, ligand) -> 'float'`
+
+Distance from ``pocket``'s centre to ``ligand``'s centroid, in A -- the DCC
+the same benchmarks report beside :func:`dca`, and the harsher of the two on a
+pocket that runs past one end of the ligand.
+
 ### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
 
 Distance RMSD (Å) between pocket atoms and ligand atoms, against a reference.
@@ -1143,6 +1188,22 @@ dwells that are resampled instead.
 Rates rest on completed events.  A dwell the trajectory cut short counts
 its time and not its ending, so a run stopped early -- by the wall clock
 or by ``--early-stop`` -- biases nothing.
+
+### `boonza.known_ligand(holo, reference, ligand: 'str | None' = None, align: 'str | None' = None) -> 'tuple[np.ndarray, dict]'`
+
+A holo structure's ligand, moved into ``reference``'s frame.
+
+``(heavy atoms (n, 3), what was used)``.  Every site and pocket is measured in
+the reference's frame, so a crystal structure of the same protein with
+something bound only means anything there: its backbone is superposed on the
+reference's by sequence, and the ligand carried along by the same transform.
+
+``align`` is the backbone to fit; by default alpha carbons against whatever
+the reference calls its backbone (``CA``, Martini's ``BB``, SIRAH's ``GC``).
+``ligand`` selects what was bound; by default the largest residue that is
+neither protein nor nucleic nor one of :data:`NOT_A_LIGAND`.  A structure with
+several copies of the protein is fitted by each in turn and the closest kept,
+since a crystal's chains are the same protein in different places.
 
 ### `boonza.ligand_centroids(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', periodic: 'bool' = True, occupancy: 'Occupancy | None' = None, radius: 'str | None' = 'sigma', drift: 'list | None' = None) -> 'tuple[np.ndarray, np.ndarray, np.ndarray]'`
 
@@ -1430,7 +1491,7 @@ when the reference was taken.  Hand the result to :func:`boonza.poses` as
 burial and the polar share of the features in it.  Pass ``DSCORE`` for the
 druggability weighting instead.
 
-### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0) -> 'SiteSet'`
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma') -> 'SiteSet'`
 
 Where the ligand is found across ``runs``, most occupied first.
 
@@ -1452,29 +1513,20 @@ the reference's once superposed.  Every site and every pocket is measured in
 the reference's frame, so a protein that changes shape measures its pockets
 against a shape the run no longer has.
 
-``radius`` is what the occupancy map a pocket is cut from is made of:
+``radius`` is how much room each ligand particle is taken to occupy on the
+occupancy grid: ``"sigma"`` (half the sigma of its own nonbonded term),
+``"rmin"`` (half of 2**(1/6) sigma, where that potential is deepest), or
+``None`` to count only the cell its centre fell in.  A bead is several atoms
+across, so counting centres asks the map a question finer than the model
+answers, and the noise comes back as a pocket in pieces.
 
-* ``"point"`` -- the molecule as one point, its own centre;
-* ``"beads"`` -- every bead as a point, the cell its centre fell in;
-* ``"sigma"`` -- every bead as a sphere of half the sigma of its own
-  nonbonded term, so the map is the room the molecule took up;
-* ``"rmin"`` -- the same with half of 2**(1/6) sigma, where that potential is
-  deepest.
-
-The three say what a molecule is: a position, a set of positions, or a volume.
-A dipeptide has twice the beads of a single residue, so the choice matters
-more for the one than the other.
-
-With ``pocket_protein`` a site has to have a pocket to be reported at all: a
-place the ligand gathered but that the protein does not enclose is bulk
-gathering by chance, and there are many of those.  Without one, nothing can
-be measured against, and every site is returned.
-
-``buried`` is how enclosed a pocket has to be, 0 being open water and 1 shut
-in, and ``min_volume`` the smallest one worth reporting in cubic angstroms.
-Between them they decide what is a pocket rather than a dent, and so how long
-a list of them a run comes back with -- which is what a hit has to be found
-in.
+``min_occupancy`` is the share of the *frames* in which a site has to hold
+something, whoever it is -- not the share of the pooled copy-frames, which
+shrinks as copies are added and would leave a molecule parked for a whole
+run below any threshold in a box of 200 probes (one copy of 210 is 0.5% of
+the pool whatever it does).  A site occupied by one copy throughout is
+1.0 either way of counting it; one occupied by four copies a quarter of the
+time each is 1.0 here and 0.1 there.
 
 ### `boonza.solvate(solute: 'System', solvent=None, box=None, thickness: 'float' = 5.0, min_solute_dist: 'float' = 2.4, min_solvent_dist: 'float' = 1.0, solvent_selection: 'str' = 'oxygen', center_selection: 'str' = 'all', remove_buried: 'bool' = False) -> 'System'`
 

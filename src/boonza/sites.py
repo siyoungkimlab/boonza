@@ -51,6 +51,23 @@ class Site:
     def __len__(self) -> int:
         return len(self.points)
 
+    def pocket_points(self) -> np.ndarray:
+        """The centres of the pocket's cells, in the reference's frame.
+
+        Empty where the site has no pocket, which is what makes the shape of one
+        something to measure against a known ligand.
+        """
+        if self.cells is None or not len(self.cells) or self.grid_origin is None:
+            return np.empty((0, 3))
+        ijk = np.array(np.unravel_index(np.asarray(self.cells), tuple(self.grid_dims))).T
+        return self.grid_origin + (ijk + 0.5) * self.grid_spacing
+
+    def pocket_center(self) -> np.ndarray:
+        """The pocket's own centre, which is what a benchmark measures from; the
+        site's centre -- where the ligand's centroids cluster -- when it has none."""
+        pts = self.pocket_points()
+        return pts.mean(0) if len(pts) else np.asarray(self.center, float)
+
 
 @dataclass
 class Density:
@@ -372,6 +389,145 @@ class Occupancy:
             return _no_pockets()
         return (np.concatenate(keep), np.concatenate(labels), np.array(centres),
                 np.array(volumes), np.array(burials))  # fmt: skip
+
+
+#: How close a pocket's centre has to be to an atom of the known ligand to count
+#: as that ligand's pocket, in angstroms: the DCA of the pocket-prediction
+#: benchmarks (distance from the centre to the closest ligand atom).
+DCA_HIT = 4.0
+#: How close a ligand atom has to be to one of the pocket's cells to count as
+#: inside it, in angstroms -- half a cell more than the grid's own spacing.
+INSIDE = 1.5
+
+
+def _pocket_points(pocket) -> np.ndarray:
+    """``pocket`` as coordinates: a :class:`Site`, or points already."""
+    if isinstance(pocket, Site):
+        return pocket.pocket_points()
+    return np.asarray(pocket, float).reshape(-1, 3)
+
+
+def _pocket_center(pocket) -> np.ndarray:
+    if isinstance(pocket, Site):
+        return pocket.pocket_center()
+    pts = _pocket_points(pocket)
+    return pts.mean(0) if len(pts) else np.full(3, np.nan)
+
+
+def dca(pocket, ligand) -> float:
+    """Distance from ``pocket``'s centre to the closest atom of ``ligand``, in A.
+
+    The DCA of the pocket-prediction benchmarks, which count a prediction right
+    within :data:`DCA_HIT`.  ``pocket`` is a :class:`Site` or the points of one,
+    ``ligand`` the atoms of the known ligand in the same frame of reference --
+    which for a holo structure means superposed on the run's own, since every
+    site is measured in the reference's frame.
+
+    It is the lenient of the two measures: a small pocket beside the ligand
+    passes it while enclosing little of it, which is what :func:`coverage` asks.
+    """
+    lig = np.asarray(ligand, float).reshape(-1, 3)
+    centre = _pocket_center(pocket)
+    if not len(lig) or not np.isfinite(centre).all():
+        return float("nan")
+    return float(np.sqrt(((lig - centre) ** 2).sum(1).min()))
+
+
+def dcc(pocket, ligand) -> float:
+    """Distance from ``pocket``'s centre to ``ligand``'s centroid, in A -- the DCC
+    the same benchmarks report beside :func:`dca`, and the harsher of the two on a
+    pocket that runs past one end of the ligand."""
+    lig = np.asarray(ligand, float).reshape(-1, 3)
+    centre = _pocket_center(pocket)
+    if not len(lig) or not np.isfinite(centre).all():
+        return float("nan")
+    return float(np.linalg.norm(lig.mean(0) - centre))
+
+
+def coverage(pocket, ligand, within: float = INSIDE) -> float:
+    """The share of ``ligand``'s atoms lying inside ``pocket``, 0 to 1.
+
+    An atom is inside where a cell of the pocket is ``within`` angstroms of it.
+    This is the measure that says whether the pocket holds the binding mode
+    rather than merely sitting beside it: a pocket can pass :func:`dca` on one
+    corner and cover almost none of the ligand.
+
+    Give it the ligand's heavy atoms; hydrogens the model never had would count
+    against a coarse-grained pocket for being absent from it.
+    """
+    from .spatial import min_dist2
+
+    lig = np.asarray(ligand, float).reshape(-1, 3)
+    pts = _pocket_points(pocket)
+    if not len(lig) or not len(pts):
+        return 0.0
+    return float((min_dist2(lig, pts, within + 1.0, cell=None) <= within**2).mean())
+
+
+#: Residues a holo structure carries that are not what was bound: the solvent and
+#: the salts and buffer a crystal is grown in.
+NOT_A_LIGAND = ("HOH", "WAT", "DOD", "SOL", "TIP3", "SO4", "PO4", "GOL", "EDO", "PEG",
+                "MPD", "DMS", "ACT", "ACY", "FMT", "CIT", "TRS", "MES", "EPE", "IMD",
+                "CL", "NA", "K", "MG", "CA", "ZN", "MN", "FE", "NI", "CD", "CU", "BR",
+                "IOD", "NH4", "NO3", "SCN", "AZI", "FLC", "TLA", "MLI")  # fmt: skip
+
+
+def known_ligand(holo, reference, ligand: str | None = None, align: str | None = None,
+                 ) -> tuple[np.ndarray, dict]:  # fmt: skip
+    """A holo structure's ligand, moved into ``reference``'s frame.
+
+    ``(heavy atoms (n, 3), what was used)``.  Every site and pocket is measured in
+    the reference's frame, so a crystal structure of the same protein with
+    something bound only means anything there: its backbone is superposed on the
+    reference's by sequence, and the ligand carried along by the same transform.
+
+    ``align`` is the backbone to fit; by default alpha carbons against whatever
+    the reference calls its backbone (``CA``, Martini's ``BB``, SIRAH's ``GC``).
+    ``ligand`` selects what was bound; by default the largest residue that is
+    neither protein nor nucleic nor one of :data:`NOT_A_LIGAND`.  A structure with
+    several copies of the protein is fitted by each in turn and the closest kept,
+    since a crystal's chains are the same protein in different places.
+    """
+    from .align import superpose
+
+    names = set(np.asarray(reference.atoms["name"]).tolist())
+    back = next((n for n in ("CA", "BB", "GC") if n in names), None)
+    if back is None:
+        raise ValueError("the reference has no CA, BB or GC atoms to fit a holo structure on")
+    if ligand is None:
+        rid = np.asarray(holo.atoms["residue"])
+        res = np.asarray(holo.residues["name"])
+        taken = np.zeros(holo.natoms, bool)
+        for sel in ("protein", "nucleic"):
+            taken[_ids(holo, sel)] = True
+        sizes: dict[str, int] = {}
+        for r in np.unique(rid[~taken]).tolist():
+            name = str(res[r]).strip()
+            if name.upper() in NOT_A_LIGAND:
+                continue
+            sizes[name] = max(sizes.get(name, 0), int((rid == r).sum()))
+        if not sizes:
+            raise ValueError("no ligand in the holo structure; name one with ligand=")
+        ligand = f"resname {max(sizes, key=lambda k: sizes[k])}"
+    best = None
+    for chain in dict.fromkeys(np.asarray(holo.chains["name"]).tolist()):
+        sub = holo.select(f"chain {chain}").clone()
+        lig = sub.select(f"({ligand}) and not element H").ids
+        if not len(lig) or len(sub.select("protein and name CA").ids) < 20:
+            continue
+        try:
+            fit = superpose(sub, reference, sel=align or "protein and name CA",
+                            ref_sel=align or f"name {back}", match="sequence")  # fmt: skip
+        except ValueError:
+            continue
+        if best is None or fit.rmsd < best[1]["fit_rmsd"]:
+            best = (np.asarray(sub.positions)[lig],
+                    {"fit_rmsd": float(fit.rmsd), "chain": str(chain), "ligand": ligand,
+                     "atoms": int(len(lig)), "paired": int(fit.n_used)})  # fmt: skip
+    if best is None:
+        raise ValueError(f"no chain of the holo structure has both {ligand} and 20 alpha "
+                         "carbons to fit with")  # fmt: skip
+    return best
 
 
 def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,

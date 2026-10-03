@@ -92,9 +92,26 @@ def _needleman_wunsch(a, b, match, mismatch, gap):
     return pi[:k][::-1].copy(), pj[:k][::-1].copy()
 
 
+def one_letter(name: str) -> str:
+    """The one-letter code of a residue name, ``"X"`` for anything unknown.
+
+    Three-letter names and the protonated and bridged spellings come from
+    :data:`THREE2ONE`.  A coarse-grained model names its residues its own way and
+    those have to pair too: SIRAH writes a one-letter code after an ``s`` (``sA``
+    for an alanine, ``sX`` for a cystine), and a probe of a single residue carries
+    the letter alone.
+    """
+    nm = str(name).strip()
+    if len(nm) == 2 and nm[0] == "s" and nm[1].isalpha():
+        return "C" if nm[1].upper() == "X" else nm[1].upper()
+    if len(nm) == 1 and nm.isalpha():
+        return nm.upper()
+    return THREE2ONE.get(nm.upper(), "X")
+
+
 def _codes(system, ids) -> np.ndarray:
     names = system.residues["name"][system.atoms["residue"][ids]].tolist()
-    return np.array([ord(THREE2ONE.get(nm.upper(), "X")) for nm in names], np.int64)
+    return np.array([ord(one_letter(nm)) for nm in names], np.int64)
 
 
 @dataclass
