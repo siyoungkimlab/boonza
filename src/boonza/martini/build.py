@@ -22,6 +22,7 @@ import numpy as np
 # what counts as holding a cofactor, and as burying one, are the same questions
 # for either model, so they are asked in one place
 from ..cofactors import (
+    ATOM_MASS,
     COFACTOR_FC,
     COFACTOR_NEIGHBOURS,
     COFACTOR_REACH,
@@ -394,6 +395,41 @@ CL 1
 #: Martini 2 builds one from.  Uncharged and unremarkable on purpose -- see
 #: :func:`martinize`'s ``cofactors``.
 COFACTOR_BEAD = {"martini3001": "TC3", "martini22": "C1"}
+
+
+@cache
+def ion_beads(version: int) -> dict:
+    """``{residue: (bead, charge, mass)}`` for the ions that version of Martini has.
+
+    A cofactor of one atom that Martini has an ion for deserves that ion rather
+    than a stand-in: a calcium is ``SD`` and +2 under Martini 3 and ``Qd`` and +2
+    under Martini 2, and those bead types are in the parameter file the topology
+    already includes, so borrowing the type and the charge needs nothing else.
+    Martini has no zinc and no magnesium; those fall back to the inert bead.
+    """
+    from . import parameters
+
+    # Martini 3 keeps its ions in a file of their own, where Martini 2's come
+    # with the parameters; IONS_FOR names only the one the topology must include
+    files = {3: ("martini_v3.0.0_ions_v1.itp",), 2: ("martini_v2.0_ions.itp",)}
+    out: dict = {}
+    for name in files.get(version, ()):
+        where, section = None, None
+        for line in parameters(name)[0].read_text().splitlines():
+            s = line.split(";")[0].strip()
+            if not s:
+                continue
+            if s.startswith("["):
+                section = s.strip("[] ").strip()
+                continue
+            cols = s.split()
+            if section == "moleculetype":
+                where = cols[0].upper()
+            elif section == "atoms" and where and len(cols) >= 7:
+                mass = float(cols[7]) if len(cols) > 7 else None
+                out.setdefault(where, (cols[1], float(cols[6]), mass))
+                where = None  # one atom is an ion; more than one is not
+    return out
 
 
 @dataclass
@@ -807,14 +843,21 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
             # not a residue of the force field, and asked for as a cofactor: one
             # bead per heavy atom, holding the room up and saying nothing
             heavy = [i for i, e in enumerate(res.elements) if e != "H"]
+            # one atom that Martini has an ion for gets that ion, charge and all;
+            # anything else gets the inert bead, which claims nothing
+            ion = ion_beads(2 if ff.name == "martini22" else 3).get(res.resname.upper())
+            ion = ion if len(heavy) == 1 else None
             index = {}
             for i in heavy:
-                node = dict(atype=cofactors, resname=res.resname[:5],
-                            atomname=res.names[i][:5], charge=0.0,
-                            mass=float(_MASS.get(res.elements[i], 30)), resid=serial,
+                node = dict(atype=ion[0] if ion else cofactors, resname=res.resname[:5],
+                            atomname=res.names[i][:5], charge=ion[1] if ion else 0.0,
+                            mass=float(ion[2]) if ion and ion[2] else
+                            float(ATOM_MASS.get(res.elements[i],
+                                                _MASS.get(res.elements[i], 30))),
+                            resid=serial,
                             chain=res.chain, input_resid=res.resid,
                             insertion=res.insertion, modifications=[],
-                            cofactor=True)  # fmt: skip
+                            cofactor=True, ion=bool(ion))  # fmt: skip
                 index[res.names[i]] = mol.add_node(node, res.xyz[i])
                 beads_of_atom[(r, i)] = [index[res.names[i]]]
             inert.append((r, [index[res.names[i]] for i in heavy]))
@@ -907,10 +950,17 @@ def _hold_cofactors(mol: CGMolecule, residues, inert, fc: float,
         for a, b, d in shape_bands(pos[beads], neighbours):
             mol.add("bonds", Interaction((beads[a], beads[b]), [1, round(d / 10, 4), fc],
                                          {"comment": "cofactor shape"}))  # fmt: skip
+        # one bead cannot deform, so the coordination alone fixes it; a body needs
+        # the tethers, having a shape to hold as well as a place to stay
         spine = np.array([mol.nodes[k].get("atomname") == "BB" for k in protein])
-        bands = {(beads[i], protein[j]): d
-                 for i, j, d in anchor_bands(pos[beads], pos[protein], spine, reach,
-                                             None, tethers)}  # fmt: skip
+        bands = (
+            {}
+            if len(beads) == 1
+            else {
+                (beads[i], protein[j]): d
+                for i, j, d in anchor_bands(pos[beads], pos[protein], spine, reach, None, tethers)
+            }
+        )
         for i in beads:  # and the coordination, which is a bond the structure shows
             for j in sorted(mol.adj[i]):
                 if j in protein:

@@ -120,6 +120,16 @@ passing contact is not — is bonded too, and that bond is made before the
 molecules are split, so a zinc holding two loops together becomes a crosslink
 rather than landing in a moleculetype of its own where nothing could bond it.
 
+**An ion Martini has, it uses.** A cofactor of one atom whose residue name
+matches an ion in the bundled parameters takes that ion instead of the inert
+bead — a calcium is `SD` and +2 under Martini 3, `Qd` and +2 under Martini 2,
+with the ion's own mass — and the coordination is bonded on top: the charge the
+model knows, plus the crosslink it does not. Martini has no zinc and no
+magnesium, so those keep the inert bead and the bonds both. Only a single-atom
+residue is eligible, so nothing polyatomic can pick up a charge by a name
+collision, and a single bead gets no tether cage: a point cannot deform, so the
+coordination alone fixes it.
+
 **The bands are dense, and that was measured rather than reasoned.** Three points
 fix a rigid body, so a few bands ought to do — and they do not, because the bands
 are soft. On a heme over 5 ps, banded to two neighbours each and tethered twice,

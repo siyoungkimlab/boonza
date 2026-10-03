@@ -23,6 +23,11 @@ import numpy as np
 #: it, in angstroms.  A metal coordinates at 1.8 to 2.3 A, where nothing merely
 #: touching comes nearer than 3, so the two are separated without any chemistry.
 COORDINATION = 2.6
+#: The mass a bead takes when it stands for one atom: that atom's own.
+ATOM_MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "F": 18.998, "NA": 22.990,
+             "MG": 24.305, "P": 30.974, "S": 32.06, "CL": 35.45, "K": 39.098, "CA": 40.078,
+             "MN": 54.938, "FE": 55.845, "CO": 58.933, "NI": 58.693, "CU": 63.546,
+             "ZN": 65.38, "SE": 78.97, "BR": 79.904, "CD": 112.41, "I": 126.90}  # fmt: skip
 #: A cofactor counts as buried when this many protein heavy atoms lie within
 #: :data:`BURIAL_RADIUS` angstroms of it.  A coordinated metal has twenty or
 #: more; one sitting in solvent has a handful.

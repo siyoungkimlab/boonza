@@ -1430,7 +1430,7 @@ when the reference was taken.  Hand the result to :func:`boonza.poses` as
 burial and the polar share of the features in it.  Pass ``DSCORE`` for the
 druggability weighting instead.
 
-### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0, pocket_enrichment: 'float | None' = None) -> 'SiteSet'`
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0) -> 'SiteSet'`
 
 Where the ligand is found across ``runs``, most occupied first.
 
@@ -1452,36 +1452,29 @@ the reference's once superposed.  Every site and every pocket is measured in
 the reference's frame, so a protein that changes shape measures its pockets
 against a shape the run no longer has.
 
-``radius`` is how much room each ligand particle is taken to occupy on the
-occupancy grid: ``"sigma"`` (half the sigma of its own nonbonded term),
-``"rmin"`` (half of 2**(1/6) sigma, where that potential is deepest), or
-``None`` to count only the cell its centre fell in.  A bead is several atoms
-across, so counting centres asks the map a question finer than the model
-answers, and the noise comes back as a pocket in pieces.
+``radius`` is what the occupancy map a pocket is cut from is made of:
 
-``enrichment`` is asked of two maps, which are not the same question.  A site
-is a place the ligand's *centroids* gather: one sample per copy per frame, on
-a grid over the centroids themselves.  A pocket is the room the ligand's
-*atoms* reached: several deposits per copy per frame -- some fifty times more
-under ``radius="sigma"``, where every bead paints a sphere -- on a grid over
-the protein.  One figure for both says a cell has to beat bulk by the same
-ratio in either, measured from counts that differ by orders of magnitude.
-``pocket_enrichment`` sets the second on its own; left out, it follows the
-first, as it always has.
+* ``"point"`` -- the molecule as one point, its own centre;
+* ``"beads"`` -- every bead as a point, the cell its centre fell in;
+* ``"sigma"`` -- every bead as a sphere of half the sigma of its own
+  nonbonded term, so the map is the room the molecule took up;
+* ``"rmin"`` -- the same with half of 2**(1/6) sigma, where that potential is
+  deepest.
+
+The three say what a molecule is: a position, a set of positions, or a volume.
+A dipeptide has twice the beads of a single residue, so the choice matters
+more for the one than the other.
+
+With ``pocket_protein`` a site has to have a pocket to be reported at all: a
+place the ligand gathered but that the protein does not enclose is bulk
+gathering by chance, and there are many of those.  Without one, nothing can
+be measured against, and every site is returned.
 
 ``buried`` is how enclosed a pocket has to be, 0 being open water and 1 shut
 in, and ``min_volume`` the smallest one worth reporting in cubic angstroms.
 Between them they decide what is a pocket rather than a dent, and so how long
 a list of them a run comes back with -- which is what a hit has to be found
 in.
-
-``min_occupancy`` is the share of the *frames* in which a site has to hold
-something, whoever it is -- not the share of the pooled copy-frames, which
-shrinks as copies are added and would leave a molecule parked for a whole
-run below any threshold in a box of 200 probes (one copy of 210 is 0.5% of
-the pool whatever it does).  A site occupied by one copy throughout is
-1.0 either way of counting it; one occupied by four copies a quarter of the
-time each is 1.0 here and 0.1 there.
 
 ### `boonza.solvate(solute: 'System', solvent=None, box=None, thickness: 'float' = 5.0, min_solute_dist: 'float' = 2.4, min_solvent_dist: 'float' = 1.0, solvent_selection: 'str' = 'oxygen', center_selection: 'str' = 'all', remove_buried: 'bool' = False) -> 'System'`
 

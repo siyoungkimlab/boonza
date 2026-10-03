@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..cofactors import COFACTOR_FC, COFACTOR_REACH
+from ..cofactors import ATOM_MASS, COFACTOR_FC, COFACTOR_REACH
 from . import read, unpack
 
 #: The bead SIRAH places on the alpha carbon itself, which a viewer traces a
@@ -225,13 +225,6 @@ def _polymer_resnames(system) -> set:
     res = np.asarray(system.residues["name"])
     return {str(res[r]).strip().upper()
             for r in np.unique(np.asarray(system.atoms["residue"])[ids]).tolist()}  # fmt: skip
-
-
-#: The masses an inert cofactor bead takes, its atom's own.
-_ATOM_MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "P": 30.974, "S": 32.06,
-              "SE": 78.97, "FE": 55.845, "ZN": 65.38, "MG": 24.305, "CA": 40.078,
-              "MN": 54.938, "CU": 63.546, "NI": 58.693, "CO": 58.933, "CD": 112.41,
-              "CL": 35.45, "F": 18.998, "BR": 79.904, "I": 126.90}  # fmt: skip
 
 
 #: What an inert cofactor bead is under SIRAH: the bead its leucine gives a side
@@ -587,7 +580,7 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
             if b.cofactor:  # no residue of SIRAH's: the inert bead, and its own mass
                 mol.types.append(COFACTOR_BEAD)
                 mol.charges.append(0.0)
-                mol.masses.append(float(_ATOM_MASS.get(b.element, 30.0)))
+                mol.masses.append(float(ATOM_MASS.get(b.element, 30.0)))
                 continue
             entry = library[b.residue]
             by_name = {name: (kind, charge) for name, kind, charge in entry.atoms}
@@ -644,49 +637,80 @@ def _bond_coordinated_ions(molecules, fc: float, log=None) -> list:
     """Bond an ion the protein holds to the residues holding it.
 
     SIRAH maps a zinc, a calcium and a magnesium to ions of its own -- real
-    parameters, which is better than any stand-in -- but an ion is a moleculetype
-    of one bead with no bonded terms, so a structural zinc comes out as a bead
-    that simply diffuses away.  A zinc finger then has nothing holding its loops
-    together and comes apart, the thing the zinc was there to do being the one
-    thing the model does not say.
+    parameters, which is better than any stand-in -- but an ion carries no bonded
+    term, so a structural zinc is a bead with nothing holding it and a zinc finger
+    has nothing holding its loops together.  The one thing the zinc is there to do
+    is the one thing the model does not say.
 
-    So where the structure shows coordination -- protein within
-    :data:`boonza.cofactors.COORDINATION` of the ion, which only a held one is --
-    the ion joins that molecule and is banded to what holds it.  An ion in
-    solvent has nothing that close and is left alone, as it should be.
+    A bead with no bonds is what that looks like, wherever the grouping put it: a
+    molecule of its own when the file writes the ion apart, or adrift inside the
+    protein's own molecule when the file writes it in the same chain with the next
+    residue number.  Either way, where the structure shows coordination -- protein
+    within :data:`boonza.cofactors.COORDINATION`, which only a held ion is -- it is
+    bonded to what holds it.  An ion in solvent has nothing that close and is left
+    the free ion it is.
     """
     from ..cofactors import COORDINATION
 
-    loose = [m for m in molecules if m.natoms == 1 and not m.bonds]
-    rest = [m for m in molecules if m not in loose]
-    if not loose or not rest:
-        return molecules
-    out = list(rest)
-    for ion in loose:
-        here = np.asarray(ion.beads[0].position, float)
-        host, best = None, np.inf
-        for m in rest:
-            d = np.linalg.norm(np.asarray([b.position for b in m.beads], float) - here, axis=1)
-            if d.min() < best:
-                host, best = m, d.min()
-        if best > COORDINATION:  # nothing holds it: an ion of the solvent
-            out.append(ion)
-            continue
-        i = host.natoms
-        host.beads += ion.beads
-        host.types += ion.types
-        host.charges += ion.charges
-        host.masses += ion.masses
-        d = np.linalg.norm(np.asarray([b.position for b in host.beads[:i]], float) - here, axis=1)
-        held = np.flatnonzero(d <= COORDINATION).tolist()
-        for j in held:
-            host.bonds.append((int(j), i))
-            host.bond_params[(int(j), i)] = [round(float(d[j]) / 10, 4), fc]
-        host.bonds = sorted(set(host.bonds))
-        if log:
-            b = ion.beads[0]
-            log(f"{b.residue} {b.chain}{b.resid}: bonded to the {len(held)} bead(s) that hold "
-                "it, which an ion of SIRAH's own has no terms for")  # fmt: skip
+    def bonded_of(mol):
+        out = set()
+        for i, j in mol.bonds:
+            out.add(i)
+            out.add(j)
+        return out
+
+    out, moved = list(molecules), 0
+    for mol in list(molecules):
+        held = bonded_of(mol)
+        for k in [k for k in range(mol.natoms) if k not in held]:
+            here = np.asarray(mol.beads[k].position, float)
+            host, at, best = None, None, np.inf
+            for other in molecules:
+                keep = sorted(bonded_of(other))
+                if not keep:
+                    continue
+                xyz = np.asarray([other.beads[j].position for j in keep], float)
+                d = np.linalg.norm(xyz - here, axis=1)
+                if d.min() < best:
+                    host, at, best = other, keep, float(d.min())
+            if host is None or best > COORDINATION:
+                continue  # nothing holds it: an ion of the solvent, left alone
+            if host is mol:
+                i = k
+            else:  # written apart from the protein it belongs to: folded in
+                i = host.natoms
+                host.beads.append(mol.beads[k])
+                host.types.append(mol.types[k])
+                host.charges.append(mol.charges[k])
+                host.masses.append(mol.masses[k])
+                mol.beads[k] = None
+                moved += 1
+            xyz = np.asarray([host.beads[j].position for j in at], float)
+            d = np.linalg.norm(xyz - here, axis=1)
+            close = [at[j] for j in np.flatnonzero(d <= COORDINATION).tolist()]
+            for j in close:
+                host.bonds.append((min(i, j), max(i, j)))
+                host.bond_params[(min(i, j), max(i, j))] = [
+                    round(float(np.linalg.norm(np.asarray(host.beads[j].position) - here)) / 10, 4),
+                    fc,
+                ]
+            host.bonds = sorted(set(host.bonds))
+            if log:
+                b = host.beads[i]
+                log(f"{b.residue} {b.chain}{b.resid}: bonded to the {len(close)} bead(s) that "
+                    "hold it, which an ion of SIRAH's own has no terms for")  # fmt: skip
+    if moved:  # drop what was folded elsewhere, and any molecule left empty
+        for mol in list(out):
+            keep = [k for k, b in enumerate(mol.beads) if b is not None]
+            if len(keep) == mol.natoms:
+                continue
+            if not keep:
+                out.remove(mol)
+                continue
+            mol.beads = [mol.beads[k] for k in keep]
+            mol.types = [mol.types[k] for k in keep]
+            mol.charges = [mol.charges[k] for k in keep]
+            mol.masses = [mol.masses[k] for k in keep]
     return out
 
 
