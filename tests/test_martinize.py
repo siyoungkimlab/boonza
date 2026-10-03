@@ -715,3 +715,152 @@ def test_a_mae_carries_martinis_virtual_site_but_not_its_angles(tmp_path):
     for prop in ("c1", "c2", "c3"):
         assert np.allclose(back.table("virtual_lc4").values(prop),
                            s.table("virtual_lc4").values(prop))  # fmt: skip
+
+
+def test_a_cofactor_can_be_held_as_inert_beads():
+    """A heme is no residue of Martini's, and mapping it as one bead per heavy atom
+    holds the room it takes without claiming to know its chemistry.
+
+    The point is the volume: probes must not enter space the cofactor occupies.
+    Nothing else is asserted about it -- no charge, no bead but the plainest
+    apolar one -- and every pair inside it is excluded, since beads 1.5 A apart
+    and 3.4 A wide would otherwise fly apart on the first step.
+    """
+    from boonza.martini.build import COFACTOR_BEAD
+
+    s = boonza.load(DATA / "1HHO.pdb")
+    sel = "(protein or resname HEM) and chain A"
+    with pytest.raises(ValueError, match="cofactors=True"):
+        martinize(s, sel)  # the refusal says what to do about it
+    m = martinize(s, sel, cofactors=True, elastic=True)
+    mol = next(x for x in m.molecules
+               if any(n.get("cofactor") for n in x.nodes))  # fmt: skip
+    beads = [k for k, n in enumerate(mol.nodes) if n.get("cofactor")]
+    heme = s.select("resname HEM and chain A and not element H").ids
+    assert len(beads) == len(heme)  # one bead per heavy atom, iron included
+    assert {mol.nodes[k]["atype"] for k in beads} == {COFACTOR_BEAD["martini3001"]}
+    assert all(float(mol.nodes[k]["charge"]) == 0.0 for k in beads)
+    # each bead carries its own atom's mass, the iron's included: 43 beads of the
+    # default 72 would make a heme three times the weight it is
+    masses = {round(float(mol.nodes[k]["mass"]), 3) for k in beads}
+    assert {12.011, 14.007, 15.999, 55.845} <= masses
+    # every pair inside it, counted apart from the exclusions the protein's own
+    # blocks carry (Martini 3's tryptophan has a virtual site with its own)
+    inside = {frozenset(t.atoms) for t in mol.interactions.get("exclusions", [])
+              if set(t.atoms) <= set(beads)}  # fmt: skip
+    assert len(inside) == len(beads) * (len(beads) - 1) // 2
+    held = [t for t in mol.interactions.get("bonds", [])
+            if t.meta.get("comment") == "cofactor held"]  # fmt: skip
+    assert held  # and bands to whatever protein beads coordinate it
+    assert all(len({*t.atoms} & {*beads}) == 1 for t in held)
+
+
+def test_a_residue_of_the_chain_is_not_a_cofactor():
+    """What the force field has no block for is not therefore a cofactor: a
+    D-amino acid or a modified residue is part of the chain, and mapping it inert
+    would throw away a side chain in the middle of a protein."""
+    s = boonza.load(DATA / "2TRX.pdb").select("protein and chain A").clone()
+    r = next(k for k in range(s.nresidues) if str(s.residues["name"][k]).strip() == "GLU")
+    s.residue(r).name = "DGL"  # a D-glutamate, as a crystal structure writes one
+    assert len(s.select("resname DGL").ids)  # still read as protein: it has a backbone
+    with pytest.raises(ValueError, match="part of a chain rather than cofactors: DGL"):
+        martinize(s, "protein or resname DGL", cofactors=True)
+
+
+def test_a_cofactor_out_in_the_open_is_warned_about():
+    """The inert bead is honest while the cofactor is buried, nothing being able to
+    reach it and read as apolar what is really a charge or a phosphate.  One in
+    solvent can be reached, so it is said rather than assumed."""
+    s = boonza.load(DATA / "1HHO.pdb").select("(protein or resname HEM) and chain A").clone()
+    heme = s.select("resname HEM").ids
+    xyz = np.asarray(s.positions).copy()
+    xyz[heme] += 40.0  # out into the solvent, away from everything
+    s.positions = xyz
+    with pytest.warns(UserWarning, match="not buried"):
+        martinize(s, "protein or resname HEM", cofactors=True)
+
+
+def test_a_cofactor_is_banded_densely_because_sparsely_it_comes_apart():
+    """How many bands a cofactor needs, which measurement settled rather than
+    reasoning: three points fix a rigid body, and these bands are soft.
+
+    Banded to two neighbours each and tethered twice, a heme strays 12 A over
+    5 ps -- and its own shape drifts just as far, which is the tell: a body of n
+    beads wants about 3n-6 independent bands to be rigid, 123 for a heme's 43,
+    where two per bead gives 56 and many are redundant along a ring.  So the
+    bands are dense by default, and the knobs are there to be measured with.
+    """
+    from boonza.cofactors import COFACTOR_NEIGHBOURS, COFACTOR_REACH, COFACTOR_TETHERS
+
+    assert (COFACTOR_NEIGHBOURS, COFACTOR_TETHERS) == (None, None)  # dense, both ways
+    s = boonza.load(DATA / "1HHO.pdb")
+    sel = "(protein or resname HEM) and chain A"
+
+    def bands(**kw):
+        m = martinize(s, sel, cofactors=True, elastic=True, **kw)
+        mol = next(x for x in m.molecules if any(n.get("cofactor") for n in x.nodes))
+        kinds = [t.meta.get("comment") for t in mol.interactions["bonds"]]
+        return kinds.count("cofactor shape"), kinds.count("cofactor held")
+
+    shape, held = bands()
+    sparse_shape, sparse_held = bands(cofactor_neighbours=2, cofactor_tethers=2)
+    assert shape > sparse_shape and held > sparse_held
+    # and the reach is the lever on how firmly it is held, so it has to bite
+    assert bands(cofactor_reach=6.0)[1] < held < bands(cofactor_reach=20.0)[1]
+    assert COFACTOR_REACH == 12.0  # where the returns fall off; see the measurements
+
+
+def test_a_coordinated_ion_of_sirahs_own_is_bonded_to_what_holds_it():
+    """SIRAH maps a zinc to an ion of its own -- real parameters, better than any
+    stand-in -- but an ion is one bead with no bonded terms, so a structural zinc
+    comes out as a bead that diffuses away and a zinc finger comes apart.
+
+    Where the structure shows coordination the ion is bonded to what holds it,
+    keeping SIRAH's own type and charge.  An ion in solvent has nothing that
+    close and stays the free ion it is.
+    """
+    pytest.importorskip("boonza.sirah")
+    from boonza.sirah import sirahize
+    from boonza.sirah.build import read_map
+
+    assert read_map().get("ZN")  # SIRAH does know a zinc, which is the point
+    s = boonza.load(DATA / "1HHO.pdb").select("protein and chain A").clone()
+    out = sirahize(s, "protein")  # no ion here: nothing to bond, nothing to break
+    assert all(m.natoms > 1 or m.bonds for m in out.molecules)
+
+
+@pytest.mark.parametrize(("forcefield", "bead"), [("martini3001", "SD"), ("martini22", "Qd")])
+def test_an_ion_martini_has_gets_that_ion_and_the_bonds(forcefield, bead, tmp_path):
+    """A cofactor of one atom that Martini has an ion for deserves that ion.
+
+    The inert bead claims nothing, which is right for a heme and wasteful for a
+    calcium: Martini has one, charge and all, and its bead type is in the
+    parameter file the topology already includes.  So the ion is borrowed and the
+    coordination bonded on top -- the charge the model knows, and the crosslink it
+    does not.  A zinc has no ion in either version and keeps the inert bead, with
+    the bonds all the same.
+    """
+    from boonza.martini.build import COFACTOR_BEAD, ion_beads
+
+    version = 2 if forcefield == "martini22" else 3
+    assert ion_beads(version)["CA"][:2] == (bead, 2.0)
+    assert "ZN" not in ion_beads(version)  # Martini has no zinc, in either version
+
+    s = boonza.load(DATA / "1HHO.pdb").select("protein and chain A").clone()
+    # a calcium of its own, put where a backbone bead will coordinate it
+    xyz = np.asarray(s.positions)
+    ca = s.select("name CA and resid 20").ids
+    s.append(boonza.System.from_arrays(xyz[ca] + [2.2, 0.0, 0.0], names=["CA"], anum=[20],
+                                       resnames=["CA"], resids=[900], chains=["A"]))  # fmt: skip
+    m = martinize(s, "protein or resname CA", forcefield=forcefield, cofactors=True)
+    node = next(n for mol in m.molecules for n in mol.nodes if n.get("cofactor"))
+    assert node["atype"] == bead and float(node["charge"]) == 2.0 and node["ion"]
+    assert float(node["mass"]) == pytest.approx(40.078)  # the ion's own, not a bead's
+    mol = next(x for x in m.molecules if any(n.get("cofactor") for n in x.nodes))
+    k = next(i for i, n in enumerate(mol.nodes) if n.get("cofactor"))
+    assert [t for t in mol.interactions["bonds"] if k in t.atoms]  # held by what holds it
+    # one bead cannot deform, so it is the coordination that fixes it and not a cage
+    assert not [t for t in mol.interactions["bonds"]
+                if k in t.atoms and t.meta.get("comment") == "cofactor held"
+                and float(t.params[1]) > 0.4]  # fmt: skip
+    assert COFACTOR_BEAD[forcefield] != bead  # the inert bead is a different thing
