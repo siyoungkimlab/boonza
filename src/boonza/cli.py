@@ -118,6 +118,46 @@ def _convert(args) -> int:
     return 0
 
 
+def _solute(args) -> int:
+    """A copy of a run without the water and the salt it swam in."""
+    from pathlib import Path
+
+    from .solute import BESIDE, solute_ids, solvent_selection, write_solute
+
+    runs = []
+    for d in args.workdir or []:
+        here = Path(d)
+        runs.append((here / "solvated.dms", here / "trajectory.dcd",
+                     [here / n for n in BESIDE] + [here.parent / n for n in BESIDE]))  # fmt: skip
+    if args.system:
+        if not args.traj:
+            raise ValueError("give SYSTEM with --traj, or --workdir for runs of their own")
+        for traj in args.traj:
+            runs.append((Path(args.system), Path(traj), []))
+    if not runs:
+        raise ValueError("give SYSTEM with --traj, or --workdir")
+    out = Path(args.out)
+    for k, (structure, traj, beside) in enumerate(runs):
+        s = _load(structure)
+        where = out if len(runs) == 1 else out / f"run_{k}"
+        if args.dry_run:
+            ids = solute_ids(s, args.keep)
+            print(
+                f"{structure}: {len(ids)} of {s.natoms} atoms kept"
+                f" ({100 * len(ids) / max(s.natoms, 1):.0f}%)"
+                f"; dropping {solvent_selection(s) if not args.keep else args.keep!r}"
+            )
+            continue
+        got = write_solute(s, traj, where, args.keep, beside)
+        print(
+            f"{got['out']}: {got['atoms']} of {got['of']} atoms"
+            f" ({100 * got['atoms'] / max(got['of'], 1):.0f}%), {got['frames']} frames"
+        )
+    if not args.dry_run and len(runs) == 1:
+        print(f"read it as the run itself: boonza sites --workdir {out}")
+    return 0
+
+
 def _select(args) -> int:
     ids = _load(args.file).select(args.selection).ids
     print(" ".join(map(str, ids.tolist())))
@@ -1245,6 +1285,19 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("-s", "--selection", help="atoms to keep")
     q.add_argument("--structure-only", action="store_true", help="skip force-field tables")
     q.set_defaults(run=_convert)
+
+    q = sub.add_parser("solute", help="a copy of a run without its water and ions, which "
+                                      "the analysis never reads")  # fmt: skip
+    q.add_argument("system", nargs="?", help="the run's structure (with --traj)")
+    q.add_argument("--traj", nargs="+", help="trajectories of that system")
+    q.add_argument("--workdir", nargs="+",
+                   help="run directories instead, each with solvated.dms and "
+                        "trajectory.dcd; probes.json and the settings are copied over")  # fmt: skip
+    q.add_argument("-o", "--out", required=True, help="directory to write (one per run)")
+    q.add_argument("--keep", help="what to keep instead of 'everything but the solvent'")
+    q.add_argument("--dry-run", dest="dry_run", action="store_true",
+                   help="say what would be kept and dropped, and write nothing")  # fmt: skip
+    q.set_defaults(run=_solute)
 
     q = sub.add_parser("select", help="print the atom indices of a selection")
     q.add_argument("file")
