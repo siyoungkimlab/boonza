@@ -173,6 +173,22 @@ def _no_pockets():
 #: What half of sigma is multiplied by for the radius where the pair potential
 #: is deepest rather than where it crosses zero: r_min = 2**(1/6) sigma.
 RMIN = 2.0 ** (1.0 / 6.0)
+#: The fewest counts a cell may be called enriched on, whatever the ratio says.
+#:
+#: An enrichment is a ratio and says nothing about how much was counted to get
+#: it: a cell holding two counts where bulk expects a tenth of one clears twenty
+#: times bulk, and two is a thing that happens.  So a floor is needed, and two is
+#: what it is.
+#:
+#: Measured, two is about right.  Asking instead for a count improbable from bulk
+#: -- a Poisson tail at the map's own rate, spread over its cells -- comes to the
+#: same two when set loosely, and when set strictly enough to suppress what a
+#: thin sample passes on luck it takes real pockets with it: over 181
+#: coarse-grained runs of six proteins, five lost theirs, among them pockets
+#: covering half of the crystal ligand.  There is no setting that keeps a sparse
+#: run's pockets and drops its noise, the difference between them being
+#: information the sparse run does not have.
+LEAST_COUNT = 2.0
 #: How enclosed a pocket has to be: the share of 26 directions out of its cells
 #: that meet protein, 0 being open water and 1 shut in.
 BURIED = 0.4
@@ -328,7 +344,7 @@ class Occupancy:
         from .spatial import min_dist2
 
         expected = self.total * self.spacing**3 / max(volume, 1e-9)
-        enriched = self.counts >= max(threshold * expected, 2.0)
+        enriched = self.counts >= max(threshold * expected, LEAST_COUNT)
         near = np.sqrt(min_dist2(self.cell_centres(), protein, shell[1] + 1.0, cell=None))
         candidates = np.flatnonzero(enriched & (near >= shell[0]) & (near <= shell[1]))
         if not len(candidates):
@@ -453,7 +469,7 @@ def _dense_cells(points, spacing: float, threshold: float, volume: float):
     flat = (ijk[:, 0] * dims[1] + ijk[:, 1]) * dims[2] + ijk[:, 2]
     counts = np.bincount(flat, minlength=int(dims.prod()))
     expected = len(points) * spacing**3 / max(volume, 1e-9)
-    dense = np.flatnonzero(counts >= max(threshold * expected, 2.0))
+    dense = np.flatnonzero(counts >= max(threshold * expected, LEAST_COUNT))
     return flat, dense, counts, dims, lo, expected
 
 
