@@ -648,9 +648,12 @@ def _sites(args) -> int:
     pocket_protein = f"not ({args.ligandsel}) and not resname {' '.join(SOLVENT_NAMES)}"
     found = boonza.sites(system, runs, reference, ligand=args.ligandsel, align=args.alignsel,
                          spacing=args.spacing, enrichment=args.enrichment,
-                         min_occupancy=args.min_occupancy, periodic=not args.no_pbc,
+                         periodic=not args.no_pbc,
                          pocket_protein=pocket_protein, rank=args.rank,
-                         radius=None if args.radius == "point" else args.radius)  # fmt: skip
+                         radius=args.radius,
+                         **({} if args.buried is None else {"buried": args.buried}),
+                         **({} if args.min_volume is None
+                            else {"min_volume": args.min_volume}))  # fmt: skip
     frames = len(found.centroids)
     bulk = int((found.labels < 0).sum())
     topologies = len({own.natoms for own in found.systems}) if found.systems else 1
@@ -670,16 +673,6 @@ def _sites(args) -> int:
                   "moved")  # fmt: skip
         else:
             print(f"  the protein stayed within {worst:.1f} A of {where}")
-    if args.interval_ns:
-        # what the gate comes to in time, which is what makes a site a site: a
-        # probe pauses anywhere for a nanosecond, so a run short enough turns
-        # those pauses into sites, wherever they happened to be
-        sampled = len(np.unique(found.where[:, [0, 2]], axis=0)) * args.interval_ns
-        dwell = args.min_occupancy * sampled
-        if dwell < 2.0:
-            print(f"  {sampled:g} ns sampled, so --min-occupancy {args.min_occupancy:g} asks "
-                  f"for only {dwell:.2f} ns in a place:\n  a probe pauses that long in bulk, "
-                  "so expect sites that are nothing but a pause")  # fmt: skip
     maps, spots, scored = {}, [], {}
     if args.features:  # before the table, so one table carries the scores too
         print("typing each probe's atoms for the feature maps (a second pass over the frames)",
@@ -1603,14 +1596,12 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--spacing", type=float, default=1.0, help="grid spacing (A)")
     q.add_argument("--enrichment", type=float, default=20.0,
                    help="how many times more visited than bulk a site must be")  # fmt: skip
-    q.add_argument("--min-occupancy", type=float, default=0.05,
-                   help="share of the frames a site must hold something in, whichever "
-                        "ligand it is; not a share of the pooled copy-frames, which the "
-                        "copy count dilutes")  # fmt: skip
-    q.add_argument("--radius", choices=("sigma", "rmin", "point"), default="sigma",
-                   help="how much room a probe particle takes on the occupancy grid: half "
-                        "the sigma of its own nonbonded term (default), half of 2^(1/6) "
-                        "sigma, or point: only the cell its centre fell in")  # fmt: skip
+    q.add_argument("--radius", choices=("point", "beads", "sigma", "rmin"), default="sigma",
+                   help="what the occupancy map a pocket is cut from is made of: point, the "
+                        "molecule as its own centre; beads, every bead as a point; sigma "
+                        "(default), every bead as a sphere of half the sigma of its own "
+                        "nonbonded term, so the map is the room it took up; rmin, the same "
+                        "with half of 2^(1/6) sigma")  # fmt: skip
     q.add_argument("--rank", choices=("pocket", "occupied", "agreement", "burial"),
                    default="pocket",
                    help="order the sites by their pocket (how much room, how enclosed; the "
@@ -1629,6 +1620,12 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--hysteresis", type=float, default=2.0,
                    help="leave a site at this many times the distance it is entered at. "
                         "One boundary counts every recrossing as a departure")  # fmt: skip
+    q.add_argument("--buried", type=float, default=None, metavar="SHARE",
+                   help="how enclosed a pocket must be, 0 open water to 1 shut in "
+                        "(default 0.4): what separates a pocket from a sticky patch")  # fmt: skip
+    q.add_argument("--min-volume", dest="min_volume", type=float, default=None, metavar="A3",
+                   help="the smallest pocket worth reporting, in cubic angstroms (default "
+                        "20, where one a ligand sits in runs to hundreds)")  # fmt: skip
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.add_argument("-o", "--out", help="write sites.json here")
     q.set_defaults(run=_sites, needs=("system and --traj", "or --workdir"))
