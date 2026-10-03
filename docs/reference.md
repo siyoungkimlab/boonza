@@ -1430,7 +1430,7 @@ when the reference was taken.  Hand the result to :func:`boonza.poses` as
 burial and the polar share of the features in it.  Pass ``DSCORE`` for the
 druggability weighting instead.
 
-### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma') -> 'SiteSet'`
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, min_occupancy: 'float' = 0.05, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0) -> 'SiteSet'`
 
 Where the ligand is found across ``runs``, most occupied first.
 
@@ -1458,6 +1458,12 @@ occupancy grid: ``"sigma"`` (half the sigma of its own nonbonded term),
 ``None`` to count only the cell its centre fell in.  A bead is several atoms
 across, so counting centres asks the map a question finer than the model
 answers, and the noise comes back as a pocket in pieces.
+
+``buried`` is how enclosed a pocket has to be, 0 being open water and 1 shut
+in, and ``min_volume`` the smallest one worth reporting in cubic angstroms.
+Between them they decide what is a pocket rather than a dent, and so how long
+a list of them a run comes back with -- which is what a hit has to be found
+in.
 
 ``min_occupancy`` is the share of the *frames* in which a site has to hold
 something, whoever it is -- not the share of the pooled copy-frames, which

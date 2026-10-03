@@ -610,7 +610,10 @@ def _sites(args) -> int:
                          spacing=args.spacing, enrichment=args.enrichment,
                          min_occupancy=args.min_occupancy, periodic=not args.no_pbc,
                          pocket_protein=pocket_protein, rank=args.rank,
-                         radius=None if args.radius == "point" else args.radius)  # fmt: skip
+                         radius=None if args.radius == "point" else args.radius,
+                         **({} if args.buried is None else {"buried": args.buried}),
+                         **({} if args.min_volume is None
+                            else {"min_volume": args.min_volume}))  # fmt: skip
     frames = len(found.centroids)
     bulk = int((found.labels < 0).sum())
     topologies = len({own.natoms for own in found.systems}) if found.systems else 1
@@ -1569,6 +1572,12 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--hysteresis", type=float, default=2.0,
                    help="leave a site at this many times the distance it is entered at. "
                         "One boundary counts every recrossing as a departure")  # fmt: skip
+    q.add_argument("--buried", type=float, default=None, metavar="SHARE",
+                   help="how enclosed a pocket must be, 0 open water to 1 shut in "
+                        "(default 0.4): what separates a pocket from a sticky patch")  # fmt: skip
+    q.add_argument("--min-volume", dest="min_volume", type=float, default=None, metavar="A3",
+                   help="the smallest pocket worth reporting, in cubic angstroms (default "
+                        "20, where one a ligand sits in runs to hundreds)")  # fmt: skip
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.add_argument("-o", "--out", help="write sites.json here")
     q.set_defaults(run=_sites, needs=("system and --traj", "or --workdir"))

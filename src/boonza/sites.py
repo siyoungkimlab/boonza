@@ -173,6 +173,12 @@ def _no_pockets():
 #: What half of sigma is multiplied by for the radius where the pair potential
 #: is deepest rather than where it crosses zero: r_min = 2**(1/6) sigma.
 RMIN = 2.0 ** (1.0 / 6.0)
+#: How enclosed a pocket has to be: the share of 26 directions out of its cells
+#: that meet protein, 0 being open water and 1 shut in.
+BURIED = 0.4
+#: The smallest pocket worth reporting, in cubic angstroms.  Twenty is twenty
+#: cells of a 1 A grid, where a pocket a ligand sits in runs to hundreds.
+MIN_VOLUME = 20.0
 
 
 def particle_radii(system, ids, rule: str = "sigma") -> np.ndarray:
@@ -524,7 +530,8 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
           align: str = "protein and name CA", spacing: float = 1.0,
           enrichment: float = 20.0, min_occupancy: float = 0.05,
           periodic: bool = True, pocket_protein: str | None = None,
-          rank: str = "pocket", radius: str | None = "sigma") -> SiteSet:  # fmt: skip
+          rank: str = "pocket", radius: str | None = "sigma",
+          buried: float = BURIED, min_volume: float = MIN_VOLUME) -> SiteSet:  # fmt: skip
     """Where the ligand is found across ``runs``, most occupied first.
 
     ``runs`` is one trajectory (or array of frames) or a list of them; each is
@@ -551,6 +558,12 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     ``None`` to count only the cell its centre fell in.  A bead is several atoms
     across, so counting centres asks the map a question finer than the model
     answers, and the noise comes back as a pocket in pieces.
+
+    ``buried`` is how enclosed a pocket has to be, 0 being open water and 1 shut
+    in, and ``min_volume`` the smallest one worth reporting in cubic angstroms.
+    Between them they decide what is a pocket rather than a dent, and so how long
+    a list of them a run comes back with -- which is what a hit has to be found
+    in.
 
     ``min_occupancy`` is the share of the *frames* in which a site has to hold
     something, whoever it is -- not the share of the pooled copy-frames, which
@@ -614,7 +627,11 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
     pocket_atoms = _ids(reference, pocket_protein) if pocket_protein else np.empty(0, np.int64)
     if len(pocket_atoms) >= 4:
         cells, labels, centres, volumes, burials = shape.pockets(
-            enrichment, volume, np.asarray(reference.positions)[pocket_atoms]
+            enrichment,
+            volume,
+            np.asarray(reference.positions)[pocket_atoms],
+            buried=buried,
+            min_volume=min_volume,
         )
         claimed: dict[int, list[int]] = {}
         for i, site in enumerate(found):

@@ -607,3 +607,23 @@ def test_a_bead_is_as_wide_as_its_own_pair(version, forcefield, radii):
     sigma = particle_radii(cg, ids, "sigma")
     assert sorted(np.unique(np.round(sigma, 4)).tolist()) == radii
     assert np.allclose(particle_radii(cg, ids, "rmin"), sigma * RMIN)
+
+
+def test_what_counts_as_a_pocket_can_be_asked_for(swimming, tmp_path):
+    """``buried`` and ``min_volume`` decide what is a pocket rather than a dent,
+    and so how long a list a run comes back with -- which is what a hit has to be
+    found in, so they are the analysis's to set and not constants in it."""
+    import inspect
+
+    from boonza.sites import BURIED, MIN_VOLUME, sites
+
+    args = inspect.signature(sites).parameters
+    assert args["buried"].default == BURIED
+    assert args["min_volume"].default == MIN_VOLUME
+    s, runs = swimming
+    loose = sites(s, runs, pocket_protein="protein", min_volume=1.0, buried=0.0)
+    tight = sites(s, runs, pocket_protein="protein", min_volume=400.0, buried=0.9)
+    # a pocket has to clear both, so asking for more leaves fewer sites with one
+    assert sum(1 for x in loose if x.volume) >= sum(1 for x in tight if x.volume)
+    assert all(x.volume >= 400.0 for x in tight if x.volume)
+    assert all(x.burial >= 0.9 for x in tight if x.volume)
