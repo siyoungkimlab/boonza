@@ -73,6 +73,13 @@ SOLVENT_NAMES = ("W", "ION", "NA", "CL", "HOH", "WT4", "WLS", "NaW", "KW", "ClW"
                  "MgX", "CaX", "ZnX")  # fmt: skip
 
 
+def _probe_chain():
+    """Imported where it is used, so probemap does not pull in the md package."""
+    from .md.cgswim import PROBE_CHAIN
+
+    return PROBE_CHAIN
+
+
 def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1,
                    periodic: bool = True) -> ProbeMap:  # fmt: skip
     """How often each residue of ``system`` touches each of ``probes``.
@@ -89,6 +96,9 @@ def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1
     if not isinstance(runs, (list, tuple)):
         runs = [runs]
     pairs = [(system, r) if not isinstance(r, tuple) else r for r in runs]
+    import re
+
+    PROBE_CHAIN = _probe_chain()
     probes = list(probes)
     index = {p: k for k, p in enumerate(probes)}
     counts, seen, labels = None, np.zeros(len(probes)), None
@@ -99,7 +109,16 @@ def probe_contacts(system, runs, probes, cutoff: float = CUTOFF, stride: int = 1
         resid = np.asarray(own.residues["resid"])
         chain_of = np.asarray(own.residues["chain"])
         per_atom = names[res]
-        is_probe = np.isin(per_atom, probes)
+        # a probe is named after its sequence, and some of those names are a
+        # solvent's: the one-residue tryptophan probe is W, which is Martini's
+        # water, and the dipeptide KW is SIRAH's potassium.  The probes of a swim
+        # are a chain of their own, so where there is such a chain it settles
+        # which is which.  Where there is not, the names stand as given -- asking
+        # what the water touches is a fair question, and WT4 is then the answer
+        # wanted rather than a collision.
+        by_name = np.isin(per_atom, probes)
+        theirs = np.array([bool(re.fullmatch(PROBE_CHAIN + r"\d*", c)) for c in chains])
+        is_probe = by_name & theirs[chain_of][res] if theirs.any() else by_name
         is_target = ~is_probe & ~np.isin(per_atom, SOLVENT_NAMES)
         target_res = np.unique(res[is_target])
         if labels is None:
