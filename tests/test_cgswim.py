@@ -164,7 +164,9 @@ def test_the_analysis_knows_a_coarse_grained_run(tmp_path):
     _cg_selections(args, cg, [str(run)])  # probes.json sits beside the run
     # the probes are left out of the fit: a fit on them is a fit on what moves
     assert args.alignsel == "(name BB) and not resname EK LL"
-    assert args.ligandsel == "resname EK LL"
+    # named out of the solvent, since a probe's name can be a solvent's: this run
+    # has no chain of its own for them (see the test below)
+    assert args.ligandsel.startswith("(resname EK LL) and not resname ")
     unchanged = Args()
     _cg_selections(unchanged, aa, [str(run)])  # all-atom: left alone
     assert unchanged.alignsel == DEFAULT_ALIGN and unchanged.ligandsel == DEFAULT_LIGAND
@@ -774,6 +776,62 @@ def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
 
     _write_view(s, RunPaths(tmp_path), log=lambda *_: None)
     assert boonza.load(tmp_path / "view.dms").nbonds == view.nbonds
+
+
+def test_what_a_probe_called_W_touches_is_not_what_the_water_touches():
+    """The same collision in `boonza probes`: counted by name, every water bead
+    near a residue would count as a tryptophan probe touching it."""
+    from boonza.md.cgswim import PROBE_CHAIN
+    from boonza.probemap import probe_contacts
+
+    # three residues 20 A apart, the probe beside the last, water beside the first
+    xyz = np.array([[0.0, 1, 0], [20.0, 0, 1], [40.0, 1, 1], [43.0, 0, 0], [2.0, 1, 1]])
+    s = boonza.System.from_arrays(xyz, names=["BB", "BB", "BB", "BB", "W"],
+                                  anum=[32] * 5, resnames=["ALA", "ALA", "ALA", "W", "W"],
+                                  resids=[1, 2, 3, 1, 2],
+                                  chains=["A", "A", "A", PROBE_CHAIN, ""],
+                                  cell=np.diag([80.0, 80.0, 80.0]))  # fmt: skip
+    m = probe_contacts(s, [(s, np.asarray(s.positions)[None])], ["W"], cutoff=6.0)
+    counts = dict(zip([r[1] for r in m.residues], m.contacts[:, 0], strict=True))
+    assert counts[3] > 0  # the residue the probe sits beside
+    assert counts[1] == 0  # the one only water sits beside, which is not a probe
+
+
+def test_a_probe_called_W_is_not_the_water_called_W(tmp_path):
+    """The probes come from the chain they were put in, not from their names alone.
+
+    A probe is named after its sequence, so a one-residue probe of a tryptophan is
+    called W -- and so is Martini's water.  Asked for the probes by name, a run of
+    the single-residue library hands back every water bead in the box, and then
+    nothing is a site because the whole box is one.
+    """
+    from boonza.cli import DEFAULT_ALIGN, _cg_selections
+    from boonza.md.cgswim import PROBE_CHAIN
+    from boonza.symmetry import DEFAULT_LIGAND
+
+    # a backbone of three beads, a tryptophan probe in its own chain, and water
+    xyz = np.array([[float(3 * k), 0.0, 0.0] for k in range(9)])
+    s = boonza.System.from_arrays(
+        xyz,
+        names=["BB", "BB", "BB", "BB", "SC1", "W", "W", "W", "W"],
+        anum=[32] * 9,
+        resnames=["ALA", "ALA", "ALA", "W", "W", "W", "W", "W", "W"],
+        resids=[1, 2, 3, 1, 1, 2, 3, 4, 5],
+        chains=["A", "A", "A", PROBE_CHAIN, PROBE_CHAIN, "", "", "", ""],
+    )
+    (tmp_path / "probes.json").write_text('{"probes": ["W"]}')
+    run = tmp_path / "md"
+    run.mkdir()
+
+    class Args:
+        alignsel = DEFAULT_ALIGN
+        ligandsel = DEFAULT_LIGAND
+
+    args = Args()
+    _cg_selections(args, s, [str(run)])
+    assert args.ligandsel == f"(resname W) and chain {PROBE_CHAIN}"
+    assert len(s.select(args.ligandsel).ids) == 2  # the probe, not the water
+    assert len(s.select("resname W").ids) == 6  # which naming alone would have given
 
 
 def test_the_default_work_directories():
