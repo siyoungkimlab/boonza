@@ -734,6 +734,36 @@ def test_which_edge_a_pocket_is_measured_from_is_asked_for(swimming):
     assert cells["surface"] != cells["center"]
 
 
+def test_a_near_edge_can_be_asked_for_not_at_all(swimming):
+    """``shell="none"`` keeps every enriched cell near the protein, however close.
+
+    A cell's counts say a probe was there, and the protein they are measured
+    against is one structure out of a run that moved, so a near edge of any kind
+    throws sampling away for the reference's convenience.  Without one nothing is
+    thrown away -- and pockets merge through a thin wall of protein, cells inside
+    a bead touching the open cells on either side of it, which is the price.
+    """
+    from boonza.sites import SHELL, SHELL_ANY, sites
+
+    assert SHELL_ANY[0] == -np.inf  # no near edge at all
+    assert SHELL_ANY[1] == SHELL[1]  # the far edge is the one thing it keeps
+    s, runs = swimming
+    plain = sites(s, runs, pocket_protein="protein")
+    kept = sites(s, runs, pocket_protein="protein", shell="none")
+    # nothing a near edge would have dropped is dropped: every pocket cell of
+    # the default run is still in a pocket, and there are more of them
+    assert set(np.concatenate([x.cells for x in plain if len(x.cells)]).tolist()) <= \
+        set(np.concatenate([x.cells for x in kept if len(x.cells)]).tolist())  # fmt: skip
+    assert sum(x.volume for x in kept) > sum(x.volume for x in plain)
+    # and the far edge still holds: nothing out in bulk
+    ids = np.asarray(s.select("protein"), int)
+    xyz = np.asarray(s.positions)[ids]
+    for site in kept:
+        pts = site.pocket_points()
+        far = np.linalg.norm(pts[:, None] - xyz[None], axis=2).min(axis=1)
+        assert (far <= SHELL_ANY[1]).all()
+
+
 def test_a_pocket_keeps_out_of_the_beads_it_is_measured_against():
     """A pocket is room a probe could occupy, so none of it lies inside the protein.
 
