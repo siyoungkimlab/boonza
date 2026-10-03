@@ -100,6 +100,91 @@ membrane rather than building it.
 7812-7824 (2007), and L Monticelli et al., *J. Chem. Theory Comput.* 4,
 819-834 (2008).
 
+## Cofactors it has no residue for
+
+A structural zinc, an ADP, a heme: Martini has no block for any of them, so
+`martinize` refuses the structure rather than quietly dropping them.
+
+```bash
+boonza martinize protein.pdb cg --cofactors        # hold them as inert beads
+```
+
+`--cofactors` (or `cofactors=True`) maps each one as **one uncharged apolar bead
+per heavy atom** — an alanine's side chain in Martini 3, the apolar bead Martini
+2 builds one from, since Martini 2's alanine is a single backbone bead with no
+side chain at all. Each bead carries its atom's own mass, every pair inside the
+cofactor is excluded, its shape is held by bands between the beads, and each bead
+is tethered to the backbone beads within `cofactor_reach` of it. Any coordination
+the structure shows — anything within 2.6 Å, which a metal is well inside and a
+passing contact is not — is bonded too, and that bond is made before the
+molecules are split, so a zinc holding two loops together becomes a crosslink
+rather than landing in a moleculetype of its own where nothing could bond it.
+
+**An ion Martini has, it uses.** A cofactor of one atom whose residue name
+matches an ion in the bundled parameters takes that ion instead of the inert
+bead — a calcium is `SD` and +2 under Martini 3, `Qd` and +2 under Martini 2,
+with the ion's own mass — and the coordination is bonded on top: the charge the
+model knows, plus the crosslink it does not. Martini has no zinc and no
+magnesium, so those keep the inert bead and the bonds both. Only a single-atom
+residue is eligible, so nothing polyatomic can pick up a charge by a name
+collision, and a single bead gets no tether cage: a point cannot deform, so the
+coordination alone fixes it.
+
+**The bands are dense, and that was measured rather than reasoned.** Three points
+fix a rigid body, so a few bands ought to do — and they do not, because the bands
+are soft. On a heme over 5 ps, banded to two neighbours each and tethered twice,
+it strays 12 Å; and its own shape drifts just as far, which is the tell. A body
+of *n* beads wants about 3*n*−6 independent bands to be rigid — 123 for a heme's
+43 — where two per bead gives 56, many of them redundant around a ring. Tethers
+cannot hold a shape that will not hold itself.
+
+How far the tethers reach is then the lever:
+
+| `cofactor_reach` | bands | the heme strays | its shape drifts | backbone rmsf near it |
+|---|---|---|---|---|
+| 9 Å | 688 | 2.27 Å | 2.12 Å | 0.30 Å |
+| **12 Å** (default) | 1718 | **1.20 Å** | **0.97 Å** | 0.24 Å |
+| 15 Å | 3028 | 0.88 Å | 0.57 Å | 0.22 Å |
+| 20 Å | 4751 | 0.59 Å | 0.47 Å | 0.20 Å |
+
+Twelve is where the returns fall off: the cofactor is held inside a bead's own
+radius and the protein around it is stiffened least. Stiffening it *is* the cost —
+you are trading some local flexibility for a cofactor that stays where it was
+put. And the bands have to stay soft: at 700 kJ/mol/nm² (`cofactor_fc`, the
+elastic network's own) this is stable, while dense *and* stiff blew up on the
+first step.
+
+This is deliberately a statement about **volume and nothing else**: probes cannot
+enter the room the cofactor takes, and no charge or chemistry is invented for it.
+It also cannot distort the fold, which the bands and the elastic network hold.
+Measured on a phospholipase with two structural calciums, through the ramp to
+20 fs and 5 ps of production, the cofactor holds to 1.7–2.1 Å of where the
+structure put it while the protein moves 1.1 Å rms — less than a bead's radius.
+
+Under SIRAH the metals need none of this: it maps a zinc, a calcium and a
+magnesium to ions of its own, with real parameters. What it does not give them is
+any bonded term, an ion being one bead of its own moleculetype — so a structural
+zinc came out as a bead that simply diffuses away, and a zinc finger had nothing
+holding its loops together. boonza now bonds a *coordinated* ion to whatever holds
+it, keeping SIRAH's own type and charge; an ion in solvent has nothing within
+2.6 Å and stays the free ion it is.
+
+Two things it will not do:
+
+- **It will not treat a residue of the chain as a cofactor.** A D-amino acid or a
+  modified residue has a backbone, and mapping it inert would throw away a side
+  chain in the middle of a protein, so it is refused by name instead.
+- **It warns when the cofactor is not buried.** Buried is the case this is honest
+  for: nothing can reach the cofactor, so nothing reads its missing chemistry. One
+  sitting in solvent can be reached, and a probe will settle on an apolar bead
+  where a phosphate or a charge belongs. Fewer than eight protein heavy atoms
+  within 5 Å is the test; a coordinated metal has twenty or more.
+
+A cofactor with parameters of its own deserves them instead: include its `.itp`
+and leave it out of the selection. boonza carries Martini 3's nucleobases and a
+library of rings and heterocycles to build one from, and both versions have a
+divalent cation (`CA`) for a calcium that really is a free ion in a site.
+
 ## What martinize does
 
 This is martinize2's method, run on vermouth's own data files: the residue

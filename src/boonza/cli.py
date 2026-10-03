@@ -1144,7 +1144,8 @@ def _martinize(args) -> int:
                          elastic_power=args.elastic_power, elastic_min_fc=args.elastic_min_fc,
                          res_min_dist=args.res_min_dist, cys=cys,
                          neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
-                         extdih=args.extdih, forcefield=FORCEFIELD_FOR[version])  # fmt: skip
+                         extdih=args.extdih, forcefield=FORCEFIELD_FOR[version],
+                         cofactors=args.cofactors)  # fmt: skip
     if args.solvate:
         from .martini import solvate
 
@@ -1369,6 +1370,12 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--neutral-termini", action="store_true")
     q.add_argument("--no-scfix", action="store_true", help="no side-chain corrections")
     q.add_argument("--extdih", action="store_true", help="dihedrals for extended regions (-ed)")
+    q.add_argument("--cofactors", action="store_true",
+                   help="hold what Martini has no residue for -- a structural zinc, an ADP, a "
+                        "heme -- as inert beads: one uncharged apolar bead per heavy atom, "
+                        "banded in place, there to stop probes entering the room it takes and "
+                        "to claim nothing else.  Honest while the cofactor is buried, which is "
+                        "checked")  # fmt: skip
     q.add_argument("--solvate", action="store_true", help="add Martini water and NaCl")
     q.add_argument("--padding", type=float, default=10.0, help="water beyond the protein (A)")
     q.add_argument("--salt", type=float, default=0.15, help="NaCl (mol/L), after neutralizing")
