@@ -377,6 +377,21 @@ CL 1
 """
 
 
+#: What an inert cofactor bead is, per force field: the smallest apolar bead each
+#: version has, which is an alanine's side chain in Martini 3 and the apolar bead
+#: Martini 2 builds one from.  Uncharged and unremarkable on purpose -- see
+#: :func:`martinize`'s ``cofactors``.
+COFACTOR_BEAD = {"martini3001": "TC3", "martini22": "C1"}
+#: How close a cofactor's atom has to be to a protein's to count as held by it,
+#: in angstroms.  A metal coordinates at 1.8 to 2.3 A, where nothing merely
+#: touching comes nearer than 3.
+COORDINATION = 2.6
+#: A cofactor is taken as buried when this many protein heavy atoms lie within
+#: :data:`BURIAL_RADIUS` angstroms of it.  Buried is the case the inert bead is
+#: honest for: nothing can reach it, so its chemistry cannot be read wrong.
+BURIAL_RADIUS, BURIED_ENOUGH = 5.0, 8
+
+
 @dataclass
 class _Residue:
     resname: str
@@ -394,7 +409,8 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
               elastic_upper: float = 9.0, elastic_decay: float = 0.0, elastic_power: float = 0.0,
               elastic_min_fc: float = 0.0, res_min_dist: int | None = None,
               cys: str | float = "auto", neutral_termini: bool = False, scfix: bool = True,
-              extdih: bool = False, forcefield: str = "martini3001") -> Martinized:  # fmt: skip
+              extdih: bool = False, forcefield: str = "martini3001",
+              cofactors: bool = False, cofactor_fc: float = 700.0) -> Martinized:  # fmt: skip
     """Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
     ``forcefield`` is the version: ``"martini3001"`` or ``"martini22"``, each
@@ -403,6 +419,20 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     (``HSD`` and not ``HIS``, which boonza renames to), and cuts a tryptophan's
     rings and reads a phenylalanine's along other lines, so it maps a residue
     onto beads by its own rules.
+
+    ``cofactors`` maps what the force field has no residue for -- a structural
+    zinc, an ADP, a heme -- as inert beads rather than refusing it: one uncharged
+    apolar bead per heavy atom, every pair inside it excluded, its shape held by
+    bands and the whole thing banded to whatever protein beads lie within
+    :data:`COORDINATION` of it (``cofactor_fc`` kJ/mol/nm², as the elastic
+    network's).  It is there to hold the room up, so that probes cannot enter
+    space the cofactor occupies, and to say nothing else: no charge and no
+    chemistry are invented, and nothing can distort the fold, which the bands and
+    the elastic network hold.  That is honest only while the cofactor is buried,
+    where nothing can reach it to read its chemistry wrongly, so one that is not
+    is warned about rather than quietly approximated.  A cofactor with parameters
+    of its own deserves them instead: include its ``.itp`` and leave it out of
+    ``atoms``.
 
     ``ss``: secondary structure, one DSSP code per residue of ``atoms``; by
     default boonza's DSSP is run on the structure, and ``ss=False`` leaves it
@@ -440,13 +470,35 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
         plain = _RESNAMES.get(resname, resname)
         return _instead_of(ff, "residue", plain, plain)
 
-    unknown = sorted({r.resname for r in residues if named(r.resname) not in ff.blocks})
+    bead = COFACTOR_BEAD.get(ff.name) if cofactors else None
+    if cofactors and bead is None:
+        raise ValueError(f"no inert cofactor bead is known for {ff.name}")
+    nameless = [r for r in residues if named(r.resname) not in ff.blocks]
+    # a residue the force field has no block for is not therefore a cofactor: a
+    # D-amino acid or a modified one is part of the chain, and mapping it inert
+    # would throw away a side chain in the middle of a protein.  What the
+    # structure's own reading calls a polymer is refused rather than approximated
+    inchain = sorted({r.resname for r in nameless
+                      if r.resname in _polymer_resnames(system)}) if cofactors else []  # fmt: skip
+    if inchain:
+        raise ValueError(f"not {ff.name} residues, and part of a chain rather than cofactors: "
+                         f"{', '.join(inchain)}.  Rename them to the residues they are, or leave "
+                         "them out of atoms")  # fmt: skip
+    unknown = sorted({r.resname for r in nameless}) if not cofactors else []
+    if cofactors:
+        _warn_exposed(system, nameless)
     if unknown:
         raise ValueError(f"not {ff.name} protein residues: {', '.join(unknown)}; leave them "
-                         f"out of atoms={atoms!r}")  # fmt: skip
+                         f"out of atoms={atoms!r}, give them parameters of their own, or "
+                         "cofactors=True to hold them as inert beads")  # fmt: skip
     known = _system_bonds(system, local, residues)
     bonds = _inter_residue_bonds(residues, cys, known)
     _check_links_across_chains(residues, bonds, known)
+    if cofactors:
+        # what holds a cofactor has to be a bond before the molecules are split,
+        # or the thing lands in a moleculetype of its own, where nothing in
+        # GROMACS can bond it to the protein it belongs to and it floats away
+        bonds = sorted(set(bonds) | _coordination_bonds(residues, nameless))
     groups = _molecules(len(residues), bonds)
     if ss is None:
         ss = _dssp(system, atoms)
@@ -466,7 +518,7 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     for m, members in enumerate(groups):
         cg_ss = convert_dssp_to_martini("".join(ss[r] for r in members)) if ss else ""
         mol = _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral_termini,
-                              missing, unmodified)  # fmt: skip
+                              missing, unmodified, bead, cofactor_fc)  # fmt: skip
         mol.meta = {"scfix": scfix, "extdih": extdih, "idr": False}
         apply_links(mol, ff.links)
         if elastic:
@@ -730,17 +782,36 @@ def _weights(ff, res, names, parents, block_name, mods):
 
 
 def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
-                    missing, unmodified=None) -> CGMolecule:  # fmt: skip
+                    missing, unmodified=None, cofactors=None,
+                    cofactor_fc: float = 700.0) -> CGMolecule:  # fmt: skip
     mol = CGMolecule()
     beads_of_atom = {}
+    inert: list = []  # (residue, its beads) for every cofactor mapped as inert
     for serial, r in enumerate(members, start=1):
         res = residues[r]
         block_name = _RESNAMES.get(res.resname, res.resname)
         block_name = _instead_of(ff, "residue", block_name, block_name)
         block = ff.blocks.get(block_name)
+        if block is None and cofactors is not None:
+            # not a residue of the force field, and asked for as a cofactor: one
+            # bead per heavy atom, holding the room up and saying nothing
+            heavy = [i for i, e in enumerate(res.elements) if e != "H"]
+            index = {}
+            for i in heavy:
+                node = dict(atype=cofactors, resname=res.resname[:5],
+                            atomname=res.names[i][:5], charge=0.0,
+                            mass=float(_MASS.get(res.elements[i], 30)), resid=serial,
+                            chain=res.chain, input_resid=res.resid,
+                            insertion=res.insertion, modifications=[],
+                            cofactor=True)  # fmt: skip
+                index[res.names[i]] = mol.add_node(node, res.xyz[i])
+                beads_of_atom[(r, i)] = [index[res.names[i]]]
+            inert.append((r, [index[res.names[i]] for i in heavy]))
+            continue
         if block is None:
             raise ValueError(f"residue {res.resname} {res.chain}{res.resid}: not a "
-                             f"{ff.name} protein residue")  # fmt: skip
+                             f"{ff.name} protein residue; cofactors=True maps it as inert "
+                             "beads instead")  # fmt: skip
         names = _canonical(res, block_name)
         parents = _hydrogen_parents(res)
         mods = _modifications(res, names, parents, block_name)
@@ -794,7 +865,105 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
             for x in beads_of_atom[(a, i)]:
                 for y in beads_of_atom[(b, j)]:
                     mol.add_edge(x, y)
+    if inert:
+        _hold_cofactors(mol, residues, inert, cofactor_fc)
     return mol
+
+
+def _hold_cofactors(mol: CGMolecule, residues, inert, fc: float) -> None:
+    """Hold each inert cofactor in shape and in place, and let nothing inside it
+    feel anything.
+
+    A bead per heavy atom sits where its atom did, which is about 1.5 A from the
+    next one, and a bead is 3.4 A wide: left to the ordinary nonbonded terms they
+    would fly apart on the first step, so every pair inside a cofactor is excluded
+    and the shape is held by bands instead.  The bands reach the protein too, at
+    the distances they are already at, so the thing stays where the structure put
+    it without a charge or a bond type being invented for it.
+    """
+    protein = [k for k, n in enumerate(mol.nodes) if not n.get("cofactor")]
+    pos = np.asarray(mol.positions, float)
+    for _, beads in inert:
+        for a in range(len(beads)):
+            for b in range(a + 1, len(beads)):
+                i, j = beads[a], beads[b]
+                mol.add("exclusions", Interaction((i, j), [], {}))
+                d = float(np.linalg.norm(pos[i] - pos[j]))
+                if d <= 0.45:  # neighbours in the molecule, as its bonds run
+                    mol.add("bonds", Interaction((i, j), [1, round(d, 4), fc],
+                                                 {"comment": "cofactor shape"}))  # fmt: skip
+        # and a band along every bond that holds it, which the coordination found
+        # before the molecules were split
+        for i in beads:
+            for j in sorted(mol.adj[i]):
+                if j in protein:
+                    d = float(np.linalg.norm(pos[i] - pos[j]))
+                    mol.add("bonds", Interaction((i, j), [1, round(d, 4), fc],
+                                                 {"comment": "cofactor held"}))  # fmt: skip
+
+
+def _coordination_bonds(residues, cofactors) -> set:
+    """``(residue, atom, residue, atom)`` wherever a cofactor's heavy atom is close
+    enough to another residue's to be what holds it.
+
+    A metal coordinates at 1.8 to 2.3 A and a passing contact comes no nearer than
+    3, so :data:`COORDINATION` separates them without knowing any chemistry.  The
+    structure's own bonds are used where it has them; these are for the files that
+    leave a metal unbonded, which is most of them.
+    """
+    which = {id(r) for r in cofactors}
+    heavy, out = [], set()
+    for r, res in enumerate(residues):
+        for i, e in enumerate(res.elements):
+            if e != "H":
+                heavy.append((r, i, res.xyz[i], id(res) in which))
+    for a, (ra, ia, xa, is_a) in enumerate(heavy):
+        for rb, ib, xb, is_b in heavy[a + 1 :]:
+            if ra == rb or not (is_a or is_b):
+                continue
+            if float(np.linalg.norm(np.asarray(xa) - np.asarray(xb))) <= COORDINATION / 10:
+                out.add((ra, ia, rb, ib) if ra < rb else (rb, ib, ra, ia))
+    return out
+
+
+def _polymer_resnames(system) -> set:
+    """The residue names the structure's own reading calls a polymer: anything with
+    a backbone, whatever the force field happens to have a block for."""
+    ids = system.select("protein or nucleic").ids
+    if not len(ids):
+        return set()
+    res = np.asarray(system.residues["name"])
+    return {str(res[r]).strip().upper()
+            for r in np.unique(np.asarray(system.atoms["residue"])[ids]).tolist()}  # fmt: skip
+
+
+def _warn_exposed(system, cofactors) -> None:
+    """Say which cofactors are not buried, the inert bead being honest only there.
+
+    A buried cofactor cannot be reached, so nothing reads the chemistry it does
+    not have.  One on the surface can be: a probe meets an apolar bead where a
+    phosphate or a charge belongs and settles there for a reason the structure
+    does not have.  The count of protein heavy atoms around it separates the two
+    -- a coordinated metal has twenty or more, one sitting in solvent a handful.
+    """
+    import warnings
+
+    from ..spatial import min_dist2
+
+    if not cofactors:
+        return
+    heavy = system.select("protein and not element H").ids
+    if not len(heavy):
+        return
+    xyz = np.asarray(system.positions)[heavy]
+    for res in cofactors:
+        here = np.asarray(res.xyz, float) * 10  # _Residue keeps nm
+        near = int((min_dist2(xyz, here, BURIAL_RADIUS, cell=None) <= BURIAL_RADIUS**2).sum())
+        if near < BURIED_ENOUGH:
+            warnings.warn(f"{res.resname} {res.chain}{res.resid} has {near} protein heavy atoms "
+                          f"within {BURIAL_RADIUS:g} A, so it is not buried: an inert bead there "
+                          "is something a probe can reach and read as apolar.  Give it "
+                          "parameters of its own, or leave it out", stacklevel=3)  # fmt: skip
 
 
 def _residue_keys(system, selection: str) -> set:

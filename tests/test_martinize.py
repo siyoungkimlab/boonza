@@ -715,3 +715,63 @@ def test_a_mae_carries_martinis_virtual_site_but_not_its_angles(tmp_path):
     for prop in ("c1", "c2", "c3"):
         assert np.allclose(back.table("virtual_lc4").values(prop),
                            s.table("virtual_lc4").values(prop))  # fmt: skip
+
+
+def test_a_cofactor_can_be_held_as_inert_beads():
+    """A heme is no residue of Martini's, and mapping it as one bead per heavy atom
+    holds the room it takes without claiming to know its chemistry.
+
+    The point is the volume: probes must not enter space the cofactor occupies.
+    Nothing else is asserted about it -- no charge, no bead but the plainest
+    apolar one -- and every pair inside it is excluded, since beads 1.5 A apart
+    and 3.4 A wide would otherwise fly apart on the first step.
+    """
+    from boonza.martini.build import COFACTOR_BEAD
+
+    s = boonza.load(DATA / "1HHO.pdb")
+    sel = "(protein or resname HEM) and chain A"
+    with pytest.raises(ValueError, match="cofactors=True"):
+        martinize(s, sel)  # the refusal says what to do about it
+    m = martinize(s, sel, cofactors=True, elastic=True)
+    mol = next(x for x in m.molecules
+               if any(n.get("cofactor") for n in x.nodes))  # fmt: skip
+    beads = [k for k, n in enumerate(mol.nodes) if n.get("cofactor")]
+    heme = s.select("resname HEM and chain A and not element H").ids
+    assert len(beads) == len(heme)  # one bead per heavy atom, iron included
+    assert {mol.nodes[k]["atype"] for k in beads} == {COFACTOR_BEAD["martini3001"]}
+    assert all(float(mol.nodes[k]["charge"]) == 0.0 for k in beads)
+    assert {mol.nodes[k]["mass"] for k in beads} >= {12.0, 14.0}  # its atoms' own masses
+    # every pair inside it, counted apart from the exclusions the protein's own
+    # blocks carry (Martini 3's tryptophan has a virtual site with its own)
+    inside = {frozenset(t.atoms) for t in mol.interactions.get("exclusions", [])
+              if set(t.atoms) <= set(beads)}  # fmt: skip
+    assert len(inside) == len(beads) * (len(beads) - 1) // 2
+    held = [t for t in mol.interactions.get("bonds", [])
+            if t.meta.get("comment") == "cofactor held"]  # fmt: skip
+    assert held  # and bands to whatever protein beads coordinate it
+    assert all(len({*t.atoms} & {*beads}) == 1 for t in held)
+
+
+def test_a_residue_of_the_chain_is_not_a_cofactor():
+    """What the force field has no block for is not therefore a cofactor: a
+    D-amino acid or a modified residue is part of the chain, and mapping it inert
+    would throw away a side chain in the middle of a protein."""
+    s = boonza.load(DATA / "2TRX.pdb").select("protein and chain A").clone()
+    r = next(k for k in range(s.nresidues) if str(s.residues["name"][k]).strip() == "GLU")
+    s.residue(r).name = "DGL"  # a D-glutamate, as a crystal structure writes one
+    assert len(s.select("resname DGL").ids)  # still read as protein: it has a backbone
+    with pytest.raises(ValueError, match="part of a chain rather than cofactors: DGL"):
+        martinize(s, "protein or resname DGL", cofactors=True)
+
+
+def test_a_cofactor_out_in_the_open_is_warned_about():
+    """The inert bead is honest while the cofactor is buried, nothing being able to
+    reach it and read as apolar what is really a charge or a phosphate.  One in
+    solvent can be reached, so it is said rather than assumed."""
+    s = boonza.load(DATA / "1HHO.pdb").select("(protein or resname HEM) and chain A").clone()
+    heme = s.select("resname HEM").ids
+    xyz = np.asarray(s.positions).copy()
+    xyz[heme] += 40.0  # out into the solvent, away from everything
+    s.positions = xyz
+    with pytest.warns(UserWarning, match="not buried"):
+        martinize(s, "protein or resname HEM", cofactors=True)
