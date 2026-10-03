@@ -1491,7 +1491,7 @@ when the reference was taken.  Hand the result to :func:`boonza.poses` as
 burial and the polar share of the features in it.  Pass ``DSCORE`` for the
 druggability weighting instead.
 
-### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0) -> 'SiteSet'`
+### `boonza.sites(system, runs=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', align: 'str' = 'protein and name CA', spacing: 'float' = 1.0, enrichment: 'float' = 20.0, periodic: 'bool' = True, pocket_protein: 'str | None' = None, rank: 'str' = 'pocket', radius: 'str | None' = 'sigma', buried: 'float' = 0.4, min_volume: 'float' = 20.0, shell: 'str' = 'center') -> 'SiteSet'`
 
 Where the ligand is found across ``runs``, most occupied first.
 
@@ -1525,6 +1525,23 @@ against a shape the run no longer has.
 The three say what a molecule is: a position, a set of positions, or a volume.
 A dipeptide has twice the beads of a single residue, so the choice matters
 more for the one than the other.
+
+``shell`` is what a pocket's near edge is measured from.  ``"center"``, the
+default, keeps it 2 A from the nearest particle's center; ``"surface"`` keeps
+it clear of that particle's van der Waals surface instead, by the force
+field's own sizes, which is the only way to keep a pocket out of a bead:
+2 A from a center is 0.2 A inside a Martini bead.  It is off by default
+because the two measures of a hit disagree about it: over 181 coarse-grained
+runs it costs ligand coverage (top-1 51 to 48, oracle 77 to 73) and gains DCA
+(top-1 50 to 54).  It does not move a pocket's center but shaves the
+wall-facing cells a ligand's atoms lie against, which is what coverage counts
+and DCA does not.  It takes the pocket volume inside the protein, 4.0% of it
+over those runs, to none.
+It also needs the sizes to exist, and they are in the force field: a system
+loaded without its nonbonded tables falls back on its elements, which is a
+heavy atom's 1.7 A where a Martini bead reaches 2.35.  The command line
+reads them for you; :func:`boonza.load` without ``without_tables=True``
+does the same for a system of your own.
 
 With ``pocket_protein`` a site has to have a pocket to be reported at all: a
 place the ligand gathered but that the protein does not enclose is bulk
