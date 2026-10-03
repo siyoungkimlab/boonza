@@ -5,6 +5,7 @@ tests/data/martini/regenerate.py remakes them.
 """
 
 import gzip
+import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -864,3 +865,90 @@ def test_an_ion_martini_has_gets_that_ion_and_the_bonds(forcefield, bead, tmp_pa
                 if k in t.atoms and t.meta.get("comment") == "cofactor held"
                 and float(t.params[1]) > 0.4]  # fmt: skip
     assert COFACTOR_BEAD[forcefield] != bead  # the inert bead is a different thing
+
+
+@pytest.mark.parametrize("name,parent", [("ASH", "ASP"), ("ASPP", "ASP"),
+                                         ("GLH", "GLU"), ("GLUP", "GLU"),
+                                         ("LYN", "LYS")])  # fmt: skip
+def test_martini2_builds_a_neutral_residue_from_the_charged_one(name, parent, tmp_path):
+    """One chemistry spelled two ways does one thing, and the charge is the thing.
+
+    Martini 2.2's neutral acids and neutral lysine are residues of its own
+    (ASP0, GLU0, LSN) that no mapping reaches from an all-atom structure, not in
+    vermouth either, so arriving *named* ASH asked for the neutral block and died
+    on its missing mapping -- while the same residue arriving named ASP with the
+    proton still on it only warned.  It now builds the charged residue, whose
+    parameters exist, and sets the side chain's charge to zero, which is what a
+    neutral residue differs in.  martinize2 leaves it charged; this says what it
+    did instead.
+    """
+    s = _load(CASES["2TRX"][0], tmp_path).select("protein and chain A").clone()
+    where = next(r for r in range(s.nresidues)
+                 if str(s.residues["name"][r]).strip() == parent)  # fmt: skip
+    plain = martinize(s.clone(), forcefield="martini22")
+    renamed = s.clone()
+    renamed.residue(where).name = name
+    with pytest.warns(UserWarning, match=f"{name} built from {parent}"):
+        got = martinize(renamed, forcefield="martini22")
+
+    def beads(m):
+        return [(n["atomname"], n["atype"], float(n["charge"]))
+                for n in m.molecules[0].nodes if n.get("resid") == where + 1]  # fmt: skip
+
+    mine, theirs = beads(got), beads(plain)
+    assert [(n, a) for n, a, _ in mine] == [(n, a) for n, a, _ in theirs]  # same beads
+    assert abs(sum(q for _, _, q in theirs)) == 1.0  # the charged one is charged
+    assert sum(q for _, _, q in mine) == 0.0  # and this one is not
+    assert all(q == 0.0 for n, _, q in mine if n.startswith("SC"))
+
+
+@pytest.mark.parametrize("name", ["HIP", "HSP"])
+def test_martini2_has_a_charged_histidine_of_its_own(name, tmp_path):
+    """Not every protonation needs standing in for: Martini 2.2 ships HSP, a
+    residue with its own mapping, so a protonated histidine is built as itself
+    and carries its charge.  Nothing is warned about and nothing is zeroed."""
+    s = _load(CASES["2TRX"][0], tmp_path).select("protein and chain A").clone()
+    where = next(r for r in range(s.nresidues)
+                 if str(s.residues["name"][r]).strip() == "HIS")  # fmt: skip
+    s.residue(where).name = name
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # it is not a compromise
+        m = martinize(s, forcefield="martini22")
+    beads = [(n["atomname"], float(n["charge"])) for n in m.molecules[0].nodes
+             if n.get("resid") == where + 1]  # fmt: skip
+    assert sum(q for _, q in beads) == pytest.approx(1.0)
+
+
+def test_martini3_keeps_a_protonated_residue_neutral(tmp_path):
+    """What Martini 2.2 cannot do, Martini 3 can: it ships the mappings for the
+    neutral acids under both conventions' names, so the charged bead gives way to
+    a polar one and nothing is warned about."""
+    s = _load(CASES["2TRX"][0], tmp_path).select("protein and chain A").clone()
+    for name, parent in (("ASH", "ASP"), ("GLH", "GLU"), ("LYN", "LYS")):
+        where = next(r for r in range(s.nresidues)
+                     if str(s.residues["name"][r]).strip() == parent)  # fmt: skip
+        x = s.clone()
+        x.residue(where).name = name
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # neutral is not a compromise here
+            m = martinize(x, forcefield="martini3001")
+        q = sum(float(n["charge"]) for n in m.molecules[0].nodes
+                if n.get("resid") == where + 1)  # fmt: skip
+        assert q == pytest.approx(0.0), f"{name} came out charged under Martini 3"
+
+
+def test_sirah_has_a_residue_of_its_own_for_a_neutral_acid():
+    """SIRAH maps ASH and GLH onto sDh and sEh, its own neutral residues, where
+    ASP and GLU give sD and sE: the proton is kept as a plus and minus across the
+    two oxygens rather than a charge of minus one over the pair.  Neutral lysine
+    is the exception -- its map sends LYN to sK, the charged one."""
+    from boonza.sirah.build import read_map, read_residues
+
+    amap, (library, _) = read_map(), read_residues()
+    assert (amap["ASP"].residue, amap["ASH"].residue) == ("sD", "sDh")
+    assert (amap["GLU"].residue, amap["GLH"].residue) == ("sE", "sEh")
+    assert amap["LYN"].residue == amap["LYS"].residue == "sK"  # SIRAH's own choice
+    for charged, neutral in (("sD", "sDh"), ("sE", "sEh")):
+        q = {k: sum(a[2] for a in library[k].atoms) for k in (charged, neutral)}
+        assert q[charged] == pytest.approx(-1.0, abs=0.01)
+        assert q[neutral] == pytest.approx(0.0, abs=0.01)

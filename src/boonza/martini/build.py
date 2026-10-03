@@ -67,10 +67,20 @@ _TERMINAL_O = ("OXT", "OT2", "O2", "OC2")
 _RESNAMES = {"CYX": "CYS", "CYM": "CYS"}
 #: What a force field calls a residue another names differently.  Martini 2.2
 #: takes CHARMM's histidines, and at its resolution HSD and HSE are the same four
-#: beads.  Its neutral acids are residues of their own (ASP0, GLU0) rather than
-#: modifications, and no mapping reaches them from an all-atom structure -- not
-#: in vermouth either -- so a protonated aspartate stays charged under Martini 2,
-#: which is what martinize2 does with it.
+#: beads.
+#:
+#: Its neutral acids and its neutral lysine are residues of its own (ASP0, GLU0,
+#: LSN) rather than modifications, and no mapping reaches them from an all-atom
+#: structure -- not in vermouth either, which is the set these come from.  So a
+#: protonated aspartate stays charged under Martini 2, which is what martinize2
+#: does with it, and naming it the Amber or CHARMM way asks for the same thing:
+#: these point at the charged residue, whose mapping exists, not at the neutral
+#: block, whose mapping does not.  The hydrogens then come back as a
+#: modification the force field has no mapping for either (ASP-HD2), which is
+#: warned about and skipped -- the same path a structure takes when it arrives
+#: named ASP with the proton still on it, so the two spellings of one chemistry
+#: do the same thing.  Martini 3 has the mappings and keeps such a residue
+#: neutral; so does SIRAH, which has a residue of its own for it.
 INSTEAD_OF = {
     "martini22": {
         "residue": {
@@ -78,11 +88,11 @@ INSTEAD_OF = {
             "HID": "HSD",
             "HIE": "HSE",
             "HIP": "HSP",
-            "ASH": "ASP0",
-            "ASPP": "ASP0",
-            "GLH": "GLU0",
-            "GLUP": "GLU0",
-            "LYN": "LSN",
+            "ASH": "ASP",
+            "ASPP": "ASP",
+            "GLH": "GLU",
+            "GLUP": "GLU",
+            "LYN": "LYS",
             "HYP": "PRO",
             "GLYM": "GLY",
             "CYSF": "CYS",
@@ -93,9 +103,36 @@ INSTEAD_OF = {
 }
 
 
+#: A neutral residue Martini 2.2 has no bead for, and the charged one whose
+#: parameters stand in for it.  Its own neutral blocks (ASP0, GLU0, LSN) have no
+#: mapping from an all-atom structure -- not in vermouth either -- so the charged
+#: residue is built and the side chain's charge is then set to zero: the bead
+#: keeps the type, the size and the bonded terms of the charged form, and carries
+#: no charge, which is the part of the chemistry a neutral residue actually
+#: differs in.  martinize2 leaves such a residue charged instead; this is a
+#: deliberate difference, and the one that answers what the structure says.
+NEUTRAL_RESIDUE = {"ASH": "ASP", "ASPP": "ASP", "GLH": "GLU", "GLUP": "GLU", "LYN": "LYS"}
+
+
 def _instead_of(ff, what: str, name: str, fallback=None):
     """What ``ff`` calls ``name``, where it calls it something else."""
-    return INSTEAD_OF.get(getattr(ff, "name", ""), {}).get(what, {}).get(name, fallback)
+    out = INSTEAD_OF.get(getattr(ff, "name", ""), {}).get(what, {}).get(name, fallback)
+    # a residue read as another charge state is a change to the chemistry, not a
+    # spelling, so it is said out loud -- once per name, however many there are
+    if what == "residue" and NEUTRAL_RESIDUE.get(name) == out != name:
+        said = getattr(ff, "_said_protonation", None)
+        if said is None:
+            said = ff._said_protonation = set()
+        if name not in said:
+            said.add(name)
+            warnings.warn(
+                f"{name} built from {out} with its side chain's charge set to zero: "
+                f"{getattr(ff, 'name', 'this force field')} has no bead for a neutral "
+                f"{out.title()}, so it takes the charged residue's parameters without "
+                f"its charge",
+                stacklevel=2,
+            )
+    return out
 
 
 _RTP = {"HIS": "HIS", "HSE": "HSE", "HSD": "HSD", "HSP": "HSP", "HIE": "HSE", "HID": "HSD",
@@ -905,6 +942,14 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
                         replace["charge"] = float(replace["charge"])
                     node.update(replace)
                     node["modifications"].append(mname)
+        if res.resname in NEUTRAL_RESIDUE:
+            # the structure says this side chain holds its proton, and the model
+            # has no bead for one: the charge is what it would differ in, so the
+            # charge is what goes.  Only the side chain -- a terminus puts its
+            # own charge on BB and has nothing to do with this
+            for name, k in index.items():
+                if name.startswith("SC"):
+                    mol.nodes[k]["charge"] = 0.0
         for e in block.edges:
             a, b = tuple(e)
             mol.add_edge(index[a], index[b])

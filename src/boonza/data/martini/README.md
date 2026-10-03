@@ -12,7 +12,10 @@ commit a9b62ee, Apache License 2.0, see `LICENSE`), unchanged:
   directory, from `vermouth/data/mappings/martini3001` and from
   `vermouth/data/mappings` (vermouth's default directory is Martini 2's).  The
   Martini 2 set has no mapping for a protonated aspartate or glutamate, a
-  neutral lysine, or the amber-named histidines, because vermouth carries none;
+  neutral lysine, or the amber-named histidines, because vermouth carries none
+  -- boonza reads the amber histidines as the CHARMM ones, which it has, and
+  builds a neutral acid or lysine from the charged residue with the side
+  chain's charge set to zero, saying so;
   `martini22/modifications.charmm36.mapping` is its `modifications.mapping`.
   The lipid mappings are left out of both: boonza builds a bilayer from
   templates rather than mapping one down;
