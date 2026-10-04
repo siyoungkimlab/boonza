@@ -863,26 +863,33 @@ def test_sites_reads_part_of_a_run(tmp_path, swimming, capsys):
     assert f"over {whole // 4} of {whole} frames" in capsys.readouterr().out
 
 
-def test_a_stride_moves_the_interval_the_rates_are_measured_against(tmp_path, swimming, capsys):
+def test_a_stride_moves_the_interval_the_rates_are_measured_against(tmp_path, swimming):
     """``--every-ns`` is in nanoseconds, not frames, because the spacing is what
     the dwell and the rates are divided by: a stride that left the interval where
-    it was would report a residence time short by exactly the stride."""
-    from boonza.cli import main
+    it was would report a residence time short by exactly the stride.  So the
+    flag is the new spacing, and reading one frame in five makes a 0.1 ns run a
+    0.5 ns one as far as everything downstream is concerned.
+    """
+    from argparse import Namespace
+
+    from boonza.cli import _over_ns
 
     s, runs = swimming
-    structure = tmp_path / "s.dms"
-    boonza.save(s, structure)
     path = tmp_path / "run.dcd"
     with boonza.open_writer(path, s.natoms) as w:
         for x in runs[0]:
             w.write(x, box=s.cell)
-    out = tmp_path / "strided"
-    assert main(["sites", str(structure), "--traj", str(path), "--interval-ns", "0.1",
-                 "--every-ns", "0.5", "-o", str(out)]) == 0  # fmt: skip
-    said = capsys.readouterr().out
-    assert "one every 0.5 ns" in said
-    rows = list(csv.DictReader((out / "sites.csv").open()))
-    assert rows and {float(r["interval_ns"]) for r in rows} == {0.5}
+    whole = len(runs[0])
+    traj = boonza.open_trajectory(str(path), s)
+    args = Namespace(from_ns=None, until_ns=None, every_ns=0.5, interval_ns=0.1)
+    (cut,) = _over_ns([traj], args)
+    assert args.interval_ns == 0.5  # what the rates will be measured against
+    assert len(cut) == len(range(0, whole, 5))  # one frame in five, and lazily
+    # and a window and a stride together: half the run, one frame in five of it
+    args = Namespace(from_ns=None, until_ns=0.1 * (whole // 2), every_ns=0.5, interval_ns=0.1)
+    (cut,) = _over_ns([traj], args)
+    assert args.interval_ns == 0.5
+    assert len(cut) == len(range(0, whole // 2, 5))
 
 
 def test_one_temperature_for_running_and_for_scoring(tmp_path, swimming, capsys):
@@ -923,5 +930,7 @@ def test_one_temperature_for_running_and_for_scoring(tmp_path, swimming, capsys)
     out = tmp_path / "out"
     assert main(["sites", str(structure), "--traj", str(path), "--interval-ns", "0.1",
                  "-o", str(out)]) == 0  # fmt: skip
-    capsys.readouterr()
-    assert float(next(iter(csv.DictReader((out / "sites.csv").open())))["interval_ns"]) == 0.1
+    # nothing to read it from, so nothing is claimed about where it came from
+    assert "their own temperature" not in capsys.readouterr().out
+    rows = list(csv.DictReader((out / "sites.csv").open()))
+    assert all(float(r["interval_ns"]) == 0.1 for r in rows)
