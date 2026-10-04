@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from ..md.config import TEMPERATURE
+
 WARM_UP = (0.002, 0.005, 0.010)  # ps
 
 
-def equilibrate(simulation, temperature: float = 310.0, timestep: float = 0.020,
+def equilibrate(simulation, temperature: float = TEMPERATURE, timestep: float = 0.020,
                 steps: int = 2000, seed: int = 1) -> None:  # fmt: skip
     """Minimize, give velocities at ``temperature`` (K), and step up to ``timestep`` (ps).
 

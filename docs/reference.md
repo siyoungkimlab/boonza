@@ -642,7 +642,7 @@ side by side.  Constraints are then brought to their lengths, virtual
 sites put where their parents place them, and the molecule turned so its
 long axis is along z, head up.  Minimization does the rest.
 
-### `boonza.martini.equilibrate(simulation, temperature: 'float' = 310.0, timestep: 'float' = 0.02, steps: 'int' = 2000, seed: 'int' = 1) -> 'None'`
+### `boonza.martini.equilibrate(simulation, temperature: 'float' = 298.0, timestep: 'float' = 0.02, steps: 'int' = 2000, seed: 'int' = 1) -> 'None'`
 
 Minimize, give velocities at ``temperature`` (K), and step up to ``timestep`` (ps).
 
@@ -1172,7 +1172,7 @@ fingerprint per frame.  ``residues`` fixes the columns, which is what lets
 fingerprints from different ligands, or different systems with the same
 protein, be compared: pass the ``residues`` of an earlier result.
 
-### `boonza.kinetics(system, found, site: 'int', interval_ns: 'float', temperature: 'float' = 310.0, hysteresis: 'float' = 2.0, quantile: 'float' = 0.9, bootstrap: 'int' = 400, seed: 'int' = 0, volume_A3: 'float | None' = None) -> 'Rates'`
+### `boonza.kinetics(system, found, site: 'int', interval_ns: 'float', temperature: 'float' = 298.0, hysteresis: 'float' = 2.0, quantile: 'float' = 0.9, bootstrap: 'int' = 400, seed: 'int' = 0, volume_A3: 'float | None' = None) -> 'Rates'`
 
 Rates, residence time and dG of one site, with an interval from resampling runs.
 

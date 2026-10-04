@@ -1,5 +1,6 @@
 """Binding sites pooled over runs and copies, and how they feed the pose level."""
 
+import csv
 from pathlib import Path
 
 import numpy as np
@@ -797,3 +798,130 @@ def test_a_pocket_keeps_out_of_the_beads_it_is_measured_against():
     # measured from a particle's surface, which is what clearance is
     assert clear[np.argmin(np.linalg.norm(grid.cell_centres() - rows[0], axis=1))] \
         == pytest.approx(-2.35, abs=grid.spacing)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "frames,interval,first,until,every,want",
+    [
+        (2000, 0.1, None, 50, None, (0, 500, 1)),         # the first quarter
+        (2000, 0.1, 100, None, None, (999, 2000, 1)),     # from 100 ns on, inclusive
+        (2000, 0.1, 50, 100, None, (499, 1000, 1)),       # a middle window
+        (2000, 0.1, None, None, 1, (0, 2000, 10)),        # every tenth frame
+        (200, 1.0, None, None, 1, (0, 200, 1)),           # already that coarse
+        (2000, 0.1, None, 1e9, None, (0, 2000, 1)),       # past the end is the end
+    ],
+)  # fmt: skip
+def test_which_frames_a_window_asks_for(frames, interval, first, until, every, want):
+    """``--from-ns``, ``--until-ns`` and ``--every-ns`` in frames.
+
+    A frame is written every interval, the first at the interval and not at zero,
+    so the frame holding time t is t/interval - 1.  Asking for 100 ns of a run
+    reported every 0.1 is 1000 frames, not 1001, and asking from 100 ns starts at
+    the frame that holds 100.0.
+    """
+    from boonza.cli import _window_of
+
+    got = _window_of(frames, interval, first, until, every)
+    assert (got.start or 0, got.stop, got.step or 1) == want
+    assert _window_of(frames, interval, None, None, None) == slice(None)  # nothing cut
+
+
+def test_a_window_needs_to_know_the_interval():
+    """Frames are numbered and the flags are in nanoseconds, so without the one
+    the other cannot be honoured -- and guessing it would be wrong by whatever
+    the run actually used."""
+    from boonza.cli import _window_of
+
+    with pytest.raises(ValueError, match="--interval-ns"):
+        _window_of(2000, None, None, 50, None)
+    with pytest.raises(ValueError, match="finer than the run"):
+        _window_of(200, 1.0, None, None, 0.1)  # one frame every 0.1 of a 1 ns run
+    with pytest.raises(ValueError, match="no frames between"):
+        _window_of(200, 1.0, 150, 100, None)  # the window is backwards
+
+
+def test_sites_reads_part_of_a_run(tmp_path, swimming, capsys):
+    """``--until-ns`` reads the frames it asked for and no others.
+
+    The point is a run analysed over part of itself: what 200 ns found that 50
+    would not have.  The trajectory slices lazily, so this is also the cheapest
+    thing in the analysis -- a quarter of the frames is a quarter of the work.
+    """
+    from boonza.cli import main
+
+    s, runs = swimming
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in runs[0]:
+            w.write(x, box=s.cell)
+    whole = len(runs[0])
+    part = str(0.1 * (whole // 4))
+    assert main(["sites", str(structure), "--traj", str(path), "--interval-ns", "0.1",
+                 "--until-ns", part, "-o", str(tmp_path / "part")]) == 0  # fmt: skip
+    assert f"over {whole // 4} of {whole} frames" in capsys.readouterr().out
+
+
+def test_a_stride_moves_the_interval_the_rates_are_measured_against(tmp_path, swimming, capsys):
+    """``--every-ns`` is in nanoseconds, not frames, because the spacing is what
+    the dwell and the rates are divided by: a stride that left the interval where
+    it was would report a residence time short by exactly the stride."""
+    from boonza.cli import main
+
+    s, runs = swimming
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in runs[0]:
+            w.write(x, box=s.cell)
+    out = tmp_path / "strided"
+    assert main(["sites", str(structure), "--traj", str(path), "--interval-ns", "0.1",
+                 "--every-ns", "0.5", "-o", str(out)]) == 0  # fmt: skip
+    said = capsys.readouterr().out
+    assert "one every 0.5 ns" in said
+    rows = list(csv.DictReader((out / "sites.csv").open()))
+    assert rows and {float(r["interval_ns"]) for r in rows} == {0.5}
+
+
+def test_one_temperature_for_running_and_for_scoring(tmp_path, swimming, capsys):
+    """A dG is in kT, so the analysis has to use the temperature the probes swam
+    at.  The simulation's default was 298 K and the analysis's was 310, which is
+    four percent of every dG and KD reported, so the analysis now takes the run's
+    own and falls back on the same default rather than a different one."""
+    import inspect
+
+    from boonza.cli import _temperature_of, main
+    from boonza.kinetics import kinetics
+    from boonza.md.config import DEFAULTS, TEMPERATURE
+
+    assert DEFAULTS["temperature"] == TEMPERATURE  # boonza md and boonza sites agree
+    assert inspect.signature(kinetics).parameters["temperature"].default == TEMPERATURE
+
+    # a run says what it was at, and the analysis reads it rather than being told
+    run = tmp_path / "md"
+    run.mkdir()
+    (run / "md.toml").write_text("temperature = 310.0\nproduction_report_interval_ns = 0.1\n")
+    assert _temperature_of([str(run)]) == 310.0
+    assert "310 K" in capsys.readouterr().out
+    # two runs that disagree are not guessed at
+    other = tmp_path / "md2"
+    other.mkdir()
+    (other / "md.toml").write_text("temperature = 298.0\n")
+    assert _temperature_of([str(run), str(other)]) is None
+    assert "different temperatures" in capsys.readouterr().out
+
+    # and with no run to ask, the default is the one the simulation uses
+    s, runs = swimming
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for x in runs[0]:
+            w.write(x, box=s.cell)
+    out = tmp_path / "out"
+    assert main(["sites", str(structure), "--traj", str(path), "--interval-ns", "0.1",
+                 "-o", str(out)]) == 0  # fmt: skip
+    capsys.readouterr()
+    assert float(next(iter(csv.DictReader((out / "sites.csv").open())))["interval_ns"]) == 0.1
