@@ -5,6 +5,7 @@ import pytest
 
 import boonza
 from boonza.kinetics import GAS, LITRES
+from boonza.md.config import TEMPERATURE
 from boonza.sites import Site, SiteSet
 
 DT = 0.1  # ns per frame
@@ -13,7 +14,7 @@ CONC = LITRES / BOX**3  # M, for one copy in the box
 K_OFF = 0.05  # 1/ns: a residence time of 20 ns
 K_ON_PSEUDO = 0.02  # 1/ns at that concentration
 K_ON = K_ON_PSEUDO / CONC
-DG = GAS * 310.0 * np.log(K_OFF / K_ON)
+DG = GAS * TEMPERATURE * np.log(K_OFF / K_ON)
 
 
 def _process(nruns=12, nframes=3000, seed=0, wobble=0.5, away=(14.0, 18.0), stop=None):
@@ -141,6 +142,7 @@ def test_the_concentration_follows_the_box_the_frames_had(box):
     assert measured.concentration == pytest.approx(assumed.concentration / 0.9, rel=1e-6)
     assert measured.k_on == pytest.approx(assumed.k_on * 0.9, rel=1e-6)
     assert measured.KD == pytest.approx(assumed.KD / 0.9, rel=1e-6)
-    shift = -GAS * 310.0 * np.log(0.9)  # RT ln(1/ratio), and nothing else
+    # RT ln(1/ratio), and nothing else, at the temperature boonza runs and scores at
+    shift = -GAS * TEMPERATURE * np.log(0.9)
     assert measured.dG - assumed.dG == pytest.approx(shift, abs=1e-6)
     assert 0 < shift < 0.1  # a tenth of the box is worth this much dG, and no more

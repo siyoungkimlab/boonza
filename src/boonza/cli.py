@@ -647,6 +647,13 @@ def _sites(args) -> int:
     _cg_selections(args, system, args.workdir)
     if args.interval_ns is None and args.workdir:
         args.interval_ns = _interval_of(args.workdir)
+    from .md.config import TEMPERATURE
+
+    if args.temperature is None:
+        # the dG is in kT, so it is the temperature the probes swam at, which the
+        # run wrote down.  Without a run to ask, the same default boonza md has
+        args.temperature = (_temperature_of(args.workdir) if args.workdir else None) or TEMPERATURE
+    runs = _over_ns(runs, args)
     from .probemap import SOLVENT_NAMES
 
     pocket_protein = f"not ({args.ligandsel}) and not resname {' '.join(SOLVENT_NAMES)}"
@@ -973,6 +980,77 @@ def _csv_number(value) -> str:
     return f"{value:.6g}"
 
 
+def _window_of(frames: int, interval_ns, first_ns, until_ns, every_ns=None):
+    """The frames of a run between ``first_ns`` and ``until_ns``, as a slice.
+
+    A frame is written every ``interval_ns``, the first at ``interval_ns`` and
+    not at zero, so the frame holding time t is t/interval - 1: asking for the
+    first 100 ns of a run reported every 0.1 gets frames 0 to 999, which are the
+    frames at 0.1 to 100.0 ns.
+
+    ``every_ns`` reads one frame that far apart instead of all of them, which
+    asks how finely a run has to be read rather than how much of it.  It is in
+    nanoseconds and not in frames because the spacing is what the dwell and the
+    rates are measured against: a stride that left the interval where it was
+    would report a residence time short by exactly the stride.
+    """
+    if first_ns is None and until_ns is None and every_ns is None:
+        return slice(None)
+    if not interval_ns:
+        raise ValueError(
+            "--from-ns, --until-ns and --every-ns need to know how far apart the frames "
+            "are: give --interval-ns, or --workdir, which reads it"
+        )
+    lo = 0 if first_ns is None else max(int(round(float(first_ns) / interval_ns)) - 1, 0)
+    hi = frames if until_ns is None else min(int(round(float(until_ns) / interval_ns)), frames)
+    step = 1
+    if every_ns is not None:
+        step = int(round(float(every_ns) / interval_ns))
+        if step < 1:
+            raise ValueError(
+                f"--every-ns {float(every_ns):g} is finer than the run itself, whose frames "
+                f"are {interval_ns:g} ns apart"
+            )
+    if hi - lo < 1:
+        raise ValueError(
+            f"no frames between {first_ns or 0} and {until_ns} ns: the run is {frames} "
+            f"frames of {interval_ns} ns"
+        )
+    return slice(lo, hi, step)
+
+
+def _over_ns(runs, args):
+    """``runs`` cut to the window asked for, and what that came to, said once.
+
+    A run is read over part of itself to ask what more of it was worth -- whether
+    200 ns of probes found what 50 would have, and whether every frame was
+    needed to see it.  The trajectories slice lazily, so the frames outside the
+    window are never read.
+    """
+    first_ns, until_ns = getattr(args, "from_ns", None), getattr(args, "until_ns", None)
+    every_ns = getattr(args, "every_ns", None)
+    if first_ns is None and until_ns is None and every_ns is None:
+        return runs
+    out, said = [], None
+    for run in runs:
+        own, traj = run if isinstance(run, tuple) else (None, run)
+        window = _window_of(len(traj), args.interval_ns, first_ns, until_ns, every_ns)
+        cut = traj[window]
+        said = said or (window, len(traj), len(cut))
+        out.append((own, cut) if own is not None else cut)
+    window, whole, kept = said
+    spacing = args.interval_ns * window.step
+    print(
+        f"over {kept} of {whole} frames: {(window.start + 1) * args.interval_ns:g} to "
+        f"{window.stop * args.interval_ns:g} ns"
+        + (f", one every {spacing:g} ns" if window.step > 1 else "")
+    )
+    # the spacing is what the dwell, the residence times and the rates are
+    # measured against, so a run read every tenth frame is a 1 ns run here
+    args.interval_ns = spacing
+    return out
+
+
 def _run_system(path, typed: bool = False, sizes: bool = False):
     """A run's system for an analysis: its structure, and its force field only
     where something needs it.
@@ -1000,12 +1078,13 @@ def _run_system(path, typed: bool = False, sizes: bool = False):
     return s
 
 
-def _interval_of(workdirs):
-    """The ns between frames, from the runs' own settings; None if they disagree.
+def _setting_of(workdirs, key):
+    """One setting from the runs' own files, or None if they disagree about it.
 
-    Every time a rate is reported in -- residence, k_on, k_off, and so dG -- is
-    frames times this, so taking it from the run beats typing it and being out
-    by a factor of ten.
+    A run writes what it was told to do, so the analysis can read it rather than
+    be told again: every time a rate is reported in is frames times the interval,
+    and every dG is in kT, so taking both from the run beats typing them and
+    being out by a factor of ten or by twelve degrees.
     """
     import tomllib
     from pathlib import Path
@@ -1018,17 +1097,39 @@ def _interval_of(workdirs):
                     settings = tomllib.loads(name.read_text())
                 except (OSError, tomllib.TOMLDecodeError):
                     continue
-                if "production_report_interval_ns" in settings:
-                    found.add(float(settings["production_report_interval_ns"]))
+                if key in settings:
+                    found.add(float(settings[key]))
                     break
-    if len(found) == 1:
-        interval = found.pop()
-        print(f"frames are {interval:g} ns apart (the runs' own "
+    return found.pop() if len(found) == 1 else (sorted(found) if found else None)
+
+
+def _interval_of(workdirs):
+    """The ns between frames, from the runs' own settings; None if they disagree."""
+    got = _setting_of(workdirs, "production_report_interval_ns")
+    if isinstance(got, float):
+        print(f"frames are {got:g} ns apart (the runs' own "
               f"production_report_interval_ns); --interval-ns overrides it")  # fmt: skip
-        return interval
-    if len(found) > 1:
-        print(f"the runs report frames at different intervals ({sorted(found)} ns): no rates "
+        return got
+    if got:
+        print(f"the runs report frames at different intervals ({got} ns): no rates "
               "without --interval-ns")  # fmt: skip
+    return None
+
+
+def _temperature_of(workdirs):
+    """The K the runs were at, from their own settings; None if they disagree.
+
+    A dG is in kT, so the temperature the analysis uses has to be the one the
+    probes swam at: twelve degrees is four percent of every dG and KD reported.
+    """
+    got = _setting_of(workdirs, "temperature")
+    if isinstance(got, float):
+        print(f"the runs were at {got:g} K (their own temperature); "
+              f"--temperature overrides it")  # fmt: skip
+        return got
+    if got:
+        print(f"the runs were at different temperatures ({got} K): "
+              f"give --temperature")  # fmt: skip
     return None
 
 
@@ -1662,7 +1763,11 @@ def _parser() -> argparse.ArgumentParser:
                         "greasy -- and where")  # fmt: skip
     q.add_argument("--interval-ns", type=float, default=None,
                    help="ns between frames; with it, rates, residence times and dG")  # fmt: skip
-    q.add_argument("--temperature", type=float, default=310.0, help="K, for dG")
+    from .md.config import TEMPERATURE
+
+    q.add_argument("--temperature", type=float, default=None,
+                   help=f"K, for dG (default: the runs' own, else "
+                        f"{TEMPERATURE:g})")  # fmt: skip
     q.add_argument("--hysteresis", type=float, default=2.0,
                    help="leave a site at this many times the distance it is entered at. "
                         "One boundary counts every recrossing as a departure")  # fmt: skip
@@ -1672,6 +1777,17 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--min-volume", dest="min_volume", type=float, default=None, metavar="A3",
                    help="the smallest pocket worth reporting, in cubic angstroms (default "
                         "20, where one a ligand sits in runs to hundreds)")  # fmt: skip
+    q.add_argument("--from-ns", dest="from_ns", type=float, default=None, metavar="NS",
+                   help="analyse the run from this time on (default: its first frame)")  # fmt: skip
+    q.add_argument("--until-ns", dest="until_ns", type=float, default=None, metavar="NS",
+                   help="analyse the run only up to this time, to ask what more of it was "
+                        "worth: --until-ns 50 on a 200 ns run reads the first quarter and "
+                        "nothing else")  # fmt: skip
+    q.add_argument("--every-ns", dest="every_ns", type=float, default=None, metavar="NS",
+                   help="read one frame this far apart rather than all of them, to ask how "
+                        "finely a run has to be read: --every-ns 1 on a run written every "
+                        "0.1 reads every tenth frame, and the dwell and the rates are then "
+                        "measured against 1 ns")  # fmt: skip
     q.add_argument("--shell", choices=("center", "surface", "none"), default="center",
                    help="what a pocket's near edge is measured from: 2 A from the nearest "
                         "particle's center (default), or clear of its van der Waals surface, "
