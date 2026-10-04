@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .md.config import TEMPERATURE
+
 GAS = 0.0019872041  # kcal/mol/K
 LITRES = 1660.5390  # A^3 of one molecule per litre-mole: 1e27 / 6.02214076e23
 
@@ -160,7 +162,7 @@ def _totals(items, interval_ns: float, free: np.ndarray, volume: float):
     return bound, unbound, exposure, left, came
 
 
-def kinetics(system, found, site: int, interval_ns: float, temperature: float = 310.0,
+def kinetics(system, found, site: int, interval_ns: float, temperature: float = TEMPERATURE,
              hysteresis: float = 2.0, quantile: float = 0.9, bootstrap: int = 400,
              seed: int = 0, volume_A3: float | None = None) -> Rates:  # fmt: skip
     """Rates, residence time and dG of one site, with an interval from resampling runs.

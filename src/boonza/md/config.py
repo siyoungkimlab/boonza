@@ -49,6 +49,11 @@ DEFAULT_FORCEFIELDS = (
 #: parameters from the topology instead -- boonza coarse-grains the input
 #: itself for Martini, while a SIRAH topology comes built by SIRAH's tools.
 MODELS = ("aa", "martini2", "martini3", "sirah")
+#: The temperature everything runs and is measured at, in kelvin.  One number
+#: for every model and for the analysis too: a dG is in kT, so a site scored at
+#: a temperature the probes did not swim at is wrong by the ratio -- twelve
+#: degrees is four percent of every dG and every KD reported.
+TEMPERATURE = 298.0
 #: What a model changes when the setting was not given, on top of DEFAULTS.
 #: The temperature is not among them: one default serves every model, and each
 #: force field's own papers run at their own (310 K for Martini membranes,
@@ -117,7 +122,7 @@ DEFAULTS: dict = {
     "box_nm": None,
     "cutoff_nm": None,
     "saltM": 0.15,
-    "temperature": 298.0,
+    "temperature": TEMPERATURE,
     "pressure": 1.0,
     "barostat": "isotropic",
     "surface_tension": 0.0,
