@@ -85,3 +85,36 @@ def test_what_to_keep_can_be_said_instead(tmp_path):
     assert sorted(solute_ids(s, keep="resname W").tolist()) == [2]
     with pytest.raises(ValueError, match="no atoms"):
         write_solute(s, tmp_path / "trajectory.dcd", tmp_path / "none", keep="resname ZZZ")
+
+
+def test_the_view_file_is_cut_down_and_not_copied(tmp_path):
+    """``view.dms`` is what a viewer opens, and it holds the same atoms in the
+    same order as the system, so the copy gets the same cut.
+
+    Copied whole it would carry every water the trajectory beside it no longer
+    has, and a viewer would draw a box of solvent around a protein that is not
+    there any more.  The settings beside it are copied as they are, being
+    settings.
+    """
+    from boonza.solute import VIEW, solute_ids
+
+    s = _run(tmp_path, ["ALA", "ALA", "ALA", "W", "NA"], ["A", "A", "A", "", ""])
+    view = s.clone()  # what a Martini run writes: the same atoms, a band fewer
+    view.delete_bonds([view.find_bond(view.atom(0), view.atom(1))])
+    boonza.save(view, tmp_path / VIEW)
+    (tmp_path / "probes.json").write_text("{}")
+
+    out = tmp_path / "solute"
+    write_solute(s, tmp_path / "trajectory.dcd", out,
+                 beside=[tmp_path / VIEW, tmp_path / "probes.json"])  # fmt: skip
+    kept = solute_ids(s, None)
+    assert (out / VIEW).is_file() and (out / "probes.json").is_file()
+    got = boonza.load(out / VIEW)
+    assert got.natoms == len(kept) < s.natoms  # cut, not copied
+    # the solvent is gone by name: in a toy system a bead left without bonds
+    # reads as an ion, which a real protein's never is
+    assert not len(got.select("resname W NA"))
+    # its own bonds and not the system's: the band the run left out stays out
+    assert got.nbonds == view.nbonds < s.nbonds
+    # the atoms line up with the trajectory, which is what a viewer needs
+    assert got.natoms == boonza.load(out / "solvated.dms").natoms

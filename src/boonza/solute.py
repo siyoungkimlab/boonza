@@ -26,6 +26,17 @@ import numpy as np
 #: The files a run directory carries that the analysis reads beside the
 #: trajectory: which probes swam, and how far apart the frames are.
 BESIDE = ("probes.json", "md.toml", "final.toml")
+#: The one beside them that is a structure and not a setting, so it is cut down
+#: rather than copied: the file a viewer opens.
+#:
+#: What it leaves out is the elastic network a viewer would draw as a hairball,
+#: which is worth having where the network is made of bonds -- Martini 3 writes
+#: its rubber bands as bonds of type 1, and one run's copy holds 1119 of them
+#: stretching up to 10.7 A through the protein.  Martini 2.2 writes its own as
+#: type 6, a harmonic potential that is no bond at all, so nothing is drawn and
+#: its view file differs from the system in name only.  SIRAH holds its fold
+#: with torsions and has nothing to leave out either.
+VIEW = "view.dms"
 
 
 def solvent_selection(system) -> str:
@@ -59,11 +70,15 @@ def write_solute(system, trajectory, out, keep: str | None = None, beside=()) ->
     ``out`` is a directory, written as a run directory is -- ``solvated.dms`` and
     ``trajectory.dcd`` -- so ``boonza sites --workdir`` reads it as it reads the
     run itself.  ``beside`` are files copied in alongside (``probes.json`` and
-    the run's settings, which the analysis also reads).
+    the run's settings, which the analysis also reads), except ``view.dms``,
+    which is a structure: it holds the same atoms in the same order, so it is cut
+    down the same way rather than copied, and the copy a viewer opens has no more
+    solvent in it than the trajectory does.
 
     The box of every frame is carried over: bulk is counted against it, so a copy
     without it would answer a different question than the run did.
     """
+    from .io import load as _load_view
     from .io import save
     from .trajectory import open_trajectory, open_writer
 
@@ -80,7 +95,13 @@ def write_solute(system, trajectory, out, keep: str | None = None, beside=()) ->
             frames += 1
     for name in beside:
         src = Path(name)
-        if src.is_file():
+        if not src.is_file():
+            continue
+        if src.name == VIEW:
+            # the same atoms in the same order as the system, so the same cut:
+            # copied whole it would hold the solvent this is written to be rid of
+            save(_load_view(src).clone(ids), out / VIEW)
+        else:
             shutil.copy(src, out / src.name)
     return {"atoms": int(len(ids)), "of": int(system.natoms), "frames": frames,
             "out": str(out)}  # fmt: skip
