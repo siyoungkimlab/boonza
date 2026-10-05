@@ -1218,3 +1218,37 @@ def test_both_ways_round_is_a_library_of_its_own():
     assert blocks(martini_probe("EK")) == blocks(martini_probe("KE"))
     assert blocks(sirah_probe("EK")) != blocks(sirah_probe("KE"))
     assert dipole(sirah_probe, "EK") < 0.8 * dipole(sirah_probe, "KE")  # 31.7 D against 44.0
+
+
+@pytest.mark.parametrize("model", ["martini2", "martini3"])
+def test_a_single_amino_acid_probe_is_typed_for_the_feature_maps(model):
+    """A probe named by one letter is still the residue that letter stands for.
+
+    The names are the library's own, one letter per residue, so a dipeptide is
+    ``EK`` and a single amino acid is ``E``.  Only the two-letter case was read,
+    so every bead of a single amino acid typed as nothing, ``--features`` found no
+    point of any family to map, and the analysis raised "carries none of" rather
+    than reporting a score -- for 82 cells of a sweep, each of which had already
+    paid for its 200 ns.
+    """
+    from boonza.martini.features import bead_features
+    from boonza.martini.probes import single_sequences
+    from boonza.pharmacophore import FAMILIES
+
+    want = {
+        "K": "PosIonizable",
+        "R": "PosIonizable",
+        "D": "NegIonizable",
+        "E": "NegIonizable",
+        "W": "Aromatic",
+        "F": "Aromatic",
+        "Y": "Aromatic",
+    }
+    typed = {}
+    for letter in single_sequences():
+        s = probe(letter).system()
+        found = bead_features(s, np.arange(s.natoms), FAMILIES)
+        typed[letter] = {fam for fam, _ in found}
+        assert typed[letter], f"{letter} types as nothing at all"
+    for letter, family in want.items():
+        assert family in typed[letter], f"{letter} should carry {family}: {typed[letter]}"

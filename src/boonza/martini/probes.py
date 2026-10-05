@@ -21,6 +21,11 @@ PROBE_RESIDUES = ("ARG", "GLN", "GLU", "HIS", "ILE", "LEU", "LYS", "MET",
 LETTERS = {"ARG": "R", "GLN": "Q", "GLU": "E", "HIS": "H", "ILE": "I", "LEU": "L", "LYS": "K",
            "MET": "M", "PHE": "F", "PRO": "P", "SER": "S", "THR": "T", "TRP": "W",
            "TYR": "Y"}  # fmt: skip
+#: The same for every residue a probe can be, which is more than a dipeptide is
+#: made of: a library of single amino acids has the four the dipeptides leave
+#: out.  Anything that reads a probe's name back -- the feature maps, for one --
+#: needs all of them, or an asparagine probe is a residue it has never heard of.
+ALL_LETTERS = {**LETTERS, "ASN": "N", "ASP": "D", "CYS": "C", "VAL": "V"}
 
 #: What a probe's molecule is called in the topology.  Its beads keep the
 #: sequence as their residue name, which is what selects them, but the
@@ -50,8 +55,7 @@ def single_sequences(residues=SINGLE_RESIDUES) -> list[str]:
     are their side chains': +1 for arginine and lysine, -1 for aspartate and
     glutamate, zero for the rest.
     """
-    letters = {**LETTERS, "ASN": "N", "ASP": "D", "CYS": "C", "VAL": "V"}
-    return [letters.get(r, r) for r in residues]
+    return [ALL_LETTERS.get(r, r) for r in residues]
 
 
 def probe_sequences(residues=PROBE_RESIDUES) -> list[str]:
