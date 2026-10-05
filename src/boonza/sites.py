@@ -25,7 +25,7 @@ import numpy as np
 
 from .align import kabsch
 from .graph import connected_components
-from .pbc import distances, minimum_image
+from .pbc import distances, minimum_image_in, prepare_box
 from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids, molecules_of
 
 
@@ -674,34 +674,54 @@ def ligand_centroids(system, positions=None, reference=None, ligand: str = DEFAU
     copy_at = [np.array([at[a] for a in c.tolist()]) for c in copies]
     blocks, _ = _boxed_blocks(system, positions, need)
 
+    # the copies in blocks of equal size, so a frame's hundreds of them are one set
+    # of array operations rather than hundreds of calls on three floats apiece.
+    # Which copies are in a block is kept, so the rows still come back in copy order
+    blocked = []
+    for beads in sorted({len(a) for a in copy_at}):
+        who = np.array([c for c, a in enumerate(copy_at) if len(a) == beads])
+        blocked.append((who, np.stack([copy_at[c] for c in who]),
+                        None if widths is None else [widths[c] for c in who]))  # fmt: skip
+
+    ncopies = len(copy_at)
     out, where, sizes, frame = [], [], [], 0
     for xyz, boxes in blocks:
         for X, box in zip(xyz, boxes, strict=True):
             box = box if periodic and np.asarray(box).any() else None
             size = abs(float(np.linalg.det(box))) if box is not None else 0.0
+            cell = prepare_box(box)  # once a frame: every copy in it shares the box
             rot, shift = kabsch(X[fit_at], target)
             if drift is not None:  # how far this frame's protein is from the reference's
                 drift.append(float(np.sqrt((((X[fit_at] @ rot.T + shift) - target) ** 2)
                                            .sum(1).mean())))  # fmt: skip
             anchor = X[fit_at].mean(0)
-            for c, atoms in enumerate(copy_at):
-                p = X[atoms]
-                spread = minimum_image(p - p[0], box)  # the copy made whole, bead by bead
-                whole = p[0] + spread.mean(0)
-                moved = minimum_image((whole - anchor)[None], box)[0] - (whole - anchor)
-                whole = whole + moved
-                out.append(whole @ rot.T + shift)
-                if occupancy is not None:
-                    occupancy.add(
-                        out[-1][None] if centre_only else (p[0] + spread + moved) @ rot.T + shift,
-                        None if centre_only else (widths[c] if widths is not None else None),
-                    )
-                where.append((frame, c))
-                sizes.append(size)  # one per row, so the three returns line up
+            centres = np.empty((ncopies, 3))
+            for who, atoms, wide in blocked:
+                p = X[atoms]  # (copies, beads, 3)
+                # the copies made whole, bead by bead, each about its own first bead
+                spread = minimum_image_in((p - p[:, :1]).reshape(-1, 3), cell).reshape(p.shape)
+                whole = p[:, 0] + spread.mean(1)
+                away = whole - anchor
+                moved = minimum_image_in(away, cell) - away
+                centres[who] = (whole + moved) @ rot.T + shift
+                if occupancy is None:
+                    continue
+                if centre_only:
+                    occupancy.add(centres[who], None)
+                    continue
+                beads = (p[:, :1] + spread + moved[:, None]) @ rot.T + shift
+                # a copy at a time, as the radii are grouped per call and one
+                # block's worth of them would be scanned once for every radius
+                for k in range(len(who)):
+                    occupancy.add(beads[k], None if wide is None else wide[k])
+            out.append(centres)
+            where.append(np.column_stack([np.full(ncopies, frame), np.arange(ncopies)]))
+            sizes.append(np.full(ncopies, size))
             frame += 1
     if not out:
         raise ValueError("no frames")
-    return np.array(out), np.array(where, np.int64), np.array(sizes)
+    return (np.concatenate(out), np.concatenate(where).astype(np.int64),
+            np.concatenate(sizes))  # fmt: skip
 
 
 def _dense_cells(points, spacing: float, threshold: float, volume: float):
