@@ -153,11 +153,18 @@ against the other; what differs is the resolution and how the protein is held.
   they share chain `LIG` (`LIG2`, ... if the protein uses it), as an all-atom
   swim's ligand library does. In the topology the molecule is `probe_EK`, since
   a probe named `KW` would otherwise be SIRAH's potassium.
-- **The protein** is martinized with an elastic network, as in any Martini run
-  (`--no-elastic` leaves it out), which holds its fold while its side chains
-  move; SIRAH is sirahized and holds its backbone with torsion terms of its
-  own, so it needs neither a network nor restraints (`--termini` chooses its
-  chain ends). It is free to tumble; the analysis superposes the frames.
+- **The protein** is held with an elastic network in either model, which keeps
+  its fold while its side chains move (`--no-elastic` leaves it out). Martini
+  builds its rubber bands into the topology as it martinizes; SIRAH, sirahized,
+  has none to build, so the swim writes `elastic_network_selection = "name GC
+  and not chain LIG"` into `md.toml` and the run springs those alpha carbons
+  itself -- the probes carry `GC` beads of their own and are left out of it.
+  (A SIRAH run of its own holds every `GC` bead; only a swim has probes to
+  leave out. An `md.toml` written before this keeps running without a network:
+  a run started from a settings file does only what the file says.)
+  SIRAH also holds its backbone with torsion terms of its own, so it needs no
+  dihedral restraints (`--termini` chooses its chain ends). The protein is free
+  to tumble; the analysis superposes the frames.
 - **Simulations** hold `--types` probes (10) with `--copies` each (5), so
   the 105 probes are spread over 10 runs of about 50 probe molecules, near
   0.1 M. Probes are dealt round robin, so each run holds a spread of
@@ -171,6 +178,9 @@ against the other; what differs is the resolution and how the protein is held.
   probes are left free. It is worth adding when the protein is built without
   an elastic network (`--no-elastic`), since Martini leaves loops free. A
   SIRAH run takes no dihedral restraints, having its own.
+- **A cryptic pocket** is a reason to pass `--no-elastic`: a held fold cannot
+  open one. SIRAH's backbone wanders 4-6.5 A without the springs, which is what
+  found the cryptic sites in the apo set.
 - **The water** is Martini's W beads, or SIRAH's WT4 with NaW and ClW ions;
   the box is filled as `boonza md` fills it for that model.
 

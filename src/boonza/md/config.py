@@ -89,9 +89,11 @@ _CG = {
 #: keep one (--no-elastic to let the protein find its own shape), and runs
 #: with GROMACS's reaction field inside 1.1 nm.
 _MARTINI = {**_CG, "cutoff_nm": 1.1, "elastic": True}
-#: SIRAH keeps its own backbone terms instead of a network, and runs with PME
-#: inside 1.2 nm, as its own mdp files do (tutorial 7, md_CGPROT.mdp).
-_SIRAH = {**_CG, "cutoff_nm": 1.2}
+#: SIRAH keeps its own backbone terms, and runs with PME inside 1.2 nm, as its
+#: own mdp files do (tutorial 7, md_CGPROT.mdp).  It holds its fold as well,
+#: with springs between its alpha carbons that a swim adds to the run itself
+#: (elastic_network_selection) rather than to the topology, as Martini's are.
+_SIRAH = {**_CG, "cutoff_nm": 1.2, "elastic": True}
 MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
@@ -100,12 +102,12 @@ ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "pa
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
-MARTINI_ONLY = ("elastic", "elastic_selection", "upper", "lower", "area_per_lipid",
+MARTINI_ONLY = ("elastic_selection", "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 #: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
-CG_ONLY = ("cg_selection", "gromacs")
+CG_ONLY = ("cg_selection", "gromacs", "elastic")
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -138,6 +140,10 @@ DEFAULTS: dict = {
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
     "dihedral_restraint_selection": None,
+    "elastic_network_selection": None,
+    "elastic_network_nm": 0.9,
+    "elastic_network_kJ": 500.0,
+    "elastic_network_res_min_dist": 2,
     "repulsion_selection": None,
     "repulsion_distance_nm": 0.5,
     "repulsion_kJ": 500.0,
@@ -186,6 +192,9 @@ _NUMBERS = {
     "performance_interval_ns",
     "integration_fs",
     "dihedral_restraint_kJ",
+    "elastic_network_nm",
+    "elastic_network_kJ",
+    "elastic_network_res_min_dist",
     "monitor_interval_ns",
     "pocket_cutoff_nm",
     "contact_cutoff_nm",
@@ -403,12 +412,6 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
 
     cg = p.add_argument_group("Martini (--model martini3 / martini2)")
-    cg.add_argument(
-        "--elastic",
-        action=argparse.BooleanOptionalAction,
-        help="hold the protein's fold with an elastic network (default: on, since "
-        "Martini does not keep a fold without one)",
-    )
     cg.add_argument("--upper", metavar="LIPIDS",
                     help="upper leaflet of the bilayer, e.g. POPC:7,CHOL:3 "
                          "(with --solvate membrane)")  # fmt: skip
@@ -572,6 +575,31 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
     numbers(hold, [("--dihedral-restraint-kJ", "dihedral_restraint_kJ",
                     "restraint strength (kJ/mol)")])  # fmt: skip
+    hold.add_argument(
+        "--elastic",
+        action=argparse.BooleanOptionalAction,
+        help="hold the protein's fold with an elastic network, which a coarse-grained "
+        "model needs to keep one (default: on).  Martini builds its rubber bands into "
+        "the topology; SIRAH gets springs between its alpha carbons instead, which a "
+        "swim writes as --elastic-network below.  --no-elastic lets the protein find "
+        "its own shape -- and SIRAH's wandering backbone is what opens a cryptic "
+        "pocket, so a search for one is a reason to turn this off",
+    )
+    hold.add_argument(
+        "--elastic-network",
+        dest="elastic_network_selection",
+        metavar="SELECTION",
+        help="which beads the springs hold, for a model whose topology has no rubber "
+        "bands: 'name GC and not chain LIG' is SIRAH's alpha carbon, one per residue, "
+        "with a swim's probes left free -- they carry GC beads of their own and would "
+        "otherwise be sprung to each other.  A SIRAH swim writes exactly that unless "
+        "given --no-elastic or a selection here.  The springs are forces and no part "
+        "of the topology, so a held pair keeps every nonbonded interaction it had",
+    )
+    numbers(hold, [("--elastic-network-nm", "elastic_network_nm",
+                    "how far apart two beads may be and still be sprung (nm)"),
+                   ("--elastic-network-kJ", "elastic_network_kJ",
+                    "spring strength (kJ/mol/nm^2)")])  # fmt: skip
     hold.add_argument(
         "--repulsion-selection",
         dest="repulsion_selection",
@@ -779,6 +807,15 @@ def finish(args) -> None:
         args.cutoff_nm = default_cutoff_nm(args)
     if args.hmr and "integration_fs" not in args.specified:
         args.integration_fs = HMR_INTEGRATION_FS
+    if (args.model == "sirah" and args.elastic
+            and "elastic_network_selection" not in args.specified
+            and getattr(args, "config", None) is None):  # fmt: skip
+        # Martini builds its rubber bands into the topology; SIRAH's has none,
+        # so the run holds the fold itself, between the alpha carbons.  A run
+        # started from a settings file does only what the file says, so a swim's
+        # md.toml -- which carries its own selection, the probes left out -- and
+        # a restart of one written before this both run as they were written.
+        args.elastic_network_selection = "name GC"
     args.ligand_charges = dict(args.ligand_charges or {})
     args.parents = dict(args.parents or {})
     chosen = [k for k in MONITOR_SELECTORS if getattr(args, k) is not None]

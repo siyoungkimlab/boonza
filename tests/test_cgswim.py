@@ -1,5 +1,6 @@
 """Dipeptide probes and the Martini side of ``boonza swim``."""
 
+import tomllib
 from pathlib import Path
 
 import numpy as np
@@ -433,20 +434,22 @@ def test_feature_maps_of_a_coarse_grained_run(tmp_path):
     assert len(maps["Aromatic"].places) == 0  # neither probe has a ring
 
 
-def test_a_martini_run_holds_the_fold_by_default():
-    """Martini does not keep a fold without an elastic network, so `boonza md
-    --model martini3` turns one on; all-atom runs never have one."""
-    assert parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3"]).elastic is True
-    assert parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini2"]).elastic is True
+def test_a_coarse_grained_run_holds_the_fold_by_default():
+    """Neither model keeps a fold without an elastic network, so every
+    coarse-grained run turns one on; all-atom runs never have one."""
+    for model in ("martini3", "martini2", "sirah"):
+        assert parse_arguments([str(DATA / "1TEN.pdb"), "--model", model]).elastic is True
+        off = parse_arguments([str(DATA / "1TEN.pdb"), "--model", model, "--no-elastic"])
+        assert off.elastic is False
+        on = parse_arguments([str(DATA / "1TEN.pdb"), "--model", model, "--elastic"])
+        assert on.elastic is True  # asking for what you already have is no error
     assert parse_arguments([str(DATA / "1TEN.pdb")]).elastic is False
-    off = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--no-elastic"])
-    assert off.elastic is False
 
 
 def test_an_all_atom_run_still_refuses_an_elastic_network(capsys):
     with pytest.raises(SystemExit):
         parse_arguments([str(DATA / "1TEN.pdb"), "--elastic"])
-    assert "needs a Martini model" in capsys.readouterr().err
+    assert "belongs to a coarse-grained run" in capsys.readouterr().err
 
 
 def _bonds_of(directory):
@@ -481,6 +484,46 @@ def test_a_coarse_grained_swim_follows_the_same_setting(tmp_path):
     assert len(_bonds_of(tmp_path / "on" / "sim_000")) > len(
         _bonds_of(tmp_path / "off" / "sim_000")
     ) + 300  # fmt: skip
+
+
+def test_a_sirah_swim_springs_the_protein_and_leaves_the_probes_free(tmp_path):
+    """SIRAH has no rubber bands to build, so the swim asks the run for springs
+    between the protein's alpha carbons.  The probes carry GC beads of their
+    own: sprung to each other they would stop swimming."""
+    from boonza.md.swim import main
+
+    def network_of(*extra):
+        root = tmp_path / ("on" if not extra else "off")
+        assert main([str(DATA / "1TEN.pdb"), "--model", "sirah", "--probes", "EK",
+                     "--types", "1", "--copies", "1", *extra,
+                     "--workdir", str(root)]) == 0  # fmt: skip
+        return tomllib.loads((root / "sim_000" / "md.toml").read_text())
+
+    on = network_of()
+    assert on["elastic_network_selection"] == "name GC and not chain LIG"
+    assert on["elastic_network_nm"] == 0.9
+    assert "elastic" not in on  # answered here, not by the run
+    assert "elastic_network_selection" not in network_of("--no-elastic")
+
+
+def test_a_sirah_run_of_its_own_holds_every_alpha_carbon(tmp_path):
+    """Without a swim there are no probes to leave out, so the default selection
+    is every GC bead.  A run started from a settings file is left alone: an
+    md.toml written before the network existed keeps running without one."""
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah"])
+    assert args.elastic_network_selection == "name GC"
+    off = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah", "--no-elastic"])
+    assert off.elastic_network_selection is None
+    mine = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah",
+                            "--elastic-network", "name GC and chain A"])  # fmt: skip
+    assert mine.elastic_network_selection == "name GC and chain A"
+    assert parse_arguments([str(DATA / "1TEN.pdb")]).elastic_network_selection is None
+
+    older = tmp_path / "md.toml"
+    older.write_text('model = "sirah"\ninput_structure = "x.pdb"\n')
+    from_file = parse_arguments(["--config", str(older)])
+    assert from_file.elastic is True  # the model's default, as every setting is
+    assert from_file.elastic_network_selection is None  # but the file is the record
 
 
 def test_the_built_system_keeps_its_chains_and_positions():
