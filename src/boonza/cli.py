@@ -122,13 +122,14 @@ def _solute(args) -> int:
     """A copy of a run without the water and the salt it swam in."""
     from pathlib import Path
 
-    from .solute import BESIDE, solute_ids, solvent_selection, write_solute
+    from .solute import BESIDE, VIEW, solute_ids, solvent_selection, write_solute
 
     runs = []
     for d in args.workdir or []:
         here = Path(d)
+        want = (*BESIDE, VIEW)
         runs.append((here / "solvated.dms", here / "trajectory.dcd",
-                     [here / n for n in BESIDE] + [here.parent / n for n in BESIDE]))  # fmt: skip
+                     [here / n for n in want] + [here.parent / n for n in want]))  # fmt: skip
     if args.system:
         if not args.traj:
             raise ValueError("give SYSTEM with --traj, or --workdir for runs of their own")
