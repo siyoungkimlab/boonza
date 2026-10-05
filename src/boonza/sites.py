@@ -1080,30 +1080,58 @@ def write_viewer_scripts(directory, sites, level: float = 50.0) -> list[Path]:
     session set up by vizard or pizard in either case, since neither viewer reads
     a bead file on its own.
 
-    The files a script names are written into it in full, so it runs from
-    whatever directory the viewer happens to be in; move the directory and the
-    scripts want writing again.
+    A script names its files relative to itself and finds itself when it runs --
+    PyMOL sets ``__script__``, and Tcl's ``info script`` is the path being
+    sourced -- so the directory can be moved, or copied off the machine the
+    analysis ran on, and the scripts still work.  Written in full they would name
+    a cluster's filesystem and break on the way home, which is the usual way to
+    read them.
+
+    Where a viewer does not say which script it is running (VMD's ``-e``, as
+    against ``source``), the files are looked for in the working directory, so
+    running from the directory itself always works.
     """
     d = Path(directory)
     at = d.resolve()
 
     def file(name: str) -> str:
         """A path a viewer will take whole, even with a space in it."""
-        path = str(at / name)
-        return f'"{path}"' if " " in path else path
+        return f'"{name}"' if " " in name else name
 
     pml = [
-        f"# boonza sites.  @{at / 'sites.pml'} in a pizard session, from any directory.",
+        # a semicolon in a .pml comment ends the comment -- PyMOL splits commands on
+        # it and hands the rest to Python, which an apostrophe then breaks -- so the
+        # prose here has none
+        "# boonza sites.  @sites.pml in a pizard session, from any directory and any",
+        "# machine: the maps are named beside this file rather than where they were",
+        "# written, so this directory can be copied anywhere.",
+        f"# Written in {at}.",
         f"# Isosurfaces are {level:g}x bulk.  pocketK.dx is a mask of site K's pocket:",
         f"# 1 inside it, drawn solid at {POCKET_LEVEL:g}, so what you see is the volume that",
         "# was reported.  occupancy.dx is every cell the atoms reach, bulk included, as",
-        "# enrichment; density.dx is where a molecule's centre sits, off the surface for",
-        "# a dipeptide.",
+        "# enrichment.  density.dx is where a molecule's centre sits, off the surface",
+        "# for a dipeptide.",
+        # the maps are named beside this file, so the viewer is pointed at wherever
+        # this file turned out to be.  PyMOL sets __script__ to the script it is
+        # running, for @ and for -d alike; without it, the working directory
+        "python",
+        "import os",
+        "from pymol import cmd",
+        'cmd.cd(os.path.dirname(os.path.abspath(__script__)) if "__script__" in globals()'
+        ' else ".")',
+        "python end",
     ]
     tcl = [
-        f"# boonza sites.  source {at / 'sites.tcl'} in a vizard session, from any directory.",
+        "# boonza sites.  source sites.tcl in a vizard session, from any directory and",
+        "# any machine: the maps are named beside this file rather than where they were",
+        "# written, so this directory can be copied anywhere.",
+        f"# Written in {at}.",
         f"# Isosurfaces are {level:g}x bulk; a pocket is a mask, drawn solid at "
         f"{POCKET_LEVEL:g}.",  # fmt: skip
+        # as above: Tcl's info script is the file being sourced, and empty when VMD
+        # was given -e instead, where the working directory is all there is to go on
+        "set boonza_here [file dirname [file normalize [info script]]]",
+        'if {[info script] ne ""} { cd $boonza_here }',
     ]
     for k in range(len(sites)):  # each site's own pocket: enclosed, against the protein
         if not (d / f"pocket{k}.dx").is_file():

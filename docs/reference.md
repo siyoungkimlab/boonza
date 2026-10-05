@@ -1654,6 +1654,13 @@ centre.  ``source <dir>/sites.tcl`` in VMD, ``@<dir>/sites.pml`` in PyMOL -- a
 session set up by vizard or pizard in either case, since neither viewer reads
 a bead file on its own.
 
-The files a script names are written into it in full, so it runs from
-whatever directory the viewer happens to be in; move the directory and the
-scripts want writing again.
+A script names its files relative to itself and finds itself when it runs --
+PyMOL sets ``__script__``, and Tcl's ``info script`` is the path being
+sourced -- so the directory can be moved, or copied off the machine the
+analysis ran on, and the scripts still work.  Written in full they would name
+a cluster's filesystem and break on the way home, which is the usual way to
+read them.
+
+Where a viewer does not say which script it is running (VMD's ``-e``, as
+against ``source``), the files are looked for in the working directory, so
+running from the directory itself always works.
