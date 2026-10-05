@@ -180,7 +180,10 @@ def test_what_model_sirah_settles_on():
     assert a.checkpoint_interval_ns == 0.1
     assert (a.monitor_interval_ns, a.confirmation_checks) == (0.2, 3)
     assert (a.pocket_cutoff_nm, a.contact_cutoff_nm, a.detach_cutoff_nm) == (0.8, 0.7, 1.2)
-    assert a.elastic is False  # SIRAH keeps its own backbone terms
+    # SIRAH keeps its own backbone terms, and holds the fold with springs of
+    # its own: its topology has no rubber bands for martinize2 to build
+    assert a.elastic is True
+    assert a.elastic_network_selection == "name GC"
 
 
 def test_one_temperature_for_every_model():
@@ -193,7 +196,7 @@ def test_one_temperature_for_every_model():
 
 def test_sirah_refuses_what_belongs_to_martini(capsys):
     with pytest.raises(SystemExit):
-        parse_arguments(["x.top", "--model", "sirah", "--elastic"])
+        parse_arguments(["x.top", "--model", "sirah", "--neutral-termini"])
     assert "needs a Martini model" in capsys.readouterr().err
 
 
@@ -729,7 +732,10 @@ def test_a_prepared_sirah_swim(tmp_path):
     assert settings.integration_fs == 20.0  # SIRAH's own step, not Martini's
     # the probes have a chain of their own, as an all-atom swim's ligands do
     assert settings.repulsion_selection == "chain LIG" == f"chain {written['chain']}"
-    assert not settings.elastic  # SIRAH holds its backbone itself
+    # SIRAH's topology has no rubber bands, so the run holds the fold itself,
+    # between the alpha carbons -- the probes, which carry GC beads of their
+    # own, left out of it
+    assert settings.elastic_network_selection == "name GC and not chain LIG"
     # the run reads cg.dms, which carries every parameter; topol.top and the
     # force field beside it are what GROMACS would read
     assert Path(settings.input_structure) == (d / "sirah" / "cg.dms").resolve()

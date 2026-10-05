@@ -271,6 +271,22 @@ def _new_run(args, paths: RunPaths, src: Path, log):
             f"Dihedral restraints: {len(records)} backbone torsions over {what}, "
             f"K = {-abs(args.dihedral_restraint_kJ):g} kJ/mol"
         )
+    if getattr(args, "elastic_network_selection", None):
+        from .restraints import add_elastic_network
+
+        reach = float(getattr(args, "elastic_network_nm", 0.9))
+        strength = float(getattr(args, "elastic_network_kJ", 500.0))
+        springs = add_elastic_network(
+            system, s, args.elastic_network_selection, upper_nm=reach, k_kj=strength,
+            res_min_dist=int(getattr(args, "elastic_network_res_min_dist", 2)),
+        )  # fmt: skip
+        if springs:
+            log(f"Elastic network: {springs} springs between the beads "
+                f"{args.elastic_network_selection!r} picks, within {reach:g} nm, "
+                f"K = {strength:g} kJ/mol/nm^2")  # fmt: skip
+        else:  # a selection that picks nothing holds nothing: say so, not silence
+            log(f"Elastic network: nothing held -- {args.elastic_network_selection!r} picks "
+                f"no pair of beads {reach:g} nm apart or closer")  # fmt: skip
     if args.repulsion_selection:
         from .restraints import add_repulsion
 
