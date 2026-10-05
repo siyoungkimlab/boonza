@@ -680,8 +680,8 @@ def _sites(args) -> int:
         if worst >= 2.0:
             print(f"  the protein moved {np.median(moved):.1f} A from {where} "
                   f"({moved.min():.1f} to {worst:.1f}):\n  its pockets are measured against a "
-                  "shape the run no longer has.  Hold the fold -- Martini's elastic\n  network, "
-                  "--dihedral-restraint ss for SIRAH -- or analyse the frames before it "
+                  "shape the run no longer has.  Hold the fold -- the elastic\n  network, "
+                  "--dihedral-restraint ss -- or analyse the frames before it "
                   "moved")  # fmt: skip
         else:
             print(f"  the protein stayed within {worst:.1f} A of {where}")

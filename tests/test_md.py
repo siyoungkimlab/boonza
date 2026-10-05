@@ -921,3 +921,52 @@ def test_martini_measures_contacts_at_bead_distances():
     assert (aa.pocket_cutoff_nm, aa.contact_cutoff_nm, aa.detach_cutoff_nm) == (0.5, 0.5, 0.8)
     asked = parse_arguments(["x.pdb", "--model", "martini2", "--contact-cutoff-nm", "0.5"])
     assert asked.contact_cutoff_nm == 0.5 and asked.pocket_cutoff_nm == 0.8
+
+
+def test_an_elastic_network_springs_the_beads_it_is_given():
+    """Springs between selected beads, at the distances the structure starts with.
+
+    What Martini calls a rubber band, for a model that has none: SIRAH holds its
+    fold with torsions, so a network has to be added at run time rather than built
+    into a topology.  The springs are forces and no part of the topology, so a
+    held pair keeps every nonbonded interaction it had -- which is what GROMACS
+    bond type 6 is for, and why Martini 2.2 uses it.
+    """
+    import openmm as mm
+
+    s = boonza.peptide("AAAAAAAA")
+    ca = np.asarray(s.select("name CA").ids, int)
+    assert len(ca) == 8
+    system = mm.System()
+    for _ in range(s.natoms):
+        system.addParticle(12.0)
+    n = restraints.add_elastic_network(system, s, "name CA", upper_nm=0.9, k_kj=500.0,
+                                      res_min_dist=2)  # fmt: skip
+    # every CA pair within 9 A that is more than two residues apart, and no other
+    xyz = np.asarray(s.positions, float)[ca] / 10.0
+    resid = np.array([s.atom(int(a)).residue.resid for a in ca])
+    want = sum(1 for i in range(len(ca)) for j in range(i + 1, len(ca))
+               if abs(resid[i] - resid[j]) > 2
+               and 0.05 <= np.linalg.norm(xyz[i] - xyz[j]) <= 0.9)  # fmt: skip
+    assert n == want > 0
+    (force,) = [f for f in system.getForces() if isinstance(f, mm.HarmonicBondForce)]
+    assert force.getName() == "ElasticNetwork"
+    # at the starting geometry every spring sits at its own rest length, so the
+    # network costs nothing until the fold moves
+    ctx = mm.Context(system, mm.VerletIntegrator(0.001),
+                     mm.Platform.getPlatformByName("Reference"))  # fmt: skip
+    ctx.setPositions(s.positions / 10)
+    assert ctx.getState(getEnergy=True).getPotentialEnergy()._value == pytest.approx(0.0, abs=1e-6)
+    # and it springs back when one is pulled
+    moved = np.array(s.positions, float)
+    moved[ca[0]] += [2.0, 0.0, 0.0]
+    ctx.setPositions(moved / 10)
+    assert ctx.getState(getEnergy=True).getPotentialEnergy()._value > 1.0
+
+    # it holds only what it is given, and nothing within res_min_dist residues
+    bare = mm.System()
+    for _ in range(s.natoms):
+        bare.addParticle(12.0)
+    assert restraints.add_elastic_network(bare, s, "name CA", upper_nm=0.3) == 0  # too close
+    held = {frozenset(force.getBondParameters(k)[:2]) for k in range(force.getNumBonds())}
+    assert all(set(p) <= set(ca.tolist()) for p in held)  # CA only

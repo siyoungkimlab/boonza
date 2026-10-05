@@ -160,7 +160,7 @@ ligands included.
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |
 | `solvate` | `box` | `fill` keeps the input's own cell and fills its empty space, leaving hydrophobic voids dry (a membrane); `membrane` builds a coarse-grained bilayer around the solute (Martini, with `upper`); `none` (`--no-solvate`) runs the input as it is |
 | `elastic_selection` | every molecule | Martini only: hold only these residues with the elastic network, e.g. `chain A` to leave a bound peptide free |
-| `elastic`, `cg_selection`, `neutral_termini` | **on under Martini**, `protein`, off | Martini only: an elastic network holding the protein's fold, which Martini does not keep without one (`--no-elastic` to leave it out); which atoms to coarse-grain; uncharged chain ends |
+| `elastic`, `cg_selection`, `neutral_termini` | **on under Martini and SIRAH**, `protein`, off | coarse-grained only: hold the protein's fold with an elastic network, which neither model keeps without one (`--no-elastic` to leave it out). Martini builds its rubber bands into the topology; SIRAH has none to build, so a swim writes `elastic_network_selection` below instead. Also: which atoms to coarse-grain; uncharged chain ends (Martini) |
 | `gromacs` | off | coarse-grained only: write the built system in GROMACS's form too (`topol.top`, an `.itp` per molecule, `cg.gro`, and for SIRAH the force field it includes), for running or checking it there; boonza runs from `cg.dms`, which carries the parameters |
 | `upper`, `lower`, `size_nm`, `area_per_lipid`, `water_nm` | none, as `upper`, 10, 60, 2.5 | the bilayer of `solvate = "membrane"`: its leaflets, its x (and y), the area per lipid and the water beyond it on each side |
 | `opm`, `shift_nm` | off, 0 | put the protein's z = 0 at the midplane, as OPM orients it, then move it along z |
@@ -177,6 +177,8 @@ ligands included.
 | `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets); in Martini, the BB-BB-BB-BB torsions |
 | `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
 | `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |
+| `elastic_network_selection` | `name GC` in a SIRAH run, `name GC and not chain LIG` in a SIRAH swim, none otherwise | hold a fold with springs between the beads this selects, for a model whose topology has no rubber bands: E = k (r - r0)^2 at the starting distance r0, between pairs within `elastic_network_nm` that are more than `elastic_network_res_min_dist` residues apart. The springs are forces, no part of the topology, so a held pair keeps every nonbonded interaction it had. `--no-elastic` leaves them out; a run started from a settings file does only what the file says, so an `md.toml` written without this keeps running without it |
+| `elastic_network_nm`, `elastic_network_kJ`, `elastic_network_res_min_dist` | 0.9, 500, 2 | how far apart two beads may be and still be sprung (nm), the spring strength (kJ/mol/nm^2), and how many residues apart they must be |
 | `repulsion_selection`, `repulsion_distance_nm`, `repulsion_kJ` | none, 0.5, 500 | keep the molecules a selection picks from sticking together: E = k (d0 - r)^2 between heavy atoms of different ones closer than d0 (k in kJ/mol/nm^2); `boonza swim` sets it for its ligands |
 | `early_stop` and `monitor_*`, `*_cutoff_nm`, `confirmation_checks` | off | see below |
 
@@ -380,8 +382,10 @@ Note that SIRAH's own mdp files set `fourierspacing 0.2`, which leaves the
 reciprocal sum about 100 kJ/mol short on a system of a few thousand beads;
 that is a fine setting for forces, and boonza's PME is tighter.
 
-A SIRAH run writes no view file. There would be nothing in it: SIRAH holds its
-fold with torsion terms rather than an elastic network, so a view would be a
+A SIRAH run writes no view file. There would be nothing in it: SIRAH's topology
+carries no rubber bands -- its fold comes from torsion terms of its own, and
+from the springs the run adds between its `GC` beads, which are forces and no
+part of the topology either (`elastic_network_selection`) -- so a view would be a
 copy of `cg.dms` -- and renaming `GC` to `CA` in it, which boonza used to do,
 makes a viewer that knows amino acids draw its own bonds over beads it reads as
 a broken residue. Open `sirah/cg.dms` (or `solvated.dms`) with the trajectory.

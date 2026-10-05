@@ -191,7 +191,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         protein = sirahize(aa, args.cg_selection, termini=args.termini, log=log,
                            strict=bool(getattr(args, "strict_mapping", False)))  # fmt: skip
         made_of = {}  # SIRAH has one version
-        log(f"SIRAH: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)")
+        log(f"SIRAH: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
+            f"{', elastic network' if elastic else ''}")  # fmt: skip
     else:
         from ..martini import FORCEFIELD_FOR, martinize
 
@@ -278,7 +279,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                     "input_structure": str(run_from.resolve()),
                     "workdir": str((d / "md").resolve())}  # fmt: skip
         # what built the system, and what only an all-atom run has, are not its
-        # settings; nor is the other model's (a SIRAH run takes no elastic network)
+        # settings; nor is the other model's.  'elastic' goes with it: it is
+        # answered here, by martinize's bands or by the springs written below
         for key in ("upper", "lower", "size_nm", "opm", "shift_nm", "elastic",
                     "elastic_selection", "cg_selection", "termini",
                     "neutral_termini", "lipid_itp", *ALL_ATOM_ONLY,
@@ -286,6 +288,10 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             settings.pop(key, None)
         if repel and "repulsion_selection" not in args.specified:
             settings["repulsion_selection"] = f"chain {chain}"  # probes apart
+        if sirah and elastic and "elastic_network_selection" not in args.specified:
+            # what Martini's rubber bands do for the fold, SIRAH has to be given:
+            # springs between the alpha carbons of the protein, never the probes'
+            settings["elastic_network_selection"] = f"name GC and not chain {chain}"
         if (settings.get("dihedral_restraint", "none") != "none"
                 and "dihedral_restraint_selection" not in args.specified):  # fmt: skip
             settings["dihedral_restraint_selection"] = f"not chain {chain}"  # probes swim

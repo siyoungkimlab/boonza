@@ -189,6 +189,56 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
     return records, description
 
 
+def add_elastic_network(omm_system, s, selection: str, lower_nm: float = 0.05,
+                        upper_nm: float = 0.9, k_kj: float = 500.0,
+                        res_min_dist: int = 2) -> int:  # fmt: skip
+    """Hold a fold with springs between the beads ``selection`` picks.
+
+    Every pair of selected beads between ``lower_nm`` and ``upper_nm`` apart in
+    the starting structure gets a harmonic bond at that distance, skipping pairs
+    within ``res_min_dist`` residues of each other, which the bonded terms
+    already hold.  ``k`` is in kJ/mol/nm^2.
+
+    It is what Martini calls a rubber band, for a model that has none: SIRAH
+    holds its fold with torsions and wanders 4 to 6.5 A of backbone RMSD, which
+    is why it finds a cryptic site Martini's pinned backbone never opens.  A
+    network here takes that away, so it is worth measuring rather than assuming.
+
+    The springs are forces of the OpenMM system and no part of the topology, so
+    they generate no exclusions: a pair held by a band keeps every nonbonded
+    interaction it had.  This is what GROMACS bond type 6 is for, which Martini
+    2.2 uses for the same reason, where Martini 3's type 1 does create them.
+    Nothing is written into the structure either, so a viewer draws no hairball.
+    Returns the number of springs.
+    """
+    import openmm as mm
+
+    from ..spatial import pairs_within
+
+    ids = np.asarray(s.select(selection).ids, int)
+    if len(ids) < 2:
+        return 0
+    xyz = np.asarray(s.positions, float)[ids] / 10.0  # A to nm
+    resid = np.array([s.atom(int(a)).residue.resid for a in ids])
+    chain = np.array([str(s.atom(int(a)).residue.chain.name) for a in ids])
+    ii, jj, d2 = pairs_within(xyz, float(upper_nm))
+    d = np.sqrt(d2)
+    keep = d >= float(lower_nm)
+    # a pair a few residues apart is already held by the bonded terms, and a
+    # spring there only stiffens what the force field already says
+    same = chain[ii] == chain[jj]
+    keep &= ~(same & (np.abs(resid[ii] - resid[jj]) <= int(res_min_dist)))
+    if not keep.any():
+        return 0
+    force = mm.HarmonicBondForce()
+    force.setUsesPeriodicBoundaryConditions(omm_system.usesPeriodicBoundaryConditions())
+    for a, b, r0 in zip(ii[keep].tolist(), jj[keep].tolist(), d[keep].tolist(), strict=True):
+        force.addBond(int(ids[a]), int(ids[b]), float(r0), float(k_kj))
+    force.setName("ElasticNetwork")
+    omm_system.addForce(force)
+    return force.getNumBonds()
+
+
 def add_repulsion(omm_system, s, selection: str, distance_nm: float, k_kj: float) -> int:
     """Keep the molecules ``selection`` picks from sticking together.
 
