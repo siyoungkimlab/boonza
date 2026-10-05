@@ -852,6 +852,10 @@ All distances between two sets of positions: an (n, m) matrix.
 
 Shortest periodic images of displacement vectors, shape (n, 3).
 
+### `boonza.pbc.minimum_image_in(vectors, prepared) -> 'np.ndarray'`
+
+:func:`minimum_image` with the box already prepared by :func:`prepare_box`.
+
 ### `boonza.pbc.paired_distances(a, b, box=None) -> 'np.ndarray'`
 
 Distance between a[k] and b[k] for every k (bond lengths).
@@ -863,6 +867,15 @@ Pairs within ``r`` under periodic boundaries, on a cell grid aligned with the bo
 ``b=None`` gives pairs i < j within ``a``.  Returns (i, j, squared
 distance) sorted by (i, j), or None when the box is too small for three
 cells of height ``r`` along each cell vector.
+
+### `boonza.pbc.prepare_box(box)`
+
+What the minimum-image kernels need of a box, worked out once.
+
+Inverting a 3x3 matrix is nothing; inverting the same one for every copy of
+every frame is most of an analysis.  A caller with a box that holds still
+across many calls -- a frame's, against its hundreds of ligand copies --
+prepares it here and hands the result to :func:`minimum_image_in`.
 
 ### `boonza.pbc.self_distances(a, box=None) -> 'np.ndarray'`
 

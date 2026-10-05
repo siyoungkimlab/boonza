@@ -107,8 +107,24 @@ def _vectors(v, box, inv, ortho):
 
 def minimum_image(vectors, box=None) -> np.ndarray:
     """Shortest periodic images of displacement vectors, shape (n, 3)."""
+    return minimum_image_in(vectors, prepare_box(box))
+
+
+def prepare_box(box):
+    """What the minimum-image kernels need of a box, worked out once.
+
+    Inverting a 3x3 matrix is nothing; inverting the same one for every copy of
+    every frame is most of an analysis.  A caller with a box that holds still
+    across many calls -- a frame's, against its hundreds of ligand copies --
+    prepares it here and hands the result to :func:`minimum_image_in`.
+    """
+    return _prepare(box)
+
+
+def minimum_image_in(vectors, prepared) -> np.ndarray:
+    """:func:`minimum_image` with the box already prepared by :func:`prepare_box`."""
+    box, inv, periodic, ortho = prepared
     v = _xyz(vectors)
-    box, inv, periodic, ortho = _prepare(box)
     return _vectors(v, box, inv, ortho) if periodic else v.copy()
 
 
