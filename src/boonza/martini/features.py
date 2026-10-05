@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .probes import LETTERS
+from .probes import ALL_LETTERS
 
 #: bead -> families, per residue.  A hydroxyl (Ser, Thr, Tyr) and an amide
 #: (Asn, Gln) both donate and accept; the charged beads also donate or accept,
@@ -76,13 +76,18 @@ def _residues_of(system, atoms) -> list[tuple[str, list[int]]]:
 
 
 def _amino_acid(resname: str, place: int) -> str:
-    """The residue a bead's own residue name stands for: a martinized protein
-    keeps the three-letter name, a probe carries its two-letter code (``EK``)."""
+    """The residue a bead's own residue name stands for.
+
+    A martinized protein keeps the three-letter name; a probe carries its own
+    code, one letter per residue -- ``EK`` for a dipeptide, ``E`` for a single
+    amino acid, whose beads are otherwise typed as nothing at all and leave
+    ``--features`` with no map to make.
+    """
     if resname in SIDE_CHAINS:
         return resname
-    if len(resname) == 2 and place < 2:
+    if place < len(resname) <= 2:
         letter = resname[place]
-        for three, one in LETTERS.items():
+        for three, one in ALL_LETTERS.items():
             if one == letter:
                 return three
     return ""
