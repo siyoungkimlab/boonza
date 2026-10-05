@@ -358,13 +358,19 @@ def test_the_sites_command_says_how_to_look_at_a_run(tmp_path, swimming, capsys)
     # the paths as they were given, so a relative workdir stays relative
     assert f"vizard {d / 'solvated.dms'} {d / 'trajectory.dcd'}" in printed  # no view file
     assert "D=" not in printed
-    # no cd: the scripts name their files in full, so either viewer runs them
-    # from wherever it happens to be
     assert f"# then: source {out / 'sites.tcl'}" in printed
     assert f"# then: @{out / 'sites.pml'}" in printed
-    tcl = (out / "sites.tcl").read_text()
-    assert f"mol new {(out / 'density.dx').resolve()} type dx" in tcl
-    assert "cd " not in tcl and "cd " not in (out / "sites.pml").read_text()
+    # the maps are named beside the script, and the script finds itself, so the
+    # directory can be copied off the machine that wrote it -- which is how a
+    # cluster's results are read.  An absolute path would name the cluster
+    tcl, pml = ((out / f"sites.{x}").read_text() for x in ("tcl", "pml"))
+    assert "mol new density.dx type dx" in tcl
+    assert "load density.dx, density" in pml
+    assert "info script" in tcl and "__script__" in pml  # each finds its own directory
+    for text in (tcl, pml):
+        named = [ln for ln in text.splitlines()
+                 if str(out.resolve()) in ln and not ln.lstrip().startswith("#")]  # fmt: skip
+        assert not named, named  # nowhere but the comment that says where it was written
 
     shutil.copy2(d / "solvated.dms", d / "view.dms")  # what a run writes for a viewer
     capsys.readouterr()
