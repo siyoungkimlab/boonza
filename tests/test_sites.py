@@ -940,3 +940,42 @@ def test_one_temperature_for_running_and_for_scoring(tmp_path, swimming, capsys)
     assert "their own temperature" not in capsys.readouterr().out
     rows = list(csv.DictReader((out / "sites.csv").open()))
     assert all(float(r["interval_ns"]) == 0.1 for r in rows)
+
+
+def test_a_holo_ligand_in_a_chain_of_its_own():
+    """Maestro writes a ligand as a chain of its own, so no chain of the holo
+    structure has both it and a protein to fit with.  The copy of the protein it
+    touches is the one to fit on -- the other copy would put it somewhere else.
+    """
+    from boonza.sites import known_ligand
+
+    holo = boonza.load(str(DATA / "1HHO.pdb"))  # two copies, a HEM bound to each
+    held = next(r for r in holo.residues
+                if r.name.strip() == "HEM" and r.chain.name == "A")  # fmt: skip
+    apart = holo.add_chain()
+    apart.name = "X"
+    held.chain, held.name = apart, "LIG"
+    reference = boonza.load(str(DATA / "1HHO.pdb")).select("chain A and protein").clone()
+
+    where, how = known_ligand(holo, reference, ligand="resname LIG")
+    assert how["chain"] == "A"  # the copy it sits in, not the other one
+    assert how["ligand_chain"] == "X"  # and it was carried from there
+    assert how["atoms"] == len(held.atoms)
+    assert how["fit_rmsd"] < 1e-3  # the reference is that chain itself
+    assert len(where) == how["atoms"]
+
+
+def test_a_holo_ligand_still_fits_in_the_protein_s_own_chain():
+    """The ordinary case is untouched: a ligand written in the protein's chain
+    is paired with it without looking at what else the structure holds."""
+    from boonza.sites import known_ligand
+
+    holo = boonza.load(str(DATA / "1HHO.pdb"))
+    for r in holo.residues:
+        if r.name.strip() == "HEM" and r.chain.name == "A":
+            r.name = "LIG"
+    reference = boonza.load(str(DATA / "1HHO.pdb")).select("chain A and protein").clone()
+
+    where, how = known_ligand(holo, reference, ligand="resname LIG")
+    assert how["chain"] == "A"
+    assert "ligand_chain" not in how  # it never had to go looking
