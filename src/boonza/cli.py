@@ -702,7 +702,7 @@ def _sites(args) -> int:
                 scored[k] = (philic, score, boonza.site_score(site, maps, DSCORE)[0])
     known = {}
     if args.holo:  # a crystal structure of the same protein with something bound
-        from boonza.sites import DCA_HIT, coverage, dca, dcc, known_ligand
+        from boonza.sites import DCA_HIT, coverage, dca, dcc, dpa, known_ligand
 
         # the frame the sites are measured in, which is the first run's own
         # system where no reference was given
@@ -712,8 +712,8 @@ def _sites(args) -> int:
               f"{how['chain']}; its backbone fits this run's to {how['fit_rmsd']:.2f} A "
               f"over {how['paired']} residues")  # fmt: skip
         for k, site in enumerate(found):
-            known[k] = (dca(site, lig), dcc(site, lig), coverage(site, lig))
-        hit = [k for k, (d, _, _) in known.items() if d <= DCA_HIT]
+            known[k] = (dca(site, lig), dcc(site, lig), coverage(site, lig), dpa(site, lig))
+        hit = [k for k, (d, *_) in known.items() if d <= DCA_HIT]
         best = max(known, key=lambda k: known[k][2], default=None)
         if hit:
             print(f"  site {hit[0]} is that ligand's, by DCA: its centre is "
@@ -750,7 +750,7 @@ def _sites(args) -> int:
         if rates:
             out += [f"{'exits':>5}", f"{'stay_ns':>7}", f"{'dG':>6}", f"{'KD_mM':>9}"]
         if known:
-            out += [f"{'DCA':>6}", f"{'DCC':>6}", f"{'covers':>6}"]
+            out += [f"{'DCA':>6}", f"{'DPA':>6}", f"{'DCC':>6}", f"{'covers':>6}"]
         return " ".join([*out, "centre"])
 
     def row(k: int, site) -> str:
@@ -771,9 +771,10 @@ def _sites(args) -> int:
             out += [_cell(r and r.events, "5d"), _cell(r and r.residence_ns, "7.1f"),
                     _cell(r and r.dG, "+6.2f"), _cell(r and 1e3 * r.KD, "9.1e")]  # fmt: skip
         if known:
-            d, c, cover = known.get(k, (None, None, None))
+            d, c, cover, pk = known.get(k, (None, None, None, None))
             out += [
                 _cell(d, "6.1f"),
+                _cell(pk, "6.1f"),
                 _cell(c, "6.1f"),
                 (f"{100 * cover:5.0f}%" if cover is not None else _cell(None, "6.1f")),
             ]
@@ -836,8 +837,9 @@ def _sites(args) -> int:
                 philic, score, drug = scored[k]
                 doc["sites"][k].update({"philic": philic, "score": score, "dscore": drug})
             if k in known:
-                d, c, cover = known[k]
-                doc["sites"][k].update({"dca_A": d, "dcc_A": c, "covered": cover})
+                d, c, cover, pk = known[k]
+                doc["sites"][k].update({"dca_A": d, "dcc_A": c, "covered": cover,
+                                        "dpa_A": pk})  # fmt: skip
         for rate in rates.values():
             doc["sites"][rate.site].update(
                 {"dG": rate.dG, "dG_interval": list(rate.dG_interval), "KD": rate.KD,
@@ -902,7 +904,8 @@ _SITE_COLUMNS = (("site", "site"), ("occupied", "occupancy"), ("of_pool", "copy_
                  ("bound_frac_frames", "occupancy_from_frames"),
                  ("bound_frac_rates", "occupancy_from_rates"),
                  ("rates_agree", "consistent"),
-                 ("dca_A", "dca_A"), ("dcc_A", "dcc_A"), ("covered", "covered"))  # fmt: skip
+                 ("dca_A", "dca_A"), ("dpa_A", "dpa_A"), ("dcc_A", "dcc_A"),
+                 ("covered", "covered"))  # fmt: skip
 
 
 def _write_sites_csv(path, sites, interval_ns=None) -> None:

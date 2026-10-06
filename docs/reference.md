@@ -940,7 +940,7 @@ The poses of a trajectory, most populated first.
 
 The kinetics of one site, with what they rest on.
 
-### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', copy_frames: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float', volume: 'float' = 0.0, burial: 'float' = 0.0, cells: 'np.ndarray | None' = None, grid_dims: 'np.ndarray | None' = None, grid_origin: 'np.ndarray | None' = None, grid_spacing: 'float' = 1.0) -> None`
+### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', copy_frames: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float', volume: 'float' = 0.0, burial: 'float' = 0.0, cells: 'np.ndarray | None' = None, grid_dims: 'np.ndarray | None' = None, grid_origin: 'np.ndarray | None' = None, grid_spacing: 'float' = 1.0, peak: 'np.ndarray | None' = None) -> None`
 
 One place the ligand is found, and the evidence for it.
 
@@ -1051,6 +1051,17 @@ passes it while enclosing little of it, which is what :func:`coverage` asks.
 Distance from ``pocket``'s centre to ``ligand``'s centroid, in A -- the DCC
 the same benchmarks report beside :func:`dca`, and the harsher of the two on a
 pocket that runs past one end of the ligand.
+
+### `boonza.dpa(pocket, ligand) -> 'float'`
+
+Distance from ``pocket``'s busiest point to the closest atom of ``ligand``.
+
+:func:`dca` measured from the centre, which is the mean of a pocket's cells
+and so sits between the lobes of a pocket that has more than one.  This
+measures from the peak of the ligand's own density instead -- where it sat
+most rather than the middle of where it sat -- which is the same number for
+a round pocket and a smaller one for a long or a merged one.  Reported
+beside DCA rather than in place of it: the benchmarks are quoted on DCA.
 
 ### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
 

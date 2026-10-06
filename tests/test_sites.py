@@ -979,3 +979,90 @@ def test_a_holo_ligand_still_fits_in_the_protein_s_own_chain():
     where, how = known_ligand(holo, reference, ligand="resname LIG")
     assert how["chain"] == "A"
     assert "ligand_chain" not in how  # it never had to go looking
+
+
+def test_the_peak_of_a_site_is_where_the_ligand_sat_most():
+    """A site's centre is the mean of everywhere the ligand sat, which a long
+    pocket pulls off the place it actually sat.  DPA measures from the mode."""
+    from boonza.sites import Site, _densest, dca, dpa
+
+    rng = np.random.default_rng(0)
+    # a crowded lobe at the origin and a thin tail running out to x = 20: the
+    # mean lands in the middle of the tail, the mode stays on the lobe
+    lobe = rng.normal(0.0, 0.5, size=(400, 3))
+    tail = np.stack([np.linspace(2.0, 25.0, 150), np.zeros(150), np.zeros(150)], axis=1)
+    xyz = np.vstack([lobe, tail])
+    peak = _densest(xyz, 1.0)
+    assert np.linalg.norm(peak) < 1.0  # on the lobe
+    assert np.linalg.norm(xyz.mean(0)) > 3.0  # the mean is dragged down the tail
+
+    ligand = np.zeros((1, 3))
+    site = Site(center=xyz.mean(0), peak=peak, points=np.arange(len(xyz)), occupancy=1.0,
+                copy_frames=1.0, runs=1, copies=1, arrivals=1, spread=1.0)  # fmt: skip
+    assert dpa(site, ligand) < dca(site, ligand)
+    assert dpa(site, ligand) < 1.0
+
+
+def test_a_site_with_no_peak_measures_from_its_centre():
+    """DPA is reported beside DCA, never instead of it, so a site built without
+    a peak still answers rather than returning nothing."""
+    from boonza.sites import Site, dca, dpa
+
+    site = Site(center=np.array([3.0, 0.0, 0.0]), points=np.arange(2), occupancy=1.0,
+                copy_frames=1.0, runs=1, copies=1, arrivals=1, spread=1.0)  # fmt: skip
+    ligand = np.zeros((1, 3))
+    assert dpa(site, ligand) == pytest.approx(dca(site, ligand))
+
+
+def test_the_table_and_the_csv_carry_both_measures(tmp_path, capsys):
+    """`--holo` prints a row per site and writes one too, and both carry DPA
+    beside DCA.  The printed table reads what the scoring holds, so a measure
+    added to one and not the other is a crash rather than a missing column."""
+    import json
+
+    from boonza.cli import main
+
+    # long enough to fit a holo structure on: the fit needs 20 alpha carbons
+    s = boonza.peptide("A" * 24)
+    s.positions = np.asarray(s.positions) - np.asarray(s.positions).mean(0)
+    s.append(boonza.from_smiles("c1ccccc1"))
+    s.cell = np.diag([40.0, 40.0, 40.0])
+    lig = np.asarray(s.select(DEFAULT_LIGAND).ids)
+    base = np.asarray(s.positions).copy()
+    base[lig] -= base[lig].mean(0)
+    here = base[: lig[0]].mean(0) + np.array([9.0, 0.0, 0.0])  # beside the peptide
+
+    rng = np.random.default_rng(0)
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for _ in range(120):
+            x = base.copy()
+            x[lig] = base[lig] + here + rng.normal(scale=0.4, size=3)
+            w.write(x, box=s.cell)
+
+    # the same protein with the ligand left where it sat, which is what a
+    # benchmark gives --holo
+    holo = boonza.peptide("A" * 24)
+    holo.positions = np.asarray(holo.positions) - np.asarray(holo.positions).mean(0)
+    held = boonza.from_smiles("c1ccccc1")
+    held.positions = np.asarray(held.positions) - np.asarray(held.positions).mean(0) + here
+    holo.append(held)
+    holo_path = tmp_path / "holo.dms"
+    boonza.save(holo, holo_path)
+
+    out = tmp_path / "out"
+    assert main(["sites", str(structure), "--traj", str(path), "--holo", str(holo_path),
+                 "--holo-ligand", DEFAULT_LIGAND, "-o", str(out)]) == 0  # fmt: skip
+    printed = capsys.readouterr().out
+    assert "DCA" in printed and "DPA" in printed
+
+    rows = list(csv.DictReader((out / "sites.csv").open()))
+    assert rows and "dpa_A" in rows[0] and "dca_A" in rows[0]
+    doc = json.loads((out / "sites.json").read_text())
+    scored = [v for v in doc["sites"] if "dca_A" in v]
+    assert scored and all("dpa_A" in v for v in scored)
+    # the ligand never moved, so both measures land on it
+    best = min(rows, key=lambda r: float(r["dca_A"]))
+    assert float(best["dca_A"]) <= 4.0 and float(best["dpa_A"]) <= 4.0

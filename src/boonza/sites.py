@@ -47,6 +47,7 @@ class Site:
     grid_dims: np.ndarray | None = None  # that grid's shape, origin and spacing, so the
     grid_origin: np.ndarray | None = None  # cells can be turned back into coordinates
     grid_spacing: float = 1.0
+    peak: np.ndarray | None = None  # the densest cell of the site's own points
 
     def __len__(self) -> int:
         return len(self.points)
@@ -61,6 +62,16 @@ class Site:
             return np.empty((0, 3))
         ijk = np.array(np.unravel_index(np.asarray(self.cells), tuple(self.grid_dims))).T
         return self.grid_origin + (ijk + 0.5) * self.grid_spacing
+
+    def peak_point(self) -> np.ndarray:
+        """Where the ligand sat most, rather than the middle of where it sat.
+
+        The mean is pulled off the pocket when a site is elongated or has a
+        shoulder on it; the mode is not.  Empty until the site is built with
+        one, in which case the centre is what there is.
+        """
+        return (np.asarray(self.peak, float) if self.peak is not None
+                else np.asarray(self.center, float))  # fmt: skip
 
     def pocket_center(self) -> np.ndarray:
         """The pocket's own centre, which is what a benchmark measures from; the
@@ -501,6 +512,25 @@ def _pocket_points(pocket) -> np.ndarray:
     return np.asarray(pocket, float).reshape(-1, 3)
 
 
+def _densest(xyz, spacing: float) -> np.ndarray:
+    """The mean of the points in the cell that holds most of them.
+
+    A site's centre is the mean of everywhere the ligand sat, which a long
+    pocket or one with a shoulder pulls away from where it actually sat.  This
+    is the mode at the map's own resolution: the busiest cell, averaged inside
+    it so the answer is not quantised to the grid.
+    """
+    pts = np.asarray(xyz, float).reshape(-1, 3)
+    if len(pts) < 2:
+        return pts.mean(0) if len(pts) else np.full(3, np.nan)
+    lo = pts.min(0)
+    ijk = ((pts - lo) / spacing).astype(np.int64)
+    dims = ijk.max(0) + 1
+    flat = (ijk[:, 0] * dims[1] + ijk[:, 1]) * dims[2] + ijk[:, 2]
+    counts = np.bincount(flat)
+    return pts[flat == int(counts.argmax())].mean(0)
+
+
 def _pocket_center(pocket) -> np.ndarray:
     if isinstance(pocket, Site):
         return pocket.pocket_center()
@@ -525,6 +555,24 @@ def dca(pocket, ligand) -> float:
     if not len(lig) or not np.isfinite(centre).all():
         return float("nan")
     return float(np.sqrt(((lig - centre) ** 2).sum(1).min()))
+
+
+def dpa(pocket, ligand) -> float:
+    """Distance from ``pocket``'s busiest point to the closest atom of ``ligand``.
+
+    :func:`dca` measured from the centre, which is the mean of a pocket's cells
+    and so sits between the lobes of a pocket that has more than one.  This
+    measures from the peak of the ligand's own density instead -- where it sat
+    most rather than the middle of where it sat -- which is the same number for
+    a round pocket and a smaller one for a long or a merged one.  Reported
+    beside DCA rather than in place of it: the benchmarks are quoted on DCA.
+    """
+    lig = np.asarray(ligand, float).reshape(-1, 3)
+    peak = (pocket.peak_point() if isinstance(pocket, Site)
+            else _pocket_center(pocket))  # fmt: skip
+    if not len(lig) or not np.isfinite(peak).all():
+        return float("nan")
+    return float(np.sqrt(((lig - peak) ** 2).sum(1).min()))
 
 
 def dcc(pocket, ligand) -> float:
@@ -603,7 +651,10 @@ def known_ligand(holo, reference, ligand: str | None = None, align: str | None =
         if not sizes:
             raise ValueError("no ligand in the holo structure; name one with ligand=")
         ligand = f"resname {max(sizes, key=lambda k: sizes[k])}"
-    chains = dict.fromkeys(np.asarray(holo.chains["name"]).tolist())
+    # a chain read from a file without a chain column has no name at all, and
+    # 'chain ' does not parse: quote every one of them rather than guess which
+    chains = {str(c): f'chain "{c}"'
+              for c in dict.fromkeys(np.asarray(holo.chains["name"]).tolist())}  # fmt: skip
 
     def fitted(selection, chain, carried):
         """The ligand in the reference's frame, or None if that chain cannot fit."""
@@ -622,8 +673,8 @@ def known_ligand(holo, reference, ligand: str | None = None, align: str | None =
                  **({"ligand_chain": carried} if carried is not None else {})})  # fmt: skip
 
     best = None
-    for chain in chains:  # the ligand sits in the protein's own chain
-        got = fitted(f"chain {chain}", chain, None)
+    for chain, named in chains.items():  # the ligand sits in the protein's own chain
+        got = fitted(named, chain, None)
         if got and (best is None or got[1]["fit_rmsd"] < best[1]["fit_rmsd"]):
             best = got
     if best is None:
@@ -638,16 +689,16 @@ def known_ligand(holo, reference, ligand: str | None = None, align: str | None =
             np.asarray(holo.residues["chain"])[np.asarray(holo.atoms["residue"])[
                 np.asarray(lig.ids, int)]]]}  # fmt: skip
         pairs = []
-        for chain in chains:
-            ca = holo.select(f"chain {chain} and protein and name CA").ids
-            if len(ca) < 20 or str(chain) in where:
+        for chain, named in chains.items():
+            ca = holo.select(f"{named} and protein and name CA").ids
+            if len(ca) < 20 or chain in where:
                 continue
             near = np.asarray(holo.positions)[np.asarray(ca, int)]
             apart = float(np.sqrt(((near[:, None] - held[None]) ** 2).sum(-1)).min())
             pairs.append((apart, str(chain)))
         for apart, chain in sorted(pairs):
             for lc in sorted(where):
-                got = fitted(f"chain {chain} or (({ligand}) and chain {lc})", chain, lc)
+                got = fitted(f'{chains[chain]} or (({ligand}) and chain "{lc}")', chain, lc)
                 if got:
                     got[1]["ligand_apart_A"] = round(apart, 2)
                     best = got
@@ -978,7 +1029,8 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
         rows, xyz = where[members], points[members]
         held = len(np.unique(rows[:, [0, 2]], axis=0)) / max(all_frames, 1)
         centre = xyz.mean(0)
-        found.append(Site(center=centre, points=members, occupancy=held,
+        found.append(Site(center=centre, peak=_densest(xyz, spacing), points=members,
+                          occupancy=held,
                           copy_frames=len(members) / len(points),
                           runs=len(np.unique(rows[:, 0])), copies=len(np.unique(rows[:, 1])),
                           arrivals=_visits(rows),
