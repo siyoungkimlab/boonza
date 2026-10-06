@@ -271,7 +271,7 @@ and the temperature and the frame interval are read from the run itself. Two
 with different numbers in them, and nothing in the file says which is which.
 
 ```python
-json.load(open("sites.json"))["settings"]["buried"]   # 0.6, not None
+json.load(open("sites.json"))["settings"]["buried"]  # 0.6, not None
 ```
 
 
