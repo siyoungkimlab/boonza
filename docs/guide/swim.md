@@ -253,6 +253,14 @@ nucleic nor solvent nor a buffer salt); `--holo-ligand` names it instead. The
 three are `boonza.dca`, `boonza.dcc` and `boonza.coverage` in Python, over a
 `Site` or any set of points, and `boonza.known_ligand` does the superposing.
 
+A structure with several copies of the protein is fitted on the one its ligand
+sits in, by the lowest RMSD of those that hold it. Where the ligand is written
+as a chain of its own, as Maestro writes one, no chain holds both, so the fit
+goes to the protein chain the ligand is nearest -- which is the copy it binds,
+and not necessarily the one that fits best. `sites.json` then names the chain
+it came from (`ligand_chain`) and how far it sat from the chain it was paired
+with (`ligand_apart_A`), so a structure that pairs oddly says so.
+
 
 `sites --features` works on beads too. RDKit types a ligand's atoms, and a
 bead has no element or valence to read, so a Martini probe is typed by what

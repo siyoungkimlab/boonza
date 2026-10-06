@@ -603,24 +603,60 @@ def known_ligand(holo, reference, ligand: str | None = None, align: str | None =
         if not sizes:
             raise ValueError("no ligand in the holo structure; name one with ligand=")
         ligand = f"resname {max(sizes, key=lambda k: sizes[k])}"
-    best = None
-    for chain in dict.fromkeys(np.asarray(holo.chains["name"]).tolist()):
-        sub = holo.select(f"chain {chain}").clone()
+    chains = dict.fromkeys(np.asarray(holo.chains["name"]).tolist())
+
+    def fitted(selection, chain, carried):
+        """The ligand in the reference's frame, or None if that chain cannot fit."""
+        sub = holo.select(selection).clone()
         lig = sub.select(f"({ligand}) and not element H").ids
         if not len(lig) or len(sub.select("protein and name CA").ids) < 20:
-            continue
+            return None
         try:
             fit = superpose(sub, reference, sel=align or "protein and name CA",
                             ref_sel=align or f"name {back}", match="sequence")  # fmt: skip
         except ValueError:
-            continue
-        if best is None or fit.rmsd < best[1]["fit_rmsd"]:
-            best = (np.asarray(sub.positions)[lig],
-                    {"fit_rmsd": float(fit.rmsd), "chain": str(chain), "ligand": ligand,
-                     "atoms": int(len(lig)), "paired": int(fit.n_used)})  # fmt: skip
+            return None
+        return (np.asarray(sub.positions)[lig],
+                {"fit_rmsd": float(fit.rmsd), "chain": str(chain), "ligand": ligand,
+                 "atoms": int(len(lig)), "paired": int(fit.n_used),
+                 **({"ligand_chain": carried} if carried is not None else {})})  # fmt: skip
+
+    best = None
+    for chain in chains:  # the ligand sits in the protein's own chain
+        got = fitted(f"chain {chain}", chain, None)
+        if got and (best is None or got[1]["fit_rmsd"] < best[1]["fit_rmsd"]):
+            best = got
     if best is None:
-        raise ValueError(f"no chain of the holo structure has both {ligand} and 20 alpha "
-                         "carbons to fit with")  # fmt: skip
+        # a ligand written as a chain of its own, as Maestro writes one: fit the
+        # protein chain it actually touches and carry the ligand along with it.
+        # Nearest first, so a second copy of the protein cannot claim it.
+        lig = holo.select(f"({ligand}) and not element H")
+        if not len(lig.ids):
+            raise ValueError(f"the holo structure has no {ligand}")
+        held = np.asarray(holo.positions)[np.asarray(lig.ids, int)]
+        where = {str(c) for c in np.asarray(holo.chains["name"])[
+            np.asarray(holo.residues["chain"])[np.asarray(holo.atoms["residue"])[
+                np.asarray(lig.ids, int)]]]}  # fmt: skip
+        pairs = []
+        for chain in chains:
+            ca = holo.select(f"chain {chain} and protein and name CA").ids
+            if len(ca) < 20 or str(chain) in where:
+                continue
+            near = np.asarray(holo.positions)[np.asarray(ca, int)]
+            apart = float(np.sqrt(((near[:, None] - held[None]) ** 2).sum(-1)).min())
+            pairs.append((apart, str(chain)))
+        for apart, chain in sorted(pairs):
+            for lc in sorted(where):
+                got = fitted(f"chain {chain} or (({ligand}) and chain {lc})", chain, lc)
+                if got:
+                    got[1]["ligand_apart_A"] = round(apart, 2)
+                    best = got
+                    break
+            if best is not None:
+                break
+    if best is None:
+        raise ValueError(f"no chain of the holo structure has 20 alpha carbons to fit "
+                         f"with, next to its {ligand}")  # fmt: skip
     return best
 
 
