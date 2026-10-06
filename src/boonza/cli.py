@@ -823,9 +823,13 @@ def _sites(args) -> int:
             for fam, grid in maps.items():
                 if len(getattr(grid, "places", ())):
                     grid.write_dx(out / f"{fam.lower()}.dx")
+        # every setting the numbers below depend on, so a sites.csv can be traced
+        # back to the command that wrote it: two of them with different --buried
+        # are otherwise the same file with different numbers in it
         doc = {"runs": [str(x) for x in args.traj], "frames": frames, "bulk": bulk,
                "spacing": args.spacing, "enrichment": args.enrichment,
-               "interval_ns": args.interval_ns, "ligand": args.ligandsel, "sites": []}  # fmt: skip
+               "interval_ns": args.interval_ns, "ligand": args.ligandsel,
+               "settings": _sites_settings(args, found), "sites": []}  # fmt: skip
         for k, site in enumerate(found):
             doc["sites"].append({"center": site.center.tolist(), "occupancy": site.occupancy,
                                  "copy_frames": site.copy_frames, "volume": site.volume,
@@ -906,6 +910,44 @@ _SITE_COLUMNS = (("site", "site"), ("occupied", "occupancy"), ("of_pool", "copy_
                  ("rates_agree", "consistent"),
                  ("dca_A", "dca_A"), ("dpa_A", "dpa_A"), ("dcc_A", "dcc_A"),
                  ("covered", "covered"))  # fmt: skip
+
+
+def _sites_settings(args, found) -> dict:
+    """What the analysis was asked for, beside what it found.
+
+    The defaults move with the model and with what a run wrote down -- the
+    temperature comes from the run, the interval from its settings -- so what
+    was asked for is not what the command line says, and reading it back off the
+    output is the only honest record of it.
+    """
+    from . import __version__
+    from .sites import BURIED, MIN_VOLUME
+
+    return {
+        "boonza": __version__,
+        "spacing": args.spacing,
+        "enrichment": args.enrichment,
+        "radius": args.radius,
+        "shell": args.shell,
+        "rank": args.rank,
+        "buried": BURIED if args.buried is None else args.buried,
+        "min_volume": MIN_VOLUME if args.min_volume is None else args.min_volume,
+        "hysteresis": args.hysteresis,
+        "temperature": args.temperature,
+        "interval_ns": args.interval_ns,
+        "ligand": args.ligandsel,
+        "align": args.alignsel,
+        "periodic": not args.no_pbc,
+        "features": bool(args.features),
+        "feature_backbone": bool(getattr(args, "feature_backbone", False)),
+        "from_ns": args.from_ns,
+        "until_ns": args.until_ns,
+        "every_ns": args.every_ns,
+        "holo": str(args.holo) if args.holo else None,
+        "holo_ligand": args.holo_ligand if args.holo else None,
+        "workdir": [str(w) for w in args.workdir] if args.workdir else None,
+        "runs": len(found.systems) if found.systems else 1,
+    }
 
 
 def _write_sites_csv(path, sites, interval_ns=None) -> None:
