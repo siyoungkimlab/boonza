@@ -245,13 +245,16 @@ site is then scored against it:
 | column | what it is |
 |---|---|
 | `DCA` | the pocket's centre to the nearest ligand atom, in Å; pocket benchmarks count a hit within 4 |
+| `DPA` | the same, from where the ligand sat *most* rather than the middle of where it sat: the mean of the busiest cell of the site's own density. The two agree on a round pocket; on a long one, or one merged with a neighbour, the centre sits between the lobes and DPA does not |
 | `DCC` | the pocket's centre to the ligand's centroid |
 | `covers` | the share of the ligand's heavy atoms inside the pocket — whether it holds the binding mode rather than merely abutting it |
 
 The ligand is found by itself (the largest residue that is neither protein nor
 nucleic nor solvent nor a buffer salt); `--holo-ligand` names it instead. The
-three are `boonza.dca`, `boonza.dcc` and `boonza.coverage` in Python, over a
-`Site` or any set of points, and `boonza.known_ligand` does the superposing.
+four are `boonza.dca`, `boonza.dpa`, `boonza.dcc` and `boonza.coverage` in
+Python, over a `Site` or any set of points, and `boonza.known_ligand` does the
+superposing. DPA is reported beside DCA and never in place of it: the published
+benchmarks are quoted on DCA, so that is the number to compare with.
 
 A structure with several copies of the protein is fitted on the one its ligand
 sits in, by the lowest RMSD of those that hold it. Where the ligand is written
