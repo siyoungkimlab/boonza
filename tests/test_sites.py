@@ -1082,3 +1082,43 @@ def test_the_table_and_the_csv_carry_both_measures(tmp_path, capsys):
         assert scored and all("dpa_A" in v for v in scored)
         best = min(rows, key=lambda r: float(r["dca_A"]))
         assert float(best["dca_A"]) <= 4.0 and float(best["dpa_A"]) <= 4.0
+
+
+def test_the_output_records_what_it_was_asked_for(tmp_path):
+    """Two sites.csv files written with different gates are the same columns
+    with different numbers in them, so the settings go in beside the sites."""
+    import json
+
+    from boonza.cli import main
+
+    s = boonza.peptide("AAAAAAAAAA")
+    s.positions = np.asarray(s.positions) - np.asarray(s.positions).mean(0)
+    s.append(boonza.from_smiles("c1ccccc1"))
+    s.cell = np.diag([40.0, 40.0, 40.0])
+    lig = np.asarray(s.select(DEFAULT_LIGAND).ids)
+    base = np.asarray(s.positions).copy()
+    base[lig] -= base[lig].mean(0)
+    rng = np.random.default_rng(0)
+    structure = tmp_path / "s.dms"
+    boonza.save(s, structure)
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for _ in range(60):
+            x = base.copy()
+            x[lig] = base[lig] + TRUE[0] + rng.normal(scale=0.4, size=3)
+            w.write(x, box=s.cell)
+
+    out = tmp_path / "out"
+    assert main(["sites", str(structure), "--traj", str(path), "--buried", "0.6",
+                 "--radius", "rmin", "--spacing", "1.5", "--rank", "burial",
+                 "--interval-ns", "0.1", "-o", str(out)]) == 0  # fmt: skip
+    asked = json.loads((out / "sites.json").read_text())["settings"]
+    # what was given
+    assert asked["buried"] == 0.6
+    assert asked["radius"] == "rmin" and asked["spacing"] == 1.5
+    assert asked["rank"] == "burial"
+    # and what was left to the defaults, resolved rather than left as None
+    assert asked["min_volume"] == 20.0
+    assert asked["shell"] == "center"
+    assert asked["temperature"] == 298.0
+    assert asked["boonza"] == boonza.__version__

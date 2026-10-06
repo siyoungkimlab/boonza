@@ -264,6 +264,16 @@ and not necessarily the one that fits best. `sites.json` then names the chain
 it came from (`ligand_chain`) and how far it sat from the chain it was paired
 with (`ligand_apart_A`), so a structure that pairs oddly says so.
 
+`sites.json` also carries a `settings` block: every option the numbers depend
+on, resolved rather than as typed, since the gates fill in from their defaults
+and the temperature and the frame interval are read from the run itself. Two
+`sites.csv` written with different `--buried` are otherwise the same columns
+with different numbers in them, and nothing in the file says which is which.
+
+```python
+json.load(open("sites.json"))["settings"]["buried"]   # 0.6, not None
+```
+
 
 `sites --features` works on beads too. RDKit types a ligand's atoms, and a
 bead has no element or valence to read, so a Martini probe is typed by what
