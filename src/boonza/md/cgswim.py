@@ -189,7 +189,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         from ..sirah import sirahize
 
         protein = sirahize(aa, args.cg_selection, termini=args.termini, log=log,
-                           strict=bool(getattr(args, "strict_mapping", False)))  # fmt: skip
+                           strict=bool(getattr(args, "strict_mapping", False)),
+                           cofactors=bool(args.cofactors))  # fmt: skip
         made_of = {}  # SIRAH has one version
         log(f"SIRAH: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
             f"{', elastic network' if elastic else ''}")  # fmt: skip

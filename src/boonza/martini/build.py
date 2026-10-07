@@ -464,6 +464,12 @@ CL 1
 """
 
 
+#: Single-atom cofactors worth banding to what coordinates them.  A zinc holds a
+#: fold together and nothing else in the model says so; the ions that merely sit
+#: in a site are left free, where a band would pin them to the crystal's guess.
+#: SIRAH draws the same line, in :data:`boonza.sirah.build.COORDINATED_IONS`.
+COORDINATED_IONS = frozenset({"ZN", "FE", "FE2", "FE3", "MN", "CU", "CU1", "NI", "CO"})
+
 #: What an inert cofactor bead is, per force field: the smallest apolar bead each
 #: version has, which is an alanine's side chain in Martini 3 and the apolar bead
 #: Martini 2 builds one from.  Uncharged and unremarkable on purpose -- see
@@ -1003,8 +1009,15 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
             for x in beads_of_atom[(a, i)]:
                 for y in beads_of_atom[(b, j)]:
                     mol.add_edge(x, y)
-    if inert:
-        _hold_cofactors(mol, residues, inert, cofactor_fc, neighbours, tethers, reach)
+    # a cofactor of one atom has no shape to hold, so only its coordination is in
+    # question, and that is worth banding for one of them: a zinc is what holds a
+    # zinc finger's loops together and the model says so nowhere else.  A calcium,
+    # a magnesium, a sodium is left the free ion it is -- banding one pins it
+    # where the crystal happened to catch it
+    held = [(r, beads) for r, beads in inert
+            if len(beads) > 1 or residues[r].resname.upper() in COORDINATED_IONS]  # fmt: skip
+    if held:
+        _hold_cofactors(mol, residues, held, cofactor_fc, neighbours, tethers, reach)
     return mol
 
 

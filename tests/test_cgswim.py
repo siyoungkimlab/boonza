@@ -1419,7 +1419,21 @@ def test_a_cofactor_is_held_as_inert_beads_by_both_commands(model, bead, tmp_pat
     assert main([str(held), "--model", model, "--probes", "A", "--types", "1", "--copies", "1",
                  *picks, "--workdir", str(swim)]) == 0  # fmt: skip
     assert beads(boonza.load(str(swim / "sim_000" / "martini" / "cg.dms"))) == (
-        heavy, [bead], [0.0])
+        heavy,
+        [bead],
+        [0.0],
+    )
+
+    # SIRAH holds one as its own inert bead too, and the flag now reaches it;
+    # the md path wants a structure with hydrogens, which this one has not, so
+    # the mapping is asked directly
+    if model == "martini3":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah.build import COFACTOR_BEAD, map_structure
+
+        beads = map_structure(s, "protein or resname HEM", cofactors=True)
+        assert len([b for b in beads if b.cofactor]) == heavy
+        assert COFACTOR_BEAD == "Y1C"  # leucine's side chain: uncharged, aliphatic
 
     # and a cofactor is never dropped quietly: without a selection that says so,
     # the build refuses rather than running the protein on its own

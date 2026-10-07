@@ -103,13 +103,12 @@ ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "pa
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
 MARTINI_ONLY = ("elastic_selection", "elastic_kJ", "elastic_nm", "elastic_lower_nm",
-                "cofactors",
                 "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 #: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
-CG_ONLY = ("cg_selection", "gromacs", "elastic")
+CG_ONLY = ("cg_selection", "gromacs", "elastic", "cofactors")
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -461,7 +460,9 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                          "heme -- as inert beads: one uncharged apolar bead per heavy atom, "
                          "banded in place and to whatever coordinates it, there to stop probes "
                          "entering the room it takes and to claim nothing else.  An ion Martini "
-                         "does have (Na, Cl, Ca) keeps its own bead and charge instead.  It only "
+                         "does have keeps its own bead and charge instead -- Na, Cl and Ca under "
+                         "Martini, and Na, K, Cl, Ca, Mg and Zn under SIRAH, which has more of "
+                         "them.  It only "
                          "reaches what --cg-selection picks, so widen that too: "
                          "--cg-selection 'protein or resname ZN HEM'.  Honest while the cofactor "
                          "is buried; one that is not is warned about")  # fmt: skip
