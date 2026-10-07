@@ -204,6 +204,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                             elastic_upper=10.0 * float(args.elastic_nm),  # nm to A
                             elastic_lower=10.0 * float(args.elastic_lower_nm),
                             neutral_termini=bool(args.neutral_termini),
+                            cofactors=bool(args.cofactors),
                             **made_of)  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
             f"{len(protein.molecules)} molecule(s)"
