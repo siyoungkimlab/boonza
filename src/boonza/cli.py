@@ -13,6 +13,7 @@
     boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]
     boonza poses system.dms --traj md.dcd [--cutoff 1.5] [-o poses/]   (representative frames)
     boonza sites system.dms --traj a.dcd b.dcd [-o sites/]   (where a ligand goes, pooled)
+    boonza pockets traj --workdir run/md --model martini3 -o pockets/   (fpocket, every frame)
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
     boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
@@ -1461,6 +1462,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
     sub.add_parser("swim", help="ligands swimming around a protein, many simulations "
                    "(boonza swim --help)")  # fmt: skip
+    sub.add_parser("pockets", help="fpocket on coarse-grained proteins, one structure or a "
+                   "trajectory (boonza pockets --help)")  # fmt: skip
 
     q = sub.add_parser("info", help="summarize a structure or trajectory file")
     q.add_argument("file")
@@ -1868,6 +1871,10 @@ def main(argv=None) -> int:
         from .md.swim import main as swim_main
 
         return swim_main(argv[1:])
+    if argv and argv[0] == "pockets":  # its own parser: run, traj, flags, and fpocket's flags
+        from .pockets.cli import main as pockets_main
+
+        return pockets_main(argv[1:])
     args = _parser().parse_args(argv)
     try:
         return args.run(args)

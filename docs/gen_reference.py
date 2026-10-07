@@ -11,6 +11,7 @@ import inspect
 from pathlib import Path
 
 import boonza
+import boonza.pockets  # noqa: F401  (a subpackage: imported for its reference)
 from boonza import io as bio
 from boonza import pbc
 
@@ -39,6 +40,13 @@ SECTIONS = [
                  "probe_contacts", "ProbeMap"]),
     ("SIRAH", ["sirah.sirahize", "sirah.Sirahized", "sirah.solvate", "sirah.map_structure",
                "sirah.unpack"]),
+    ("Pockets", ["pockets.write_fpocket_pdb", "pockets.bead_elements", "pockets.bead_types",
+                 "pockets.martini_polar", "pockets.sirah_polar", "pockets.coarse_grain",
+                 "pockets.protein_ids", "pockets.find_fpocket", "pockets.preset",
+                 "pockets.run_fpocket", "pockets.run_mdpocket", "pockets.Pocket",
+                 "pockets.frame_pockets", "pockets.consensus_pockets",
+                 "pockets.ConsensusPocket", "pockets.enclosed_core", "pockets.bead_radii",
+                 "pockets.ppc", "pockets.moc", "pockets.volume_overlap"]),
 ]  # fmt: skip
 CLASSES_WITH_MEMBERS = {"System", "AtomSel", "Atom", "Bond", "Residue", "Chain", "Ct",
                         "TermTable", "ParamTable", "Term", "OverrideTable", "Trajectory",
