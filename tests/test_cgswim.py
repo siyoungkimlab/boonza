@@ -1329,3 +1329,58 @@ def test_the_rubber_bands_take_a_stiffness_and_a_reach(tmp_path):
     # and a lower bound drops the pairs already close enough not to need one
     near = bands(**{"elastic-lower-nm": 0.6})
     assert held_at(near, 700.0) < held_at(plain, 700.0)
+
+
+def test_the_bead_radius_tables_say_what_the_force_fields_do(tmp_path):
+    """The tables under data/cg_radii are derived, so they can drift from the
+    force fields they came from.  Regenerate them and compare, which also keeps
+    the three different ways of writing a size honest: Martini 2.2 gives C6 and
+    C12, Martini 3 gives sigma and epsilon, SIRAH gives per-type sigma with
+    self-pairs overriding it.
+    """
+    import csv
+    import runpy
+    import sys
+
+    here = Path(__file__).resolve().parent.parent
+    kept = here / "src/boonza/data/cg_radii"
+    argv = sys.argv
+    sys.argv = ["bead_radii.py", str(tmp_path)]
+    try:
+        runpy.run_path(str(here / "scripts/bead_radii.py"), run_name="__main__")
+    finally:
+        sys.argv = argv
+
+    def rows(path):
+        with path.open(newline="", encoding="utf-8") as fh:
+            return {r["type"]: r for r in csv.DictReader(fh)}
+
+    for model in ("martini2", "martini3", "sirah"):
+        name = f"{model}_bead_radii.csv"
+        assert (kept / name).is_file(), f"{name} is not in the package"
+        assert rows(kept / name) == rows(tmp_path / name), f"{name} is out of date"
+
+
+def test_a_bead_is_as_wide_as_its_table_says():
+    """And the tables agree with what a built system carries, which is where
+    the number is actually read from: a bead's own size is the nonbonded pair
+    it makes with itself, not a per-type column, since these force fields write
+    their terms per pair."""
+    import csv
+
+    from boonza.sites import particle_radii
+
+    here = Path(__file__).resolve().parent.parent
+    args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3"])
+    built = boonza.martinize(boonza.load(str(DATA / "1TEN.pdb")), args.cg_selection)
+    s = built.system()
+    with (here / "src/boonza/data/cg_radii/martini3_bead_radii.csv").open(
+        newline="", encoding="utf-8"
+    ) as fh:
+        table = {r["type"]: float(r["radius_sigma_A"]) for r in csv.DictReader(fh)}
+
+    ids = np.arange(s.natoms, dtype=np.int64)
+    kinds = np.asarray([str(x) for x in s.table("nonbonded").values("type")])
+    for kind, wide in zip(kinds[ids], particle_radii(s, ids, "sigma"), strict=True):
+        assert kind in table, f"{kind} is missing from the table"
+        assert abs(table[kind] - wide) < 1e-3, f"{kind}: {table[kind]} vs {wide}"
