@@ -727,6 +727,137 @@ water box when it fills one) and has no business in a run directory.
 all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
 the residue libraries.
 
+## Pockets
+
+### `boonza.pockets.write_fpocket_pdb(system, path, ids=None, model: 'str | None' = None, n_polar: 'bool' = False) -> 'None'`
+
+Write ``system`` (or the atoms ``ids``) as a PDB for fpocket or mdpocket.
+
+### `boonza.pockets.bead_elements(system, ids=None, model: 'str | None' = None, n_polar: 'bool' = False) -> 'list'`
+
+The element to write for each of ``ids``: the real one for all-atom, C or O for beads.
+
+``model`` is ``aa``, ``sirah`` or a Martini model (guessed from the names when
+not given).  A Martini system read without its topology takes its bead types
+from the force field (:func:`bead_types`).
+
+### `boonza.pockets.bead_types(names, resnames, model: 'str') -> 'list[str]'`
+
+The Martini type of each bead, from its residue's block in the force field.
+
+For a structure read without its topology (a bare .gro or .pdb), which has
+bead names and no types.  A backbone bead's type follows the secondary
+structure in Martini 2, and the block holds the coil's (P5, or P4 for Ala
+and Pro); helix and strand types are N-class there, which the Martini 2
+preset counts as polar too, so the polarity fpocket reads is the same.  A
+bead the force field has no block for comes back as an empty string.
+
+### `boonza.pockets.martini_polar(bead_type: 'str', n_polar: 'bool' = False) -> 'bool'`
+
+Whether a Martini 2 or 3 bead type is polar.
+
+The size prefix (S, T), Martini 2's amino-acid prefix (A, in the AC1 and AC2
+side chains of Leu, Ile and Val) and the label suffixes (d, a, h, e, r, q, p,
+n) are ignored: the class letter decides.  A type that is none of these is
+taken as polar.
+
+### `boonza.pockets.sirah_polar(bead_name: 'str', charge: 'float') -> 'bool'`
+
+Whether a SIRAH bead is polar: the backbone by name, a side chain by its charge.
+
+### `boonza.pockets.coarse_grain(system, model: 'str', atoms: 'str' = 'protein and not chain "LIG"', drop_unknown: 'bool' = True)`
+
+``atoms`` of an all-atom ``system`` mapped onto ``model``'s beads, as a System.
+
+``aa`` returns the heavy atoms themselves.  The beads keep the chain names
+and residue numbers of the atoms they were mapped from.  ``drop_unknown``
+leaves out, with a warning, residues the model has no mapping for (a D-amino
+acid, a modified residue) rather than refusing the structure.
+
+### `boonza.pockets.protein_ids(system, selection: 'str | None' = None) -> 'np.ndarray'`
+
+The protein's atoms or beads, or those of ``selection``, never the probes.
+
+A coarse-grained system the ``protein`` keyword finds nothing in is taken by
+its residue names (the twenty amino acids, their protonation variants and
+SIRAH's names).
+
+### `boonza.pockets.find_fpocket(path=None, program: 'str' = 'fpocket') -> 'Path'`
+
+The ``program`` (fpocket or mdpocket) to run: in ``path``, else in
+``$FPOCKET_HOME/bin``, else the one on ``PATH``.
+
+``path`` is the program itself or the directory of an fpocket build (its
+``bin/`` is looked in).  It must be the build that reads
+``--score_coefficients``, which the tuned presets pass.
+
+### `boonza.pockets.preset(model: 'str') -> 'dict'`
+
+The preset of one model.
+
+### `boonza.pockets.run_fpocket(pdb, flags=(), fpocket=None, quiet: 'bool' = False) -> 'list[Pocket]'`
+
+fpocket on ``pdb`` with ``flags``: its pockets, best first.
+
+The output is fpocket's own, ``<stem>_out`` beside ``pdb``, replaced if it
+is there already.
+
+### `boonza.pockets.run_mdpocket(pdb, dcd, prefix, flags=(), fpocket=None) -> 'list[str]'`
+
+mdpocket over a trajectory (``pdb`` and its frames, ``dcd``); returns the command run.
+
+Writes ``<prefix>_freq.dx`` (the share of frames each point is in a pocket)
+and ``<prefix>_dens.dx`` (alpha-sphere density) among mdpocket's other files.
+
+### `class boonza.pockets.Pocket(centres: 'np.ndarray', radii: 'np.ndarray', score: 'float', info: 'str' = '', descriptors: 'dict' = <factory>) -> None`
+
+One pocket of one fpocket run, in fpocket's own order.
+
+### `boonza.pockets.frame_pockets(pdb, frames, flags=(), fpocket=None)`
+
+fpocket on each of ``frames`` (positions of the atoms in ``pdb``, in order).
+
+Yields each frame's pockets as FramePockets, with their burial against that
+frame.  ``pdb`` is the structure fpocket reads (from
+:func:`boonza.pockets.write_fpocket_pdb`); only its coordinates change.
+
+### `boonza.pockets.consensus_pockets(per_frame, cutoff: 'float' = 6.0, crystal=None) -> 'list[ConsensusPocket]'`
+
+Consensus pockets from each frame's pockets (``per_frame``, a list of lists of
+FramePocket), ranked; returned in quality order.
+
+``crystal``: the pocket centres of the apo crystal structure in the same frame,
+to flag each consensus pocket cryptic when none lies within ``CRYPTIC_CUTOFF``
+of it (left as None without them).
+
+### `class boonza.pockets.ConsensusPocket(members: 'list', frames: 'int', open: 'list' = <factory>, cryptic: 'bool | None' = None, core: 'np.ndarray' = <factory>, rank_quality: 'int' = 0, rank_persistence: 'int' = 0, rank_quality_burial: 'int' = 0) -> None`
+
+Pockets of different frames at one place.
+
+### `boonza.pockets.enclosed_core(centres, radii, beads, bead_radii, spacing: 'float' = 2.0) -> 'np.ndarray'`
+
+Grid points (n, 3) of the enclosed core of one pocket (its alpha spheres' ``centres``
+and ``radii``) on one frame (``beads`` with per-bead ``bead_radii``).
+
+### `boonza.pockets.bead_radii(types, model: 'str', rule: 'str' = 'sigma') -> 'np.ndarray'`
+
+Radius (A) of each bead from its type: sigma/2 (``rule="sigma"``) or rmin/2 of the
+type's self-interaction, read from data/cg_radii/<model>_bead_radii.csv. NaN for a
+type the table does not have.  With a loaded topology,
+:func:`boonza.sites.particle_radii` reads the same numbers off the force field.
+
+### `boonza.pockets.ppc(pocket, ligand, cutoff: 'float' = 4.0) -> 'bool'`
+
+Whether ``pocket``'s centre lies within ``cutoff`` of an atom of ``ligand``.
+
+### `boonza.pockets.moc(pocket, ligand) -> 'bool'`
+
+fpocket's mutual-overlap criterion for ``pocket``'s alpha-sphere centres.
+
+### `boonza.pockets.volume_overlap(pocket: 'np.ndarray', ligand_atoms) -> 'dict'`
+
+Volume-overlap measures of one pocket (voxels) with one ligand (heavy-atom coordinates).
+
 ## Per-format readers and writers (`boonza.io`)
 
 ### `boonza.io.load_cif(path, guess_bonds: 'bool' = True, struct_conn: 'bool' = True) -> 'System'`

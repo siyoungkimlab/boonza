@@ -311,6 +311,30 @@ def particle_radii(system, ids, rule: str = "sigma") -> np.ndarray:
     return out
 
 
+def burial(points, protein, reach: float = 10.0, touch: float = 2.6) -> np.ndarray:
+    """Of 26 directions out of each of ``points``, the share that meet ``protein``.
+
+    A pocket is enclosed; a dent on a convex surface is not, and bulk is not at
+    all.  Counting directions rather than neighbours within a radius keeps the
+    number comparable between an all-atom protein and a coarse-grained one,
+    whose beads are fewer and larger.  A direction meets the protein where a
+    step along it, 2 to ``reach`` A out, comes within ``touch`` of a particle.
+    """
+    from .spatial import min_dist2
+
+    xyz = np.asarray(points, float).reshape(-1, 3)
+    dirs = np.array([(x, y, z) for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1)
+                     if (x, y, z) != (0, 0, 0)], float)  # fmt: skip
+    dirs /= np.linalg.norm(dirs, axis=1)[:, None]
+    steps = np.arange(2.0, reach + 0.1, 1.5)
+    blocked = np.zeros(len(xyz))
+    for u in dirs:
+        pts = (xyz[:, None, :] + u * steps[:, None]).reshape(-1, 3)
+        hit = min_dist2(pts, protein, touch * 2, cell=None).reshape(len(xyz), len(steps))
+        blocked += (hit <= touch**2).any(1)
+    return blocked / len(dirs)
+
+
 class Occupancy:
     """Where the ligand's atoms go, counted onto a grid as the frames come.
 
@@ -386,26 +410,9 @@ class Occupancy:
         return self.origin + (ijk + 0.5) * self.spacing
 
     def burial(self, cells, protein, reach: float = 10.0, touch: float = 2.6) -> np.ndarray:
-        """Of 26 directions out of each cell, the share that meet ``protein``.
-
-        A pocket is enclosed; a dent on a convex surface is not, and bulk is
-        not at all.  Counting directions rather than neighbours within a radius
-        keeps the number comparable between an all-atom protein and a
-        coarse-grained one, whose beads are fewer and larger.
-        """
-        from .spatial import min_dist2
-
-        xyz = self.cell_centres()[cells]
-        dirs = np.array([(x, y, z) for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1)
-                         if (x, y, z) != (0, 0, 0)], float)  # fmt: skip
-        dirs /= np.linalg.norm(dirs, axis=1)[:, None]
-        steps = np.arange(2.0, reach + 0.1, 1.5)
-        blocked = np.zeros(len(xyz))
-        for u in dirs:
-            pts = (xyz[:, None, :] + u * steps[:, None]).reshape(-1, 3)
-            hit = min_dist2(pts, protein, touch * 2, cell=None).reshape(len(xyz), len(steps))
-            blocked += (hit <= touch**2).any(1)
-        return blocked / len(dirs)
+        """Of 26 directions out of each of ``cells``, the share that meet ``protein``
+        (:func:`burial` at the cells' centres)."""
+        return burial(self.cell_centres()[cells], protein, reach, touch)
 
     def clearance(self, protein, radii=None, reach: float = 6.0) -> np.ndarray:
         """Per cell, how far clear of the nearest of ``protein``'s surfaces it is.
