@@ -683,6 +683,9 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
         _check_nothing_is_dropped(aa, args, path, log)
         protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
                                elastic_selection=args.elastic_selection,
+                               elastic_fc=float(args.elastic_kJ),
+                               elastic_upper=10.0 * float(args.elastic_nm),  # nm to A
+                               elastic_lower=10.0 * float(args.elastic_lower_nm),
                                neutral_termini=bool(args.neutral_termini))  # fmt: skip
         log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
             f"{', elastic network' if args.elastic else ''}")  # fmt: skip

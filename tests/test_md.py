@@ -970,3 +970,23 @@ def test_an_elastic_network_springs_the_beads_it_is_given():
     assert restraints.add_elastic_network(bare, s, "name CA", upper_nm=0.3) == 0  # too close
     held = {frozenset(force.getBondParameters(k)[:2]) for k in range(force.getNumBonds())}
     assert all(set(p) <= set(ca.tolist()) for p in held)  # CA only
+
+
+def test_the_elastic_network_leaves_out_what_is_already_close():
+    """A pair closer than `lower_nm` is held by the force field already; a
+    spring there only stiffens what it says, so it is not worth adding."""
+    import openmm as mm
+
+    import boonza
+    from boonza.md.restraints import add_elastic_network
+
+    s = boonza.peptide("A" * 16)
+
+    def springs(lower_nm):
+        fresh = mm.System()
+        for _ in range(s.natoms):
+            fresh.addParticle(1.0)
+        return add_elastic_network(fresh, s, "name CA", lower_nm=lower_nm, upper_nm=1.2,
+                                   res_min_dist=0)  # fmt: skip
+
+    assert springs(0.05) > springs(0.5) > 0

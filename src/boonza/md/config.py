@@ -102,7 +102,8 @@ ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "pa
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
-MARTINI_ONLY = ("elastic_selection", "upper", "lower", "area_per_lipid",
+MARTINI_ONLY = ("elastic_selection", "elastic_kJ", "elastic_nm", "elastic_lower_nm",
+                "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
@@ -140,10 +141,14 @@ DEFAULTS: dict = {
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
     "dihedral_restraint_selection": None,
+    "elastic_kJ": 700.0,
+    "elastic_nm": 0.9,
+    "elastic_lower_nm": 0.0,
     "elastic_network_selection": None,
     "elastic_network_nm": 0.9,
-    "elastic_network_kJ": 500.0,
+    "elastic_network_kJ": 700.0,
     "elastic_network_res_min_dist": 2,
+    "elastic_network_lower_nm": 0.05,
     "repulsion_selection": None,
     "repulsion_distance_nm": 0.5,
     "repulsion_kJ": 500.0,
@@ -192,6 +197,10 @@ _NUMBERS = {
     "performance_interval_ns",
     "integration_fs",
     "dihedral_restraint_kJ",
+    "elastic_kJ",
+    "elastic_nm",
+    "elastic_lower_nm",
+    "elastic_network_lower_nm",
     "elastic_network_nm",
     "elastic_network_kJ",
     "elastic_network_res_min_dist",
@@ -412,6 +421,15 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
 
     cg = p.add_argument_group("Martini (--model martini3 / martini2)")
+    numbers(cg, [("--elastic-kJ", "elastic_kJ",
+                  "how stiff Martini's own rubber bands are (kJ/mol/nm^2); martinize2's -ef"),
+                 ("--elastic-nm", "elastic_nm",
+                  "how far apart two backbone beads may be and still be banded (nm); "
+                  "martinize2's -eu.  These are the bands Martini keeps in the topology; "
+                  "SIRAH's springs are --elastic-network-kJ and -nm"),
+                 ("--elastic-lower-nm", "elastic_lower_nm",
+                  "and how close two of them have to be before a band is not worth "
+                  "adding (nm); martinize2's -el")])  # fmt: skip
     cg.add_argument("--upper", metavar="LIPIDS",
                     help="upper leaflet of the bilayer, e.g. POPC:7,CHOL:3 "
                          "(with --solvate membrane)")  # fmt: skip
@@ -598,6 +616,8 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
     numbers(hold, [("--elastic-network-nm", "elastic_network_nm",
                     "how far apart two beads may be and still be sprung (nm)"),
+                   ("--elastic-network-lower-nm", "elastic_network_lower_nm",
+                    "and how close before a spring is not worth adding (nm)"),
                    ("--elastic-network-kJ", "elastic_network_kJ",
                     "spring strength (kJ/mol/nm^2)")])  # fmt: skip
     hold.add_argument(

@@ -275,9 +275,10 @@ def _new_run(args, paths: RunPaths, src: Path, log):
         from .restraints import add_elastic_network
 
         reach = float(getattr(args, "elastic_network_nm", 0.9))
-        strength = float(getattr(args, "elastic_network_kJ", 500.0))
+        strength = float(getattr(args, "elastic_network_kJ", 700.0))
         springs = add_elastic_network(
             system, s, args.elastic_network_selection, upper_nm=reach, k_kj=strength,
+            lower_nm=float(getattr(args, "elastic_network_lower_nm", 0.05)),
             res_min_dist=int(getattr(args, "elastic_network_res_min_dist", 2)),
         )  # fmt: skip
         if springs:

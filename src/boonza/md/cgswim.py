@@ -200,6 +200,9 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         made_of = {"forcefield": FORCEFIELD_FOR[version]}  # the probes are made of it too
         protein = martinize(aa, args.cg_selection, elastic=elastic,
                             elastic_selection=args.elastic_selection if elastic else None,
+                            elastic_fc=float(args.elastic_kJ),
+                            elastic_upper=10.0 * float(args.elastic_nm),  # nm to A
+                            elastic_lower=10.0 * float(args.elastic_lower_nm),
                             neutral_termini=bool(args.neutral_termini),
                             **made_of)  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
