@@ -113,6 +113,43 @@ INSTEAD_OF = {
 #: deliberate difference, and the one that answers what the structure says.
 NEUTRAL_RESIDUE = {"ASH": "ASP", "ASPP": "ASP", "GLH": "GLU", "GLUP": "GLU", "LYN": "LYS"}
 
+#: Acids whose neutral form Martini 2.2 has no block for, so it builds the
+#: charged one even from a structure that says otherwise.
+#:
+#: Whether the structure says otherwise is read from the hydrogens, not from a
+#: name: the proton is spelled HD2, HD1 or 2HD depending on who wrote the file,
+#: and a residue can be named ASP and still hold it.  Nor does it look for OD1
+#: or OD2 -- in a charged aspartate no oxygen carries a hydrogen at all, and
+#: neither does the backbone carbonyl, so a hydrogen on any oxygen of the
+#: residue says the side chain holds its proton, whatever the file calls either
+#: of them.
+#:
+#: Lysine needs none of this: Martini 2.2 maps a neutral one to C3-P1 and a
+#: charged one to C3-Qd from the hydrogens itself, so it is already right.
+PROTONATABLE_ACIDS = ("ASP", "GLU")
+#: How close a hydrogen is to the atom it sits on, in nm, which is what
+#: _Residue.xyz is written in -- a covalent O-H is near 0.10 nm.
+_BONDED_H = 0.13
+
+
+def _holds_its_proton(res) -> bool:
+    """Whether an acid arrived with a proton its charged form would not have.
+
+    Read from the elements and where they are, so a file that names its atoms
+    unusually is read the same as one that does not.  ``False`` where there are
+    no hydrogens to count, the name being the only answer left.
+    """
+    if res.resname.upper() not in PROTONATABLE_ACIDS:
+        return False
+    elements = list(res.elements)
+    oxygens = [i for i, e in enumerate(elements) if e == "O"]
+    hydrogens = [i for i, e in enumerate(elements) if e == "H"]
+    if not oxygens or not hydrogens:
+        return False
+    xyz = np.asarray(res.xyz, float)
+    near = np.sqrt(((xyz[hydrogens][:, None] - xyz[oxygens][None]) ** 2).sum(-1))
+    return bool((near <= _BONDED_H).any())
+
 
 def _instead_of(ff, what: str, name: str, fallback=None):
     """What ``ff`` calls ``name``, where it calls it something else."""
@@ -942,7 +979,9 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
                         replace["charge"] = float(replace["charge"])
                     node.update(replace)
                     node["modifications"].append(mname)
-        if res.resname in NEUTRAL_RESIDUE:
+        if res.resname in NEUTRAL_RESIDUE or (
+            getattr(ff, "name", "") == "martini22" and _holds_its_proton(res)
+        ):
             # the structure says this side chain holds its proton, and the model
             # has no bead for one: the charge is what it would differ in, so the
             # charge is what goes.  Only the side chain -- a terminus puts its

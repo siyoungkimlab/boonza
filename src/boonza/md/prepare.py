@@ -675,19 +675,16 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
         aa = load_input(path, log, hydrogens=False)
         if _already_built(aa, args.model, path):  # beads with their parameters on them
             return _run_as_built(aa, args, path, workdir, f"Martini {version}", log, check)
-        if version != 3:
-            raise ValueError(f"model = '{args.model}' cannot coarse-grain {path.name}: boonza "
-                             "martinizes proteins as Martini 3.  Give a Martini 2 topology "
-                             "(.top) or a built Martini 2 system (cg.dms) instead, or build a "
-                             "membrane without a protein")  # fmt: skip
         _check_nothing_is_dropped(aa, args, path, log)
         protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
                                elastic_selection=args.elastic_selection,
                                elastic_fc=float(args.elastic_kJ),
                                elastic_upper=10.0 * float(args.elastic_nm),  # nm to A
                                elastic_lower=10.0 * float(args.elastic_lower_nm),
-                               neutral_termini=bool(args.neutral_termini))  # fmt: skip
-        log(f"Martinized: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
+                               neutral_termini=bool(args.neutral_termini),
+                               forcefield=mt.FORCEFIELD_FOR[version])  # fmt: skip
+        log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
+            f"{len(protein.molecules)} molecule(s)"
             f"{', elastic network' if args.elastic else ''}")  # fmt: skip
     elif mode != "membrane":
         raise ValueError("give a structure to coarse-grain, or solvate = 'membrane' "
