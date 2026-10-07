@@ -1295,3 +1295,37 @@ def test_a_single_amino_acid_probe_is_typed_for_the_feature_maps(model):
         assert typed[letter], f"{letter} types as nothing at all"
     for letter, family in want.items():
         assert family in typed[letter], f"{letter} should carry {family}: {typed[letter]}"
+
+
+def test_the_rubber_bands_take_a_stiffness_and_a_reach(tmp_path):
+    """Martini keeps its network in the topology, so --elastic-kJ and
+    --elastic-nm have to reach martinize rather than the run: a softer band is a
+    different force constant on the same pair, a shorter reach is fewer pairs."""
+    from boonza.md.prepare import build_martini_system
+
+    def bands(**extra):
+        where = tmp_path / ("".join(f"{k}{v}" for k, v in extra.items()) or "default")
+        flags = [x for k, v in extra.items() for x in (f"--{k}", str(v))]
+        args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *flags,
+                                "--gromacs", "--workdir", str(where / "run")])  # fmt: skip
+        build_martini_system(args, where, log=lambda *_: None)
+        itp = next((where / "martini").glob("molecule_*.itp")).read_text()
+        rows = [ln.split() for ln in itp.split("[ bonds ]")[1].split("[", 1)[0].splitlines()
+                if ln.strip() and not ln.startswith(";")]  # fmt: skip
+        # a rubber band is the force constant martinize was told to use
+        return [r for r in rows if len(r) >= 5]
+
+    plain = bands()
+    soft = bands(**{"elastic-kJ": 50})
+    short = bands(**{"elastic-nm": 0.7})
+
+    def held_at(rows, k):
+        return len([r for r in rows if abs(float(r[4]) - k) < 1e-6])
+
+    assert held_at(plain, 700.0) > 300  # 1TEN gets 354 of them
+    assert held_at(soft, 50.0) == held_at(plain, 700.0)  # the same pairs, held gently
+    assert held_at(soft, 700.0) == 0  # and none left at the old stiffness
+    assert held_at(short, 700.0) < held_at(plain, 700.0)  # a shorter reach bands fewer
+    # and a lower bound drops the pairs already close enough not to need one
+    near = bands(**{"elastic-lower-nm": 0.6})
+    assert held_at(near, 700.0) < held_at(plain, 700.0)

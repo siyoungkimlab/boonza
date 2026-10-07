@@ -190,14 +190,15 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
 
 
 def add_elastic_network(omm_system, s, selection: str, lower_nm: float = 0.05,
-                        upper_nm: float = 0.9, k_kj: float = 500.0,
+                        upper_nm: float = 0.9, k_kj: float = 700.0,
                         res_min_dist: int = 2) -> int:  # fmt: skip
     """Hold a fold with springs between the beads ``selection`` picks.
 
     Every pair of selected beads between ``lower_nm`` and ``upper_nm`` apart in
     the starting structure gets a harmonic bond at that distance, skipping pairs
     within ``res_min_dist`` residues of each other, which the bonded terms
-    already hold.  ``k`` is in kJ/mol/nm^2.
+    already hold.  ``k`` is in kJ/mol/nm^2, 700 as martinize2's -ef is, so that
+    an elastic network means the same stiffness whichever model is asked for it.
 
     It is what Martini calls a rubber band, for a model that has none: SIRAH
     holds its fold with torsions and wanders 4 to 6.5 A of backbone RMSD, which
