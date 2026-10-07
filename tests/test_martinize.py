@@ -952,3 +952,36 @@ def test_sirah_has_a_residue_of_its_own_for_a_neutral_acid():
         q = {k: sum(a[2] for a in library[k].atoms) for k in (charged, neutral)}
         assert q[charged] == pytest.approx(-1.0, abs=0.01)
         assert q[neutral] == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.parametrize("resname,proton", [("ASP", "HD2"), ("GLU", "HE2")])
+def test_martini2_reads_a_proton_rather_than_a_name(resname, proton, tmp_path):
+    """The same acid arriving named ASP with its proton on comes out neutral too.
+
+    Spelling it ASH says the same thing about the chemistry, and the two used to
+    disagree by a whole charge: ASH was zeroed, ASP-with-a-proton stayed at -1.
+    The proton is what is read, by element and distance -- it is written HD2,
+    HD1 or 2HD depending on who made the file, and the oxygens it sits on are
+    not always OD1 and OD2 either.
+    """
+    s = _load(CASES["2TRX"][0], tmp_path).select("protein and chain A").clone()
+    where = next(r for r in range(s.nresidues)
+                 if str(s.residues["name"][r]).strip() == resname)  # fmt: skip
+
+    def side_chain(m):
+        mine = [n for n in m.molecules[0].nodes if n.get("resid") == where + 1]
+        return sum(float(n["charge"]) for n in mine
+                   if str(n["atomname"]).startswith("SC"))  # fmt: skip
+
+    charged = martinize(s.clone(), forcefield="martini22")
+    assert abs(side_chain(charged)) == 1.0  # with no proton on it, it is charged
+
+    # put the acidic hydrogen on one of the side chain's oxygens, as a structure
+    # prepared at low pH has it, and leave the residue named as it was
+    held = s.clone()
+    res = held.residue(where)
+    oxygen = [a for a in res.atoms if a.element == "O" and a.name.strip() not in ("O", "OXT")][0]
+    added = held.residue(where).add_atom()
+    added.name, added.anum = proton, 1  # the element follows the atomic number
+    added.pos = np.asarray(oxygen.pos) + np.array([0.0, 0.0, 1.0])  # 1 A away, as a bond is
+    assert side_chain(martinize(held, forcefield="martini22")) == 0.0
