@@ -768,8 +768,16 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
 
     m = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"), elastic=True)
     whole = m.system()
-    bands = m.elastic_bonds()
-    assert len(bands) > 300
+    rubber = m.elastic_bonds()
+    bands = set(m.restraint_bonds())
+    assert len(rubber) > 300
+    # the rubber bands are not all of it: Martini also writes "short" and
+    # "long elastic bonds for extended regions", which hold a beta sheet at
+    # 0.64 and 0.97 nm, and 1TEN is a fibronectin domain -- all sheet.  Those
+    # are real bonds of the topology, so a viewer draws every one as a bar
+    # across the protein
+    assert len(bands) > len(rubber)
+    assert set(rubber) < bands
     viewing = m.for_viewing(whole)
     assert viewing.natoms == whole.natoms
     assert viewing.nbonds == whole.nbonds - len(bands)
@@ -777,8 +785,16 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     # renamed "GLU: CA SC1" as a broken residue and draws its own bonds over it
     assert [str(n) for n in viewing.atoms["name"]] == [str(n) for n in whole.atoms["name"]]
     assert len(viewing.select("name BB").ids) > 50 and not len(viewing.select("name CA").ids)
-    for i, j in bands[:5]:
+    for i, j in sorted(bands):
         assert viewing.find_bond(viewing.atom(i), viewing.atom(j)) is None
+    # what is left is chemistry, and chemistry is short: the longest bond of
+    # the view is a side chain's, where the full system has one over 10 A
+    xyz = np.asarray(viewing.positions)
+
+    def longest(s):
+        return max(float(np.linalg.norm(xyz[b.first.id] - xyz[b.second.id])) for b in s.bonds)
+
+    assert longest(viewing) < 5.0 < longest(whole)
     # which is what the cts say, so the file cannot be run by mistake
     from boonza.martini.build import VIEWING_MARK
 
@@ -788,8 +804,12 @@ def test_a_view_of_the_system_without_its_rubber_bands(tmp_path):
     traced = m.for_viewing(whole, backbone_as_ca=True)
     assert len(traced.select("name CA").ids) == len(whole.select("name BB").ids)
 
+    # and the same bonds are left whether the network was ever switched on
     without = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein"), elastic=False)
     assert without.elastic_bonds() == []
+    assert without.restraint_bonds()  # the sheet's bands are not the network
+    bare = without.for_viewing()
+    assert bare.nbonds == viewing.nbonds
 
 
 @pytest.mark.parametrize("elastic", [[], ["--no-elastic"]])
@@ -808,9 +828,15 @@ def test_a_martini_run_writes_what_a_viewer_wants(tmp_path, elastic):
     assert [str(n) for n in view.atoms["name"]] == [str(n) for n in s.atoms["name"]]
     assert {str(view.ct(c).name) for c in range(view.ncts)} == {VIEWING_MARK}
     assert [str(r) for r in view.residues["name"]] == [str(r) for r in s.residues["name"]]
-    # the rubber bands are left out where there are any; "elastic" here is the
-    # flag that switches the network off, so an empty one means it is on
-    assert view.nbonds == (s.nbonds if elastic else s.nbonds - 354)
+    # every band is left out -- the rubber bands, and the ones holding the
+    # sheet, which are there whether or not the network is ("elastic" here is
+    # the flag that switches it off, so an empty one means it is on) -- and the
+    # same chemistry is left either way
+    assert view.nbonds < s.nbonds
+    assert view.nbonds == 206
+    xyz = np.asarray(view.positions)
+    assert max(float(np.linalg.norm(xyz[b.first.id] - xyz[b.second.id]))
+               for b in view.bonds) < 5.0  # fmt: skip
     # the coordinates it carries are the built ones, not a .gro's
     assert np.allclose(np.asarray(view.positions), np.asarray(s.positions))
     # and the writer every model shares leaves this one alone: Martini's is the
@@ -1442,3 +1468,88 @@ def test_a_cofactor_is_held_as_inert_beads_by_both_commands(model, bead, tmp_pat
                             "--workdir", str(plain / "run")])  # fmt: skip
     with pytest.raises(ValueError, match="HEM"):
         build_martini_system(args, plain, log=lambda *_: None)
+
+
+def test_a_chain_in_two_pieces_still_builds_a_topology():
+    """OpenMM's chain is a run of residues, not a record.
+
+    A cofactor keeps the chain of the protein it belongs to and is mapped as a
+    molecule of its own, after whatever chains were written between them, so a
+    structure whose chain A holds a ligand builds as A, B, A -- which OpenMM
+    refuses ("All residues within a chain must be contiguous").  A run of
+    residues now opens a chain of its own, named as it was, and nothing is
+    reordered: the atoms stay where the system has them, which is what the
+    positions are in.
+    """
+    s = boonza.load(str(DATA / "1HHO.pdb")).select("protein").clone()
+    xyz = np.asarray(s.positions)
+    where = s.select("name CA and resid 20 and chain A").ids
+    # a ligand of chain A, written after chain B, as a prepared file has it
+    s.append(boonza.System.from_arrays(xyz[where] + [2.2, 0.0, 0.0], names=["C1"], anum=[6],
+                                       resnames=["LIG"], resids=[900], chains=["A"]))  # fmt: skip
+    seen = [str(s.residue(r).chain.name).strip() for r in range(s.nresidues)]
+    assert seen[0] == "A" and seen[-1] == "A" and "B" in seen  # A, then B, then A again
+
+    top, _omm, positions = boonza.to_openmm(s)
+    assert top.getNumAtoms() == s.natoms
+    assert len(positions) == s.natoms
+    # every chain of the topology holds one run, and the names are kept
+    assert [c.id for c in top.chains()] == ["A", "B", "A"]
+    assert sum(len(list(c.residues())) for c in top.chains()) == s.nresidues
+    assert top.getNumResidues() == s.nresidues
+    # the order the positions are in is the order the topology reads them
+    assert [a.index for a in top.atoms()] == list(range(s.natoms))
+
+
+@pytest.mark.parametrize("model", ["martini2", "martini3", "sirah"])
+def test_a_view_file_keeps_no_band_of_any_kind(model, tmp_path):
+    """Whatever holds a thing, rather than saying what it is, is left out of the
+    view file -- every kind of it.
+
+    This has come back twice: `for_viewing` removed the rubber bands, which was
+    all there was when it was written, and then cofactors arrived with bands of
+    their own and a benzamidine came out as a star of a hundred and fifty lines.
+    SIRAH's removed nothing at all, its docstring saying there was nothing to
+    remove.  So the test is on the property rather than on a list: no bond of
+    the view may be one the builder calls a band.
+    """
+    held = boonza.load(str(DATA / "1HHO.pdb")).select("protein and chain A").clone()
+    xyz = np.asarray(held.positions)
+    where = held.select("name CA and resid 20").ids
+    # a cofactor of several atoms, which gets shape bands and anchor bands
+    for k, step in enumerate(([2.6, 0.0, 0.0], [3.9, 1.1, 0.0], [5.2, 0.0, 0.6])):
+        held.append(boonza.System.from_arrays(xyz[where] + step, names=[f"C{k}"], anum=[6],
+                                              resnames=["LIG"], resids=[900],
+                                              chains=["A"]))  # fmt: skip
+    picks = "protein or resname LIG"
+
+    if model == "sirah":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah import sirahize
+
+        out = sirahize(held, picks, log=None, cofactors=True)
+        full, view = out.system(), None
+        view = out.for_viewing(full, backbone_as_ca=False)
+    else:
+        from boonza.martini import FORCEFIELD_FOR, martinize
+
+        version = int(model.removeprefix("martini"))
+        out = martinize(held, picks, forcefield=FORCEFIELD_FOR[version], cofactors=True,
+                        elastic=True)  # fmt: skip
+        full = out.system()
+        view = out.for_viewing(full)
+
+    bands = out.restraint_bonds()
+    assert bands, "the cofactor should be held by something"
+    assert view.natoms == full.natoms  # same atoms in the same order, for the trajectory
+    # not every band is a bond of the topology -- Martini 2.2 writes its rubber
+    # bands as GROMACS type 6, a potential that is no bond at all, so a viewer
+    # never drew those.  What matters is that none of them survives as one
+    assert view.nbonds <= full.nbonds
+
+    kept = {tuple(sorted((int(b.first.id), int(b.second.id)))) for b in view.bonds}
+    assert not kept & {tuple(sorted(p)) for p in bands}
+    # and nothing is left tying the cofactor to the protein
+    ids = {int(i) for i in view.select("resname LIG").ids}
+    assert not [b for b in view.bonds
+                if {int(b.first.id), int(b.second.id)} & ids]  # fmt: skip
