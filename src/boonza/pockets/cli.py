@@ -21,7 +21,7 @@ import numpy as np
 
 from .beads import MODELS, guess_model, write_fpocket_pdb
 from .prepare import NOT_PROBES, coarse_grain, protein_ids, searchable
-from .run import merge_flags, preset
+from .run import find_fpocket, merge_flags, preset
 
 #: what is scored against a holo ligand, per pocket, after its own columns
 LIGAND_COLUMNS = ("center_to_nearest_ligand_atom", "center_to_ligand_centroid",
@@ -61,6 +61,14 @@ def _backbone(system) -> str:
     if found is None:
         raise ValueError("no CA, BB or GC atoms to superpose on")
     return found
+
+
+def _model_of(system, ids) -> str:
+    """``aa``, ``martini`` or ``sirah``: what the atoms ``ids`` are, by their names and their
+    residues' names (SIRAH has no BB bead; its residue names, sA, sK, ..., say it)."""
+    names = np.asarray(system.atoms["name"])[ids]
+    resnames = np.asarray(system.residues["name"])[np.asarray(system.atoms["residue"])[ids]]
+    return guess_model(names, resnames)
 
 
 def _apo_on(apo_path, reference, same_frame: bool):
@@ -178,6 +186,7 @@ def cmd_run(args, extra) -> int:
     from .run import run_fpocket
 
     model = args.model
+    find_fpocket(args.fpocket)  # before any work: a missing or stock build fails at once
     system = _load(args.structure, args.top)
     beads, ids = searchable(system, model, args.selection)
     out = Path(args.out)
@@ -188,7 +197,7 @@ def cmd_run(args, extra) -> int:
     print(f"fpocket on {pdb.name}: {len(ids)} {'atoms' if model == 'aa' else 'beads'}, "
           f"{' '.join(flags) or 'its own defaults'}")  # fmt: skip
     pockets = run_fpocket(pdb, flags, args.fpocket)
-    all_atom = guess_model(np.asarray(system.atoms["name"])[protein_ids(system)], ["X"]) == "aa"
+    all_atom = _model_of(system, protein_ids(system)) == "aa"
     apo_path = args.apo or (args.structure if all_atom else None)
     reference = _load(pdb)
     apo = _apo_on(apo_path, reference, same_frame=apo_path == args.structure) if apo_path else None
@@ -224,6 +233,8 @@ def cmd_run(args, extra) -> int:
         view = write_run_view(out, pockets, apo, moved, args.holo_ligand
                               if moved is not None else None, verdicts, fmt)  # fmt: skip
         print(f"all-atom view: pymol {view}")
+    else:
+        print("no view: it shows the pockets on the all-atom apo structure; give it with --apo")
     return 0
 
 
@@ -276,10 +287,11 @@ def cmd_traj(args, extra) -> int:
         raise ValueError(
             "traj is for coarse-grained runs: give --model martini2, martini3 or sirah"
         )
+    find_fpocket(args.fpocket)  # before the frames are prepared: that takes a while
     system, traj, interval = _frames_of(args)
     ids = protein_ids(system, args.selection)
     names = np.asarray(system.atoms["name"])
-    if guess_model(names[ids], ["X"]) == "aa":
+    if _model_of(system, ids) == "aa":
         raise ValueError("traj needs the run's own coarse-grained structure")
     fit = ids[np.isin(names[ids], ["BB", "GC"])]
     whole = ids if system.nbonds else None
@@ -400,6 +412,11 @@ def cmd_traj(args, extra) -> int:
         view = write_traj_view(out, ranked, apo, moved, args.holo_ligand if moved is not None
                                else None, verdicts, structure_format(args.apo), iso)  # fmt: skip
         print(f"all-atom view: pymol {view}")
+    else:
+        print(
+            "no view: it shows the pockets on the all-atom apo structure; give it with --apo. "
+            f"The beads: pymol {out / 'md.pdb'} {out / 'pockets.pqr'} {out / 'cores.pqr'}"
+        )
     return 0
 
 
