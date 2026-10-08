@@ -1384,3 +1384,61 @@ def test_a_bead_is_as_wide_as_its_table_says():
     for kind, wide in zip(kinds[ids], particle_radii(s, ids, "sigma"), strict=True):
         assert kind in table, f"{kind} is missing from the table"
         assert abs(table[kind] - wide) < 1e-3, f"{kind}: {table[kind]} vs {wide}"
+
+
+@pytest.mark.parametrize("model,bead", [("martini2", "C1"), ("martini3", "TC3")])
+def test_a_cofactor_is_held_as_inert_beads_by_both_commands(model, bead, tmp_path):
+    """What Martini has no residue for -- a heme, a structural zinc -- is held as
+    one uncharged apolar bead per heavy atom, so that a probe cannot swim through
+    the room it takes.  `boonza martinize` could do this and neither `boonza md`
+    nor `boonza swim` could ask for it.
+    """
+    from boonza.md.prepare import build_martini_system
+    from boonza.md.swim import main
+
+    s = boonza.load(str(DATA / "1HHO.pdb")).select("chain A").clone()
+    heavy = len([i for i in s.select("resname HEM").ids if s.atom(int(i)).element != "H"])
+    assert heavy == 43  # a haem, and every heavy atom of it becomes a bead
+    held = tmp_path / "hemo.pdb"
+    boonza.save(s, held)
+    picks = ["--cg-selection", "protein or resname HEM", "--cofactors"]
+
+    def beads(cg):
+        ids = np.asarray(cg.select("resname HEM").ids, np.int64)
+        kinds = np.asarray([str(x) for x in cg.table("nonbonded").values("type")])[ids]
+        charge = np.asarray(cg.atoms["charge"], float)[ids]
+        return len(ids), sorted(set(kinds.tolist())), sorted(set(charge.round(3).tolist()))
+
+    run = tmp_path / "md"
+    args = parse_arguments([str(held), "--model", model, "--solvate", "none", *picks,
+                            "--workdir", str(run / "run")])  # fmt: skip
+    build_martini_system(args, run, log=lambda *_: None)
+    assert beads(boonza.load(str(run / "martini" / "cg.dms"))) == (heavy, [bead], [0.0])
+
+    swim = tmp_path / "swim"
+    assert main([str(held), "--model", model, "--probes", "A", "--types", "1", "--copies", "1",
+                 *picks, "--workdir", str(swim)]) == 0  # fmt: skip
+    assert beads(boonza.load(str(swim / "sim_000" / "martini" / "cg.dms"))) == (
+        heavy,
+        [bead],
+        [0.0],
+    )
+
+    # SIRAH holds one as its own inert bead too, and the flag now reaches it;
+    # the md path wants a structure with hydrogens, which this one has not, so
+    # the mapping is asked directly
+    if model == "martini3":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah.build import COFACTOR_BEAD, map_structure
+
+        beads = map_structure(s, "protein or resname HEM", cofactors=True)
+        assert len([b for b in beads if b.cofactor]) == heavy
+        assert COFACTOR_BEAD == "Y1C"  # leucine's side chain: uncharged, aliphatic
+
+    # and a cofactor is never dropped quietly: without a selection that says so,
+    # the build refuses rather than running the protein on its own
+    plain = tmp_path / "plain"
+    args = parse_arguments([str(held), "--model", model, "--solvate", "none",
+                            "--workdir", str(plain / "run")])  # fmt: skip
+    with pytest.raises(ValueError, match="HEM"):
+        build_martini_system(args, plain, log=lambda *_: None)

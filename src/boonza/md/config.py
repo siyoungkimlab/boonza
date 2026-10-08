@@ -108,7 +108,7 @@ MARTINI_ONLY = ("elastic_selection", "elastic_kJ", "elastic_nm", "elastic_lower_
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 #: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
-CG_ONLY = ("cg_selection", "gromacs", "elastic")
+CG_ONLY = ("cg_selection", "gromacs", "elastic", "cofactors")
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -141,6 +141,7 @@ DEFAULTS: dict = {
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
     "dihedral_restraint_selection": None,
+    "cofactors": False,
     "elastic_kJ": 700.0,
     "elastic_nm": 0.9,
     "elastic_lower_nm": 0.0,
@@ -215,7 +216,7 @@ _NUMBERS = {
     "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs",
+_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs", "cofactors",
              "strict_mapping"}  # fmt: skip
 _CHOICES = {
     "model": MODELS,
@@ -454,6 +455,17 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                          "parameters (default: off)")  # fmt: skip
     cg.add_argument("--neutral-termini", dest="neutral_termini", action="store_true",
                     help="uncharged chain ends")  # fmt: skip
+    cg.add_argument("--cofactors", action="store_true",
+                    help="hold what Martini has no residue for -- a structural zinc, an ADP, a "
+                         "heme -- as inert beads: one uncharged apolar bead per heavy atom, "
+                         "banded in place and to whatever coordinates it, there to stop probes "
+                         "entering the room it takes and to claim nothing else.  An ion Martini "
+                         "does have keeps its own bead and charge instead -- Na, Cl and Ca under "
+                         "Martini, and Na, K, Cl, Ca, Mg and Zn under SIRAH, which has more of "
+                         "them.  It only "
+                         "reaches what --cg-selection picks, so widen that too: "
+                         "--cg-selection 'protein or resname ZN HEM'.  Honest while the cofactor "
+                         "is buried; one that is not is warned about")  # fmt: skip
     cg.add_argument("--opm", action="store_true",
                     help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
     cg.add_argument("--lipid-itp", dest="lipid_itp", nargs="+", metavar="ITP",
