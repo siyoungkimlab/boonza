@@ -108,7 +108,8 @@ MARTINI_ONLY = ("elastic_selection", "elastic_kJ", "elastic_nm", "elastic_lower_
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 #: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
-CG_ONLY = ("cg_selection", "gromacs", "elastic", "cofactors")
+CG_ONLY = ("cg_selection", "gromacs", "elastic", "cofactors", "cofactor_kJ",
+           "cofactor_nm", "cofactor_anchors")  # fmt: skip
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -142,6 +143,9 @@ DEFAULTS: dict = {
     "dihedral_restraint_kJ": 20.0,
     "dihedral_restraint_selection": None,
     "cofactors": False,
+    "cofactor_kJ": 700.0,
+    "cofactor_nm": 1.2,
+    "cofactor_anchors": True,
     "elastic_kJ": 700.0,
     "elastic_nm": 0.9,
     "elastic_lower_nm": 0.0,
@@ -198,6 +202,8 @@ _NUMBERS = {
     "performance_interval_ns",
     "integration_fs",
     "dihedral_restraint_kJ",
+    "cofactor_kJ",
+    "cofactor_nm",
     "elastic_kJ",
     "elastic_nm",
     "elastic_lower_nm",
@@ -217,7 +223,7 @@ _NUMBERS = {
 }
 _INTEGERS = {"seed", "confirmation_checks"}
 _BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs", "cofactors",
-             "strict_mapping"}  # fmt: skip
+             "cofactor_anchors", "strict_mapping"}  # fmt: skip
 _CHOICES = {
     "model": MODELS,
     "termini": ("Charged", "Neutral", "None"),
@@ -466,6 +472,21 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                          "reaches what --cg-selection picks, so widen that too: "
                          "--cg-selection 'protein or resname ZN HEM'.  Honest while the cofactor "
                          "is buried; one that is not is warned about")  # fmt: skip
+    numbers(cg, [("--cofactor-kJ", "cofactor_kJ",
+                  "how stiff the bands holding a cofactor are (kJ/mol/nm^2), both the ones "
+                  "inside it and the ones tying it to the protein; as stiff as a rubber band "
+                  "by default, the two holding the same kind of thing"),
+                 ("--cofactor-nm", "cofactor_nm",
+                  "how far a cofactor's bead may reach for a backbone bead to tie itself to "
+                  "(nm).  Wider than --elastic-nm on purpose: a rubber band joins two beads of "
+                  "one chain, and a cofactor sits in a pocket whose walls are further off than "
+                  "the next residue")])  # fmt: skip
+    cg.add_argument("--cofactor-anchors", dest="cofactor_anchors",
+                    action=argparse.BooleanOptionalAction,
+                    help="tie the cofactor to the protein around it (default: on).  "
+                         "--no-cofactor-anchors leaves it free to move: its own shape is still "
+                         "held, and so is any coordination the structure shows, which is a bond "
+                         "rather than a guess")  # fmt: skip
     cg.add_argument("--opm", action="store_true",
                     help="the protein's z = 0 is the midplane, as OPM orients it")  # fmt: skip
     cg.add_argument("--lipid-itp", dest="lipid_itp", nargs="+", metavar="ITP",

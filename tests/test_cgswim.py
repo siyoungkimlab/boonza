@@ -1553,3 +1553,92 @@ def test_a_view_file_keeps_no_band_of_any_kind(model, tmp_path):
     ids = {int(i) for i in view.select("resname LIG").ids}
     assert not [b for b in view.bonds
                 if {int(b.first.id), int(b.second.id)} & ids]  # fmt: skip
+
+
+@pytest.mark.parametrize("model", ["martini22", "martini3001", "sirah"])
+def test_how_hard_and_how_far_a_cofactor_is_held_can_be_asked_for(model):
+    """Three knobs over the bands, and a shape that is not one of them.
+
+    The shape bands are what keep a cofactor from scattering on the first step
+    -- a bead per heavy atom, 1.5 A apart, each 3.4 A wide -- so they are there
+    whatever is asked for.  The tethers to the protein are a choice:
+    --no-cofactor-anchors leaves the cofactor free to move in its pocket, and
+    any coordination the structure shows is banded all the same, that being a
+    bond rather than a guess at one.
+    """
+    held = boonza.load(str(DATA / "1HHO.pdb")).select("protein and chain A").clone()
+    xyz = np.asarray(held.positions)
+    where = held.select("name CA and resid 20").ids
+    steps = np.array([[2.6, 0.0, 0.0], [3.9, 1.1, 0.0], [5.2, 0.0, 0.6]])
+    held.append(boonza.System.from_arrays(xyz[where] + steps, names=["C1", "C2", "C3"],
+                                          anum=[6, 6, 6], resnames=["LIG"] * 3,
+                                          resids=[900] * 3, chains=["A"] * 3))  # fmt: skip
+    picks = "protein or resname LIG"
+
+    if model == "sirah":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah import sirahize
+
+        def build(**kw):
+            return sirahize(held, picks, cofactors=True, log=None, **kw)
+    else:
+        from boonza.martini import martinize
+
+        def build(**kw):
+            return martinize(held, picks, cofactors=True, forcefield=model, **kw)
+
+    on = len(build().restraint_bonds())
+    loose = len(build(cofactor_anchors=False).restraint_bonds())
+    wide = len(build(cofactor_reach=20.0).restraint_bonds())
+    assert 0 < loose < on < wide  # the shape survives; the tethers do not
+    assert loose < 10  # three beads' worth of shape, and nothing else
+    # the force constant is what a band is written with, not how many there are
+    assert len(build(cofactor_fc=200.0).restraint_bonds()) == on
+
+
+@pytest.mark.parametrize("model", ["martini2", "martini3", "sirah"])
+def test_both_commands_ask_for_the_cofactor_bands_the_same_way(model, monkeypatch, tmp_path):
+    """--cofactor-kJ, --cofactor-nm and --no-cofactor-anchors reach the builder
+    from `boonza md` and from `boonza swim` alike, in nanometres on the command
+    line and angstroms at the mapping."""
+    import boonza.martini
+    import boonza.md.cgswim as cgswim
+    import boonza.md.prepare as prepare
+
+    sirah = model == "sirah"
+    if sirah:
+        pytest.importorskip("boonza.sirah")
+    import boonza.sirah
+
+    class Reached(Exception):
+        pass
+
+    seen: dict = {}
+
+    def spy(*_a, **kw):
+        seen.update(kw)
+        raise Reached
+
+    monkeypatch.setattr(boonza.sirah, "sirahize", spy)
+    monkeypatch.setattr(boonza.martini, "martinize", spy)
+
+    # SIRAH puts beads on named hydrogens, so it is given a structure with them
+    source = DATA / "sirah" / "1CRN_ph7.pdb" if sirah else DATA / "1HHO.pdb"
+    args = parse_arguments([str(source), "--model", model, "--solvate", "none",
+                            "--cg-selection", "protein", "--cofactors",
+                            "--cofactor-kJ", "350", "--cofactor-nm", "1.5",
+                            "--no-cofactor-anchors",
+                            "--workdir", str(tmp_path / "run")])  # fmt: skip
+    assert (args.cofactor_kJ, args.cofactor_nm, args.cofactor_anchors) == (350.0, 1.5, False)
+    want = {"cofactors": True, "cofactor_fc": 350.0, "cofactor_reach": 15.0,
+            "cofactor_anchors": False}  # fmt: skip
+
+    build = prepare.build_sirah_system if sirah else prepare.build_martini_system
+    for ask in (
+        lambda: build(args, tmp_path / "md", log=lambda *_: None),
+        lambda: cgswim.prepare(args, log=lambda *_: None),
+    ):
+        seen.clear()
+        with pytest.raises(Reached):
+            ask()
+        assert {k: seen.get(k) for k in want} == want
