@@ -193,7 +193,8 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                            cofactors=bool(args.cofactors),
                            cofactor_fc=float(args.cofactor_kJ),
                            cofactor_reach=10.0 * float(args.cofactor_nm),  # nm to A
-                           cofactor_anchors=bool(args.cofactor_anchors))  # fmt: skip
+                           cofactor_anchors=bool(args.cofactor_anchors),
+                           cofactor_side_chains=bool(args.cofactor_side_chains))  # fmt: skip
         made_of = {}  # SIRAH has one version
         log(f"SIRAH: {protein.nbeads} beads in {len(protein.molecules)} molecule(s)"
             f"{', elastic network' if elastic else ''}")  # fmt: skip
@@ -212,6 +213,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                             cofactor_fc=float(args.cofactor_kJ),
                             cofactor_reach=10.0 * float(args.cofactor_nm),  # nm to A
                             cofactor_anchors=bool(args.cofactor_anchors),
+                            cofactor_side_chains=bool(args.cofactor_side_chains),
                             **made_of)  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
             f"{len(protein.molecules)} molecule(s)"
