@@ -227,6 +227,17 @@ def _polymer_resnames(system) -> set:
             for r in np.unique(np.asarray(system.atoms["residue"])[ids]).tolist()}  # fmt: skip
 
 
+#: SIRAH's own ions (sirah_ions.itp): one bead, a charge, and no bonded terms.
+#: CaX and MgX are +2, ZnX is +1 -- SIRAH's own choice, which already allows for
+#: the residues holding it.  They carry no angle or dihedral types either, so an
+#: angle through one cannot be written whatever bonds it is given.
+ION_BEADS = frozenset({"CaX", "MgX", "ZnX", "NaW", "KW", "ClW"})
+#: Which of them a coordination bond is worth: a zinc is what holds a zinc
+#: finger's loops together and the model says so nowhere else, where a calcium
+#: or a magnesium is left the free ion it is -- bonding one would pin it where
+#: the crystal happened to catch it.
+COORDINATED_IONS = frozenset({"ZnX"})
+
 #: What an inert cofactor bead is under SIRAH: the bead its leucine gives a side
 #: chain, which is uncharged and plainly aliphatic.  Its alanine has none to
 #: borrow -- that side chain is folded into the alpha carbon, typed Y2Ca.
@@ -459,17 +470,29 @@ def _chains_of(beads: list[Bead]) -> list[list[int]]:
     return out
 
 
-def _angles_from(bonds: list[tuple[int, int]], natoms: int) -> list[tuple[int, int, int]]:
-    """Every i-j-k of the bond graph, as pdb2gmx generates them."""
+def _angles_from(bonds: list[tuple[int, int]], natoms: int,
+                 apart: set[int] | None = None) -> list[tuple[int, int, int]]:  # fmt: skip
+    """Every i-j-k of the bond graph, as pdb2gmx generates them.
+
+    ``apart`` names beads whose bonds make no angle: an ion bonded to what
+    coordinates it is held at a distance and nothing more, SIRAH having no angle
+    type for a GC-GO-CaX of it.  Inventing one would be inventing geometry the
+    model does not claim, so the triples it would make are left out instead.
+    """
+    skip = apart or set()
     neighbours: list[set[int]] = [set() for _ in range(natoms)]
     for i, j in bonds:
         neighbours[i].add(j)
         neighbours[j].add(i)
     out = []
     for j in range(natoms):
+        if j in skip:
+            continue
         near = sorted(neighbours[j])
         for a in range(len(near)):
             for b in range(a + 1, len(near)):
+                if near[a] in skip or near[b] in skip:
+                    continue
                 out.append((near[a], j, near[b]))
     return out
 
@@ -619,8 +642,13 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         pairs = [(which(a), which(b)) for a, b in disulfide_pairs(system, atoms)]
         _add_disulfides(molecules, pairs, log)
     for mol in molecules:
-        mol.angles = _angles_from(mol.bonds, mol.natoms)
-        mol.dihedrals = _dihedrals_from(mol.bonds, mol.natoms)
+        # an ion has a bond to what holds it and nothing beyond: SIRAH has no
+        # angle or dihedral type with one in it, and writing one would be making
+        # up geometry the model does not claim
+        apart = {k for k, kind in enumerate(mol.types) if kind in ION_BEADS}
+        mol.angles = _angles_from(mol.bonds, mol.natoms, apart)
+        mol.dihedrals = [d for d in _dihedrals_from(mol.bonds, mol.natoms)
+                         if not (set(d) & apart)]  # fmt: skip
         mol.pairs = _pairs_from(mol.dihedrals, mol.bonds, mol.angles)
         mol.impropers = sorted(set(mol.impropers))
     positions = np.array([b.position for b in beads], float)
@@ -663,6 +691,8 @@ def _bond_coordinated_ions(molecules, fc: float, log=None) -> list:
     for mol in list(molecules):
         held = bonded_of(mol)
         for k in [k for k in range(mol.natoms) if k not in held]:
+            if mol.types[k] not in COORDINATED_IONS:
+                continue  # a free ion, and left one
             here = np.asarray(mol.beads[k].position, float)
             host, at, best = None, None, np.inf
             for other in molecules:

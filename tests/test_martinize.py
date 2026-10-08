@@ -831,15 +831,18 @@ def test_a_coordinated_ion_of_sirahs_own_is_bonded_to_what_holds_it():
 
 
 @pytest.mark.parametrize(("forcefield", "bead"), [("martini3001", "SD"), ("martini22", "Qd")])
-def test_an_ion_martini_has_gets_that_ion_and_the_bonds(forcefield, bead, tmp_path):
+def test_an_ion_martini_has_gets_that_ion_and_stays_free(forcefield, bead, tmp_path):
     """A cofactor of one atom that Martini has an ion for deserves that ion.
 
     The inert bead claims nothing, which is right for a heme and wasteful for a
     calcium: Martini has one, charge and all, and its bead type is in the
-    parameter file the topology already includes.  So the ion is borrowed and the
-    coordination bonded on top -- the charge the model knows, and the crosslink it
-    does not.  A zinc has no ion in either version and keeps the inert bead, with
-    the bonds all the same.
+    parameter file the topology already includes.  So the ion is borrowed.
+
+    It is not banded.  One bead has no shape to hold, so a band could only tether
+    it to what the crystal happened to catch it near, and a calcium or a magnesium
+    sitting in a site is free to leave -- which is what it does.  A zinc is the
+    exception and keeps its bands: it holds a zinc finger's loops together and
+    nothing else in the model says so.  SIRAH draws the same line.
     """
     from boonza.martini.build import COFACTOR_BEAD, ion_beads
 
@@ -859,12 +862,21 @@ def test_an_ion_martini_has_gets_that_ion_and_the_bonds(forcefield, bead, tmp_pa
     assert float(node["mass"]) == pytest.approx(40.078)  # the ion's own, not a bead's
     mol = next(x for x in m.molecules if any(n.get("cofactor") for n in x.nodes))
     k = next(i for i, n in enumerate(mol.nodes) if n.get("cofactor"))
-    assert [t for t in mol.interactions["bonds"] if k in t.atoms]  # held by what holds it
-    # one bead cannot deform, so it is the coordination that fixes it and not a cage
-    assert not [t for t in mol.interactions["bonds"]
-                if k in t.atoms and t.meta.get("comment") == "cofactor held"
-                and float(t.params[1]) > 0.4]  # fmt: skip
+    assert not [t for t in mol.interactions["bonds"] if k in t.atoms]  # and free
     assert COFACTOR_BEAD[forcefield] != bead  # the inert bead is a different thing
+
+    # a zinc, which Martini has no ion for, keeps the inert bead and is banded to
+    # what coordinates it: that crosslink is the whole of what it is there for
+    zinc = s.clone()
+    where = next(i for i, n in enumerate(zinc.residues["name"]) if str(n).strip() == "CA")
+    zinc.residue(where).name = "ZN"
+    for a in zinc.residue(where).atoms:
+        a.name, a.anum = "ZN", 30
+    z = martinize(zinc, "protein or resname ZN", forcefield=forcefield, cofactors=True)
+    mol = next(x for x in z.molecules if any(n.get("cofactor") for n in x.nodes))
+    k = next(i for i, n in enumerate(mol.nodes) if n.get("cofactor"))
+    assert not mol.nodes[k]["ion"] and float(mol.nodes[k]["charge"]) == 0.0
+    assert [t for t in mol.interactions["bonds"] if k in t.atoms]  # held by what holds it
 
 
 @pytest.mark.parametrize("name,parent", [("ASH", "ASP"), ("ASPP", "ASP"),
@@ -985,3 +997,44 @@ def test_martini2_reads_a_proton_rather_than_a_name(resname, proton, tmp_path):
     added.name, added.anum = proton, 1  # the element follows the atomic number
     added.pos = np.asarray(oxygen.pos) + np.array([0.0, 0.0, 1.0])  # 1 A away, as a bond is
     assert side_chain(martinize(held, forcefield="martini22")) == 0.0
+
+
+@pytest.mark.parametrize(
+    "ion,anum,bead,charge,bonded",
+    [("ZN", 30, "ZnX", 1.0, True), ("CA", 20, "CaX", 2.0, False), ("MG", 12, "MgX", 2.0, False)],
+)
+def test_sirah_keeps_an_ion_free_unless_it_is_what_holds_a_fold(ion, anum, bead, charge, bonded):
+    """SIRAH ships CaX, MgX and ZnX -- real parameters, +2, +2 and +1 -- and none
+    of them carries a bonded term.
+
+    A zinc is bonded to what coordinates it, being what holds a zinc finger's
+    loops together and said nowhere else in the model; a calcium and a magnesium
+    are left the free ions they are, since bonding one pins it where the crystal
+    happened to catch it.  Either way no angle or dihedral runs through an ion:
+    SIRAH has no type for a GC-GO-CaX, and writing one would be inventing
+    geometry.  Before this, any of the three stopped the build.
+    """
+    pytest.importorskip("boonza.sirah")
+    from boonza.sirah import sirahize
+
+    s = boonza.load(DATA / "1HHO.pdb").select("protein and chain A").clone()
+    xyz = np.asarray(s.positions)
+    near = s.select("name CA and resid 20").ids
+    s.append(boonza.System.from_arrays(xyz[near] + [2.2, 0.0, 0.0], names=[ion], anum=[anum],
+                                       resnames=[ion], resids=[900], chains=["A"]))  # fmt: skip
+    built = sirahize(s, f"protein or resname {ion}", log=None).system()  # used to raise
+
+    ids = np.asarray(built.select(f"resname {ion} CaX MgX ZnX").ids, np.int64)
+    kinds = {str(x) for x in np.asarray(
+        [str(v) for v in built.table("nonbonded").values("type")])[ids]}  # fmt: skip
+    assert kinds == {bead}
+    assert set(np.asarray(built.atoms["charge"], float)[ids].tolist()) == {charge}
+
+    def touching(table):
+        return sum(1 for i in range(table.nterms)
+                   if set(int(a) for a in table.term(i).atoms) & set(ids.tolist()))  # fmt: skip
+
+    assert (touching(built.table("stretch_harm")) > 0) is bonded
+    for kind in ("angle_harm", "dihedral_trig"):
+        if kind in built.table_names:
+            assert touching(built.table(kind)) == 0  # nothing derived runs through it

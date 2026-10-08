@@ -573,7 +573,8 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
                              "states, first")  # fmt: skip
         _check_nothing_is_dropped(aa, args, path, log)
         built = sirahize(aa, args.cg_selection, termini=args.termini, log=log,
-                         strict=bool(getattr(args, "strict_mapping", False)))  # fmt: skip
+                         strict=bool(getattr(args, "strict_mapping", False)),
+                         cofactors=bool(args.cofactors))  # fmt: skip
         log(f"SIRAH: {built.nbeads} beads in {len(built.molecules)} molecule(s)")
         if mode == "box":
             from ..sirah.build import solvate as solvate_sirah
@@ -682,6 +683,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                                elastic_upper=10.0 * float(args.elastic_nm),  # nm to A
                                elastic_lower=10.0 * float(args.elastic_lower_nm),
                                neutral_termini=bool(args.neutral_termini),
+                               cofactors=bool(args.cofactors),
                                forcefield=mt.FORCEFIELD_FOR[version])  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
             f"{len(protein.molecules)} molecule(s)"
