@@ -120,6 +120,26 @@ passing contact is not — is bonded too, and that bond is made before the
 molecules are split, so a zinc holding two loops together becomes a crosslink
 rather than landing in a moleculetype of its own where nothing could bond it.
 
+How hard and how far can be asked for:
+
+```bash
+boonza md protein.pdb --model martini3 --cofactors \
+    --cofactor-kJ 700 --cofactor-nm 1.2      # the defaults
+boonza md protein.pdb --model martini3 --cofactors --no-cofactor-anchors
+```
+
+`--cofactor-kJ` is the force constant every one of those bands is written with,
+in kJ/mol/nm², and it is the rubber bands' own default: the two hold the same
+kind of thing. `--cofactor-nm` is how far a bead may reach for a backbone bead
+to tie itself to. It is wider than `--elastic-nm` on purpose — a rubber band
+joins two beads of one chain, a tether crosses a pocket, whose walls are
+further off than the next residue. `--no-cofactor-anchors` drops the tethers
+and leaves the cofactor free to move where it sits: its own shape is still
+held, since without that it scatters on the first step, and so is any
+coordination the structure shows, that being a bond rather than a guess at one.
+The same three reach `boonza swim`, and SIRAH, which holds a cofactor the same
+way.
+
 **An ion Martini has, it uses.** A cofactor of one atom whose residue name
 matches an ion in the bundled parameters takes that ion instead of the inert
 bead — a calcium is `SD` and +2 under Martini 3, `Qd` and +2 under Martini 2,
