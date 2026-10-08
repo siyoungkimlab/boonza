@@ -196,14 +196,23 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
 
 def _topology(s, app, anum):
     top = app.Topology()
-    chains = [top.addChain(str(n)) for n in s.chains["name"].tolist()]
+    names = s.chains["name"].tolist()
     res_chain = s.residues["chain"].tolist()
-    residues = [
-        top.addResidue(nm, chains[c], id=str(rid), insertionCode=ins or " ")
-        for nm, c, rid, ins in zip(s.residues["name"].tolist(), res_chain,
-                                   s.residues["resid"].tolist(), s.residues["insertion"].tolist(),
-                                   strict=True)
-    ]  # fmt: skip
+    # a chain of OpenMM's is a run of residues, not a record: it refuses one whose
+    # residues are in two pieces ("All residues within a chain must be
+    # contiguous").  A structure arrives that way often enough -- a cofactor keeps
+    # the chain of the protein it belongs to and is mapped after the chains
+    # written between them, and a file that appends a chain's waters at the end
+    # has the chain twice over -- so a run of them opens a chain of its own, named
+    # as it was.  Nothing is reordered: the atoms stay where the system has them,
+    # which is what the positions are in.
+    residues, here, chain = [], None, None
+    for nm, c, rid, ins in zip(s.residues["name"].tolist(), res_chain,
+                               s.residues["resid"].tolist(),
+                               s.residues["insertion"].tolist(), strict=True):  # fmt: skip
+        if c != here:
+            chain, here = top.addChain(str(names[c])), c
+        residues.append(top.addResidue(nm, chain, id=str(rid), insertionCode=ins or " "))
     atoms = []
     for nm, z, r in zip(s.atoms["name"].tolist(), anum.tolist(), s.atoms["residue"].tolist(),
                         strict=True):  # fmt: skip

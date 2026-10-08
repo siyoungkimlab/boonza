@@ -1038,3 +1038,85 @@ def test_sirah_keeps_an_ion_free_unless_it_is_what_holds_a_fold(ion, anum, bead,
     for kind in ("angle_harm", "dihedral_trig"):
         if kind in built.table_names:
             assert touching(built.table(kind)) == 0  # nothing derived runs through it
+
+
+def test_sirah_tells_60a_from_60():
+    """A residue is known by where it sits in the chain, not by its number.
+
+    A structure numbered as a chymotrypsin is -- 60, 60A, 60B, 60C, 60D, 61 --
+    has neither one residue per number nor the next one a number higher, so
+    bonding by number wires a side chain to whatever else happened to be called
+    60.  SIRAH then asks for a bond type between two beads that are never
+    bonded (C6O-P3Cn, an aspartate's oxygen to an asparagine's side chain) and
+    the build stops; where a type happens to exist it would build quietly, with
+    the wrong connectivity.
+    """
+    pytest.importorskip("boonza.sirah")
+    from boonza.sirah import sirahize
+
+    s = boonza.load(DATA / "1HHO.pdb").select("protein and chain A").clone()
+    # renumber as a chymotrypsin does: 59, 60, 60A, 60B, 61 ...
+    where = [r for r in range(s.nresidues) if 60 <= int(s.residues["resid"][r]) <= 62]
+    for code, r in zip(("", "A", "B"), where, strict=False):
+        res = s.residue(r)
+        res.resid, res.insertion = 60, code
+    assert sum(1 for r in range(s.nresidues) if int(s.residues["resid"][r]) == 60) == 3
+
+    out = sirahize(s, "protein", log=None)
+    built = out.system()  # used to raise: no [ bondtypes ] entry for C6O-P3Cn
+    assert built.natoms > 0
+
+    # the three are three residues in the built system too, each under its own
+    # insertion code -- a GROMACS topology has no column for one
+    sixty = [r for r in range(built.nresidues) if int(built.residues["resid"][r]) == 60]
+    assert [str(built.residues["insertion"][r]).strip() for r in sixty] == ["", "A", "B"]
+
+    # and they are joined in a line, not to each other's side chains: every
+    # bond from one of them to another is backbone to backbone
+    of_residue = {i: int(built.atom(i).residue.id) for i in range(built.natoms)
+                  if int(built.atom(i).residue.id) in sixty}  # fmt: skip
+    names = {i: built.atom(i).name.strip() for i in of_residue}
+    bonds = built.table("stretch_harm")
+    between = [t for i in range(bonds.nterms)
+               for t in [bonds.term(i)]
+               if all(int(a) in of_residue for a in t.atoms)
+               and len({of_residue[int(a)] for a in t.atoms}) > 1]  # fmt: skip
+    assert between, "the three should be bonded along the backbone"
+    for t in between:
+        assert all(names[int(a)] in ("GN", "GC", "GO") for a in t.atoms)
+
+
+@pytest.mark.parametrize("model", ["martini22", "martini3001", "sirah"])
+def test_a_built_system_keeps_the_numbering_it_was_given(model):
+    """A GROMACS topology numbers its residues from 1 in each molecule and has
+    no column for an insertion code, so a chain numbered as a chymotrypsin is
+    -- 60, 60A, 60B, 61 -- came back as residues all called 60, several
+    backbone beads to each, and a chain broken into molecules came back
+    numbered from the end of the one before it.  A viewer then draws one
+    residue where there are four, and knots a trace through them.
+    """
+    held = boonza.load(DATA / "1HHO.pdb").select("protein").clone()
+    where = [r for r in range(held.nresidues)
+             if str(held.residue(r).chain.name).strip() == "A"
+             and 60 <= int(held.residues["resid"][r]) <= 62]  # fmt: skip
+    for code, r in zip(("", "A", "B"), where, strict=True):
+        held.residue(r).resid, held.residue(r).insertion = 60, code
+    want = [(str(held.residue(r).chain.name).strip(),
+             int(held.residues["resid"][r]),
+             str(held.residues["insertion"][r]).strip())
+            for r in range(held.nresidues)]  # fmt: skip
+
+    if model == "sirah":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah import sirahize
+
+        built = sirahize(held, "protein", log=None).system()
+    else:
+        built = martinize(held, forcefield=model).system()
+
+    got = [(str(built.chains["name"][built.residues["chain"][r]]).strip(),
+            int(built.residues["resid"][r]),
+            str(built.residues["insertion"][r]).strip())
+           for r in range(built.nresidues)]  # fmt: skip
+    assert got == want
+    assert len(set(got)) == len(got)  # and no two residues under one number

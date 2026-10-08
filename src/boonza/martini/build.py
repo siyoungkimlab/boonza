@@ -248,8 +248,8 @@ class Martinized:
     def nbeads(self) -> int:
         return len(self.positions)
 
-    def itp(self, k: int = 0) -> str:
-        return _write_itp(self.molecules[k], self.names[k])
+    def itp(self, k: int = 0, serial_resids: bool = False) -> str:
+        return _write_itp(self.molecules[k], self.names[k], serial_resids)
 
     def top(self, martini_itp=None) -> str:
         lines = [f'#include "{_nonbonded(martini_itp, self.martini)}"']
@@ -301,18 +301,48 @@ class Martinized:
         and a protein comes out a hairball; :func:`for_viewing` leaves them
         out.
         """
+        return self._marked_bonds(lambda meta: meta.get("group") == "Rubber band")
+
+    def restraint_bonds(self) -> list[tuple[int, int]]:
+        """Every band, as pairs of bead indices in the built system.
+
+        The rubber bands; what holds a cofactor, the bands inside one that keep
+        its shape and the ones tying it to whatever coordinates it; and Martini
+        2.2's own "short" and "long elastic bonds for extended regions", which
+        hold a beta sheet at 0.64 and 0.97 nm.  Those last are written as real
+        bonds rather than as the rubber bands are, so a viewer draws every one
+        of them: a protease comes out under a lattice of 127 of them.
+
+        All of them are bonds of the topology, so a viewer draws them -- a
+        hundred and fifty from one benzamidine to the protein around it, which
+        is a star rather than a ligand -- and :func:`for_viewing` leaves them
+        all out.  The force field names them elastic; what holds a thing rather
+        than saying what it is does not belong in a picture of it.
+
+        Whatever holds a thing rather than saying what it is belongs here.  A
+        disulfide does not: it is chemistry, and stays.
+        """
+        return self._marked_bonds(
+            lambda meta: (
+                "elastic" in str(meta.get("group", "")).lower()
+                or meta.get("group") == "Rubber band"
+                or str(meta.get("comment", "")).startswith("cofactor")
+            )
+        )
+
+    def _marked_bonds(self, wanted) -> list[tuple[int, int]]:
         out, offset = [], 0
         for mol, count in zip(self.molecules, self.molecule_copies, strict=True):
             for _ in range(count):
                 for bond in mol.interactions["bonds"]:
-                    if bond.meta.get("group") == "Rubber band":
+                    if wanted(bond.meta):
                         i, j = (int(a) + offset for a in bond.atoms)
                         out.append((min(i, j), max(i, j)))
                 offset += len(mol.nodes)
         return out
 
     def for_viewing(self, system=None, martini_itp=None, backbone_as_ca: bool = False):
-        """The system without its elastic network: what to open in a viewer.
+        """The system without its bands: what to open in a viewer.
 
         Everything else is kept, atom for atom and in the same order, so the
         trajectory still lines up with it.  Its cts are named ``VIEWING_MARK``,
@@ -326,7 +356,7 @@ class Martinized:
         perceives no bonds of its own.
         """
         s = (system if system is not None else self.system(martini_itp)).clone()
-        bands = self.elastic_bonds()
+        bands = self.restraint_bonds()
         if bands:
             ids = [s.find_bond(s.atom(i), s.atom(j)) for i, j in bands]
             s.delete_bonds([b for b in ids if b is not None])
@@ -338,13 +368,13 @@ class Martinized:
             s.ct(c).name = VIEWING_MARK
         return s
 
-    def _write_topology(self, directory, martini_itp=None) -> Path:
+    def _write_topology(self, directory, martini_itp=None, serial_resids: bool = False) -> Path:
         """The topology, its molecules and the .gro, without building a system:
         what :meth:`system` needs to read its parameters back."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         for k, name in enumerate(self.names):
-            (d / f"{name}.itp").write_text(self.itp(k))
+            (d / f"{name}.itp").write_text(self.itp(k, serial_resids))
         if any(c for _, c in self.solvent) and self.martini == 3:
             (d / "solvent.itp").write_text(SOLVENT_ITP)
         (d / "topol.top").write_text(self.top(martini_itp))
@@ -367,7 +397,11 @@ class Martinized:
 
         martini_itp = Path(_nonbonded(martini_itp, self.martini)).resolve()
         with tempfile.TemporaryDirectory() as tmp:
-            top = self._write_topology(tmp, martini_itp.name)
+            # a topology numbers its residues and has no column for an
+            # insertion code, so 170 GLN and 170A GLN read back as one residue
+            # with two backbone beads in it; the numbering here is one per
+            # residue, and _name_chains puts the structure's own back
+            top = self._write_topology(tmp, martini_itp.name, serial_resids=True)
             s = load_top(top, include_dirs=[str(martini_itp.parent)])
         if s.natoms != len(self.positions):
             raise ValueError(f"the topology built {s.natoms} beads where this system holds "
@@ -381,28 +415,49 @@ class Martinized:
         return s
 
     def _name_chains(self, s) -> None:
-        """Give the beads' residues the chains they came from.
+        """Give the beads' residues the chain, number and insertion code they
+        came from.
 
         A molecule's beads know their chain, and the lipids and the solvent
         have none of their own; a system built from a composition alone knows
         no chains at all, and keeps the one chain it was read with.
+
+        A GROMACS topology has no column for an insertion code and renumbers
+        each molecule's residues after the one before it, so a structure
+        numbered 60, 60A, 60B comes back as three residues all called 60 --
+        one residue as far as any viewer is concerned, with three backbone
+        beads in it and a trace that knots itself drawing them.  The beads
+        carry the numbering they were mapped from, so it is put back here.
         """
         of_bead = []
         for mol, count in zip(self.molecules, self.molecule_copies, strict=True):
-            mine = [str(n.get("chain", "") or "") for n in mol.nodes]
+            # every copy of a molecule would claim the one residue number its
+            # nodes carry, so copies keep the numbering the topology gave them
+            mine = [
+                (
+                    str(n.get("chain", "") or ""),
+                    None if count > 1 else n.get("input_resid"),
+                    str(n.get("insertion", "") or "").strip(),
+                )
+                for n in mol.nodes
+            ]
             of_bead += mine * count
-        if not any(of_bead):
-            return
-        of_bead += [""] * (s.natoms - len(of_bead))  # lipids, water, ions
+        of_bead += [("", None, "")] * (s.natoms - len(of_bead))  # lipids, water, ions
         residue = np.asarray(s.atoms["residue"])
         first = np.zeros(s.nresidues, np.int64)
         first[residue[::-1]] = np.arange(s.natoms)[::-1]  # the first bead of each residue
         want = [of_bead[int(a)] for a in first]
+        for r, (_name, resid, insertion) in enumerate(want):
+            if resid is not None:
+                s.residue(r).resid = int(resid)
+                s.residue(r).insertion = insertion
+        if not any(name for name, _resid, _insertion in want):
+            return
         chains = {str(s.chains["name"][c]): s.chain(c) for c in range(s.nchains)}
-        for name in dict.fromkeys(want):
+        for name in dict.fromkeys(name for name, _resid, _insertion in want):
             if name not in chains:
                 chains[name] = s.add_chain(name=name)
-        for r, name in enumerate(want):
+        for r, (name, _resid, _insertion) in enumerate(want):
             s.residue(r).chain = chains[name]
         s._prune_hierarchy()  # the chains the topology was read with are empty now
 
@@ -1172,11 +1227,20 @@ _SECTIONS = ("bonds", "constraints", "pairs", "angles", "dihedrals", "impropers"
              "virtual_sitesn", "exclusions")  # fmt: skip
 
 
-def _write_itp(mol: CGMolecule, name: str) -> str:
+def _write_itp(mol: CGMolecule, name: str, serial_resids: bool = False) -> str:
+    """The molecule as a GROMACS .itp.
+
+    Its residues are numbered as the structure numbered them, which is what
+    martinize2's .gro and boonza's own say too.  With ``serial_resids`` they
+    are numbered one apiece instead: a topology has no insertion code, so two
+    residues the structure told apart as 170 and 170A are one residue to
+    anything reading it back -- which :meth:`Martinized.system` does.
+    """
     out = ["[ moleculetype ]", f"{name} 1", "", "[ atoms ]"]
     for k, n in enumerate(mol.nodes, start=1):
         mass = f" {_num(n['mass'])}" if "mass" in n else ""
-        out.append(f"{k:5d} {n['atype']:<6s} {n['input_resid']:5d} {n['resname']:<5s} "
+        resid = n["resid"] if serial_resids else n["input_resid"]
+        out.append(f"{k:5d} {n['atype']:<6s} {resid:5d} {n['resname']:<5s} "
                    f"{n['atomname']:<5s} {k:5d} {_num(float(n['charge'])):>6s}{mass}")  # fmt: skip
     for kind in _SECTIONS:
         lst = mol.interactions.get(kind, [])

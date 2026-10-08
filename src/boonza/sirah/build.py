@@ -445,14 +445,20 @@ class Molecule:
         return len(self.beads)
 
 
-def _where(resid: int, name: str) -> tuple[int, str]:
+def _where(at: int, name: str) -> tuple[int, str]:
     """The residue and bead a library entry names: ``+X`` is the next residue's
-    and ``-X`` the one before, as GROMACS's .rtp files write them."""
+    and ``-X`` the one before, as GROMACS's .rtp files write them.
+
+    ``at`` is a residue's place in its chain, not its number.  A structure
+    numbered as a chymotrypsin is -- 60, 60A, 60B, 60C, 60D, 61 -- has neither
+    one residue per number nor the next one a number higher, so bonding by
+    number wires a side chain to whatever else was called 60.
+    """
     if name.startswith("+"):
-        return resid + 1, name[1:]
+        return at + 1, name[1:]
     if name.startswith("-"):
-        return resid - 1, name[1:]
-    return resid, name
+        return at - 1, name[1:]
+    return at, name
 
 
 def _chains_of(beads: list[Bead]) -> list[list[int]]:
@@ -597,8 +603,18 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     for m, members in enumerate(_chains_of(beads)):
         mine = [beads[k] for k in members]
         mol = Molecule(f"molecule_{m}", mine)
-        index = {(b.resid, b.name): k for k, b in enumerate(mine)}
-        first, last = mine[0].resid, mine[-1].resid
+        # a residue is known by where it sits in the chain: its number is not
+        # unique where a structure uses insertion codes, and the residue after
+        # 60 is 60A rather than 61
+        order: list[tuple[int, str, str]] = []
+        at_of: dict[tuple[int, str], int] = {}
+        for b in mine:
+            key = (b.resid, b.insertion)
+            if key not in at_of:
+                at_of[key] = len(order)
+                order.append((b.resid, b.insertion, b.residue))
+        index = {(at_of[(b.resid, b.insertion)], b.name): k for k, b in enumerate(mine)}
+        first, last = 0, len(order) - 1
         for k, b in enumerate(mine):
             if b.cofactor:  # no residue of SIRAH's: the inert bead, and its own mass
                 mol.types.append(COFACTOR_BEAD)
@@ -608,22 +624,25 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
             entry = library[b.residue]
             by_name = {name: (kind, charge) for name, kind, charge in entry.atoms}
             kind, charge = by_name[b.name]
-            if b.resid == first and b.name in n_ter[termini]:
+            here = at_of[(b.resid, b.insertion)]
+            if here == first and b.name in n_ter[termini]:
                 kind, _mass, charge = n_ter[termini][b.name]
-            if b.resid == last and b.name in c_ter[termini]:
+            if here == last and b.name in c_ter[termini]:
                 kind, _mass, charge = c_ter[termini][b.name]
             mol.types.append(kind)
             mol.charges.append(charge)
             mol.masses.append(masses.get(kind, 0.0))
             del k
-        for b in {(x.resid, x.residue) for x in mine if not x.cofactor}:
-            resid, resname = b
+        held = {at_of[(x.resid, x.insertion)] for x in mine if x.cofactor}
+        for here, (_resid, _ins, resname) in enumerate(order):
+            if here in held:
+                continue
             for one, two in library[resname].bonds:
-                a, other = (index.get(_where(resid, n)) for n in (one, two))
+                a, other = (index.get(_where(here, n)) for n in (one, two))
                 if a is not None and other is not None and a != other:
                     mol.bonds.append((min(a, other), max(a, other)))
             for imp in library[resname].impropers:
-                got = [index.get(_where(resid, n)) for n in imp]
+                got = [index.get(_where(here, n)) for n in imp]
                 if all(g is not None for g in got):
                     mol.impropers.append(tuple(got))
         mol.bonds = sorted(set(mol.bonds))
@@ -642,16 +661,24 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         pairs = [(which(a), which(b)) for a, b in disulfide_pairs(system, atoms)]
         _add_disulfides(molecules, pairs, log)
     for mol in molecules:
-        # an ion has a bond to what holds it and nothing beyond: SIRAH has no
-        # angle or dihedral type with one in it, and writing one would be making
-        # up geometry the model does not claim
+        # an ion, and a bead standing in for a cofactor's atom, are held by bands
+        # and nothing beyond: SIRAH has no angle or dihedral type with either in
+        # it, and writing one would be making up geometry the model does not
+        # claim.  The bands keep their own lengths and force constants, so the
+        # shape is held without them
         apart = {k for k, kind in enumerate(mol.types) if kind in ION_BEADS}
+        apart |= {k for k, b in enumerate(mol.beads) if b.cofactor}
         mol.angles = _angles_from(mol.bonds, mol.natoms, apart)
         mol.dihedrals = [d for d in _dihedrals_from(mol.bonds, mol.natoms)
                          if not (set(d) & apart)]  # fmt: skip
         mol.pairs = _pairs_from(mol.dihedrals, mol.bonds, mol.angles)
         mol.impropers = sorted(set(mol.impropers))
-    positions = np.array([b.position for b in beads], float)
+    # from the molecules rather than from the mapping: folding a cofactor into
+    # the molecule that holds it moves its beads to the end of that one, so the
+    # order the mapper produced is no longer the order the topology is written
+    # in.  Taking the mapper's order here put 985 of 1562 beads on the wrong
+    # coordinates, and bonds then spanned the box
+    positions = np.array([b.position for mol in molecules for b in mol.beads], float)
     # DSSP cannot read beads, so the codes are taken here, where the atoms still
     # are: dihedral_restraint = 'ss' reads them back from secondary.txt
     from ..martini.build import _dssp
@@ -861,14 +888,25 @@ class Sirahized:
         """How many of each molecule the system holds; one each unless set."""
         return self.copies or [1] * len(self.molecules)
 
-    def itp(self, k: int) -> str:
-        """One molecule's topology, with its parameters left to the force field."""
+    def itp(self, k: int, serial_resids: bool = False) -> str:
+        """One molecule's topology, with its parameters left to the force field.
+
+        Its residues are numbered as the structure numbered them.  With
+        ``serial_resids`` they are numbered one apiece instead: a topology has
+        no column for an insertion code, so two residues the structure told
+        apart as 170 and 170A are one residue to anything reading it back --
+        which :meth:`Sirahized.system` does.
+        """
         mol = self.molecules[k]
+        serial = {}
+        for bead in mol.beads:
+            serial.setdefault((bead.resid, bead.insertion), len(serial) + 1)
         out = [f"[ moleculetype ]\n{mol.name} {self.nrexcl}\n", "[ atoms ]"]
         for n, (bead, kind, charge, mass) in enumerate(
             zip(mol.beads, mol.types, mol.charges, mol.masses, strict=True), start=1
         ):
-            out.append(f"{n:6d} {kind:<6s} {bead.resid:5d} {bead.residue:<5s} {bead.name:<5s}"
+            resid = serial[(bead.resid, bead.insertion)] if serial_resids else bead.resid
+            out.append(f"{n:6d} {kind:<6s} {resid:5d} {bead.residue:<5s} {bead.name:<5s}"
                        f" {n:5d} {charge:8.3f} {mass:8.3f}")  # fmt: skip
         for title, rows, funct in (("bonds", mol.bonds, 1), ("pairs", mol.pairs, 1),
                                    ("angles", mol.angles, 1), ("dihedrals", mol.dihedrals, 9),
@@ -922,19 +960,44 @@ class Sirahized:
         save_structure(built, out / "cg.gro")  # what GROMACS needs, rounded to 0.001 nm
         return out / "topol.top"
 
+    def restraint_bonds(self) -> list[tuple[int, int]]:
+        """The bands, as pairs of bead indices in the built system.
+
+        A band carries its own length and force constant, because SIRAH has no
+        bonded entry for the pair it joins -- which is what tells a band from
+        chemistry: a disulfide takes its parameters from the force field and is
+        not one of these.  They are bonds of the topology all the same, so a
+        viewer draws them and a cofactor comes out a star.
+        """
+        out, offset = [], 0
+        for mol, count in zip(self.molecules, self.copies or [1] * len(self.molecules),
+                              strict=True):  # fmt: skip
+            for _ in range(count):
+                for i, j in mol.bond_params:
+                    out.append((int(i) + offset, int(j) + offset))
+                offset += mol.natoms
+        return out
+
     def for_viewing(self, system=None, backbone_as_ca: bool = True):
-        """The system with its alpha-carbon bead named CA, for a viewer that
-        wants a CA trace.
+        """The system without its bands, and with its alpha-carbon bead named
+        CA for a viewer that wants a CA trace.
 
         SIRAH's ``GC`` sits on the alpha carbon itself -- its map places it
         there -- so the name is what the bead is rather than a convenience.
         Everything else is kept, atom for atom and in order, so a trajectory
-        still lines up.  A run writes no such file: SIRAH holds its fold with
-        torsion terms rather than an elastic network, so there is nothing to
-        leave out, and a viewer that knows amino acids draws its own bonds over
-        beads it takes for a broken residue.  ``cg.dms`` is what to open.
+        still lines up.
+
+        SIRAH holds its fold with torsion terms and needs no elastic network,
+        but a cofactor is held by bands all the same -- a hundred and fifty of
+        them from one benzamidine to the protein around it -- and a viewer draws
+        every one.  Whatever holds something rather than saying what it is comes
+        out here.
         """
         s = (system if system is not None else self.system()).clone()
+        bands = self.restraint_bonds()
+        if bands:
+            ids = [s.find_bond(s.atom(i), s.atom(j)) for i, j in bands]
+            s.delete_bonds([b for b in ids if b is not None])
         if backbone_as_ca:
             names = s.atoms["name"]
             for a in np.flatnonzero(np.asarray(names) == ALPHA_BEAD).tolist():
@@ -950,7 +1013,9 @@ class Sirahized:
         with tempfile.TemporaryDirectory() as tmp:
             ff = unpack(tmp)
             for k, mol in enumerate(self.molecules):
-                (Path(tmp) / f"{mol.name}.itp").write_text(self.itp(k))
+                # one number per residue, so that 170 and 170A do not read back
+                # as one; _name_chains puts the structure's own numbering back
+                (Path(tmp) / f"{mol.name}.itp").write_text(self.itp(k, serial_resids=True))
             (Path(tmp) / "topol.top").write_text(self.top(str(ff)))
             s = load_top(Path(tmp) / "topol.top", include_dirs=[tmp, str(ff)])
         if s.natoms != len(self.positions):
@@ -966,22 +1031,38 @@ class Sirahized:
 
 
 def _name_chains(s, molecules, copies=None) -> None:
-    """Give the beads the chains they were mapped from, which no .gro holds."""
+    """Give the beads the chain, number and insertion code they were mapped
+    from, none of which a GROMACS topology holds.
+
+    It renumbers each molecule's residues after the one before it and has no
+    column for an insertion code at all, so a chain broken into four molecules
+    comes back numbered from the end of the third, and 60, 60A, 60B come back
+    as one residue called 60 with three backbone beads in it -- which is what
+    a viewer draws, knotting the trace through all three.
+    """
     copies = copies or [1] * len(molecules)
-    of_bead = [b.chain for mol, c in zip(molecules, copies, strict=True)
-               for b in mol.beads * c]  # fmt: skip
-    if not any(of_bead):
-        return
-    of_bead += [""] * (s.natoms - len(of_bead))
+    of_bead = []
+    for mol, c in zip(molecules, copies, strict=True):
+        # every copy of a molecule would claim the one residue number its
+        # beads carry, so copies keep the numbering the topology gave them
+        mine = [(b.chain, None if c > 1 else b.resid, b.insertion) for b in mol.beads]
+        of_bead += mine * c
+    of_bead += [("", None, "")] * (s.natoms - len(of_bead))
     residue = np.asarray(s.atoms["residue"])
     first = np.zeros(s.nresidues, np.int64)
     first[residue[::-1]] = np.arange(s.natoms)[::-1]
     want = [of_bead[int(a)] for a in first]
+    for r, (_name, resid, insertion) in enumerate(want):
+        if resid is not None:
+            s.residue(r).resid = int(resid)
+            s.residue(r).insertion = insertion
+    if not any(name for name, _resid, _insertion in want):
+        return
     chains = {str(s.chains["name"][c]): s.chain(c) for c in range(s.nchains)}
-    for name in dict.fromkeys(want):
+    for name in dict.fromkeys(name for name, _resid, _insertion in want):
         if name not in chains:
             chains[name] = s.add_chain(name=name)
-    for r, name in enumerate(want):
+    for r, (name, _resid, _insertion) in enumerate(want):
         s.residue(r).chain = chains[name]
     s._prune_hierarchy()
 

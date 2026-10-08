@@ -591,10 +591,18 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
         _write_built(built, workdir / "sirah", s, bool(args.gromacs), log)
         if built.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
             (workdir / "sirah" / "secondary.txt").write_text(built.ss + "\n")
-        # no view file: SIRAH holds its fold with torsion terms rather than an
-        # elastic network, so there is nothing to leave out of one, and beads
-        # renamed for a viewer are beads a viewer mis-bonds (sirah/cg.dms is
-        # what to open)
+        # a view file where there is something to leave out: SIRAH needs no
+        # elastic network, holding its fold with torsion terms, but a cofactor
+        # is held by bands all the same -- a hundred and fifty from one
+        # benzamidine -- and a viewer draws every one of them.  The beads keep
+        # their names: a viewer that knows amino acids reads a renamed
+        # "GLU: CA SC1" as a broken residue and draws its own bonds over it
+        if built.restraint_bonds():
+            viewing = built.for_viewing(s, backbone_as_ca=False)
+            for suffix in (".dms", ".mae"):
+                save(viewing, workdir / f"view{suffix}")
+            log(f"Wrote view.dms and view.mae: what to open in a viewer, without the "
+                f"{len(built.restraint_bonds())} band(s) that hold its cofactors")  # fmt: skip
         s.atoms["md_index"] = np.arange(1, s.natoms + 1, dtype=np.int64)
         info = components(s, [])
         if getattr(args, "monitor_selection", None) is not None:
