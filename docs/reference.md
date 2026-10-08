@@ -515,7 +515,7 @@ that carries names needs nothing else to make a legible picture.
 
 ## Martini
 
-### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True) -> 'Martinized'`
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False) -> 'Martinized'`
 
 Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
@@ -671,7 +671,7 @@ Contacts as a fraction of frames, residues down and probes across.
 
 ## SIRAH
 
-### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, strict: 'bool' = False, log=None, cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True) -> 'Sirahized'`
+### `boonza.sirah.sirahize(system, atoms: 'str' = 'protein', *, termini: 'str' = 'Charged', disulfides: 'bool' = True, strict: 'bool' = False, log=None, cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False) -> 'Sirahized'`
 
 Map ``system`` onto SIRAH beads and build the topology of each chain.
 

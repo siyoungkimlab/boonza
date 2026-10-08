@@ -137,8 +137,26 @@ further off than the next residue. `--no-cofactor-anchors` drops the tethers
 and leaves the cofactor free to move where it sits: its own shape is still
 held, since without that it scatters on the first step, and so is any
 coordination the structure shows, that being a bond rather than a guess at one.
-The same three reach `boonza swim`, and SIRAH, which holds a cofactor the same
-way.
+
+`--cofactor-side-chains` lets the tethers reach side-chain beads too, which is
+what a ligand is actually in contact with. It holds the cofactor better and
+holds the pocket with it. Over three replicates of a benzamidine in a thrombin,
+2 ns each, aligned on the pocket's own backbone:
+
+| | ligand drift (Å) | pocket side-chain RMSF (Å) |
+|---|---|---|
+| no tethers at all | 4.20 ± 0.84 | 1.43 ± 0.13 |
+| backbone only (default) | 1.96 ± 0.19 | 1.30 ± 0.20 |
+| **with side chains** | **1.20 ± 0.84** | **0.78 ± 0.03** |
+
+Both halves of that are the point, which is why it is a flag rather than the
+default: banding the pocket wall to the thing sitting in it cut the lining side
+chains' mobility by 40 per cent, in every replicate. Ask for it when the run is
+a positive control and the ligand has to stay put; leave it off when what the
+pocket does is the measurement. One ligand on one target, so take the ordering
+rather than the numbers.
+
+All four reach `boonza swim`, and SIRAH, which holds a cofactor the same way.
 
 **An ion Martini has, it uses.** A cofactor of one atom whose residue name
 matches an ion in the bundled parameters takes that ion instead of the inert

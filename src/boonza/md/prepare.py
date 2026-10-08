@@ -577,7 +577,8 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
                          cofactors=bool(args.cofactors),
                          cofactor_fc=float(args.cofactor_kJ),
                          cofactor_reach=10.0 * float(args.cofactor_nm),  # nm to A
-                         cofactor_anchors=bool(args.cofactor_anchors))  # fmt: skip
+                         cofactor_anchors=bool(args.cofactor_anchors),
+                         cofactor_side_chains=bool(args.cofactor_side_chains))  # fmt: skip
         log(f"SIRAH: {built.nbeads} beads in {len(built.molecules)} molecule(s)")
         if mode == "box":
             from ..sirah.build import solvate as solvate_sirah
@@ -698,6 +699,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                                cofactor_fc=float(args.cofactor_kJ),
                                cofactor_reach=10.0 * float(args.cofactor_nm),  # nm to A
                                cofactor_anchors=bool(args.cofactor_anchors),
+                               cofactor_side_chains=bool(args.cofactor_side_chains),
                                forcefield=mt.FORCEFIELD_FOR[version])  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
             f"{len(protein.molecules)} molecule(s)"

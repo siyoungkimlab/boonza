@@ -578,7 +578,8 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
              disulfides: bool = True, strict: bool = False, log=None,
              cofactors: bool = False, cofactor_fc: float = COFACTOR_FC,
              cofactor_reach: float = COFACTOR_REACH,
-             cofactor_anchors: bool = True) -> Sirahized:  # fmt: skip
+             cofactor_anchors: bool = True,
+             cofactor_side_chains: bool = False) -> Sirahized:  # fmt: skip
     """Map ``system`` onto SIRAH beads and build the topology of each chain.
 
     The beads come from SIRAH's map, their topology from its residue library,
@@ -651,7 +652,7 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     molecules = _bond_coordinated_ions(molecules, cofactor_fc, log)
     if cofactors:
         molecules = _attach_cofactors(molecules, cofactor_fc, cofactor_reach,
-                                      cofactor_anchors, log)  # fmt: skip
+                                      cofactor_anchors, cofactor_side_chains, log)  # fmt: skip
     if disulfides:
         res = system.residues
         chains = np.asarray(system.chains["name"])
@@ -774,7 +775,7 @@ def _bond_coordinated_ions(molecules, fc: float, log=None) -> list:
 
 
 def _attach_cofactors(molecules, fc: float, reach: float, anchors: bool = True,
-                      log=None) -> list:  # fmt: skip
+                      side_chains: bool = False, log=None) -> list:  # fmt: skip
     """Fold each inert cofactor into the molecule that holds it, and hold it there.
 
     A cofactor is no chain, so it comes out of the grouping as a molecule of its
@@ -790,7 +791,10 @@ def _attach_cofactors(molecules, fc: float, reach: float, anchors: bool = True,
 
     Without ``anchors`` the cofactor is not tied to the protein and is free to
     move: its own shape is still held, and so is any coordination the structure
-    shows, which is a bond rather than a guess at one.
+    shows, which is a bond rather than a guess at one.  With ``side_chains`` the
+    tethers reach side-chain beads too, which holds the cofactor better and
+    holds the pocket with it -- see :func:`boonza.martini.build._hold_cofactors`,
+    where the measurement is written down.
 
     What makes a molecule a cofactor's is that it holds no protein, and what
     makes one a host is that it holds some.  An ion is neither: SIRAH has a
@@ -837,7 +841,8 @@ def _attach_cofactors(molecules, fc: float, reach: float, anchors: bool = True,
             host.bonds.append((here[a], here[b]))
             host.bond_params[(here[a], here[b])] = [round(d / 10, 4), fc]
         protein = np.asarray([b.position for b in host.beads[:start]], float)
-        spine = np.array([b.name == "GC" for b in host.beads[:start]])
+        spine = (None if side_chains
+                 else np.array([b.name == "GC" for b in host.beads[:start]]))  # fmt: skip
         held = 0
         # coordination where there is any, and anchors for the body: one bond
         # through an iron leaves a heme free to swing about it
