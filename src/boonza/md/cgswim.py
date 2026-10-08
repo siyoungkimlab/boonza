@@ -266,13 +266,15 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                          log if s == 0 else _quiet, martini_itp=args.martini_itp)  # fmt: skip
             if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
                 (built / "secondary.txt").write_text(protein.ss + "\n")
-        if whole is not None and not sirah:
-            # what to open in a viewer: the system without its rubber bands,
-            # which a viewer would otherwise draw as a hairball.  The beads keep
-            # their names: a viewer that knows amino acids reads a renamed
+        if whole is not None and (not sirah or system.restraint_bonds()):
+            # what to open in a viewer: the system without the bands that hold
+            # it -- the rubber bands, and whatever holds a cofactor -- which a
+            # viewer would otherwise draw as a hairball.  The beads keep their
+            # names: a viewer that knows amino acids reads a renamed
             # "GLU: CA SC1" as a broken residue and draws its own bonds over it.
-            # SIRAH has no network to leave out, so cg.dms is what to open.
-            viewing = system.for_viewing(whole, martini_itp=args.martini_itp)
+            # SIRAH has no network, but a cofactor of its own is banded too.
+            viewing = (system.for_viewing(whole, backbone_as_ca=False) if sirah
+                       else system.for_viewing(whole, martini_itp=args.martini_itp))  # fmt: skip
             for suffix in (".dms", ".mae"):
                 save(viewing, built / f"view{suffix}")
         # the run reads cg.dms, which carries every parameter the topology gave
