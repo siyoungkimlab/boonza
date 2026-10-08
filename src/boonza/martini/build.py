@@ -587,7 +587,8 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
               extdih: bool = False, forcefield: str = "martini3001",
               cofactors: bool = False, cofactor_fc: float = COFACTOR_FC,
               cofactor_neighbours=COFACTOR_NEIGHBOURS, cofactor_tethers=COFACTOR_TETHERS,
-              cofactor_reach: float = COFACTOR_REACH) -> Martinized:  # fmt: skip
+              cofactor_reach: float = COFACTOR_REACH,
+              cofactor_anchors: bool = True) -> Martinized:  # fmt: skip
     """Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
     ``forcefield`` is the version: ``"martini3001"`` or ``"martini22"``, each
@@ -698,7 +699,7 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
         mol = _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral_termini,
                               missing, unmodified, bead, cofactor_fc,
                               cofactor_neighbours, cofactor_tethers,
-                              cofactor_reach)  # fmt: skip
+                              cofactor_reach, cofactor_anchors)  # fmt: skip
         mol.meta = {"scfix": scfix, "extdih": extdih, "idr": False}
         apply_links(mol, ff.links)
         if elastic:
@@ -965,7 +966,8 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
                     missing, unmodified=None, cofactors=None,
                     cofactor_fc: float = COFACTOR_FC,
                     neighbours=COFACTOR_NEIGHBOURS, tethers=COFACTOR_TETHERS,
-                    reach: float = COFACTOR_REACH) -> CGMolecule:  # fmt: skip
+                    reach: float = COFACTOR_REACH,
+                    anchors: bool = True) -> CGMolecule:  # fmt: skip
     mol = CGMolecule()
     beads_of_atom = {}
     inert: list = []  # (residue, its beads) for every cofactor mapped as inert
@@ -1072,13 +1074,13 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
     held = [(r, beads) for r, beads in inert
             if len(beads) > 1 or residues[r].resname.upper() in COORDINATED_IONS]  # fmt: skip
     if held:
-        _hold_cofactors(mol, residues, held, cofactor_fc, neighbours, tethers, reach)
+        _hold_cofactors(mol, residues, held, cofactor_fc, neighbours, tethers, reach, anchors)
     return mol
 
 
 def _hold_cofactors(mol: CGMolecule, residues, inert, fc: float,
                     neighbours=COFACTOR_NEIGHBOURS, tethers=COFACTOR_TETHERS,
-                    reach: float = COFACTOR_REACH) -> None:  # fmt: skip
+                    reach: float = COFACTOR_REACH, anchors: bool = True) -> None:  # fmt: skip
     """Hold each inert cofactor in shape and in place, and let nothing inside it
     feel anything.
 
@@ -1086,12 +1088,16 @@ def _hold_cofactors(mol: CGMolecule, residues, inert, fc: float,
     next one, and a bead is 3.4 A wide: left to the ordinary nonbonded terms they
     would fly apart on the first step, so every pair inside a cofactor is excluded
     and the shape is held by bands instead -- ``neighbours`` of them per bead, as a
-    molecule's own bonds run.
+    molecule's own bonds run.  That shape is held whatever else is asked for.
 
     ``tethers`` bands each bead to that many of the nearest backbone beads, which
     is what keeps the body where the structure put it: tethering every bead of it
     holds far better than banding a few of them hard, the bands being soft.  Any
     coordination the structure shows is banded too, whatever the counting says.
+
+    Without ``anchors`` no tether is added and the cofactor is free to move: its
+    shape is still held, and so is any coordination the structure shows, which
+    is a bond rather than a guess at one.
     """
     protein = [k for k, n in enumerate(mol.nodes) if not n.get("cofactor")]
     pos = np.asarray(mol.positions, float) * 10  # the helpers measure in angstroms
@@ -1107,7 +1113,7 @@ def _hold_cofactors(mol: CGMolecule, residues, inert, fc: float,
         spine = np.array([mol.nodes[k].get("atomname") == "BB" for k in protein])
         bands = (
             {}
-            if len(beads) == 1
+            if len(beads) == 1 or not anchors
             else {
                 (beads[i], protein[j]): d
                 for i, j, d in anchor_bands(pos[beads], pos[protein], spine, reach, None, tethers)

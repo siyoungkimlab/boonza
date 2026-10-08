@@ -577,7 +577,8 @@ DISULFIDE = 2.2
 def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
              disulfides: bool = True, strict: bool = False, log=None,
              cofactors: bool = False, cofactor_fc: float = COFACTOR_FC,
-             cofactor_reach: float = COFACTOR_REACH) -> Sirahized:  # fmt: skip
+             cofactor_reach: float = COFACTOR_REACH,
+             cofactor_anchors: bool = True) -> Sirahized:  # fmt: skip
     """Map ``system`` onto SIRAH beads and build the topology of each chain.
 
     The beads come from SIRAH's map, their topology from its residue library,
@@ -649,7 +650,8 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
         molecules.append(mol)
     molecules = _bond_coordinated_ions(molecules, cofactor_fc, log)
     if cofactors:
-        molecules = _attach_cofactors(molecules, cofactor_fc, cofactor_reach, log)
+        molecules = _attach_cofactors(molecules, cofactor_fc, cofactor_reach,
+                                      cofactor_anchors, log)  # fmt: skip
     if disulfides:
         res = system.residues
         chains = np.asarray(system.chains["name"])
@@ -771,7 +773,8 @@ def _bond_coordinated_ions(molecules, fc: float, log=None) -> list:
     return out
 
 
-def _attach_cofactors(molecules, fc: float, reach: float, log=None) -> list:
+def _attach_cofactors(molecules, fc: float, reach: float, anchors: bool = True,
+                      log=None) -> list:  # fmt: skip
     """Fold each inert cofactor into the molecule that holds it, and hold it there.
 
     A cofactor is no chain, so it comes out of the grouping as a molecule of its
@@ -784,6 +787,10 @@ def _attach_cofactors(molecules, fc: float, reach: float, log=None) -> list:
     The bands carry their own length and force constant.  SIRAH reads a bond's
     parameters from the pair of bead types, and it has no entry for an inert bead
     against a protein's, there being no such pair in the force field.
+
+    Without ``anchors`` the cofactor is not tied to the protein and is free to
+    move: its own shape is still held, and so is any coordination the structure
+    shows, which is a bond rather than a guess at one.
     """
     from ..cofactors import COORDINATION, anchor_bands, shape_bands
 
@@ -816,7 +823,9 @@ def _attach_cofactors(molecules, fc: float, reach: float, log=None) -> list:
         held = 0
         # coordination where there is any, and anchors for the body: one bond
         # through an iron leaves a heme free to swing about it
-        bands = {(int(j), here[i]): d for i, j, d in anchor_bands(xyz, protein, spine, reach)}
+        bands = ({(int(j), here[i]): d
+                  for i, j, d in anchor_bands(xyz, protein, spine, reach)}
+                 if anchors else {})  # fmt: skip
         for a, i in enumerate(here):
             d = np.linalg.norm(protein - xyz[a], axis=1)
             for j in np.flatnonzero(d <= COORDINATION).tolist():
