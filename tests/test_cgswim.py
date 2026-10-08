@@ -1642,3 +1642,110 @@ def test_both_commands_ask_for_the_cofactor_bands_the_same_way(model, monkeypatc
         with pytest.raises(Reached):
             ask()
         assert {k: seen.get(k) for k in want} == want
+
+
+@pytest.mark.parametrize("model", ["martini22", "martini3001", "sirah"])
+def test_a_cofactor_that_bonds_to_nothing_is_still_held(model):
+    """A ligand is bound, not bonded, and the bands have to reach it anyway.
+
+    The tethers are written between beads of one molecule, and a cofactor that
+    bonds to nothing is a molecule by itself: its protein beads number none, so
+    the reach was searched against an empty set and no band came out, however
+    near the protein was.  What decided whether a cofactor escaped that was the
+    2.6 A coordination test -- a test for a metal, and none at all for whether
+    something is bound.  In a thrombin a sulfate made it by 0.04 A and the
+    benzamidine missed by 0.8, and the benzamidine then walked 8.8 A out of its
+    pocket in half a nanosecond with nothing holding it.
+
+    SIRAH never had this, folding a cofactor into the nearest molecule before
+    banding it; Martini does the same now, and the test covers both.
+    """
+    held = _with_a_ligand()
+    picks = "protein or resname LIG"
+    if model == "sirah":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah import sirahize
+
+        built = sirahize(held, picks, cofactors=True, log=None).system()
+    else:
+        from boonza.martini import martinize
+
+        built = martinize(held, picks, cofactors=True, forcefield=model).system()
+    assert _bands_to_the_protein(built, "LIG") > 0
+
+
+@pytest.mark.parametrize("model", ["martini22", "martini3001"])
+def test_a_free_ion_is_left_the_free_thing_it_is(model):
+    """Folding a cofactor in is for one that is bound.  A magnesium out in the
+    solvent is not, and banding one pins it where the crystal caught it, so it
+    keeps the molecule of its own it came as."""
+    from boonza.martini import martinize
+
+    held = _with_a_ligand()
+    xyz = np.asarray(held.positions)
+    where = held.select("name CA and resid 20").ids
+    held.append(boonza.System.from_arrays(xyz[where] + [40.0, 40.0, 40.0], names=["MG"],
+                                          anum=[12], resnames=["MG"], resids=[901],
+                                          chains=["A"]))  # fmt: skip
+    with pytest.warns(UserWarning, match="not buried"):  # and it says so
+        m = martinize(held, "protein or resname LIG MG", cofactors=True, forcefield=model)
+    built = m.system()
+    assert _bands_to_the_protein(built, "LIG") > 0
+    assert _bands_to_the_protein(built, "MG") == 0
+    assert [len(mol.nodes) for mol in m.molecules][-1] == 1  # still a molecule of its own
+
+
+@pytest.mark.parametrize("model", ["martini22", "martini3001", "sirah"])
+def test_an_ion_in_the_chain_does_not_cost_the_ligand_its_bands(model):
+    """What makes a molecule a cofactor's is that it holds no protein.
+
+    SIRAH asked instead whether *every* bead was a cofactor, and it has a bead
+    for a sodium, a calcium, a magnesium and a zinc -- so one ion sharing a
+    chain with a ligand made that molecule look like a host, and a host is
+    folded into nothing: the ligand came out held by its own shape and nothing
+    else, 75 bands to none, from adding an ion 40 A away.  Martini is immune
+    for a reason worth keeping a test on: its ions are not force-field blocks,
+    so an ion is a cofactor to it and cannot turn a group into a host.
+    """
+    held = _with_a_ligand()
+    xyz = np.asarray(held.positions)
+    where = held.select("name CA and resid 20").ids
+    held.append(boonza.System.from_arrays(xyz[where] + [40.0, 40.0, 40.0], names=["MG"],
+                                          anum=[12], resnames=["MG"], resids=[901],
+                                          chains=["A"]))  # fmt: skip
+    picks = "protein or resname LIG MG"
+
+    if model == "sirah":
+        pytest.importorskip("boonza.sirah")
+        from boonza.sirah import sirahize
+
+        built = sirahize(held, picks, cofactors=True, log=None).system()
+    else:
+        from boonza.martini import martinize
+
+        with pytest.warns(UserWarning, match="not buried"):
+            built = martinize(held, picks, cofactors=True, forcefield=model).system()
+    assert _bands_to_the_protein(built, "LIG") > 0
+
+
+def _with_a_ligand():
+    """A haemoglobin chain with a three-atom ligand in the pocket, bonded to
+    nothing -- which is what a ligand is."""
+    held = boonza.load(str(DATA / "1HHO.pdb")).select("protein and chain A").clone()
+    xyz = np.asarray(held.positions)
+    where = held.select("name CA and resid 20").ids
+    steps = np.array([[2.6, 0.0, 0.0], [3.9, 1.1, 0.0], [5.2, 0.0, 0.6]])
+    held.append(boonza.System.from_arrays(xyz[where] + steps, names=["C1", "C2", "C3"],
+                                          anum=[6, 6, 6], resnames=["LIG"] * 3,
+                                          resids=[900] * 3, chains=["A"] * 3))  # fmt: skip
+    return held
+
+
+def _bands_to_the_protein(built, resname):
+    """How many bonds run between that residue and anything outside it."""
+    ids = {int(i) for i in built.select(f"resname {resname}").ids}
+    assert ids, f"{resname} is not in the built system"
+    bonds = built.table("stretch_harm")
+    return sum(1 for k in range(bonds.nterms)
+               for a in [[int(x) for x in bonds.term(k).atoms]]
+               if 0 < sum(1 for x in a if x in ids) < len(a))  # fmt: skip

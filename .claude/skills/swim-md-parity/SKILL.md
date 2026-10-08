@@ -54,6 +54,9 @@ Each was found by a user hitting it, not by a test.
    only one has covered half the change. Where a behaviour is observable in the built
    system (bead types, bond force constants, charges), assert on the **built topology**,
    not on the settings: settings can be right while nothing reads them.
-6. **Defaults.** Do not change an analysis default without being asked. If a model default
+6. **The models too.** A change to one coarse-grained model usually has to reach
+   the other two -- that is the sibling skill, `model-parity`. Both axes apply to
+   most changes: two commands times three models.
+7. **Defaults.** Do not change an analysis default without being asked. If a model default
    changes, remember `md.toml` records what each run used, so finished runs stay
    reproducible -- say that when reporting.
