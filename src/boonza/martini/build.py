@@ -679,6 +679,13 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
         # GROMACS can bond it to the protein it belongs to and it floats away
         bonds = sorted(set(bonds) | _coordination_bonds(residues, nameless))
     groups = _molecules(len(residues), bonds)
+    if cofactors and cofactor_anchors:
+        inert_of = {r for r, res in enumerate(residues) if named(res.resname) not in ff.blocks}
+        # a host is a molecule with a backbone in it: the bands tie a cofactor to
+        # backbone beads, and a lipid or an ion has none to tie it to
+        spine_of = {r for r, res in enumerate(residues)
+                    if "BB" in getattr(ff.blocks.get(named(res.resname)), "atoms", {})}  # fmt: skip
+        groups = _join_loose_cofactors(groups, residues, inert_of, spine_of, cofactor_reach)
     if ss is None:
         ss = _dssp(system, atoms)
     elif ss is False:  # no secondary structure: the coil terms, and no more
@@ -861,6 +868,68 @@ def _molecules(n, bonds) -> list[list[int]]:
     for r in range(n):
         groups[root(r)].append(r)
     return sorted(groups.values(), key=lambda g: g[0])
+
+
+def _join_loose_cofactors(groups, residues, inert, spine, reach: float) -> list[list[int]]:
+    """Fold a molecule of nothing but cofactor into the nearest one with a
+    protein in it, so that the bands holding it have something to hold on to.
+
+    :func:`_hold_cofactors` tethers a cofactor's beads to the backbone beads of
+    its own molecule, and a cofactor that bonds to nothing is a molecule by
+    itself, whose protein beads number none: the reach is then searched against
+    an empty set and no band is written, however wide it is or however near the
+    protein actually is.  A benzamidine 4.1 A from the nearest backbone bead,
+    with 36 of them inside 12 A, came out tethered by nothing and walked 8.8 A
+    out of its pocket in half a nanosecond.
+
+    What used to decide this was :func:`_coordination_bonds`, which bonds at 2.6
+    A -- a test for a metal's coordination, and no test at all for whether
+    something is bound.  In one structure a sulfate made it by 0.04 A and a
+    benzamidine missed by 0.8, and nothing about either was a decision.
+
+    A cofactor is folded in when it is close enough to be held, which is the
+    same ``reach`` the bands use, and when it is something :func:`_hold_cofactors`
+    would hold: more than one bead, or an ion that coordinates.  A lone calcium
+    in the solvent is left the free molecule it is.  The residues keep the order
+    the structure gave them, so the beads come out in it too.
+
+    ``spine`` is the residues with a backbone bead, which is what a host has to
+    have: the bands tie a cofactor to backbone beads, and a bilayer's lipids or
+    an ion are no more a place to tie one than open water is.
+    """
+    hosts = [g for g in groups if any(r in spine for r in g)]
+    if not hosts:
+        return groups
+    held = {id(g): list(g) for g in hosts}
+    out, free = [], []
+    for g in groups:
+        if any(r in spine for r in g):
+            continue
+        if any(r not in inert for r in g):
+            free.append(g)  # no cofactor of ours: a lipid, a nucleic acid
+            continue
+        beads = sum(1 for r in g for e in residues[r].elements if str(e).upper() != "H")
+        if beads <= 1 and not any(residues[r].resname.upper() in COORDINATED_IONS for r in g):
+            free.append(g)  # a free ion, which banding would only pin
+            continue
+        mine = np.vstack([np.asarray(residues[r].xyz, float) for r in g])
+        near, closest = None, np.inf
+        for h in hosts:
+            theirs = np.vstack([np.asarray(residues[r].xyz, float) for r in h
+                                if r in spine])  # fmt: skip
+            d = float(np.linalg.norm(mine[:, None] - theirs[None], axis=2).min()) * 10
+            if d < closest:
+                near, closest = h, d
+        if near is None or closest > reach:
+            free.append(g)  # too far from any protein to be bound to one
+            continue
+        held[id(near)] += g
+    for g in groups:
+        if any(r in spine for r in g):
+            out.append(sorted(held[id(g)]))
+        elif g in free:
+            out.append(g)
+    return out
 
 
 def _dssp(system, atoms) -> str:

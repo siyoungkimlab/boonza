@@ -791,21 +791,39 @@ def _attach_cofactors(molecules, fc: float, reach: float, anchors: bool = True,
     Without ``anchors`` the cofactor is not tied to the protein and is free to
     move: its own shape is still held, and so is any coordination the structure
     shows, which is a bond rather than a guess at one.
+
+    What makes a molecule a cofactor's is that it holds no protein, and what
+    makes one a host is that it holds some.  An ion is neither: SIRAH has a
+    bead for a sodium, a calcium, a magnesium and a zinc, so those are not
+    cofactors, and asking instead whether *every* bead is a cofactor let one
+    ion in a chain turn its ligand's molecule into a host -- which is then
+    folded into nothing, and the ligand comes out held by its own shape and
+    nothing else.  A ligand sharing a chain with a magnesium went from 75 bands
+    to none that way.
     """
     from ..cofactors import COORDINATION, anchor_bands, shape_bands
 
-    theirs = [m for m in molecules if all(b.cofactor for b in m.beads)]
-    rest = [m for m in molecules if m not in theirs]
-    if not theirs or not rest:
+    def spine_of(mol):
+        return [k for k, b in enumerate(mol.beads) if b.name == "GC" and not b.cofactor]
+
+    hosts = [m for m in molecules if spine_of(m)]
+    theirs = [m for m in molecules
+              if not spine_of(m) and any(b.cofactor for b in m.beads)]  # fmt: skip
+    if not theirs or not hosts:
         return molecules
+    folded = []
     for cof in theirs:
-        xyz = np.asarray([b.position for b in cof.beads], float)
+        xyz = np.asarray([b.position for b in cof.beads if b.cofactor], float)
         host, best = None, np.inf
-        for m in rest:
-            d = np.linalg.norm(np.asarray([b.position for b in m.beads], float)[:, None]
-                               - xyz[None], axis=2).min()  # fmt: skip
+        for m in hosts:
+            theirs_xyz = np.asarray([m.beads[k].position for k in spine_of(m)], float)
+            d = np.linalg.norm(theirs_xyz[:, None] - xyz[None], axis=2).min()
             if d < best:
                 host, best = m, d
+        if host is None or best > reach:
+            continue  # too far from any protein to be bound to one; leave it free
+        folded.append(cof)
+        xyz = np.asarray([b.position for b in cof.beads], float)
         start = host.natoms
         host.beads += cof.beads
         host.types += cof.types
@@ -838,7 +856,7 @@ def _attach_cofactors(molecules, fc: float, reach: float, anchors: bool = True,
         if log:
             log(f"{cof.beads[0].residue} {cof.beads[0].chain}{cof.beads[0].resid}: "
                 f"{len(here)} inert bead(s) held by {held} band(s)")  # fmt: skip
-    return rest
+    return [m for m in molecules if m not in folded]
 
 
 def _add_disulfides(molecules, bridges=(), log=None) -> None:
