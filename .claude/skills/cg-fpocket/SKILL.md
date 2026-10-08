@@ -42,8 +42,12 @@ boonza pockets flags --model martini3   # the preset, from data/pockets/presets.
 - Use the model the structure or simulation is in. The presets are not
   interchangeable.
 - Report PPc and MOc, never residue overlap. Place a holo ligand by
-  whole-protein superposition (`boonza.sites.known_ligand`), never by
-  binding-site residue lists.
+  superposing the whole holo protein (every chain: `--holo-fit whole`, the
+  default), never by binding-site residue lists. `--holo-fit chain`
+  (`boonza.sites.known_ligand`) fits only the ligand's chain. On a symmetric
+  oligomer it can place the ligand in the symmetry-equivalent copy of the site
+  (1MPU/8EA5), so a pocket right against one copy can score wrong against the
+  other.
 - Do not use fpocket's `-p` above 0: a precedence bug in its `refine.c` then
   drops every pocket that is not entirely apolar.
 - Keep `-C s` (single linkage). The other linkages are about 10x slower on

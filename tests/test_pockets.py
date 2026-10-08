@@ -245,3 +245,22 @@ def test_run_on_a_mapped_structure(tmp_path):
     view = (tmp_path / "view.pml").read_text()
     assert "pocket_1" in view and "__script__" in view
     assert all(";" not in line for line in view.splitlines() if line.startswith("#"))
+
+
+@pytest.mark.parametrize("fit", ["whole", "chain"])
+def test_holo_ligand_follows_the_protein(tmp_path, fit):
+    """--holo-fit whole superposes every chain of the holo protein, chain only the one the
+    ligand sits in; either way the ligand moves with the fit."""
+    from boonza.pockets.cli import _holo_on
+
+    ref = boonza.load(str(DATA / "1HHO.pdb"))
+    holo = ref.clone()
+    turn = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    holo.positions = np.asarray(holo.positions) @ turn.T + [30.0, -5.0, 12.0]
+    boonza.save(holo, tmp_path / "holo.pdb")
+    lig, info, moved = _holo_on(tmp_path / "holo.pdb", ref, "resname HEM and chain B", fit=fit)
+    want = np.asarray(ref.positions)[ref.select("resname HEM and chain B and not element H").ids]
+    assert info["fit"] == fit and np.abs(lig - want).max() < 0.01
+    assert info["paired"] > (250 if fit == "whole" else 120)
+    moved_lig = moved.select("resname HEM and chain B and not element H").ids
+    assert np.abs(np.asarray(moved.positions)[moved_lig] - want).max() < 0.01
