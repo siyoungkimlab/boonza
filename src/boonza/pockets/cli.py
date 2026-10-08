@@ -77,28 +77,55 @@ def _apo_on(apo_path, reference, same_frame: bool):
     return apo
 
 
-def _holo_on(holo_path, reference, ligand, holo_top=None):
+#: how --holo carries the ligand onto the apo
+HOLO_FITS = ("whole", "chain")
+
+
+def _holo_on(holo_path, reference, ligand, holo_top=None, fit: str = "whole"):
     """``(ligand heavy atoms, what was used, the holo structure moved)`` in ``reference``'s
-    frame: :func:`boonza.sites.known_ligand` for the ligand, and the same fit applied to
-    the whole holo structure for the view."""
+    frame.
+
+    ``fit="whole"``: the whole holo protein -- alpha carbons of every chain, paired by
+    sequence with the reference's backbone and pruned at 2 A -- is superposed, and the
+    ligand moves with it, as the benchmarks behind the presets placed it.
+    ``fit="chain"``: :func:`boonza.sites.known_ligand`, which fits the one protein chain
+    the ligand sits in or touches.  On a symmetric oligomer the two can put the ligand in
+    different, symmetry-equivalent copies of its site: on the dimer 1MPU/8EA5, holo chain
+    A pairs with apo chain B by sequence and the ligand lands across the twofold axis.
+    ``ligand`` defaults to known_ligand's guess.
+    """
     from ..align import superpose
     from ..sites import known_ligand
 
+    if fit not in HOLO_FITS:
+        raise ValueError(f"--holo-fit {fit!r}: one of {', '.join(HOLO_FITS)}")
     holo = _load(holo_path, holo_top)
-    lig, info = known_ligand(holo, reference, ligand)
-    print(
-        f"holo ligand {info['ligand']}: {info['atoms']} heavy atoms, superposed by chain "
-        f"{info['chain']} ({info['paired']} alpha carbons, RMSD {info['fit_rmsd']:.2f} A)"
-    )
+    if ligand is None:
+        ligand = known_ligand(holo, reference)[1]["ligand"]
+    back = f"name {_backbone(reference)} and {NOT_PROBES}"
+    moved = holo.clone()
+    if fit == "chain":
+        lig, info = known_ligand(holo, reference, ligand)
+        # the same fit, applied to the whole holo structure for the view
+        superpose(moved, reference, sel=f'chain "{info["chain"]}" and protein and name CA',
+                  ref_sel=back, match="sequence", apply=True)  # fmt: skip
+        info = {**info, "fit": "chain"}
+        how = f"holo chain {info['chain']} superposed ({info['paired']} alpha carbons kept"
+    else:
+        sup = superpose(moved, reference, sel=f"protein and name CA and {NOT_PROBES}",
+                        ref_sel=back, match="sequence", apply=True)  # fmt: skip
+        lig = np.asarray(moved.positions)[moved.select(f"({ligand}) and not element H").ids]
+        if not len(lig):
+            raise ValueError(f"the holo structure has no {ligand}")
+        info = {"fit": "whole", "ligand": ligand, "atoms": int(len(lig)),
+                "paired": int(sup.n_used), "matched": int(sup.n_matched),
+                "fit_rmsd": float(sup.rmsd)}  # fmt: skip
+        how = f"whole holo protein superposed ({sup.n_used}/{sup.n_matched} alpha carbons kept"
+    print(f"holo ligand {ligand}: {info['atoms']} heavy atoms; {how}, "
+          f"RMSD {info['fit_rmsd']:.2f} A)")  # fmt: skip
     if info["paired"] < 20 or info["fit_rmsd"] > 3.0:
         print("warning: a poor superposition; the distances to the ligand are unreliable",
               file=sys.stderr)  # fmt: skip
-    moved = holo.clone()
-    try:
-        superpose(moved, reference, sel=f"protein and name CA and {NOT_PROBES}",
-                  ref_sel=f"name {_backbone(reference)}", match="sequence", apply=True)  # fmt: skip
-    except ValueError:
-        moved = None
     return lig, info, moved
 
 
@@ -132,7 +159,8 @@ def _settings(args, model: str, flags: list[str], **more) -> dict:
     return {"boonza": __version__, "model": model, "fpocket_flags": flags,
             "n_polar": bool(preset(model).get("n_polar")),
             "holo": str(args.holo) if args.holo else None,
-            "holo_ligand": args.holo_ligand if args.holo else None, **more}  # fmt: skip
+            "holo_ligand": args.holo_ligand if args.holo else None,
+            "holo_fit": args.holo_fit if args.holo else None, **more}  # fmt: skip
 
 
 def _ligand_measures(pocket, centre, lig) -> dict:
@@ -166,8 +194,9 @@ def cmd_run(args, extra) -> int:
     apo = _apo_on(apo_path, reference, same_frame=apo_path == args.structure) if apo_path else None
     lig = moved = None
     if args.holo:
-        lig, _, moved = _holo_on(args.holo, apo if apo is not None else reference,
-                                 args.holo_ligand, args.holo_top)  # fmt: skip
+        lig, held, moved = _holo_on(args.holo, apo if apo is not None else reference,
+                                    args.holo_ligand, args.holo_top, args.holo_fit)  # fmt: skip
+        args.holo_ligand = held["ligand"]
     rows, verdicts = [], {}
     for k, p in enumerate(pockets, 1):
         row = {
@@ -276,8 +305,9 @@ def cmd_traj(args, extra) -> int:
     apo = _apo_on(args.apo, reference, same_frame=False) if args.apo else None
     lig = moved = None
     if args.holo:
-        lig, _, moved = _holo_on(args.holo, apo if apo is not None else reference,
-                                 args.holo_ligand, args.holo_top)  # fmt: skip
+        lig, held, moved = _holo_on(args.holo, apo if apo is not None else reference,
+                                    args.holo_ligand, args.holo_top, args.holo_fit)  # fmt: skip
+        args.holo_ligand = held["ligand"]
     iso = None
     if args.mdpocket:
         run_mdpocket(out / "md.pdb", out / "md.dcd", out / "mdpocket", flags, args.fpocket)
@@ -405,6 +435,16 @@ def _parser() -> argparse.ArgumentParser:
                        help="the ligand in --holo (default: its largest residue that is "
                             "neither protein, nucleic, solvent nor a buffer salt)")  # fmt: skip
         q.add_argument("--holo-top", help="topology of a coarse-grained --holo")
+        q.add_argument(
+            "--holo-fit",
+            choices=HOLO_FITS,
+            default="whole",
+            help="how the holo ligand is carried onto the apo: superposing the "
+            "whole holo protein, every chain (default, as the presets were "
+            "benchmarked), or only the chain the ligand sits in or touches "
+            "(boonza.sites.known_ligand).  On a symmetric oligomer the two can "
+            "put the ligand in different, symmetry-equivalent copies of its site",
+        )
         q.add_argument("--fpocket", help="the fpocket build to run (its directory or the "
                                          "program; default: $FPOCKET_HOME, then PATH)")  # fmt: skip
         q.add_argument("-o", "--out", required=True, help="the output directory")

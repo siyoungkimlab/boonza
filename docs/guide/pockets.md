@@ -101,8 +101,17 @@ site-point rules keep, applied to the beads with each bead's own radius. The
 core is ligand-sized and is reported beside the pocket; it does not change
 the rankings.
 
-With `--holo`, its ligand is placed by `boonza.sites.known_ligand`. Each pocket
-is then scored by PPc and MOc, fpocket's own criteria:
+With `--holo`, the whole holo protein is superposed on the apo: alpha carbons
+of every chain, paired by sequence and pruned at 2 A. The ligand moves with
+it. This is how the presets were benchmarked. `--holo-fit chain` instead fits
+only the chain the ligand sits in or touches (`boonza.sites.known_ligand`).
+
+On a symmetric oligomer the two fits can put the ligand in different,
+symmetry-equivalent copies of its site. On the dimer 1MPU/8EA5, for example,
+holo chain A pairs with apo chain B by sequence, and the ligand lands across
+the twofold axis.
+
+Each pocket is then scored by PPc and MOc, fpocket's own criteria:
 
 - PPc: the pocket's centre is within 4 A of a ligand atom.
 - MOc: more than half the ligand atoms are within 3 A of an alpha sphere, and
