@@ -284,3 +284,19 @@ def test_traj_checks_fpocket_before_reading_frames(monkeypatch, tmp_path, capsys
                  "-o", str(tmp_path / "out")])  # fmt: skip
     assert code == 1 and "siyoungkimlab" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
+
+
+def test_traj_view_loads_best_frames_and_never_bonds_spheres(tmp_path):
+    """Each drawn pocket's best frame is loaded (off) as frame_<rank>; alpha spheres and core
+    cells load without distance bonds, and a run without --apo is drawn on its beads."""
+    from boonza.pockets.view import write_traj_view
+
+    frames = [[_frame_pocket(f, 1, [0.0, 0.0, 0.0], 1.0)] for f in range(4)]
+    ranked = consensus.consensus_pockets(frames)
+    view = write_traj_view(tmp_path, ranked, None, frames={1: "best_frames/pocket1_frame0.mae"})
+    text = view.read_text()
+    assert "load md.pdb, beads" in text and "load best_frames/pocket1_frame0.mae, frame_1" in text
+    assert "disable frame_1" in text and "unbond pocket_1, pocket_1" in text
+    for pqr in ("pockets.pqr", "cores.pqr"):
+        k = text.index(f"load {pqr}")
+        assert text.rindex("set connect_mode, 1", 0, k) > text.rfind("set connect_mode, 0", 0, k)
