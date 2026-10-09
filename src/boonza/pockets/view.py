@@ -50,7 +50,7 @@ def pocket_object_lines(source: str, drawn) -> list[str]:
         lines += [f"create {obj}, {source} and resi {k}",
                   f'pseudoatom {obj}, name=LBL, resi={k}, pos=[{x:.3f}, {y:.3f}, {z:.3f}], '
                   f'label="{label}"',
-                  f"hide everything, {obj}",  # PyMOL bonds nearby points of a .pqr
+                  f"unbond {obj}, {obj}", f"hide everything, {obj}",
                   f"set sphere_scale, 0.3, {obj}", f"set sphere_transparency, 0.2, {obj}",
                   f"show spheres, {obj} and not name LBL", f"color {_color(k)}, {obj}",
                   f"show labels, {obj} and name LBL"]  # fmt: skip
@@ -62,8 +62,11 @@ def pocket_object_lines(source: str, drawn) -> list[str]:
 def _structures(where: Path, apo, holo, ligand, fmt: str) -> list[str]:
     from ..io import save
 
-    save(apo, where / f"apo.{fmt}")
-    lines = [f"load apo.{fmt}, apo"]
+    if apo is None:  # a trajectory with no all-atom apo: its first frame's beads stand in
+        lines = ["load md.pdb, beads"]
+    else:
+        save(apo, where / f"apo.{fmt}")
+        lines = [f"load apo.{fmt}, apo"]
     if holo is not None:
         save(holo.select(f"not ({ligand})").clone(), where / f"holo.{fmt}")
         save(holo.select(f"({ligand})").clone(), where / f"ligand.{fmt}")
@@ -71,15 +74,13 @@ def _structures(where: Path, apo, holo, ligand, fmt: str) -> list[str]:
     return lines
 
 
-def _style(holo) -> list[str]:
-    lines = [
-        "hide everything",
-        "bg_color black",
-        "set ray_opaque_background, 0",
-        "show cartoon, apo",
-        "color wheat, apo",
-        "set cartoon_transparency, 0.45, apo",
-    ]
+def _style(holo, beads: bool = False) -> list[str]:
+    lines = ["hide everything", "bg_color black", "set ray_opaque_background, 0"]
+    if beads:
+        lines += ["show spheres, beads", "set sphere_scale, 0.35, beads", "color wheat, beads",
+                  "set sphere_transparency, 0.6, beads"]  # fmt: skip
+    else:
+        lines += ["show cartoon, apo", "color wheat, apo", "set cartoon_transparency, 0.45, apo"]
     if holo is not None:
         lines += ["show cartoon, holo", "color lightblue, holo",
                   "# click holo in the object panel to compare the folds", "disable holo",
@@ -112,7 +113,8 @@ def write_run_view(where, pockets, apo, holo=None, ligand: str | None = None,
     write_pqr(where / "pockets.pqr", [(k, p.centres, p.radii) for k, p in enumerate(pockets, 1)])
     lines = ["# fpocket pockets of a coarse-grained protein, on the all-atom structures",
              *PREAMBLE, *_structures(where, apo, holo, ligand, fmt),
-             "load pockets.pqr, pockets_all", *_style(holo)]  # fmt: skip
+             "set connect_mode, 1", "load pockets.pqr, pockets_all", "set connect_mode, 0",
+             *_style(holo)]  # fmt: skip
     verdicts = verdicts or {}
     drawn = []
     for k, p in enumerate(pockets, 1):
@@ -153,6 +155,7 @@ def write_traj_view(
     verdicts=None,
     fmt: str = "pdb",
     maps: float | None = None,
+    frames: dict | None = None,
 ) -> Path:
     """``view.pml`` for a trajectory's consensus pockets (``ranked``, quality order).
 
@@ -160,16 +163,21 @@ def write_traj_view(
     quality rank, ``*`` when cryptic, and PPc / MOc when right for the holo ligand
     (``verdicts``, ``{quality rank: (PPc, MOc)}``); its enclosed core is
     ``core_<rank>``.  ``maps``: the level mdpocket's density was calibrated at, when
-    pocket_frequency.dx and pocket_density.dx are beside the view.
+    pocket_frequency.dx and pocket_density.dx are beside the view.  ``frames``: each
+    pocket's best-frame structure, ``{quality rank: file}``, loaded as ``frame_<rank>``
+    (off; click it to see the protein as it was when that pocket was best).  Without
+    ``apo`` the beads of the trajectory's first frame (md.pdb) are drawn instead.
     """
     where = Path(where)
     where.mkdir(parents=True, exist_ok=True)
     verdicts = verdicts or {}
-    lines = ["# consensus pockets of a coarse-grained trajectory, on the all-atom structures",
+    frames = frames or {}
+    on = "the all-atom structures" if apo is not None else "its beads (no --apo)"
+    lines = [f"# consensus pockets of a coarse-grained trajectory, on {on}",
              *PREAMBLE, *_structures(where, apo, holo, ligand, fmt)]  # fmt: skip
     if maps is not None:
         lines += ["load pocket_frequency.dx, frequency", "load pocket_density.dx, density"]
-    lines += _style(holo)
+    lines += _style(holo, beads=apo is None)
     if maps is not None:
         lines += ["# mdpocket maps, off by default: click pocket_frequency or pocket_density",
                   "isosurface pocket_frequency, frequency, 0.5",
@@ -186,18 +194,35 @@ def write_traj_view(
               "# for the holo ligand by PPc and by MOc, each in its best frame.  Label = quality",
               "# rank, * = cryptic (closed in the apo crystal structure).  Every pocket is in",
               "# pockets.csv",
-              "load pockets.pqr, consensus_all"]  # fmt: skip
+              "set connect_mode, 1", "load pockets.pqr, consensus_all",
+              "set connect_mode, 0"]  # fmt: skip
     lines += pocket_object_lines("consensus_all", drawn)
     lines += [
         "# each pocket's enclosed core, the object core_<rank>, one sphere per grid cell",
+        "set connect_mode, 1",
         "load cores.pqr, cores_all",
+        "set connect_mode, 0",
     ]
     for k, _, _ in drawn:
-        lines += [f"create core_{k}, cores_all and resi {k}", f"hide everything, core_{k}",
+        lines += [f"create core_{k}, cores_all and resi {k}", f"unbond core_{k}, core_{k}",
+                  f"hide everything, core_{k}",
                   f"show spheres, core_{k}", f"color {_color(k)}, core_{k}",
                   f"set sphere_transparency, 0.45, core_{k}"]  # fmt: skip
     lines += ["delete cores_all"]
-    lines += ["zoom ligand, 10"] if holo is not None else ["orient apo"]
+    shown = [(k, frames[k]) for k, _, _ in drawn if k in frames]
+    if shown:
+        lines += ["# each pocket's best frame, the object frame_<rank>: the protein beads",
+                  "# when that pocket scored highest.  Off: click it"]  # fmt: skip
+    for k, path in shown:
+        lines += [f"load {path}, frame_{k}", f"hide everything, frame_{k}",
+                  f"show spheres, frame_{k}", f"set sphere_scale, 0.35, frame_{k}",
+                  f"color {_color(k)}, frame_{k}", f"set sphere_transparency, 0.5, frame_{k}",
+                  f"disable frame_{k}"]  # fmt: skip
+    lines += (
+        ["zoom ligand, 10"]
+        if holo is not None
+        else [f"orient {'apo' if apo is not None else 'beads'}"]
+    )
     view = where / "view.pml"
     view.write_text("\n".join(lines) + "\n")
     return view

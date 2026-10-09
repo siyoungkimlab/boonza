@@ -383,7 +383,10 @@ def cmd_traj(args, extra) -> int:
                          until_ns=args.until_ns, every_ns=args.every_ns,
                          workdir=str(args.workdir) if args.workdir else None,
                          apo=str(args.apo) if args.apo else None,
-                         core_spacing_A=SPACING)  # fmt: skip
+                         core_spacing_A=SPACING, best_frames=args.best_frames)  # fmt: skip
+    files = _write_best_frames(args, out, ranked, beads, coords)
+    for row in rows:
+        row["best_frame_file"] = files.get(row["rank_quality"])
     _write(out, rows, settings)
     write_frame_pockets(out / "frame_pockets.npz", ranked)
     write_pqr(out / "pockets.pqr", [(q.rank_quality, q.best.pocket.centres, q.best.pocket.radii)
@@ -408,16 +411,42 @@ def cmd_traj(args, extra) -> int:
             hit = min((getattr(q, f"rank_{key}") for q in ranked if verdicts[q.rank_quality][0]),
                       default=None)  # fmt: skip
             print(f"  by {key}: first right by PPc at rank {hit or 'none'}")
-    if apo is not None:
-        view = write_traj_view(out, ranked, apo, moved, args.holo_ligand if moved is not None
-                               else None, verdicts, structure_format(args.apo), iso)  # fmt: skip
-        print(f"all-atom view: pymol {view}")
-    else:
-        print(
-            "no view: it shows the pockets on the all-atom apo structure; give it with --apo. "
-            f"The beads: pymol {out / 'md.pdb'} {out / 'pockets.pqr'} {out / 'cores.pqr'}"
-        )
+    view = write_traj_view(out, ranked, apo, moved, args.holo_ligand if moved is not None else None,
+                           verdicts, structure_format(args.apo or args.holo or "x.pdb"), iso,
+                           files)  # fmt: skip
+    print(
+        f"view: pymol {view}"
+        + ("" if apo is not None else "  (on the beads; --apo draws the all-atom structure)")
+    )
     return 0
+
+
+def _write_best_frames(args, out: Path, ranked, beads, coords) -> dict:
+    """Each pocket's best frame -- the protein beads in the frame its p is highest -- for the
+    pockets in the top ``--best-frames`` of any ranking, as ``best_frames/pocket<quality
+    rank>_frame<frame>.<ext>``.  The format is the run's own: a .dms or .mae run is written
+    as MAE, which keeps its bonds; others as they came, or PDB.  Returns the file of each
+    pocket written, by quality rank."""
+    from ..io import save
+
+    if not args.best_frames:
+        return {}
+    source = Path(args.workdir) / "solvated.dms" if args.workdir else Path(args.system)
+    fmt = structure_format(source)
+    where = out / "best_frames"
+    where.mkdir(exist_ok=True)
+    files = {}
+    for q in ranked:
+        if min(q.rank_quality, q.rank_persistence, q.rank_quality_burial) > args.best_frames:
+            continue
+        frame = beads.clone()
+        frame.positions = np.asarray(coords[q.best.frame], float)
+        name = f"pocket{q.rank_quality}_frame{q.best.frame}.{fmt}"
+        save(frame, where / name)
+        files[q.rank_quality] = f"best_frames/{name}"
+    print(f"best frames of {len(files)} pockets (top {args.best_frames} of any ranking) -> "
+          f"{where}")  # fmt: skip
+    return files
 
 
 def cmd_flags(args, extra) -> int:
@@ -496,6 +525,10 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--every-ns", type=float, default=None, metavar="NS",
                    help="read one frame this far apart (default: every frame; fpocket runs "
                         "once per frame read, about a second each)")  # fmt: skip
+    q.add_argument("--best-frames", type=int, default=10, metavar="K",
+                   help="write each pocket's best frame (its highest p) for the pockets in the "
+                        "top K of any ranking, in the run's own format: MAE for a .dms or .mae "
+                        "run, keeping its bonds (default 10; 0 writes none)")  # fmt: skip
     q.set_defaults(run=cmd_traj)
 
     q = sub.add_parser("flags", help="print a model's tuned fpocket flags")
