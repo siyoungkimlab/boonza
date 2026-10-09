@@ -29,9 +29,10 @@ from .pbc import distances, minimum_image_in, prepare_box
 from .symmetry import DEFAULT_LIGAND, _boxed_blocks, _ids, molecules_of
 
 
-@dataclass
+@dataclass(eq=False)  # its fields are arrays: == between sites would compare them element-wise
 class Site:
-    """One place the ligand is found, and the evidence for it."""
+    """One place the ligand is found, and the evidence for it.  Sites compare by identity, so
+    ``sites.index(site)`` and ``site in sites`` find this very site in any order."""
 
     center: np.ndarray  # (3,) in the reference's frame
     points: np.ndarray  # rows of the pooled table
