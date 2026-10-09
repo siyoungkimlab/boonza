@@ -264,3 +264,23 @@ def test_holo_ligand_follows_the_protein(tmp_path, fit):
     assert info["paired"] > (250 if fit == "whole" else 120)
     moved_lig = moved.select("resname HEM and chain B and not element H").ids
     assert np.abs(np.asarray(moved.positions)[moved_lig] - want).max() < 0.01
+
+
+@pytest.mark.parametrize(
+    ("model", "found"), [("sirah", "sirah"), ("martini3", "martini"), ("aa", "aa")]
+)
+def test_coarse_grained_input_is_recognized(model, found):
+    """A SIRAH system has no BB bead: its residue names (sA, sK, ...) say what it is."""
+    from boonza.pockets.cli import _model_of
+
+    s = prepare.coarse_grain(boonza.load(str(DATA / "1TEN.pdb")), model)
+    assert _model_of(s, np.arange(s.natoms)) == found
+
+
+def test_traj_checks_fpocket_before_reading_frames(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FPOCKET_HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    code = main(["traj", "--workdir", str(tmp_path / "nowhere"), "--model", "sirah",
+                 "-o", str(tmp_path / "out")])  # fmt: skip
+    assert code == 1 and "siyoungkimlab" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
