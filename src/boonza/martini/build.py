@@ -540,7 +540,10 @@ def ion_beads(version: int) -> dict:
     than a stand-in: a calcium is ``SD`` and +2 under Martini 3 and ``Qd`` and +2
     under Martini 2, and those bead types are in the parameter file the topology
     already includes, so borrowing the type and the charge needs nothing else.
-    Martini has no zinc and no magnesium; those fall back to the inert bead.
+    Martini has no magnesium either, and a magnesium is the calcium's bead and
+    charge (with its own mass) rather than an inert bead: a neutral, apolar bead
+    left free drifts into the hydrophobic pockets a run is meant to find.
+    Martini has no zinc; that falls back to the inert bead.
     """
     from . import parameters
 
@@ -564,6 +567,8 @@ def ion_beads(version: int) -> dict:
                 mass = float(cols[7]) if len(cols) > 7 else None
                 out.setdefault(where, (cols[1], float(cols[6]), mass))
                 where = None  # one atom is an ion; more than one is not
+    if "CA" in out and "MG" not in out:
+        out["MG"] = (out["CA"][0], out["CA"][1], 24.305)
     return out
 
 

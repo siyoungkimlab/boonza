@@ -848,6 +848,8 @@ def test_an_ion_martini_has_gets_that_ion_and_stays_free(forcefield, bead, tmp_p
 
     version = 2 if forcefield == "martini22" else 3
     assert ion_beads(version)["CA"][:2] == (bead, 2.0)
+    # no magnesium in either version: it borrows the calcium, with its own mass
+    assert ion_beads(version)["MG"] == (bead, 2.0, 24.305)
     assert "ZN" not in ion_beads(version)  # Martini has no zinc, in either version
 
     s = boonza.load(DATA / "1HHO.pdb").select("protein and chain A").clone()
