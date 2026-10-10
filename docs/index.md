@@ -162,6 +162,7 @@ guide/md
 guide/swim
 guide/pockets
 guide/sitemap
+guide/sitemap_static200
 guide/martini
 guide/building
 guide/checking

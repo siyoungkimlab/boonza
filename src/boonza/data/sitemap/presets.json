@@ -1,42 +1,42 @@
 {
  "martini2": {
   "spacing": 2.0,
-  "probe": "N0",
+  "probe": "AC2",
   "params": {
-   "outside": 2.18,
-   "ray_length": 10.0,
-   "enclosure": 0.62,
+   "outside": 2.4,
+   "ray_length": 8.0,
+   "enclosure": 0.57,
    "contact_form": "capped",
-   "contact": -7.16,
-   "neighbour_radius": 1.85,
-   "neighbours": 4,
-   "min_points": 5,
-   "merge_gap": 5.01,
-   "merge_cap": 103.5,
-   "min_volume": 15.0
+   "contact": -6.02,
+   "neighbour_radius": 1.83,
+   "neighbours": 2,
+   "min_points": 3,
+   "merge_gap": 9.16,
+   "merge_cap": 76.11,
+   "min_volume": 0.12
   },
   "score": {
-   "intercept": -4.298278274530851,
-   "sqrt_n": 0.23971880023521797,
-   "enclosure": 3.1208937099757668,
-   "philic": -0.10854178826584834
+   "intercept": -5.755642460487337,
+   "sqrt_n": 0.3727982701070792,
+   "enclosure": 3.2856879571093285,
+   "philic": 0.05544484095830481
   },
   "trained": {
-   "set": "train263 (data/train200.txt: 200 complexes)",
-   "search": "martini2_v2_train200",
-   "trial": 270,
-   "objective": 0.6116387765515316,
+   "set": "holo200b (fpocketSet_263/holo, 200 prepared holo .mae, ligand resname LIG)",
+   "search": "holo200b_halfNone_martini2_val",
+   "trial": 183,
+   "objective": 0.6295090171082032,
    "cv": {
-    "top1": 0.74,
-    "top3": 0.83,
-    "top5": 0.835,
-    "top10": 0.85
+    "top1": 0.785,
+    "top3": 0.875,
+    "top5": 0.895,
+    "top10": 0.905
    },
    "cv_overlap": {
-    "fill": 0.4382775531030635,
-    "LVC": 0.377662,
-    "PVN": 0.5388149999999999,
-    "DVO": 0.19197100000000003
+    "fill": 0.4290180342164062,
+    "LVC": 0.32621349999999993,
+    "PVN": 0.6043065000000002,
+    "DVO": 0.19483250000000002
    }
   }
  },
@@ -44,81 +44,81 @@
   "spacing": 2.0,
   "probe": "SC3",
   "params": {
-   "outside": 2.67,
+   "outside": 2.74,
    "ray_length": 8.0,
-   "enclosure": 0.49,
+   "enclosure": 0.5,
    "contact_form": "full",
-   "contact": 1.5,
-   "neighbour_radius": 1.69,
-   "neighbours": 1,
-   "min_points": 4,
-   "merge_gap": 5.22,
-   "merge_cap": 288.54,
-   "min_volume": 11.67
+   "contact": 23.98,
+   "neighbour_radius": 1.92,
+   "neighbours": 3,
+   "min_points": 3,
+   "merge_gap": 6.22,
+   "merge_cap": 0.0,
+   "min_volume": 34.8
   },
   "score": {
-   "intercept": -6.02071033227072,
-   "sqrt_n": 0.3260834491180822,
-   "enclosure": 8.170875765485635,
-   "philic": -1.1478752214495833
+   "intercept": -6.478204176641831,
+   "sqrt_n": 0.29000858873395996,
+   "enclosure": 5.777015171880361,
+   "philic": -0.28640882376848437
   },
   "trained": {
-   "set": "train263 (data/train200.txt: 200 complexes)",
-   "search": "martini3_v2_train200",
-   "trial": 336,
-   "objective": 0.6222160216194667,
+   "set": "holo200b (fpocketSet_263/holo, 200 prepared holo .mae, ligand resname LIG)",
+   "search": "holo200b_halfNone_martini3_val",
+   "trial": 31,
+   "objective": 0.6506014341664343,
    "cv": {
-    "top1": 0.78,
-    "top3": 0.875,
-    "top5": 0.9,
-    "top10": 0.905
+    "top1": 0.8,
+    "top3": 0.88,
+    "top5": 0.89,
+    "top10": 0.895
    },
    "cv_overlap": {
-    "fill": 0.41693204323893335,
-    "LVC": 0.3378204999999999,
-    "PVN": 0.5455219999999997,
-    "DVO": 0.18779749999999995
+    "fill": 0.4612028683328686,
+    "LVC": 0.3976344999999999,
+    "PVN": 0.5660389999999998,
+    "DVO": 0.20205399999999998
    }
   }
  },
  "sirah": {
-  "spacing": 1.5,
-  "probe": "Y1C",
+  "spacing": 2.0,
+  "probe": "Y4Cv",
   "params": {
    "contact_form": "full",
-   "outside": 2.32,
-   "ray_length": 8.74,
-   "enclosure": 0.59,
-   "neighbour_radius": 1.85,
-   "neighbours": 4,
-   "min_points": 2,
-   "merge_gap": 2.0,
-   "merge_cap": 525.02,
-   "min_volume": 7.7,
-   "contact": 35.25
+   "outside": 1.48,
+   "ray_length": 8.55,
+   "enclosure": 0.56,
+   "neighbour_radius": 1.43,
+   "neighbours": 5,
+   "min_points": 3,
+   "merge_gap": 4.73,
+   "merge_cap": 276.93,
+   "min_volume": 16.75,
+   "contact": 138.32
   },
   "score": {
-   "intercept": -1.4472483416479442,
-   "sqrt_n": 0.4139612162772962,
-   "enclosure": -2.913299716425898,
-   "philic": -0.012675902971170303
+   "intercept": -1.9832425452132132,
+   "sqrt_n": 0.3223986783031408,
+   "enclosure": -2.040471957002226,
+   "philic": 0.007564707476072814
   },
   "trained": {
-   "set": "train263 (data/train200.txt: 200 complexes)",
-   "search": "sirah_v2_train200",
-   "trial": 262,
-   "objective": 0.5565164686910457,
+   "set": "holo200b (fpocketSet_263/holo, 200 prepared holo .mae, ligand resname LIG)",
+   "search": "holo200b_halfNone_sirah_val",
+   "trial": 121,
+   "objective": 0.6053485822612836,
    "cv": {
-    "top1": 0.705,
-    "top3": 0.875,
-    "top5": 0.9,
-    "top10": 0.93
+    "top1": 0.735,
+    "top3": 0.845,
+    "top5": 0.855,
+    "top10": 0.86
    },
    "cv_overlap": {
-    "fill": 0.32303293738209127,
-    "LVC": 0.20804750000000002,
-    "PVN": 0.546514,
-    "DVO": 0.14116400000000007
+    "fill": 0.4206971645225671,
+    "LVC": 0.3451685000000001,
+    "PVN": 0.5506530000000001,
+    "DVO": 0.17475599999999994
    }
   }
  }

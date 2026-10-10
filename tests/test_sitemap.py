@@ -111,6 +111,29 @@ def test_structure_cli(tmp_path):
     assert "scene overview, store" in view
 
 
+def test_named_presets(tmp_path):
+    """static200 is kept by name; a presets file is used by its path, and its preset by the
+    command line."""
+    import json
+
+    from boonza.sitemap import presets as P
+
+    assert "static200" in P.names()
+    static = P.presets("static200")
+    assert {static[m]["probe"] for m in static} == {"AC2", "SC3", "Y4Cv"}
+    mine = {**static, "martini3": {**static["martini3"], "spacing": 3.0}}
+    (tmp_path / "mine.json").write_text(json.dumps(mine))
+    assert P.preset("martini3", str(tmp_path / "mine.json"))["spacing"] == 3.0
+    with pytest.raises(ValueError, match="no presets"):
+        P.presets("no-such-presets")
+    out = tmp_path / "sites"
+    assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
+                 "--preset", "static200"]) == 0  # fmt: skip
+    assert list(csv.DictReader(open(out / "pockets.csv")))
+    assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
+                 "--preset", "no-such-presets"]) == 1  # fmt: skip
+
+
 @pytest.mark.parametrize("model", ["martini2", "martini3", "sirah"])
 def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     """Myoglobin without its heme: the heme pocket is among the first sites, and --ligand
@@ -125,8 +148,9 @@ def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     assert (out / "ligand.pdb").exists()
 
 
-def _run(tmp_path, pdb):
-    """A small Martini 3 run of ``pdb``'s protein: its system and three jittered frames."""
+def _run(tmp_path, pdb, selection="protein"):
+    """A small Martini 3 run of ``pdb``'s ``selection``: its system and three jittered
+    frames."""
     from boonza.trajectory import open_writer
 
     run = tmp_path / "md_solute"
@@ -134,7 +158,7 @@ def _run(tmp_path, pdb):
     s = boonza.load(str(DATA / pdb))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cg = boonza.martinize(s, "protein", forcefield="martini3001").system()
+        cg = boonza.martinize(s, selection, forcefield="martini3001").system()
     boonza.save(cg, run / "solvated.dms")
     rng = np.random.default_rng(2)
     with open_writer(str(run / "trajectory.dcd"), cg.natoms) as w:
@@ -159,8 +183,9 @@ def test_traj_cli(tmp_path):
 
 
 def test_traj_cli_without_sites(tmp_path):
-    """A protein with no site in any frame (1TEN) gives an empty table, not an error."""
-    run = _run(tmp_path, "1TEN.pdb")
+    """A protein with no site in any frame (1TEN's first 28 residues) gives an empty
+    table, not an error."""
+    run = _run(tmp_path, "1TEN.pdb", "protein and resid < 830")
     out = tmp_path / "sitemap"
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip
