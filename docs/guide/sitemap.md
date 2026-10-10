@@ -80,7 +80,16 @@ the structure, the beads (off) and each site as `pocket_<rank>`.
 
 ```bash
 boonza sitemap traj --workdir run/md_solute --model martini3 -o sitemap/ --apo apo.mae --every 5
+boonza sitemap traj --workdir run/md_solute --model martini3 -o sitemap/ --every 5 \
+    --holo holo.mae --holo-ligand "resname LIG"
 ```
+
+With `--holo` (and `--holo-ligand`, `--holo-top`, `--holo-fit`, as in
+`boonza pockets traj`) a holo structure's ligand is carried onto the run's
+first fitted frame, which every frame is fitted on, and each pocket is scored
+against it: PPc, MOc, LVC and PVN of its site in its best frame, and the share
+of its frames whose site is PPc-right (`frames_PPc`). The view shows the holo
+structure (off at the start) and the ligand.
 
 Every analysed frame is made whole and fitted on the backbone (the probe chain
 `LIG` is never part of the protein), and its sites are found under the preset,
