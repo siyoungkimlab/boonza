@@ -135,13 +135,14 @@ trajectory, periodic boxes, RDKit, validation and the command line.
 8. [Running simulations (`boonza md`)](guide/md.md)
 9. [Ligands swimming around a protein (`boonza swim`)](guide/swim.md)
 10. [Pockets of coarse-grained proteins (`boonza pockets`)](guide/pockets.md)
-11. [Martini 3 coarse-grained proteins](guide/martini.md)
-12. [Checking systems: validate, knots, diff](guide/checking.md)
-13. [Geometry and periodic boundaries](guide/geometry.md)
-14. [Alignment: superposition and sequences](guide/alignment.md)
-15. [Analysis](guide/analysis.md)
-16. [RDKit and OpenMM](guide/bridges.md)
-17. [Command line](guide/cli.md)
+11. [SiteMap-style sites of coarse-grained proteins (`boonza sitemap`)](guide/sitemap.md)
+12. [Martini 3 coarse-grained proteins](guide/martini.md)
+13. [Checking systems: validate, knots, diff](guide/checking.md)
+14. [Geometry and periodic boundaries](guide/geometry.md)
+15. [Alignment: superposition and sequences](guide/alignment.md)
+16. [Analysis](guide/analysis.md)
+17. [RDKit and OpenMM](guide/bridges.md)
+18. [Command line](guide/cli.md)
 
 [API reference](reference.md) · [Verification and benchmarks](verification.md)
 
@@ -160,6 +161,7 @@ guide/ligands
 guide/md
 guide/swim
 guide/pockets
+guide/sitemap
 guide/martini
 guide/building
 guide/checking

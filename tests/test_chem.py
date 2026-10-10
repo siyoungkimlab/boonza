@@ -21,7 +21,10 @@ def _smiles(mol):
 @functools.cache
 def _peptide():
     mol = Chem.AddHs(Chem.MolFromSequence("ACDEFHKWY"))
-    AllChem.EmbedMolecule(mol, randomSeed=7)
+    params = AllChem.ETKDGv3()  # as boonza.peptide embeds: plain EmbedMolecule fails on this
+    params.useRandomCoords = True  # peptide from RDKit 2026.09 on, leaving no coordinates
+    params.randomSeed = 7
+    assert AllChem.EmbedMolecule(mol, params) == 0, "RDKit could not embed the test peptide"
     return mol
 
 
