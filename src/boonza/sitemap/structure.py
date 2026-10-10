@@ -15,10 +15,11 @@ the chain the ligand sits in).
 ``pockets.csv``: rank, SiteScore and p (its probability of being a ligand site,
 1 / (1 + exp(-score))), volume, enclosure, exposure, the residues lining it
 (a bead within its radius + traj.LINING of a site point) and, if a ligand is
-given, how the site matches it: PPc (centre within 4 A of a ligand atom), MOc
-(more than half the ligand's atoms within 3 A of a site point and more than a
-fifth of the site's points within 3 A of the ligand), LVC (share of the
-ligand's volume in the site) and PVN (share of the site within 2 A of it).
+given, how the site matches it, by boonza.pockets.overlap's measures, the same
+``boonza pockets`` judges its pockets by: PPc (centre within 4 A of a ligand
+atom), MOc (more than half the ligand's atoms within 3 A of a site point and
+more than a fifth of the site's points within 3 A of the ligand), LVC (share of
+the ligand's volume in the site) and PVN (share of the site within 2 A of it).
 The ligand is only measured against: it is never part of the protein.
 
 ``view.pml`` (run from anywhere): the structure (cartoon), the holo structure
@@ -37,34 +38,19 @@ from pathlib import Path
 
 import numpy as np
 
-PPC, MOC_D, MOC_LIGAND, MOC_POCKET = 4.0, 3.0, 0.5, 0.2  # fpocket's criteria
-
-
-def _cubes(points: np.ndarray, spacing: float) -> np.ndarray:
-    """The 0.5 A voxels of each point's grid cube (boonza.pockets.overlap.grid_pocket)."""
-    from ..pockets.overlap import SPACING
-
-    half = spacing / 2
-    n = int(np.ceil(half / SPACING))
-    off = np.mgrid[-n : n + 1, -n : n + 1, -n : n + 1].reshape(3, -1).T
-    cand = np.round(points / SPACING).astype(int)[:, None] + off[None]
-    keep = (np.abs(cand * SPACING - points[:, None]) <= half + 1e-9).all(2)
-    return np.unique(cand[keep], axis=0)
-
 
 def _against(site, spacing: float, lig: np.ndarray) -> dict:
-    from ..pockets.overlap import SHELL, _count, ligand_voxels
+    """PPc, MOc, LVC and PVN of a site against a ligand, as boonza pockets measures its
+    pockets (boonza.pockets.overlap): the site as its points for PPc and MOc, as its grid
+    cubes for the volumes."""
+    from ..pockets.overlap import grid_pocket, moc, ppc, volume_overlap
 
-    near = ((lig[:, None] - site.xyz[None]) ** 2).sum(-1) < MOC_D**2
-    lv = np.ascontiguousarray(ligand_voxels(lig))
-    sh = np.ascontiguousarray(ligand_voxels(lig, SHELL))
-    pocket = np.ascontiguousarray(_cubes(site.xyz, spacing))
-    inter = _count(lv, pocket)
+    vol = volume_overlap(grid_pocket(site.xyz, spacing), lig)
     return {
-        "PPc": bool(np.sqrt(((lig - site.centre) ** 2).sum(1)).min() < PPC),
-        "MOc": bool(near.any(1).mean() > MOC_LIGAND and near.any(0).mean() > MOC_POCKET),
-        "LVC": round(inter / len(lv), 3),
-        "PVN": round(_count(sh, pocket) / len(pocket), 3),
+        "PPc": ppc(site.xyz, lig),
+        "MOc": moc(site.xyz, lig),
+        "LVC": round(vol["ligand_volume_covered"], 3),
+        "PVN": round(vol["pocket_volume_near_ligand"], 3),
     }
 
 

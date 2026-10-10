@@ -115,7 +115,7 @@ def _voxels_within(centres: np.ndarray, radii) -> np.ndarray:
         cand = base + _ball(r + SPACING)
         keep = np.linalg.norm(cand * SPACING - c, axis=1) <= r
         out.append(cand[keep])
-    return np.unique(np.vstack(out), axis=0) if out else np.zeros((0, 3), int)
+    return _unique_rows(np.vstack(out)) if out else np.zeros((0, 3), int)
 
 
 def sphere_pocket(centres, radii, shrink: float = SPHERE_SHRINK) -> np.ndarray:
@@ -143,11 +143,22 @@ def grid_pocket(points, spacing: float) -> np.ndarray:
     n = int(np.ceil(half / SPACING))
     offsets = np.mgrid[-n : n + 1, -n : n + 1, -n : n + 1].reshape(3, -1).T
     out = []
-    for c in points:
-        cand = np.round(c / SPACING).astype(int) + offsets
-        keep = (np.abs(cand * SPACING - c) <= half + 1e-9).all(1)
+    chunk = max(1, 2_000_000 // len(offsets))  # points at a time, a few tens of MB
+    for a in range(0, len(points), chunk):
+        c = points[a : a + chunk]
+        cand = np.round(c / SPACING).astype(int)[:, None] + offsets[None]
+        keep = (np.abs(cand * SPACING - c[:, None]) <= half + 1e-9).all(2)
         out.append(cand[keep])
-    return np.unique(np.vstack(out), axis=0)
+    return _unique_rows(np.vstack(out))
+
+
+def _unique_rows(v: np.ndarray) -> np.ndarray:
+    """np.unique(v, axis=0) for integer voxels, sorted the same way, by one integer key per
+    row (several times faster for the hundreds of thousands of rows a pocket has)."""
+    lo = v.min(0)
+    dims = v.max(0) - lo + 1
+    keys = np.unique(np.ravel_multi_index((v - lo).T, dims))
+    return np.stack(np.unravel_index(keys, dims), axis=1) + lo
 
 
 def ligand_voxels(atoms, extra: float = 0.0) -> np.ndarray:
