@@ -165,3 +165,18 @@ def test_traj_cli_without_sites(tmp_path):
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip
     assert list(csv.DictReader(open(out / "pockets.csv"))) == []
+
+
+def test_traj_cli_with_holo(tmp_path):
+    """--holo carries a holo ligand onto the run; every pocket is measured against it, and the
+    heme pocket of myoglobin is among the right ones."""
+    run = _run(tmp_path, "1MBN.pdb")
+    out = tmp_path / "sitemap"
+    holo = ["--holo", str(DATA / "1MBN.pdb"), "--holo-ligand", "resname HEM"]
+    assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
+                 "-j", "1", *holo]) == 0  # fmt: skip
+    rows = list(csv.DictReader(open(out / "pockets.csv")))
+    assert {"PPc", "MOc", "LVC", "PVN", "frames_PPc"} <= set(rows[0])
+    assert any(r["PPc"] == "True" for r in rows)
+    view = (out / "view.pml").read_text()
+    assert "load holo.pdb, holo" in view and (out / "ligand.pdb").exists()

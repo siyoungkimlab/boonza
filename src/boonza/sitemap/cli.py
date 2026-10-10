@@ -75,13 +75,13 @@ def cmd_traj(args) -> int:
     print(f"{len(spots)} pharmacophore hotspots of at least {args.min_probes} distinct probe "
           f"molecules over {len(all_frames)} frames (boonza.pharmacophore.hotspots)",
           flush=True)  # fmt: skip
+    reference = system.clone(ids)  # the first fitted frame, which every frame is fitted on
+    reference.positions = np.asarray(coords[0], float)
     apo = None
     if args.apo:
         from ..align import superpose
         from ..io import load
 
-        reference = system.clone(ids)
-        reference.positions = np.asarray(coords[0], float)
         bb = "BB" if "BB" in set(np.asarray(reference.atoms["name"]).tolist()) else "GC"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -99,8 +99,16 @@ def cmd_traj(args) -> int:
             view_system = load(str(view_dms))
         if view_system.natoms != system.natoms:
             view_system = None
+    holo = holo_ligand = ligand = None
+    if args.holo:
+        from ..pockets.cli import _holo_on
+
+        ligand, info, holo = _holo_on(args.holo, reference, args.holo_ligand, args.holo_top,
+                                      args.holo_fit)  # fmt: skip
+        ligand, holo_ligand = np.asarray(ligand, float), info["ligand"]
     view = report.write(out, args.model, pockets, len(coords), every, system, ids, coords,
-                        pids, pcoords, apo, args.top, args.rank, spots, view_system)  # fmt: skip
+                        pids, pcoords, apo, args.top, args.rank, spots, view_system,
+                        holo, holo_ligand, ligand)  # fmt: skip
     print(f"{len(pockets)} pockets, ranked by {args.rank} -> {out / 'pockets.csv'}, {view}")
     import csv
 
@@ -136,6 +144,16 @@ def main(argv=None) -> int:
     t.add_argument("--model", required=True, choices=MODELS)
     t.add_argument("-o", "--out", required=True)
     t.add_argument("--apo", help="an all-atom apo structure to draw, superposed on the run")
+    t.add_argument("--holo", help="a structure of the same protein with a ligand, superposed on "
+                   "the run: each pocket is scored against that ligand in its best frame (PPc, "
+                   "MOc, LVC, PVN) and by the share of its frames that are PPc-right")  # fmt: skip
+    t.add_argument("--holo-ligand", default=None, metavar="SEL",
+                   help="the ligand in --holo (default: its largest residue that is neither "
+                        "protein, nucleic, solvent nor a buffer salt)")  # fmt: skip
+    t.add_argument("--holo-top", help="topology of a coarse-grained --holo")
+    t.add_argument("--holo-fit", choices=["whole", "chain"], default="whole",
+                   help="how the holo ligand is carried onto the run: superposing the whole holo "
+                        "protein (default) or the chain the ligand sits in")  # fmt: skip
     t.add_argument("--every", type=int, default=1, help="analyse every N-th frame")
     t.add_argument("--first", type=int, default=None, help="first frame index")
     t.add_argument("--last", type=int, default=None, help="stop before this frame index")
