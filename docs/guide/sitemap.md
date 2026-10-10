@@ -60,6 +60,11 @@ Top-3 / Top-10, crystal apo structures):
 | Martini 3 | 0.76 / 0.88 / 0.88 | 0.49 / 0.61 / 0.63 |
 | SIRAH | 0.68 / 0.80 / 0.88 | 0.54 / 0.59 / 0.61 |
 
+Earlier presets are kept under a name, unchanged, so that a run can use them
+again or compare them with the current ones: `--preset static200` (in `traj`
+and `structure`) uses the presets tuned on the static training set alone, before
+any fine-tuning on MD frames. `--preset` also takes a presets file of one's own.
+
 ## One structure
 
 ```bash

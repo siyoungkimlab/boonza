@@ -111,6 +111,29 @@ def test_structure_cli(tmp_path):
     assert "scene overview, store" in view
 
 
+def test_named_presets(tmp_path):
+    """static200 is kept by name; a presets file is used by its path, and its preset by the
+    command line."""
+    import json
+
+    from boonza.sitemap import presets as P
+
+    assert "static200" in P.names()
+    static = P.presets("static200")
+    assert {static[m]["probe"] for m in static} == {"AC2", "SC3", "Y4Cv"}
+    mine = {**static, "martini3": {**static["martini3"], "spacing": 3.0}}
+    (tmp_path / "mine.json").write_text(json.dumps(mine))
+    assert P.preset("martini3", str(tmp_path / "mine.json"))["spacing"] == 3.0
+    with pytest.raises(ValueError, match="no presets"):
+        P.presets("no-such-presets")
+    out = tmp_path / "sites"
+    assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
+                 "--preset", "static200"]) == 0  # fmt: skip
+    assert list(csv.DictReader(open(out / "pockets.csv")))
+    assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
+                 "--preset", "no-such-presets"]) == 1  # fmt: skip
+
+
 @pytest.mark.parametrize("model", ["martini2", "martini3", "sirah"])
 def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     """Myoglobin without its heme: the heme pocket is among the first sites, and --ligand
