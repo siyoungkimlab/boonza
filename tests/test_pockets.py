@@ -159,6 +159,30 @@ def test_volume_overlap_of_a_pocket_on_its_ligand():
     assert len(cube) * overlap.SPACING**3 == pytest.approx(8.0 * (5 / 4) ** 3)
 
 
+@pytest.mark.parametrize("spacing", [1.0, 1.5, 2.0])
+def test_grid_pocket_is_every_points_cube(spacing):
+    """grid_pocket, done for all points at once, gives the voxels of each point's cube
+    taken one by one, on and off the grid."""
+    rng = np.random.default_rng(int(spacing * 10))
+    on = rng.integers(-6, 7, (40, 3)) * spacing
+    pts = np.vstack([on, rng.uniform(-8, 8, (40, 3))])
+    half, n = spacing / 2, int(np.ceil(spacing / 2 / overlap.SPACING))
+    offsets = np.mgrid[-n : n + 1, -n : n + 1, -n : n + 1].reshape(3, -1).T
+    one_by_one = []
+    for c in pts:
+        cand = np.round(c / overlap.SPACING).astype(int) + offsets
+        one_by_one.append(cand[(np.abs(cand * overlap.SPACING - c) <= half + 1e-9).all(1)])
+    expected = np.unique(np.vstack(one_by_one), axis=0)
+    np.testing.assert_array_equal(overlap.grid_pocket(pts, spacing), expected)
+    assert len(overlap.grid_pocket(np.zeros((0, 3)), spacing)) == 0
+
+
+def test_unique_rows_is_numpys():
+    """The integer-key unique of voxels is np.unique(axis=0): the same rows, the same order."""
+    v = np.random.default_rng(5).integers(-30, 30, (5000, 3))
+    np.testing.assert_array_equal(overlap._unique_rows(v), np.unique(v, axis=0))
+
+
 def _shell(radius=7.0, n=400, seed=0):
     """Beads on a sphere with a gap at +z: a closed cavity with one mouth."""
     r = np.random.default_rng(seed).normal(size=(n, 3))
