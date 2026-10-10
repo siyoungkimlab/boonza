@@ -4,7 +4,7 @@
     boonza sitemap structure APO.pdb --model martini3 -o OUT [--holo HOLO.pdb [--holo-ligand SEL]]
 
 traj: the sites of every frame of a coarse-grained run under the model's preset
-(presets.json), grouped into pockets by the residues lining them
+(dynamic200 unless --preset), grouped into pockets by the residues lining them
 (traj.consensus), written as OUT/pockets.csv and OUT/view.pml (report.py), with
 every frame's sites in OUT/sites.pkl so the grouping can be redone without them.
 """
@@ -132,6 +132,7 @@ def cmd_structure(args) -> int:
 
 
 def main(argv=None) -> int:
+    from .presets import STRUCTURE, TRAJ
     from .traj import COOCCUR, RANKINGS, SIMILARITY
 
     ap = argparse.ArgumentParser(
@@ -199,10 +200,10 @@ def main(argv=None) -> int:
         help="worker processes (default: every core but two)",
     )
     t.add_argument("--recompute", action="store_true", help="ignore OUT/sites.pkl")
-    t.add_argument("--preset", metavar="NAME|FILE",
-                   help="presets to use: a named set kept in boonza (static200, the "
-                        "static-training presets) or a presets file (default: the current "
-                        "ones)")  # fmt: skip
+    t.add_argument("--preset", metavar="NAME|FILE", default=TRAJ,
+                   help="presets to use: a named set kept in boonza or a presets file "
+                        f"(default: {TRAJ}, tuned on MD frames; {STRUCTURE}: on crystal "
+                        "structures)")  # fmt: skip
     s = sub.add_parser("structure", help="sites of one structure")
     s.add_argument("input", help="an all-atom structure (mapped to beads), or a coarse-grained "
                    "one that carries its bead types")  # fmt: skip
@@ -222,10 +223,10 @@ def main(argv=None) -> int:
                    help="how the holo ligand is carried onto the structure: superposing the "
                         "whole holo protein (default) or the chain the ligand sits in")  # fmt: skip
     s.add_argument("--top", type=int, default=10, help="sites drawn in the view")
-    s.add_argument("--preset", metavar="NAME|FILE",
-                   help="presets to use: a named set kept in boonza (static200, the "
-                        "static-training presets) or a presets file (default: the current "
-                        "ones)")  # fmt: skip
+    s.add_argument("--preset", metavar="NAME|FILE", default=STRUCTURE,
+                   help="presets to use: a named set kept in boonza or a presets file "
+                        f"(default: {STRUCTURE}, tuned on crystal structures; {TRAJ}: on MD "
+                        "frames)")  # fmt: skip
     args = ap.parse_args(argv)
     try:
         return {"traj": cmd_traj, "structure": cmd_structure}[args.cmd](args)

@@ -3,7 +3,8 @@
 Per frame: the protein's beads (never the probe chain LIG, which
 boonza.pockets.prepare.protein_ids leaves out), made whole and fitted on the
 backbone (boonza's Glue; the first frame is the reference), and their sites
-under the model's preset (presets.find), each with the residues lining it.
+under the model's preset (presets.find; dynamic200 by default), each with the residues
+lining it.
 
 Pockets move and change shape through a run, so a pocket is not a place: it is
 named by the residues that line it.  A site's lining residues are those with a
@@ -287,9 +288,9 @@ def _frame(job):
 
 
 def frame_sites(system, ids, coords, model: str, jobs: int = 4, progress: bool = True,
-                preset: str | None = None) -> list[FrameSite]:  # fmt: skip
-    """The sites of every frame under ``model``'s preset (of presets ``preset``: see
-    presets.path), with their lining residues;
+                preset: str | None = "dynamic200") -> list[FrameSite]:  # fmt: skip
+    """The sites of every frame under ``model``'s preset (of presets ``preset``, by default
+    presets.TRAJ's, tuned on MD frames: see presets.path), with their lining residues;
     ``progress`` reports frames done, the rate and the time left about every 10%."""
     import sys
     import time

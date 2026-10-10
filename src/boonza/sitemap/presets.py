@@ -16,6 +16,14 @@ own (a tuning candidate, say).  Named so far:
               SC3, SIRAH Y4Cv), tuned on the 200 static holo complexes alone
               (2026-10-10), before any fine-tuning on MD frames
               (docs/guide/sitemap_static200.md: data, search, validation)
+  dynamic200  static200 fine-tuned on MD frames of the same complexes' runs, their
+              ligand removed (5 frames of each of 191 100-ns runs per model;
+              docs/guide/sitemap_dynamic200.md)
+
+Each command has its default: ``boonza sitemap traj`` finds a run's sites under
+dynamic200 (TRAJ), tuned on frames like the ones it reads, and ``boonza sitemap
+structure`` under static200 (STRUCTURE), tuned on crystal structures.
+presets.json is what :func:`find` uses when given no name.
 """
 
 from __future__ import annotations
@@ -28,6 +36,8 @@ import numpy as np
 
 PRESETS = Path(__file__).resolve().parents[1] / "data" / "sitemap" / "presets.json"
 NAMED = PRESETS.parent / "presets"
+TRAJ = "dynamic200"  #: boonza sitemap traj's default presets
+STRUCTURE = "static200"  #: boonza sitemap structure's default presets
 
 
 def names() -> list[str]:
