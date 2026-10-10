@@ -116,7 +116,8 @@ def _pharm_pdb(path: Path, spots) -> None:
 
 def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coords,
           pids=None, pcoords=None, apo=None, top: int | None = None,
-          rank: str = "p_max", spots=None, view_system=None) -> Path:  # fmt: skip
+          rank: str = "p_max", spots=None, view_system=None, holo=None,
+          holo_ligand: str | None = None, ligand=None) -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 
     ``coords``/``pcoords``: protein/probe positions of the analysed frames (frame k is MD
@@ -124,11 +125,16 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     ``top``: draw only the best ``top`` pockets (all are in the table).  ``rank``: the
     traj.RANKINGS value that orders them.  ``spots``: the run's pharmacophore hotspots
     (pharm.hotspots).  ``view_system``: the run's system without its bands (its
-    view.dms, boonza's for_viewing), atom for atom as ``system``, for the frames' bonds."""
+    view.dms, boonza's for_viewing), atom for atom as ``system``, for the frames' bonds.
+    ``holo``, ``holo_ligand``, ``ligand``: a holo structure superposed on the run, its
+    ligand's selection and that ligand's heavy atoms there: every pocket is measured
+    against it in its best frame (PPc, MOc, LVC, PVN) and by the share of its frames whose
+    site is PPc-right (frames_PPc)."""
     from ..io import save
     from ..pockets import view as BV
     from .pharm import assign
     from .presets import preset
+    from .structure import _against
     from .traj import RANKINGS
 
     out = Path(out)
@@ -169,9 +175,22 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
                      "probes_at_best_frame": " ".join(probe_names),
                      "hotspots": "; ".join(f"{CODES[h.family]} x{h.enrichment:.0f} "
                                            f"({h.ligands} probes)" for h in mine)})  # fmt: skip
+        verdict = ""
+        if ligand is not None:
+            from ..pockets.overlap import ppc
+
+            m = _against(p.best, spacing, ligand)
+            per_frame = p.per_frame_best().values()
+            rows[-1].update(
+                {
+                    **m,
+                    "frames_PPc": round(float(np.mean([ppc(x.xyz, ligand) for x in per_frame])), 3),
+                }
+            )
+            verdict = f"{' PPc' if m['PPc'] else ''}{' MOc' if m['MOc'] else ''} LVC {m['LVC']:.2f}"
         if top is not None and k > top:
             continue
-        label = f"{k} occ {s['occupancy']:.2f} p {s['p_max']:.2f} md frame {f * every}"
+        label = f"{k} occ {s['occupancy']:.2f} p {s['p_max']:.2f} md frame {f * every}{verdict}"
         drawn.append((k, label, p.best.xyz.mean(0)))
         frame = _drawable(view_system or system, ids, coords[f])
         names = {"frame": f"frame_{k}_md{f * every}.{fmt}", "sites": f"sites_{k}.pdb"}
@@ -203,6 +222,9 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
         save(beads, out / f"beads.{fmt}")
         if apo is not None:
             save(apo.select("protein").clone(), out / "apo.pdb")
+        if holo is not None:
+            save(holo.select(f"protein and not ({holo_ligand})").clone(), out / "holo.pdb")
+            save(holo.select(holo_ligand).clone(), out / "ligand.pdb")
     lines = [f"# boonza sitemap: pockets of a {model} run ({n_frames} frames, every {every}th MD "
              f"frame, {len(pockets)} pockets ranked by {rank}, the best {len(drawn)} drawn)",
              "# each pocket is a group, pocket_<rank>: site_<rank> (its site in its best",
@@ -213,11 +235,18 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
              "# hydrophobe green)", *BV.PREAMBLE]  # fmt: skip
     if apo is not None:
         lines += ["load apo.pdb, apo"]
+    if holo is not None:
+        lines += ["load holo.pdb, holo", "load ligand.pdb, ligand"]
     lines += [f"load beads.{fmt}, beads", "set connect_mode, 1", "load sites.pqr, sites_all",
               "set connect_mode, 0", "hide everything", "bg_color black",
               "set ray_opaque_background, 0"]  # fmt: skip
     if apo is not None:
         lines += ["show cartoon, apo", "color wheat, apo", "set cartoon_transparency, 0.45, apo"]
+    if holo is not None:
+        lines += ["show cartoon, holo", "color lightblue, holo",
+                  "# click holo in the object panel to compare the folds", "disable holo",
+                  "show sticks, ligand and not hydro", "color tv_blue, ligand and elem C",
+                  "set stick_radius, 0.3, ligand"]  # fmt: skip
     lines += ["show spheres, beads", "set sphere_scale, 0.35, beads", "color grey70, beads",
               "set sphere_transparency, 0.6, beads"]  # fmt: skip
     lines += [] if apo is None else ["disable beads"]
