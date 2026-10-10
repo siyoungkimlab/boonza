@@ -50,6 +50,72 @@ reading them:
   Martini 2's capped cutoff (-6.02) is a real requirement of contact.
 - Martini 3's `merge_cap` is 0: neighbouring groups are never merged.
 
+## Compared with SiteMap's own scores
+
+Schrödinger's SiteMap ranks sites with fixed linear scores (Halgren 2009, *J.
+Chem. Inf. Model.* 49, 377):
+
+- **SiteScore** = 0.0733 sqrt(n) + 0.6688 e - 0.20 p, where n is the number of
+  site points on its 1 A grid (capped at 100), e the enclosure and p the
+  hydrophilic score.
+- **Dscore** (druggability) = 0.094 sqrt(n) + 0.60 e - 0.324 p. Some later
+  papers quote the last weight as 0.34.
+
+The commonly quoted Dscore classes are below 0.83 undruggable, 0.83-0.98
+difficult and above 0.98 druggable.
+
+`boonza sitemap` keeps SiteScore's three terms but fits their weights per
+model, as a logistic regression (right site against the rest), so they are
+not directly comparable:
+
+- it has an intercept;
+- n is in A^3, which on SiteMap's grid is the same as points, but is not
+  capped;
+- philic is the probe's mean Lennard-Jones energy with the polar beads (sign
+  flipped), in kcal/mol, which is not SiteMap's hydrophilic score.
+
+Ratios to the sqrt(n) weight compare better:
+
+| | enclosure / sqrt(n) | philic / sqrt(n) |
+|---|---|---|
+| SiteMap SiteScore | 9.1 | -2.7 |
+| Martini 2 (static200) | 8.8 | 0.15 |
+| Martini 3 (static200) | 19.9 | -1.0 |
+| SIRAH (static200) | -6.3 | 0.02 |
+
+Size dominates in every model, as in SiteMap. Martini 2 weighs enclosure
+against size almost exactly as SiteMap does. The polar term matters little in
+the CG models.
+
+**Why enclosure differs between models.** Each model's raw weight is per unit
+of enclosure, so it scales with how widely enclosure varies (SD 0.08-0.12).
+Standardised weights, over the best trial's sites on the 200 training
+complexes, are closer:
+
+| | Martini 2 | Martini 3 | SIRAH |
+|---|---|---|---|
+| standardised weight: sqrt(n) | +1.40 | +1.36 | +1.62 |
+| standardised weight: enclosure | +0.33 | +0.48 | -0.24 |
+| enclosure alone (no other terms) | +0.99 | +1.35 | +0.16 |
+| right site more enclosed than the same complex's wrong sites | 84% of pairs | 89% | 63% |
+| enclosure of right / wrong sites (median) | 0.68 / 0.59 | 0.62 / 0.52 | 0.71 / 0.65 |
+| sites with enclosure > 0.75 (share right) | 10% (28%) | 3% (25%) | 26% (16%) |
+| median exposure of those sites | 0.14 | 0.02 | 0.00 |
+
+- **Martini 2 and 3.** A more enclosed site is more likely the ligand's.
+  Martini 2's weight is the smaller of the two because its enclosure and
+  philic terms are strongly correlated (r = 0.75), so the two share the
+  credit.
+- **SIRAH.** Enclosure barely separates right sites from wrong ones. A
+  quarter of SIRAH's sites are small, fully buried voids (exposure 0, median
+  48 A^3), and only 16% of them are right. SIRAH's beads are smaller and more
+  numerous, leaving interstitial cavities between them. Its contact cut-off
+  is loose (138 kcal/mol), so they pass the contact filter. Those voids make
+  up most of the high-enclosure sites. Once size is accounted for, more
+  enclosure points slightly towards a wrong site, hence the negative weight.
+  A tighter contact cut-off or a minimum exposure would remove them, and is
+  worth trying when fine-tuning.
+
 ## Training data: 200 holo complexes
 
 The structures are `~/Dropbox/PocketFinding/fpocketSet/fpocketSet_263/holo/<pdb>.mae`
