@@ -15,6 +15,7 @@ own (a tuning candidate, say).  Named so far:
   static200   valine's side-chain bead in every model (Martini 2 AC2, Martini 3
               SC3, SIRAH Y4Cv), tuned on the 200 static holo complexes alone
               (2026-10-10), before any fine-tuning on MD frames
+              (docs/guide/sitemap_static200.md: data, search, validation)
 """
 
 from __future__ import annotations

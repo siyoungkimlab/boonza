@@ -54,16 +54,17 @@ complexes.
 On the validation sets, which share no protein with the training set (Top-1 /
 Top-3 / Top-10, crystal apo structures):
 
-| model | fpocket's 41 apo/holo pairs (easy) | Schrödinger's 41 apo (hard) |
+| model | 40 apo/holo pairs from fpocket's pp48 (easy) | Schrödinger's 41 apo (hard) |
 |---|---|---|
 | Martini 2 | 0.68 / 0.85 / 0.88 | 0.49 / 0.56 / 0.66 |
-| Martini 3 | 0.76 / 0.88 / 0.88 | 0.49 / 0.61 / 0.63 |
-| SIRAH | 0.68 / 0.80 / 0.88 | 0.54 / 0.59 / 0.61 |
+| Martini 3 | 0.78 / 0.90 / 0.90 | 0.49 / 0.61 / 0.63 |
+| SIRAH | 0.70 / 0.82 / 0.88 | 0.54 / 0.59 / 0.61 |
 
 Earlier presets are kept under a name, unchanged, so that a run can use them
 again or compare them with the current ones: `--preset static200` (in `traj`
 and `structure`) uses the presets tuned on the static training set alone, before
-any fine-tuning on MD frames. `--preset` also takes a presets file of one's own.
+any fine-tuning on MD frames ([how they were made](sitemap_static200.md)).
+`--preset` also takes a presets file of one's own.
 
 ## One structure
 
