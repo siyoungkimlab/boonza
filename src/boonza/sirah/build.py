@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..analyze import chain_residues
 from ..cofactors import ATOM_MASS, COFACTOR_FC, COFACTOR_REACH
 from . import read, unpack
 
@@ -214,19 +215,6 @@ def disulfide_pairs(system, atoms: str = "protein") -> list[tuple[int, int]]:
     return sorted(pairs)
 
 
-def _polymer_resnames(system) -> set:
-    """The residue names the structure's own reading calls a polymer.  What SIRAH
-    has no entry for is not therefore a cofactor: a D-amino acid or a modified
-    residue belongs to the chain, and an inert bead there throws a side chain
-    away in the middle of a protein."""
-    ids = system.select("protein or nucleic").ids
-    if not len(ids):
-        return set()
-    res = np.asarray(system.residues["name"])
-    return {str(res[r]).strip().upper()
-            for r in np.unique(np.asarray(system.atoms["residue"])[ids]).tolist()}  # fmt: skip
-
-
 #: SIRAH's own ions (sirah_ions.itp): one bead, a charge, and no bonded terms.
 #: CaX and MgX are +2, ZnX is +1 -- SIRAH's own choice, which already allows for
 #: the residues holding it.  They carry no angle or dihedral types either, so an
@@ -265,6 +253,9 @@ def map_structure(system, atoms: str = "protein", log=None, strict: bool = False
     chains = np.asarray(system.chains["name"])
     unknown, missing, changed = set(), [], set()
     bridged = {r for pair in disulfide_pairs(system, atoms) for r in pair}
+    # what SIRAH has no entry for is not therefore a cofactor: a D-amino acid or a
+    # modified residue bonded into the chain is refused, not made inert
+    linked = set(chain_residues(system).tolist()) if cofactors else set()
     out: list[Bead] = []
     for r in dict.fromkeys(residue.tolist()):
         here = residue == r
@@ -275,7 +266,7 @@ def map_structure(system, atoms: str = "protein", log=None, strict: bool = False
             changed.add(f"{resname} as CYX, its sulfur being bridged")
             resname = "CYX"
         entry = mapping.get(resname)
-        if entry is None and cofactors and resname not in _polymer_resnames(system):
+        if entry is None and cofactors and int(r) not in linked:
             # no residue of SIRAH's, and not part of a chain: one bead per heavy
             # atom, holding the room up and saying nothing about what fills it
             for name, x, z in zip(names[here], xyz[here], anum[here], strict=True):

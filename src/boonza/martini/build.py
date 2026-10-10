@@ -660,10 +660,12 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     nameless = [r for r in residues if named(r.resname) not in ff.blocks]
     # a residue the force field has no block for is not therefore a cofactor: a
     # D-amino acid or a modified one is part of the chain, and mapping it inert
-    # would throw away a side chain in the middle of a protein.  What the
-    # structure's own reading calls a polymer is refused rather than approximated
+    # would throw away a side chain in the middle of a protein.  What is bonded
+    # into the chain is refused rather than approximated; a free SAH or ATP, read
+    # as protein or nucleic by its atom names alone, is not
+    linked = _chain_keys(system) if cofactors else set()
     inchain = sorted({r.resname for r in nameless
-                      if r.resname in _polymer_resnames(system)}) if cofactors else []  # fmt: skip
+                      if (r.chain, r.resid, r.insertion) in linked})  # fmt: skip
     if inchain:
         raise ValueError(f"not {ff.name} residues, and part of a chain rather than cofactors: "
                          f"{', '.join(inchain)}.  Rename them to the residues they are, or leave "
@@ -1239,15 +1241,16 @@ def _coordination_bonds(residues, cofactors) -> set:
     return out
 
 
-def _polymer_resnames(system) -> set:
-    """The residue names the structure's own reading calls a polymer: anything with
-    a backbone, whatever the force field happens to have a block for."""
-    ids = system.select("protein or nucleic").ids
-    if not len(ids):
-        return set()
-    res = np.asarray(system.residues["name"])
-    return {str(res[r]).strip().upper()
-            for r in np.unique(np.asarray(system.atoms["residue"])[ids]).tolist()}  # fmt: skip
+def _chain_keys(system) -> set:
+    """(chain, resid, insertion) of every residue bonded into a chain, as
+    ``_residues`` names them."""
+    from ..analyze import chain_residues
+
+    res = system.residues
+    chains = np.asarray(system.chains["name"])
+    return {(str(chains[res["chain"][r]]).strip(), int(res["resid"][r]),
+             str(res["insertion"][r]).strip())
+            for r in chain_residues(system).tolist()}  # fmt: skip
 
 
 def _residue_keys(system, selection: str) -> set:
