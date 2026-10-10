@@ -118,9 +118,12 @@ def test_named_presets(tmp_path):
 
     from boonza.sitemap import presets as P
 
-    assert "static200" in P.names()
+    assert {"static200", "dynamic200"} <= set(P.names())
     static = P.presets("static200")
     assert {static[m]["probe"] for m in static} == {"AC2", "SC3", "Y4Cv"}
+    dynamic = P.presets("dynamic200")  # fine-tuned from static200: the same probes
+    assert {m: dynamic[m]["probe"] for m in dynamic} == {m: static[m]["probe"] for m in static}
+    assert (P.TRAJ, P.STRUCTURE) == ("dynamic200", "static200")
     mine = {**static, "martini3": {**static["martini3"], "spacing": 3.0}}
     (tmp_path / "mine.json").write_text(json.dumps(mine))
     assert P.preset("martini3", str(tmp_path / "mine.json"))["spacing"] == 3.0

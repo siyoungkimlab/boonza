@@ -163,6 +163,7 @@ guide/swim
 guide/pockets
 guide/sitemap
 guide/sitemap_static200
+guide/sitemap_dynamic200
 guide/martini
 guide/building
 guide/checking

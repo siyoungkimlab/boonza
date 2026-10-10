@@ -1,0 +1,125 @@
+{
+ "martini2": {
+  "spacing": 2.0,
+  "probe": "AC2",
+  "params": {
+   "outside": 1.77,
+   "ray_length": 9.41,
+   "enclosure": 0.52,
+   "contact_form": "capped",
+   "contact": -5.72,
+   "neighbour_radius": 1.65,
+   "neighbours": 4,
+   "min_points": 2,
+   "merge_gap": 8.2,
+   "merge_cap": 59.49,
+   "min_volume": 57.49
+  },
+  "score": {
+   "intercept": -7.379860377019956,
+   "sqrt_n": 0.20502832091012185,
+   "enclosure": 8.014134113792563,
+   "philic": -0.15977949775087474
+  },
+  "trained": {
+   "set": "md_train200_martini2 (5 frames, 20-100 ns, of each of 191 100-ns runs of the 200 training complexes, ligand removed; fine-tuned from static200)",
+   "search": "md_train200_martini2_halfNone_martini2_ft",
+   "trial": 92,
+   "objective": 0.3969577447856808,
+   "cv": {
+    "top1": 0.49947643979057593,
+    "top3": 0.6481675392670158,
+    "top5": 0.6712041884816754,
+    "top10": 0.6869109947643979
+   },
+   "cv_overlap": {
+    "fill": 0.22009350004256578,
+    "LVC": 0.18200638743455488,
+    "PVN": 0.29029361256544495,
+    "DVO": 0.07505235602094237
+   }
+  }
+ },
+ "martini3": {
+  "spacing": 2.0,
+  "probe": "SC3",
+  "params": {
+   "outside": 2.74,
+   "ray_length": 8.05,
+   "enclosure": 0.52,
+   "contact_form": "full",
+   "contact": 23.98,
+   "neighbour_radius": 1.74,
+   "neighbours": 3,
+   "min_points": 2,
+   "merge_gap": 6.22,
+   "merge_cap": 117.22,
+   "min_volume": 22.12
+  },
+  "score": {
+   "intercept": -4.529446006421224,
+   "sqrt_n": 0.2839183068086179,
+   "enclosure": 2.690511780381126,
+   "philic": -0.14284254277168443
+  },
+  "trained": {
+   "set": "md_train200_martini3 (5 frames, 20-100 ns, of each of 191 100-ns runs of the 200 training complexes, ligand removed; fine-tuned from static200)",
+   "search": "md_train200_martini3_halfNone_martini3_ft",
+   "trial": 90,
+   "objective": 0.47633583127232226,
+   "cv": {
+    "top1": 0.6010471204188481,
+    "top3": 0.7591623036649214,
+    "top5": 0.7926701570680629,
+    "top10": 0.818848167539267
+   },
+   "cv_overlap": {
+    "fill": 0.27256695050275975,
+    "LVC": 0.21116094240837713,
+    "PVN": 0.37692607329842914,
+    "DVO": 0.10102041884816755
+   }
+  }
+ },
+ "sirah": {
+  "spacing": 2.0,
+  "probe": "Y4Cv",
+  "params": {
+   "contact_form": "full",
+   "outside": 1.6,
+   "ray_length": 9.06,
+   "enclosure": 0.59,
+   "neighbour_radius": 1.43,
+   "neighbours": 5,
+   "min_points": 6,
+   "merge_gap": 5.52,
+   "merge_cap": 430.2,
+   "min_volume": 8.44,
+   "contact": 202.21
+  },
+  "score": {
+   "intercept": -3.0253354492216857,
+   "sqrt_n": 0.22378741393234164,
+   "enclosure": -0.5201335476275485,
+   "philic": -0.014697818557110047
+  },
+  "trained": {
+   "set": "md_train200_sirah (5 frames, 20-100 ns, of each of 191 100-ns runs of the 200 training complexes, ligand removed; fine-tuned from static200)",
+   "search": "md_train200_sirah_halfNone_sirah_ft",
+   "trial": 78,
+   "objective": 0.4461206573875889,
+   "cv": {
+    "top1": 0.5507853403141362,
+    "top3": 0.6921465968586388,
+    "top5": 0.724607329842932,
+    "top10": 0.7403141361256544
+   },
+   "cv_overlap": {
+    "fill": 0.27077534618879034,
+    "LVC": 0.25110774869109925,
+    "PVN": 0.3161651308900521,
+    "DVO": 0.0895632460732984
+   }
+  }
+ }
+}

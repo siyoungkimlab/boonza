@@ -60,11 +60,27 @@ Top-3 / Top-10, crystal apo structures):
 | Martini 3 | 0.78 / 0.90 / 0.90 | 0.49 / 0.61 / 0.63 |
 | SIRAH | 0.70 / 0.82 / 0.88 | 0.54 / 0.59 / 0.61 |
 
-Earlier presets are kept under a name, unchanged, so that a run can use them
-again or compare them with the current ones: `--preset static200` (in `traj`
-and `structure`) uses the presets tuned on the static training set alone, before
-any fine-tuning on MD frames ([how they were made](sitemap_static200.md)).
-`--preset` also takes a presets file of one's own.
+There are two sets of presets, kept by name, and each command uses the one
+tuned on what it reads:
+
+- **static200** (`boonza sitemap structure`'s default), tuned on the 200
+  crystal structures above ([how they were made](sitemap_static200.md));
+- **dynamic200** (`boonza sitemap traj`'s default): static200 fine-tuned on
+  MD frames of the same complexes' runs, their ligand removed
+  ([how they were made](sitemap_dynamic200.md)).
+
+On MD frames of the Schrödinger set's apo runs (40 cases, 10 frames each),
+dynamic200 finds the ligand's site more often (Top-1 / Top-3 / Top-10):
+
+| model | static200 | dynamic200 |
+|---|---|---|
+| Martini 2 | 0.32 / 0.46 / 0.54 | 0.36 / 0.51 / 0.56 |
+| Martini 3 | 0.48 / 0.58 / 0.65 | 0.49 / 0.61 / 0.69 |
+| SIRAH | 0.31 / 0.44 / 0.59 | 0.39 / 0.47 / 0.59 |
+
+On crystal structures, static200 does better (the table above). `--preset`
+(in `traj` and `structure`) chooses either, or takes a presets file of one's
+own.
 
 ## One structure
 
