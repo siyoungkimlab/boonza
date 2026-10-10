@@ -290,6 +290,60 @@ def test_neutral_termini_and_no_disulfides():
                 if t.meta.get("comment") == "Disulfide bridge"]  # fmt: skip
 
 
+def _capped(path):
+    """Chain A with its first residue cut down to an ACE and its last to an N-methyl
+    amide, called NMA here: a cap is known by its atoms, not its name."""
+    s = boonza.load(path).select("protein and chain A and not element H").clone()
+    res = np.asarray(s.atoms["residue"])
+    names = [str(x).strip() for x in s.atoms["name"]]
+    first, last = 0, s.nresidues - 1
+    keep = {first: {"CA": "CH3", "C": "C", "O": "O"}, last: {"N": "N", "CA": "C"}}
+    s.delete_atoms([a for a in range(s.natoms)
+                    if res[a] in keep and names[a] not in keep[res[a]]])  # fmt: skip
+    res = np.asarray(s.atoms["residue"])
+    s.atoms["name"] = [keep[res[a]][n] if res[a] in keep else n
+                       for a, n in enumerate(str(x).strip() for x in s.atoms["name"])]  # fmt: skip
+    s.residue(first).name = "ACE"
+    s.residue(last).name = "NMA"
+    return s
+
+
+@pytest.mark.parametrize("forcefield", ["martini22", "martini3001"])
+def test_a_cap_is_left_out_and_its_end_is_neutral(forcefield):
+    """An ACE or NME is no residue of Martini's, and the group it stands for
+    carries no charge: it is left out, saying so, and the end it capped is
+    neutral while an uncapped end keeps its charge."""
+    s = _capped(DATA / "2TRX.pdb")
+    from boonza.analyze import end_caps
+
+    assert sorted(end for _, end in end_caps(s).values()) == ["C", "N"]
+    with pytest.warns(UserWarning, match="ACE A1 left out: .* is a neutral N-terminus"):
+        m = martinize(s, "protein", forcefield=forcefield)
+    nodes = [n for x in m.molecules for n in x.nodes]
+    assert not {"ACE", "NMA"} & {n["resname"] for n in nodes}
+    bb = [n for n in nodes if n["atomname"] == "BB"]
+    assert (bb[0]["charge"], bb[-1]["charge"]) == (0.0, 0.0)
+    plain = martinize(boonza.load(DATA / "2TRX.pdb"), "protein and chain A",
+                      forcefield=forcefield)  # fmt: skip
+    bb = [n for x in plain.molecules for n in x.nodes if n["atomname"] == "BB"]
+    assert (bb[0]["charge"], bb[-1]["charge"]) == (1.0, -1.0)
+
+
+def test_sirah_leaves_a_cap_out_and_makes_its_end_neutral():
+    """SIRAH as Martini: the cap is left out, and its end takes the library's
+    neutral terminus while the run's own setting holds everywhere else."""
+    pytest.importorskip("boonza.sirah")
+    from boonza.sirah import sirahize
+
+    said = []
+    mol = sirahize(_capped(DATA / "2TRX.pdb"), "protein", log=said.append).molecules[0]
+    assert any("ACE A1 left out" in x for x in said)
+    assert any("NMA A108 left out" in x for x in said)
+    assert not {"ACE", "NMA"} & {b.residue for b in mol.beads}
+    neutral = sirahize(_capped(DATA / "2TRX.pdb"), "protein", termini="Neutral")
+    assert sum(mol.charges) == pytest.approx(sum(neutral.molecules[0].charges))
+
+
 def test_what_it_refuses():
     s = boonza.load(DATA / "1HHO.pdb")
     with pytest.raises(ValueError, match="not martini3001 protein residues: HEM"):

@@ -636,9 +636,14 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     ``scfix``/``extdih`` as martinize2's (side-chain corrections on by
     default).  Hydrogens present in the structure decide protonation:
     Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
-    neutral, and His is typed by which ring nitrogens carry one.
+    neutral, and His is typed by which ring nitrogens carry one.  A capping
+    group at a chain end (ACE, NME) is left out, and the end it capped made
+    neutral, as the cap had it.
     """
     ff = force_field(forcefield)
+    atoms, capped, notes = _without_caps(system, atoms)
+    for note in notes:
+        warnings.warn(note, stacklevel=2)
     residues, local = _residues(system, atoms)
     networked = None
     if elastic_selection is not None:
@@ -707,11 +712,14 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     # vermouth's termini: residues bonded to exactly one other residue
     nter = {r for r, nb in neighbours.items() if len(nb) == 1 and r < min(nb)}
     cter = {r for r, nb in neighbours.items() if len(nb) == 1 and r > max(nb)}
+    neutral = (set(range(len(residues))) if neutral_termini else
+               {r for r, res in enumerate(residues) if (res.chain, res.resid, res.insertion)
+                in capped})  # fmt: skip
     molecules, names, positions, missing = [], [], [], []
     unmodified: set[str] = set()
     for m, members in enumerate(groups):
         cg_ss = convert_dssp_to_martini("".join(ss[r] for r in members)) if ss else ""
-        mol = _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral_termini,
+        mol = _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
                               missing, unmodified, bead, cofactor_fc,
                               cofactor_neighbours, cofactor_tethers,
                               cofactor_reach, cofactor_anchors,
@@ -1085,9 +1093,9 @@ def _build_molecule(ff, residues, members, cg_ss, bonds, nter, cter, neutral,
         parents = _hydrogen_parents(res)
         mods = _modifications(res, names, parents, block_name)
         if r in nter:
-            mods.append("NH2-ter" if neutral else "N-ter")
+            mods.append("NH2-ter" if r in neutral else "N-ter")
         if r in cter:
-            mods.append("COOH-ter" if neutral else "C-ter")
+            mods.append("COOH-ter" if r in neutral else "C-ter")
         weights = _weights(ff, res, names, parents, block_name, mods)
         mass = np.array([_MASS.get(e, 30) for e in res.elements], float)
         index = {}
@@ -1251,6 +1259,43 @@ def _chain_keys(system) -> set:
     return {(str(chains[res["chain"][r]]).strip(), int(res["resid"][r]),
              str(res["insertion"][r]).strip())
             for r in chain_residues(system).tolist()}  # fmt: skip
+
+
+def _without_caps(system, atoms: str) -> tuple[str, set, list[str]]:
+    """``atoms`` without the capping groups at chain ends in it, the ends they
+    capped as (chain, resid, insertion), and a line saying so for each.
+
+    A cap is no residue of Martini's or SIRAH's, and the group it stands for is
+    neutral: what it capped is a chain end that carries no terminal charge.
+    """
+    from ..analyze import end_caps
+
+    caps = end_caps(system)
+    if not caps:
+        return atoms, set(), []
+    chosen = set(system.select(atoms).ids.tolist())
+    res, residue = system.residues, np.asarray(system.atoms["residue"])
+    chains = np.asarray(system.chains["name"])
+
+    def key(r):
+        return (str(chains[res["chain"][r]]).strip(), int(res["resid"][r]),
+                str(res["insertion"][r]).strip())  # fmt: skip
+
+    def name(r):
+        chain, resid, insertion = key(r)
+        return f"{str(res['name'][r]).strip()} {chain}{resid}{insertion}"
+
+    drop, ends, notes = [], set(), []
+    for cap, (host, end) in sorted(caps.items()):
+        if not chosen & set(np.flatnonzero(residue == host).tolist()):
+            continue  # whether or not the cap was asked for, the end it capped is neutral
+        mine = [a for a in np.flatnonzero(residue == cap).tolist() if a in chosen]
+        drop += mine
+        ends.add(key(host))
+        notes.append(f"{name(cap)} left out: {name(host)} is a neutral {end}-terminus")
+    if drop:
+        atoms = f"({atoms}) and not index {' '.join(map(str, drop))}"
+    return atoms, ends, notes
 
 
 def _residue_keys(system, selection: str) -> set:

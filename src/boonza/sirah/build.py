@@ -578,8 +578,15 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     pdb2gmx generates them.  ``termini`` is ``"Charged"`` or ``"Neutral"``,
     named as the library's ``.tdb`` files are.  ``strict`` refuses a structure
     missing an atom a bead sits on, where the default places the bead against
-    the bead it bonds to and says so.
+    the bead it bonds to and says so.  A capping group at a chain end (ACE,
+    NME) is left out, and the end it capped made neutral, as the cap had it.
     """
+    from ..martini.build import _without_caps
+
+    atoms, capped, notes = _without_caps(system, atoms)
+    for note in notes:
+        if log:
+            log(note)
     beads = map_structure(system, atoms, log, strict, cofactors)
     library, bonded = read_residues()
     masses = read_masses()
@@ -608,6 +615,9 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
                 order.append((b.resid, b.insertion, b.residue))
         index = {(at_of[(b.resid, b.insertion)], b.name): k for k, b in enumerate(mine)}
         first, last = 0, len(order) - 1
+        # an end a cap was taken from is neutral whatever the rest are
+        ends = [(mine[0].chain, *order[k][:2]) in capped for k in (first, last)]
+        n_kind, c_kind = ("Neutral" if cap and termini != "None" else termini for cap in ends)
         for k, b in enumerate(mine):
             if b.cofactor:  # no residue of SIRAH's: the inert bead, and its own mass
                 mol.types.append(COFACTOR_BEAD)
@@ -618,10 +628,10 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
             by_name = {name: (kind, charge) for name, kind, charge in entry.atoms}
             kind, charge = by_name[b.name]
             here = at_of[(b.resid, b.insertion)]
-            if here == first and b.name in n_ter[termini]:
-                kind, _mass, charge = n_ter[termini][b.name]
-            if here == last and b.name in c_ter[termini]:
-                kind, _mass, charge = c_ter[termini][b.name]
+            if here == first and b.name in n_ter[n_kind]:
+                kind, _mass, charge = n_ter[n_kind][b.name]
+            if here == last and b.name in c_ter[c_kind]:
+                kind, _mass, charge = c_ter[c_kind][b.name]
             mol.types.append(kind)
             mol.charges.append(charge)
             mol.masses.append(masses.get(kind, 0.0))
