@@ -138,6 +138,23 @@ def classify(system) -> tuple[np.ndarray, np.ndarray]:
     return restype, atomtype
 
 
+def chain_residues(system) -> np.ndarray:
+    """Indices of the residues that are part of a chain: read as protein or
+    nucleic acid, and bonded to another residue that is.
+
+    The reading alone goes by atom names, which a free molecule can share: SAH
+    carries an amino acid's N, CA and C, and ATP, GDP or FAD a nucleotide's
+    phosphate and ribose.  Only a bond into the next residue makes one a link of
+    the chain, as a modified or D-amino acid is.
+    """
+    res = system._atoms.column("residue")
+    polymer = np.zeros(system.nresidues, bool)
+    polymer[res[system.select("protein or nucleic").ids]] = True
+    ri, rj = res[system._bonds.column("i")], res[system._bonds.column("j")]
+    link = (ri != rj) & polymer[ri] & polymer[rj]
+    return np.unique(np.concatenate([ri[link], rj[link]]))
+
+
 def _sidechain(r, ca, atomtype, anum, names, res, nbrs) -> None:
     # pick a C-beta (the last heavy non-backbone neighbor), else a hydrogen
     cb = -1
