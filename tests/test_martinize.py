@@ -768,6 +768,30 @@ def test_a_residue_of_the_chain_is_not_a_cofactor():
         martinize(s, "protein or resname DGL", cofactors=True)
 
 
+def test_a_free_molecule_with_a_backbones_names_is_a_cofactor():
+    """Atom names say protein or nucleic acid, and a free molecule can share them:
+    SAH carries an amino acid's N, CA and C, ATP or FAD a nucleotide's phosphate
+    and ribose.  Only a bond into the chain makes a residue part of it, so one
+    bonded to nothing is held as a cofactor, by Martini and by SIRAH alike."""
+    s = boonza.load(DATA / "2TRX.pdb").select("protein and chain A").clone()
+    s.residue(s.nresidues - 1).name = "SAH"  # the C-terminal residue, cut loose below
+    mine = s.select("resname SAH").ids
+    bi, bj = np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"])
+    s.delete_bonds(np.flatnonzero(np.isin(bi, mine) != np.isin(bj, mine)))
+    assert len(s.select("protein and resname SAH").ids)  # still read as protein
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # whether it is buried is beside the point
+        m = martinize(s, "protein or resname SAH", cofactors=True)
+    held = [n for x in m.molecules for n in x.nodes if n.get("cofactor")]
+    assert len(held) == len(s.select("resname SAH and not element H").ids)
+
+    pytest.importorskip("boonza.sirah")
+    from boonza.sirah.build import map_structure
+
+    beads = map_structure(s, "protein or resname SAH", cofactors=True)
+    assert len([b for b in beads if b.cofactor]) == len(held)
+
+
 def test_a_cofactor_out_in_the_open_is_warned_about():
     """The inert bead is honest while the cofactor is buried, nothing being able to
     reach it and read as apolar what is really a charge or a phosphate.  One in
