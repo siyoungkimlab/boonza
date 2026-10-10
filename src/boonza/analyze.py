@@ -155,6 +155,52 @@ def chain_residues(system) -> np.ndarray:
     return np.unique(np.concatenate([ri[link], rj[link]]))
 
 
+def end_caps(system) -> dict[int, tuple[int, str]]:
+    """The capping groups at chain ends: cap residue -> (the residue it caps,
+    ``"N"`` or ``"C"``, the end of that residue it caps).
+
+    An ACE is CH3-C(=O) with its carbonyl bonded to a residue's backbone N, an
+    NME (or NMA) N-CH3 with its N bonded to a residue's backbone C.  They are
+    read by their heavy atoms, whatever the residue is called and whether or
+    not the file has hydrogens; an acetyl on a lysine's side chain is bonded to
+    no backbone and is no cap.
+    """
+    restype, atomtype = classify(system)
+    res = system._atoms.column("residue")
+    anum = system._atoms.column("anum")
+    heavy = anum > 1
+    off, order = system._csr("rescsr", system.nresidues, res)
+    adj_off, adj_nbr, _ = system._adjacency()
+
+    def nbrs(a):
+        return [b for b in adj_nbr[adj_off[a] : adj_off[a + 1]].tolist() if heavy[b]]
+
+    out = {}
+    for r in range(system.nresidues):
+        if restype[r] == RES_WATER:
+            continue
+        mine = [a for a in order[off[r] : off[r + 1]].tolist() if heavy[a]]
+        elems = sorted(int(anum[a]) for a in mine)
+        if elems not in ([6, 6, 8], [6, 7]):
+            continue
+        inside = {a: [b for b in nbrs(a) if res[b] == r] for a in mine}
+        outside = [(a, b) for a in mine for b in nbrs(a) if res[b] != r]
+        if len(outside) != 1:
+            continue
+        a, b = outside[0]
+        if restype[res[b]] != RES_PROTEIN or atomtype[b] != ATOM_PROBACK:
+            continue
+        if elems == [6, 6, 8]:  # ACE: the carbonyl C, bonded to CH3 and O, onto an N
+            ok = anum[a] == 6 and anum[b] == 7 and len(inside[a]) == 2
+            end = "N"
+        else:  # NME: the N, bonded to CH3, onto a carbonyl C
+            ok = anum[a] == 7 and anum[b] == 6 and len(inside[a]) == 1
+            end = "C"
+        if ok:
+            out[r] = (int(res[b]), end)
+    return {r: v for r, v in out.items() if v[0] not in out}
+
+
 def _sidechain(r, ca, atomtype, anum, names, res, nbrs) -> None:
     # pick a C-beta (the last heavy non-backbone neighbor), else a hydrogen
     cb = -1
