@@ -125,8 +125,9 @@ def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     assert (out / "ligand.pdb").exists()
 
 
-def _run(tmp_path, pdb):
-    """A small Martini 3 run of ``pdb``'s protein: its system and three jittered frames."""
+def _run(tmp_path, pdb, selection="protein"):
+    """A small Martini 3 run of ``pdb``'s ``selection``: its system and three jittered
+    frames."""
     from boonza.trajectory import open_writer
 
     run = tmp_path / "md_solute"
@@ -134,7 +135,7 @@ def _run(tmp_path, pdb):
     s = boonza.load(str(DATA / pdb))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cg = boonza.martinize(s, "protein", forcefield="martini3001").system()
+        cg = boonza.martinize(s, selection, forcefield="martini3001").system()
     boonza.save(cg, run / "solvated.dms")
     rng = np.random.default_rng(2)
     with open_writer(str(run / "trajectory.dcd"), cg.natoms) as w:
@@ -159,8 +160,9 @@ def test_traj_cli(tmp_path):
 
 
 def test_traj_cli_without_sites(tmp_path):
-    """A protein with no site in any frame (1TEN) gives an empty table, not an error."""
-    run = _run(tmp_path, "1TEN.pdb")
+    """A protein with no site in any frame (1TEN's first 28 residues) gives an empty
+    table, not an error."""
+    run = _run(tmp_path, "1TEN.pdb", "protein and resid < 830")
     out = tmp_path / "sitemap"
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip

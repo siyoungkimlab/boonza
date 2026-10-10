@@ -37,23 +37,28 @@ then only compared and grouped, which is what makes tuning them affordable.
 ## Presets
 
 Each model has a preset: the grid spacing, the probe, the site-finding
-thresholds and SiteScore's weights (`boonza/data/sitemap/presets.json`). They
-were tuned the way fpocket's and the `boonza pockets` presets were, on
-fpocket's training set of holo complexes, the score refitted for every trial
-and each trial judged by the cross-validated mean of Top-1 and Top-3 (the
-site's centre within 4 A of the ligand) and how much of the ligand the top
-site holds. The training set is fpocket's 263 complexes less every protein
-that is also in a validation set and the 32 whose site the file leaves
-incomplete (a partner chain or symmetry copy the file lacks): 200 complexes.
+thresholds and SiteScore's weights (`boonza/data/sitemap/presets.json`). The
+probe is the same residue in every model, valine's side-chain bead (Martini 2
+AC2, Martini 3 SC3, SIRAH Y4Cv), so a site means the same thing whichever model
+found it; leucine's and methionine's beads did as well in training.
+
+The presets were tuned the way fpocket's and the `boonza pockets` presets
+were, on prepared holo complexes from fpocket's training set, the score
+refitted for every trial and each trial judged by the cross-validated mean of
+Top-1 and Top-3 (the site's centre within 4 A of the ligand) and how much of
+the ligand the top site holds. The training set is fpocket's 263 complexes
+less every protein that is also in a validation set and those whose site the
+file leaves incomplete (a partner chain or symmetry copy the file lacks): 200
+complexes.
 
 On the validation sets, which share no protein with the training set (Top-1 /
 Top-3 / Top-10, crystal apo structures):
 
-| model | fpocket's 46 apo/holo pairs (easy) | Schrödinger's 41 apo (hard) |
+| model | fpocket's 41 apo/holo pairs (easy) | Schrödinger's 41 apo (hard) |
 |---|---|---|
-| Martini 2 | 0.67 / 0.78 / 0.78 | 0.54 / 0.59 / 0.59 |
-| Martini 3 | 0.72 / 0.85 / 0.87 | 0.44 / 0.56 / 0.59 |
-| SIRAH | 0.59 / 0.80 / 0.87 | 0.44 / 0.56 / 0.63 |
+| Martini 2 | 0.68 / 0.85 / 0.88 | 0.49 / 0.56 / 0.66 |
+| Martini 3 | 0.76 / 0.88 / 0.88 | 0.49 / 0.61 / 0.63 |
+| SIRAH | 0.68 / 0.80 / 0.88 | 0.54 / 0.59 / 0.61 |
 
 ## One structure
 

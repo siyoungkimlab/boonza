@@ -1,11 +1,11 @@
 """Each model's tuned site finding: parameters, probe and SiteScore weights.
 
 data/sitemap/presets.json holds, per model, the best trial of the search on
-the static training set (the cgsitemap benchmark: train263 less every protein
-of the validation sets and the complexes whose site the file leaves incomplete,
-200 complexes; its export_presets.py writes this file): the site-finding parameters, the
-contact probe by name, and the SiteScore terms (sqrt n, enclosure, philic) with
-their coefficients fitted on all of train263.
+the static training set (the cgsitemap benchmark: 200 prepared holo complexes of
+train263, less every protein of the validation sets and the complexes whose site
+the file leaves incomplete; its export_presets.py writes this file): the
+site-finding parameters, the contact probe by name, and the SiteScore terms
+(sqrt n, enclosure, philic) with their coefficients fitted on all 200.
 """
 
 from __future__ import annotations
