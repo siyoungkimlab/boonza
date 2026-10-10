@@ -47,7 +47,7 @@ def cmd_traj(args) -> int:
         "workdir": str(Path(args.workdir).resolve()),
         "model": args.model,
         "frames": (args.first, args.last, every),
-        "preset": preset(args.model),
+        "preset": preset(args.model, args.preset),
     }  # sites made under other presets are not reused
     sites = None
     if cache.exists() and not args.recompute:
@@ -56,7 +56,8 @@ def cmd_traj(args) -> int:
             sites = saved["sites"]
             print(f"sites of every frame from {cache}", flush=True)
     if sites is None:
-        sites = T.frame_sites(system, ids, coords, args.model, jobs=args.jobs)
+        sites = T.frame_sites(system, ids, coords, args.model, jobs=args.jobs,
+                              preset=args.preset)  # fmt: skip
         with open(cache.with_suffix(".partial"), "wb") as fh:
             pickle.dump({"key": key, "sites": sites, "fit_rmsd": rmsd}, fh)
         cache.with_suffix(".partial").replace(cache)
@@ -124,7 +125,8 @@ def cmd_structure(args) -> int:
     from .structure import run
 
     view = run(args.input, args.model, args.out, args.selection, args.ligand, args.top,
-               args.holo, args.holo_ligand, args.holo_top, args.holo_fit)  # fmt: skip
+               args.holo, args.holo_ligand, args.holo_top, args.holo_fit,
+               args.preset)  # fmt: skip
     print(f"-> {Path(args.out) / 'pockets.csv'}, {view}")
     return 0
 
@@ -197,6 +199,10 @@ def main(argv=None) -> int:
         help="worker processes (default: every core but two)",
     )
     t.add_argument("--recompute", action="store_true", help="ignore OUT/sites.pkl")
+    t.add_argument("--preset", metavar="NAME|FILE",
+                   help="presets to use: a named set kept in boonza (static200, the "
+                        "static-training presets) or a presets file (default: the current "
+                        "ones)")  # fmt: skip
     s = sub.add_parser("structure", help="sites of one structure")
     s.add_argument("input", help="an all-atom structure (mapped to beads), or a coarse-grained "
                    "one that carries its bead types")  # fmt: skip
@@ -216,6 +222,10 @@ def main(argv=None) -> int:
                    help="how the holo ligand is carried onto the structure: superposing the "
                         "whole holo protein (default) or the chain the ligand sits in")  # fmt: skip
     s.add_argument("--top", type=int, default=10, help="sites drawn in the view")
+    s.add_argument("--preset", metavar="NAME|FILE",
+                   help="presets to use: a named set kept in boonza (static200, the "
+                        "static-training presets) or a presets file (default: the current "
+                        "ones)")  # fmt: skip
     args = ap.parse_args(argv)
     try:
         return {"traj": cmd_traj, "structure": cmd_structure}[args.cmd](args)

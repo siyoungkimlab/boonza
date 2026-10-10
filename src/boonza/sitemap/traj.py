@@ -262,8 +262,8 @@ def load_run(workdir=None, system=None, trajectory=None, selection: str | None =
 _W: dict = {}
 
 
-def _init(beads, residue):
-    _W["beads"], _W["residue"] = beads, residue
+def _init(beads, residue, name=None):
+    _W["beads"], _W["residue"], _W["preset"] = beads, residue, name
 
 
 def _frame(job):
@@ -277,7 +277,7 @@ def _frame(job):
     out = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        found, _ = find(beads)
+        found, _ = find(beads, name=_W["preset"])
     for rank, (score, s) in enumerate(found, 1):
         reach = beads.radius + LINING
         d2 = min_dist2(beads.xyz, s.xyz, float(reach.max())).astype(float)
@@ -286,9 +286,10 @@ def _frame(job):
     return out
 
 
-def frame_sites(system, ids, coords, model: str, jobs: int = 4,
-                progress: bool = True) -> list[FrameSite]:  # fmt: skip
-    """The sites of every frame under ``model``'s preset, with their lining residues;
+def frame_sites(system, ids, coords, model: str, jobs: int = 4, progress: bool = True,
+                preset: str | None = None) -> list[FrameSite]:  # fmt: skip
+    """The sites of every frame under ``model``'s preset (of presets ``preset``: see
+    presets.path), with their lining residues;
     ``progress`` reports frames done, the rate and the time left about every 10%."""
     import sys
     import time
@@ -298,7 +299,7 @@ def frame_sites(system, ids, coords, model: str, jobs: int = 4,
     beads = from_system(system, model, ids)
     residue = np.asarray(system.atoms["residue"])[ids]
     out, t0, step = [], time.time(), max(1, len(coords) // 10)
-    with ProcessPoolExecutor(jobs, initializer=_init, initargs=(beads, residue)) as pool:
+    with ProcessPoolExecutor(jobs, initializer=_init, initargs=(beads, residue, preset)) as pool:
         for k, found in enumerate(pool.map(_frame, enumerate(coords), chunksize=4), 1):
             out.extend(found)
             if progress and (k % step == 0 or k == len(coords)):

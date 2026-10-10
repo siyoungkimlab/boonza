@@ -56,14 +56,16 @@ def _against(site, spacing: float, lig: np.ndarray) -> dict:
 
 def run(path, model: str, out, selection: str | None = None, ligand: str | None = None,
         top: int = 10, holo=None, holo_ligand: str | None = None, holo_top=None,
-        holo_fit: str = "whole") -> Path:  # fmt: skip
-    """Find and write the sites of the structure at ``path`` (see the module docstring)."""
+        holo_fit: str = "whole", preset: str | None = None) -> Path:  # fmt: skip
+    """Find and write the sites of the structure at ``path`` (see the module docstring),
+    under presets ``preset`` (presets.path: the current ones by default)."""
     from ..io import load, save
     from ..pockets import view as BV
     from ..pockets.prepare import NOT_PROBES, protein_ids
     from ..spatial import min_dist2
     from . import beads as B
-    from .presets import find, preset
+    from .presets import find
+    from .presets import preset as preset_of
     from .report import _residue_names
     from .traj import LINING
 
@@ -101,8 +103,8 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
                                     holo_top, holo_fit)  # fmt: skip
         lig = np.asarray(lig, float)
         holo_ligand = info["ligand"]
-    found, grid = find(beads, model)
-    spacing = preset(model)["spacing"]
+    found, grid = find(beads, model, preset)
+    spacing = preset_of(model, preset)["spacing"]
     residue = np.asarray(cg.atoms["residue"])
     rows, drawn = [], []
     for k, (score, s) in enumerate(found, 1):
