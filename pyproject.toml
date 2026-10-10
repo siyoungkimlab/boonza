@@ -23,8 +23,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# development: tests (with MDAnalysis as a reference) and lint
-dev = ["pytest", "ruff", "MDAnalysis>=2.7"]
+# development: tests (in parallel, with MDAnalysis as a reference) and lint
+dev = ["pytest", "pytest-xdist", "ruff", "MDAnalysis>=2.7"]
 
 [project.scripts]
 boonza = "boonza.cli:main"

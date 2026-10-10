@@ -52,8 +52,9 @@ jobs:
           python -c "import rdkit, openmm, MDAnalysis; print('rdkit', rdkit.__version__, 'openmm', openmm.version.version, 'MDAnalysis', MDAnalysis.__version__)"
       - name: Run tests
         # msys, viparr, mdtraj, gemmi and ChimeraX oracles and the MDAnalysis
-        # test data are not installed here; those tests skip themselves
-        run: pytest tests -q -rs
+        # test data are not installed here; those tests skip themselves.  One
+        # worker per core: in one process the suite took 28 minutes
+        run: pytest tests -q -rs -n auto
 
   gaff2:
     # AmberTools is conda-only; the GAFF2 tests skip themselves elsewhere
