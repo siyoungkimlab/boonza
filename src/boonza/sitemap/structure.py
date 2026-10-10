@@ -56,9 +56,10 @@ def _against(site, spacing: float, lig: np.ndarray) -> dict:
 
 def run(path, model: str, out, selection: str | None = None, ligand: str | None = None,
         top: int = 10, holo=None, holo_ligand: str | None = None, holo_top=None,
-        holo_fit: str = "whole", preset: str | None = None) -> Path:  # fmt: skip
+        holo_fit: str = "whole", preset: str | None = "static200") -> Path:  # fmt: skip
     """Find and write the sites of the structure at ``path`` (see the module docstring),
-    under presets ``preset`` (presets.path: the current ones by default)."""
+    under presets ``preset`` (presets.path; by default presets.STRUCTURE's, tuned on crystal
+    structures)."""
     from ..io import load, save
     from ..pockets import view as BV
     from ..pockets.prepare import NOT_PROBES, protein_ids
