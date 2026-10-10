@@ -1,0 +1,125 @@
+{
+ "martini2": {
+  "spacing": 2.0,
+  "probe": "N0",
+  "params": {
+   "outside": 2.18,
+   "ray_length": 10.0,
+   "enclosure": 0.62,
+   "contact_form": "capped",
+   "contact": -7.16,
+   "neighbour_radius": 1.85,
+   "neighbours": 4,
+   "min_points": 5,
+   "merge_gap": 5.01,
+   "merge_cap": 103.5,
+   "min_volume": 15.0
+  },
+  "score": {
+   "intercept": -4.298278274530851,
+   "sqrt_n": 0.23971880023521797,
+   "enclosure": 3.1208937099757668,
+   "philic": -0.10854178826584834
+  },
+  "trained": {
+   "set": "train263 (data/train200.txt: 200 complexes)",
+   "search": "martini2_v2_train200",
+   "trial": 270,
+   "objective": 0.6116387765515316,
+   "cv": {
+    "top1": 0.74,
+    "top3": 0.83,
+    "top5": 0.835,
+    "top10": 0.85
+   },
+   "cv_overlap": {
+    "fill": 0.4382775531030635,
+    "LVC": 0.377662,
+    "PVN": 0.5388149999999999,
+    "DVO": 0.19197100000000003
+   }
+  }
+ },
+ "martini3": {
+  "spacing": 2.0,
+  "probe": "SC3",
+  "params": {
+   "outside": 2.67,
+   "ray_length": 8.0,
+   "enclosure": 0.49,
+   "contact_form": "full",
+   "contact": 1.5,
+   "neighbour_radius": 1.69,
+   "neighbours": 1,
+   "min_points": 4,
+   "merge_gap": 5.22,
+   "merge_cap": 288.54,
+   "min_volume": 11.67
+  },
+  "score": {
+   "intercept": -6.02071033227072,
+   "sqrt_n": 0.3260834491180822,
+   "enclosure": 8.170875765485635,
+   "philic": -1.1478752214495833
+  },
+  "trained": {
+   "set": "train263 (data/train200.txt: 200 complexes)",
+   "search": "martini3_v2_train200",
+   "trial": 336,
+   "objective": 0.6222160216194667,
+   "cv": {
+    "top1": 0.78,
+    "top3": 0.875,
+    "top5": 0.9,
+    "top10": 0.905
+   },
+   "cv_overlap": {
+    "fill": 0.41693204323893335,
+    "LVC": 0.3378204999999999,
+    "PVN": 0.5455219999999997,
+    "DVO": 0.18779749999999995
+   }
+  }
+ },
+ "sirah": {
+  "spacing": 1.5,
+  "probe": "Y1C",
+  "params": {
+   "contact_form": "full",
+   "outside": 2.32,
+   "ray_length": 8.74,
+   "enclosure": 0.59,
+   "neighbour_radius": 1.85,
+   "neighbours": 4,
+   "min_points": 2,
+   "merge_gap": 2.0,
+   "merge_cap": 525.02,
+   "min_volume": 7.7,
+   "contact": 35.25
+  },
+  "score": {
+   "intercept": -1.4472483416479442,
+   "sqrt_n": 0.4139612162772962,
+   "enclosure": -2.913299716425898,
+   "philic": -0.012675902971170303
+  },
+  "trained": {
+   "set": "train263 (data/train200.txt: 200 complexes)",
+   "search": "sirah_v2_train200",
+   "trial": 262,
+   "objective": 0.5565164686910457,
+   "cv": {
+    "top1": 0.705,
+    "top3": 0.875,
+    "top5": 0.9,
+    "top10": 0.93
+   },
+   "cv_overlap": {
+    "fill": 0.32303293738209127,
+    "LVC": 0.20804750000000002,
+    "PVN": 0.546514,
+    "DVO": 0.14116400000000007
+   }
+  }
+ }
+}

@@ -82,9 +82,10 @@ def test_distances_are_the_drmsd_of_every_pair(two_sites):
     middle.positions = frames[50]
     row50 = boonza.drmsd(s, reference=middle, positions=frames, cutoff=WIDE).drmsd
     # drmsd picks the ligand's mapping against frame 50; pose_distances picks it once, against
-    # frame 0, so it can only be the larger of the two -- and here they are the same
+    # frame 0, so it can only be the larger of the two -- and here the two mappings agree to
+    # within a hundredth of an angstrom (exactly, or not, as the peptide's embedding has it)
     assert (d[50] >= row50 - 1e-9).all()
-    assert np.allclose(d[50], row50, atol=1e-6)
+    assert np.allclose(d[50], row50, atol=0.01)
 
 
 def test_poses_are_the_two_sites(two_sites):
@@ -229,8 +230,13 @@ def test_settling_trims_an_approach_and_not_a_state(tmp_path, two_sites, capsys)
 def test_a_thin_pocket_says_so(two_sites):
     """Three atoms are always coplanar, and cannot tell a pose from its mirror image."""
     s, frames = two_sites
+    # the pocket is the CA within pocket_cutoff of the ligand in the first frame: a cutoff
+    # between the third and fourth nearest takes exactly three, whatever shape the helix
+    # embedding gives the peptide
+    ca, ring = s.select("protein and name CA").ids, s.select(DEFAULT_LIGAND).ids
+    d = np.sort(np.linalg.norm(frames[0][ca][:, None] - frames[0][ring][None], axis=2).min(1))
     with pytest.warns(UserWarning, match="fewer than four|nearly flat"):
-        boonza.poses(s, frames, pocket_cutoff=5.0)  # only three CA are that close
+        boonza.poses(s, frames, pocket_cutoff=float(d[2] + d[3]) / 2)
 
 
 def test_contacts_choose_a_fair_reference(two_sites):
@@ -252,7 +258,11 @@ def test_a_pocket_can_be_given_outright(two_sites):
     """With pocket=, neither the protein selection nor a reference decides anything."""
     s, frames = two_sites
     derived = boonza.poses(s, frames, pocket_cutoff=WIDE)
-    prot = s.select("protein and name CA").ids  # the same atoms, handed over instead
+    # the same atoms, handed over instead: the CA within WIDE of the ligand in the first frame
+    ca, ring = s.select("protein and name CA").ids, s.select(DEFAULT_LIGAND).ids
+    near = np.linalg.norm(frames[0][ca][:, None] - frames[0][ring][None], axis=2).min(1) <= WIDE
+    prot = ca[near]
+    assert len(prot) >= 4
     given = boonza.poses(s, frames, pocket=prot, protein="name CA and resid 1")
     assert [len(x) for x in given] == [len(x) for x in derived]
     assert [x.center for x in given] == [x.center for x in derived]

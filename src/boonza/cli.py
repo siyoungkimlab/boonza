@@ -14,6 +14,7 @@
     boonza poses system.dms --traj md.dcd [--cutoff 1.5] [-o poses/]   (representative frames)
     boonza sites system.dms --traj a.dcd b.dcd [-o sites/]   (where a ligand goes, pooled)
     boonza pockets traj --workdir run/md --model martini3 -o pockets/   (fpocket, every frame)
+    boonza sitemap traj --workdir run/md --model martini3 -o sitemap/   (SiteMap-style sites)
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
     boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
@@ -1464,6 +1465,8 @@ def _parser() -> argparse.ArgumentParser:
                    "(boonza swim --help)")  # fmt: skip
     sub.add_parser("pockets", help="fpocket on coarse-grained proteins, one structure or a "
                    "trajectory (boonza pockets --help)")  # fmt: skip
+    sub.add_parser("sitemap", help="SiteMap-style sites of coarse-grained proteins, one "
+                   "structure or a trajectory (boonza sitemap --help)")  # fmt: skip
 
     q = sub.add_parser("info", help="summarize a structure or trajectory file")
     q.add_argument("file")
@@ -1875,6 +1878,10 @@ def main(argv=None) -> int:
         from .pockets.cli import main as pockets_main
 
         return pockets_main(argv[1:])
+    if argv and argv[0] == "sitemap":  # its own parser: traj, structure
+        from .sitemap.cli import main as sitemap_main
+
+        return sitemap_main(argv[1:])
     args = _parser().parse_args(argv)
     try:
         return args.run(args)
