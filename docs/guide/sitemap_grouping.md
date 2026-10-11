@@ -89,12 +89,14 @@ the ranking left as it was (below).
 
 Every frame, PPc Top-1 / 3 / 5 / 10 and the coverage of the hits:
 
-| model | previous default | centroid 8 A, centre, p_max | LVC | PVN | fill |
-|---|---|---|---|---|---|
-| Martini 2 | 0.45 / 0.575 / 0.625 / 0.70 | **0.50 / 0.675 / 0.75 / 0.875** | 0.18 | 0.51 | 0.30 |
-| Martini 3 | 0.475 / 0.55 / 0.625 / 0.725 | **0.50 / 0.675 / 0.725 / 0.85** | 0.22 | 0.56 | 0.34 |
-| SIRAH | 0.475 / 0.575 / 0.60 / 0.725 | **0.475 / 0.625 / 0.70 / 0.80** | 0.24 | 0.68 | 0.38 |
-| MxMD + SiteMap | | 0.50 / 0.675 / 0.75 / 0.925 | 0.19 | 0.70 | 0.35 |
+| model | previous default | LVC / PVN / fill | centroid 8 A, centre, p_max | LVC / PVN / fill |
+|---|---|---|---|---|
+| Martini 2 | 0.45 / 0.575 / 0.625 / 0.70 | 0.22 / 0.35 / 0.29 | **0.50 / 0.675 / 0.75 / 0.875** | 0.18 / 0.51 / 0.30 |
+| Martini 3 | 0.475 / 0.55 / 0.625 / 0.725 | 0.24 / 0.46 / 0.31 | **0.50 / 0.675 / 0.725 / 0.85** | 0.22 / 0.56 / 0.34 |
+| SIRAH | 0.475 / 0.575 / 0.60 / 0.725 | 0.31 / 0.43 / 0.35 | **0.475 / 0.625 / 0.70 / 0.80** | 0.24 / 0.68 / 0.38 |
+| MxMD + SiteMap | | | 0.50 / 0.675 / 0.75 / 0.925 | 0.19 / 0.70 / 0.35 |
+
+Coverage is of the Top-10 hits: median LVC and PVN, mean fill.
 
 Martini 2 matches MxMD + SiteMap at Top-1 to Top-5, and Martini 3 is within
 a pair; at Top-10 they are 2 and 3 pairs short. SIRAH is 1 to 5 pairs short.
@@ -151,13 +153,16 @@ never saw: the 200 [dynamic200](sitemap_dynamic200.md) training complexes'
 MD runs (every frame, the ligand carried on by superposition, as `--holo`).
 PPc Top-1 / 3 / 5 / 10:
 
-| model | consensus, best site | centroid 8 A, centre, p_max |
-|---|---|---|
-| Martini 2 | 0.445 / 0.60 / 0.655 / 0.69 | 0.475 / 0.695 / 0.78 / 0.855 |
-| Martini 3 | 0.53 / 0.70 / 0.74 / 0.77 | 0.595 / 0.80 / 0.87 / 0.96 |
-| SIRAH | 0.46 / 0.595 / 0.645 / 0.69 | 0.525 / 0.73 / 0.81 / 0.865 |
+| model | consensus, best site | LVC / PVN / fill | centroid 8 A, centre, p_max | LVC / PVN / fill |
+|---|---|---|---|---|
+| Martini 2 | 0.445 / 0.60 / 0.655 / 0.69 | 0.41 / 0.46 / 0.43 | 0.475 / 0.695 / 0.78 / 0.855 | 0.32 / 0.63 / 0.45 |
+| Martini 3 | 0.53 / 0.70 / 0.74 / 0.77 | 0.42 / 0.49 / 0.45 | 0.595 / 0.80 / 0.87 / 0.96 | 0.33 / 0.66 / 0.44 |
+| SIRAH | 0.46 / 0.595 / 0.645 / 0.69 | 0.46 / 0.46 / 0.46 | 0.525 / 0.73 / 0.81 / 0.865 | 0.40 / 0.64 / 0.48 |
 
 The gain holds, and is larger: Top-10 rises by 0.165 to 0.19 in every model.
+Coverage is of the Top-10 hits (median LVC and PVN, mean fill), the medoid's
+site for the centre and the best site for consensus: the medoid covers less
+of the ligand and lies more on it, and fill is the same.
 
 ## How many frames
 
@@ -229,4 +234,5 @@ python schr_cv.py --every 1                 # cross-validation, coverage, MxMD +
 python frames_test.py --set schr            # how many frames
 python occ_blend.py; python probe_test.py   # MD in the ranking
 python centre_test.py; python miss_diag.py  # the point, and what is left
+python train_coverage.py                    # coverage on the 200 training runs
 ```
