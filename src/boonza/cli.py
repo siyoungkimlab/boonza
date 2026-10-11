@@ -333,10 +333,24 @@ def _reference_frame(system, traj, args):
         print(f"Warning: the ligand visits {patches} separate patches of the protein. This "
               "groups poses against one of them; use 'boonza sites' to separate them first, "
               "or --pocketsel to say which.")  # fmt: skip
+    # the counts settle the run too, from this one pass
+    return _frame_system(system, traj[best]), counts
+
+
+def _frame_system(system, frame):
+    """``system`` at one frame, in that frame's own box.
+
+    A trajectory gives a Frame (positions and box), an array of structures
+    gives coordinates only. Under NPT the box drifts from the system's cell, and
+    minimum images taken in the wrong box put atoms across the cell from where
+    they are.
+    """
     out = system.clone()
-    frame = traj[best]  # a trajectory gives a Frame, an array of structures gives coordinates
     out.positions = getattr(frame, "positions", frame)
-    return out, counts  # the counts settle the run too, from this one pass
+    box = getattr(frame, "box", None)
+    if box is not None and np.any(box):
+        out.cell = box
+    return out
 
 
 def _structures(paths, log=print):
@@ -457,6 +471,12 @@ def _poses(args) -> int:
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
+        glue = None
+        if not files and not args.no_pbc:  # trajectories are wrapped: put the complex back together
+            from .glue import Glue
+
+            glue = Glue(system, glue=f"({args.proteinsel}) or ({args.ligandsel})",
+                        center=args.proteinsel)  # fmt: skip
         doc = {"frames": len(kept), "cutoff": args.cutoff, "pocket_cutoff": args.pocket_cutoff,
                "ligand": args.ligandsel, "stride": args.stride, "poses": []}  # fmt: skip
         for k, pose in enumerate(p):
@@ -466,8 +486,9 @@ def _poses(args) -> int:
                 name = f"pose_{k:03d}_{source.name}"
                 shutil.copy2(source, out / name)
             else:
-                written = system.clone()
-                written.positions = traj[frame].positions
+                written = _frame_system(system, traj[frame])
+                if glue is not None and written.cell.any():
+                    written.positions, written.cell = glue(written.positions, written.cell)
                 name = f"pose_{k:03d}.{args.format}"
                 boonza.save(written, out / name)
             record = {"file": name, "population": pose.population, "spread": pose.spread,
