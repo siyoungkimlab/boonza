@@ -599,6 +599,178 @@ def _cg_selections(args, system, workdirs) -> None:
         print(f"the probes of the run(s): {args.ligandsel}")
 
 
+TRIAGE_FIELDS = ["run", "outcome", "frames", "from_start", "drifted", "from_start_max",
+                 "from_end", "from_pose", "pose_frame", "population", "n_poses",
+                 "late_population", "late_from_pose", "moved", "settled", "note"]  # fmt: skip
+
+
+def _triage(args) -> int:
+    """Measure many runs of one system, for picking the few worth opening."""
+    import csv
+    import json
+    from pathlib import Path
+
+    import boonza
+
+    from .trajectory import open_trajectory
+    from .triage import frame_system, triage
+
+    out = Path(args.out)
+    (out / "structures").mkdir(parents=True, exist_ok=True)
+    rows, prints = [], {}
+    for d in args.workdir:
+        here = Path(d)
+        row = {"run": here.name}
+        status = here / "status.json"
+        if status.exists():
+            row["outcome"] = json.loads(status.read_text()).get("outcome", "")
+        if row.get("outcome") == "detached" and not args.keep_detached:
+            # the ligand left and the run stopped saying so: nothing to measure
+            rows.append({**row, "note": "detached"})
+            print(f"{here.name}: detached", flush=True)
+            continue
+        if not (here / "trajectory.dcd").exists():
+            rows.append({**row, "note": "no trajectory"})
+            continue
+        try:
+            system = _load(here / "solvated.dms")
+            traj = open_trajectory(here / "trajectory.dcd", system)
+            got = triage(system, traj, ligand=args.ligandsel, protein=args.proteinsel,
+                         pocket=args.pocketsel, cutoff=args.pose_cutoff,
+                         fingerprint=not args.no_fingerprint)  # fmt: skip
+        except Exception as e:  # one unreadable run must not stop the other thousand
+            rows.append({**row, "note": f"{type(e).__name__}: {e}"[:90]})
+            print(f"{here.name}: {type(e).__name__}: {e}"[:100], flush=True)
+            continue
+        row.update({k: getattr(got, k) for k in TRIAGE_FIELDS if hasattr(got, k)})
+        row["settled"] = int(got.settled)
+        rows.append({k: round(v, 3) if isinstance(v, float) else v for k, v in row.items()})
+        if got.fingerprint is not None:
+            prints[here.name] = got.fingerprint
+        glue = None
+        for what, k in (("pose", got.pose_frame), ("initial", 0), ("last", len(traj) - 1)):
+            if what != "pose" and not args.all_frames:
+                continue
+            s = frame_system(system, traj, k, glue)
+            keep = s.select("not (water or ions)").ids  # a viewer wants no box of water
+            boonza.save(s.clone(keep),
+                        out / "structures" / f"{here.name}_{what}.{args.format}")  # fmt: skip
+        print(f"{here.name}: drifted {got.drifted:.2f} A, pose holds "
+              f"{100 * got.population:.0f}% of the run"
+              f"{', settled late' if got.settled else ''}{'  ' + got.note if got.note else ''}",
+              flush=True)  # fmt: skip
+    with open(out / "summary.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, TRIAGE_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    if prints:
+        np.savez(out / "fingerprints.npz", **prints)
+    done = [r for r in rows if r.get("frames")]
+    print(f"\n{len(rows)} run(s), {len(done)} measured, {len(prints)} fingerprinted "
+          f"-> {out / 'summary.csv'}")  # fmt: skip
+    print(f"{sum(1 for r in done if r.get('settled'))} left where they started and settled")
+    return 0
+
+
+def _modes(args) -> int:
+    """Group the runs into binding modes, and open one of each rather than a thousand."""
+    import csv
+    import shutil
+    from pathlib import Path
+
+    from .triage import modes
+
+    where = Path(args.triage)
+    loaded = np.load(where / "fingerprints.npz")
+    names = list(loaded.files)
+    if not names:
+        raise ValueError(f"{where / 'fingerprints.npz'} holds no fingerprints")
+    found = modes([loaded[n] for n in names], cutoff=args.cutoff)
+    summary = {}
+    if (where / "summary.csv").exists():
+        summary = {r["run"]: r for r in csv.DictReader(open(where / "summary.csv"))}
+    print(f"{len(names)} pose(s) -> {len(found)} mode(s) at cosine {args.cutoff:g}\n")
+    print(f"{'mode':>4s} {'runs':>5s} {'share':>6s} {'widest':>7s}  medoid")
+    rows = []
+    for n, (members, medoid, spread) in enumerate(
+        zip(found.members, found.medoids, found.spread, strict=True)
+    ):
+        wide = "   <- widest pair is large: the cutoff may have merged two modes"
+        print(f"{n:4d} {len(members):5d} {100 * len(members) / len(names):5.0f}% "
+              f"{spread:7.2f}  {names[medoid]}"
+              f"{wide if spread > 2 * args.cutoff else ''}")  # fmt: skip
+        for i in members:
+            rows.append({"run": names[i], "mode": n, "mode_runs": len(members),
+                         "mode_spread": round(spread, 3), "medoid": names[medoid],
+                         "is_medoid": int(i == medoid),
+                         **{k: v for k, v in summary.get(names[i], {}).items()
+                            if k != "run"}})  # fmt: skip
+        if n + 1 >= args.max_modes:
+            print(f"     ... {len(found) - args.max_modes} smaller mode(s) not listed")
+            break
+    out = Path(args.out) if args.out else None
+    if out is None:
+        return 0
+    (out / "structures").mkdir(parents=True, exist_ok=True)
+    cols = ["run", "mode", "mode_runs", "mode_spread", "medoid", "is_medoid"]
+    cols += [c for c in (next(iter(summary.values()), {}) or {}) if c not in (*cols, "run")]
+    with open(out / "modes.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, cols, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(sorted(rows, key=lambda r: (r["mode"], -r["is_medoid"], r["run"])))
+    picked = []
+    for n, medoid in enumerate(found.medoids[: args.max_modes]):
+        src = where / "structures"
+        for f in sorted(src.glob(f"{names[medoid]}_*")):
+            shutil.copy2(f, out / "structures" / f"mode{n:02d}_n{len(found.members[n])}_{f.name}")
+        picked.append((n, names[medoid], len(found.members[n])))
+    _write_sessions(out, picked, args.ligandsel)
+    print(f"\n{len(picked)} medoid(s) -> {out / 'modes.csv'} and a session beside it")
+    return 0
+
+
+def _write_sessions(out, picked, ligand: str) -> None:
+    """A PyMOL and a VMD session over the medoids, biggest mode first.
+
+    Each is loaded from ``structures/`` by a relative path, so the folder can
+    be copied off a cluster as it is and opened where the eyes are.
+    """
+    from pathlib import Path
+
+    pml = ["# boonza modes: run from this folder with  pymol session.pml",
+           "bg_color white", "set cartoon_transparency, 0.7"]  # fmt: skip
+    vmd = ["# boonza modes: run from this folder with  vmd -e session.vmd",
+           "display projection orthographic", "color Display Background white",
+           "axes location off"]  # fmt: skip
+    first = None
+    for k, (n, run, count) in enumerate(picked):
+        files = sorted(Path(out, "structures").glob(f"mode{n:02d}_n{count}_{run}_*"))
+        pose = next((f for f in files if "_pose." in f.name), None)
+        if pose is None:
+            continue
+        name = pose.stem
+        pml.append(f"load structures/{pose.name}, {name}")
+        if first is None:
+            first = name
+        else:
+            # fit, not align: every medoid is the same system, so the backbone
+            # atoms pair in order.  align would try to sequence-align them,
+            # which is slow at best and hangs on coarse-grained residue names
+            pml.append(f"fit {name} and name CA+BB+GC, {first} and name CA+BB+GC")
+        vmd += [f"mol new structures/{pose.name} waitfor all", "mol delrep 0 top",
+                "mol representation NewCartoon", "mol selection {protein}",
+                "mol material Transparent", "mol addrep top",
+                "mol representation Licorice 0.2 12 12", f"mol selection {{{ligand}}}",
+                "mol material Opaque", "mol addrep top", f"mol rename top {name}"]  # fmt: skip
+        if k:
+            vmd.append("mol off top")
+    pml += ["hide everything", "show cartoon, polymer", f"show sticks, ({ligand}) and not hydro",
+            f"show lines, byres (polymer within 5 of ({ligand})) and not hydro",
+            f"orient {ligand}", "save session.pse"]  # fmt: skip
+    Path(out, "session.pml").write_text("\n".join(pml) + "\n")
+    Path(out, "session.vmd").write_text("\n".join(vmd) + "\n")
+
+
 def _probes(args) -> int:
     """What each probe touches, residue by residue."""
     import json
@@ -1782,6 +1954,46 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("-o", "--out", help="write the representative structures here")
     q.add_argument("--format", default="dms", help="structure format to write (default: dms)")
     q.set_defaults(run=_poses)
+
+    q = sub.add_parser("triage", help="measure many runs of one system: which pose each took",
+                       description="Measure many runs of one protein and one ligand, started "
+                                   "from different poses, for picking the few worth opening. "
+                                   "Every run has to be the same system: the fingerprints are "
+                                   "compared column by column, and the medoids are fitted on "
+                                   "matching backbone atoms.")  # fmt: skip
+    q.add_argument("workdir", nargs="+", help="boonza md runs, each with its own solvated.dms")
+    q.add_argument("-o", "--out", default="triage", help="where the summary and the "
+                   "fingerprints go (default: triage)")  # fmt: skip
+    q.add_argument("--ligandsel", default="not (polymer or water or ions) and noh",
+                   help="the ligand whose pose is in question")  # fmt: skip
+    q.add_argument("--proteinsel", default="protein and noh",
+                   help="what the fingerprint measures the ligand against")  # fmt: skip
+    q.add_argument("--pocketsel", default="protein and name CA",
+                   help="what dRMSD measures it against (BB or GC beads, "
+                        "coarse-grained)")  # fmt: skip
+    q.add_argument("--pose-cutoff", type=float, default=1.5, help="pose dRMSD cutoff (A)")
+    q.add_argument("--no-fingerprint", action="store_true",
+                   help="skip the pharmacophore fingerprint, and with it "
+                        "'boonza modes'")  # fmt: skip
+    q.add_argument("--keep-detached", action="store_true",
+                   help="measure runs whose ligand left and stopped them, too")  # fmt: skip
+    q.add_argument("--all-frames", action="store_true",
+                   help="write each run's first and last frame as well as its pose")  # fmt: skip
+    q.add_argument("--format", default="pdb", help="structure format to write (default: pdb)")
+    q.set_defaults(run=_triage)
+
+    q = sub.add_parser("modes", help="group triaged runs into binding modes, with a session "
+                                     "over one of each")  # fmt: skip
+    q.add_argument("triage", help="a folder 'boonza triage' wrote")
+    q.add_argument("-o", "--out", help="write modes.csv, the medoids and a session here")
+    q.add_argument("--cutoff", type=float, default=0.25,
+                   help="cosine distance joining two poses into one mode (default: 0.25); "
+                        "check it against the widest pair each mode reports")  # fmt: skip
+    q.add_argument("--max-modes", type=int, default=20, help="modes to keep, largest first")
+    q.add_argument("--ligandsel", default="not polymer and not solvent",
+                   help="how the session selects the ligand (the viewer's syntax, "
+                        "not boonza's)")  # fmt: skip
+    q.set_defaults(run=_modes)
 
     q = sub.add_parser("probes",
                        help="what each probe of a coarse-grained swim touches, "

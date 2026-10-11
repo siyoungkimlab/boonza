@@ -558,7 +558,9 @@ distance in Å.  ``neutral_termini`` makes neutral termini;
 ``scfix``/``extdih`` as martinize2's (side-chain corrections on by
 default).  Hydrogens present in the structure decide protonation:
 Asp/Glu with a carboxyl hydrogen and Lys with two amine hydrogens are
-neutral, and His is typed by which ring nitrogens carry one.
+neutral, and His is typed by which ring nitrogens carry one.  A capping
+group at a chain end (ACE, NME) is left out, and the end it capped made
+neutral, as the cap had it.
 
 ### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, copies: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
 
@@ -680,7 +682,8 @@ and the angles, dihedrals and 1-4 pairs follow from the bonds, the way
 pdb2gmx generates them.  ``termini`` is ``"Charged"`` or ``"Neutral"``,
 named as the library's ``.tdb`` files are.  ``strict`` refuses a structure
 missing an atom a bead sits on, where the default places the bead against
-the bead it bonds to and says so.
+the bead it bonds to and says so.  A capping group at a chain end (ACE,
+NME) is left out, and the end it capped made neutral, as the cap had it.
 
 ### `class boonza.sirah.Sirahized(molecules: 'list[Molecule]', positions: 'np.ndarray', cell: 'np.ndarray | None' = None, nrexcl: 'int' = 3, solvent: 'list[tuple[str, int]]' = <factory>, copies: 'list[int]' = <factory>, ss: 'str' = '') -> None`
 
@@ -1073,7 +1076,8 @@ The kinetics of one site, with what they rest on.
 
 ### `class boonza.Site(center: 'np.ndarray', points: 'np.ndarray', occupancy: 'float', copy_frames: 'float', runs: 'int', copies: 'int', arrivals: 'int', spread: 'float', volume: 'float' = 0.0, burial: 'float' = 0.0, cells: 'np.ndarray | None' = None, grid_dims: 'np.ndarray | None' = None, grid_origin: 'np.ndarray | None' = None, grid_spacing: 'float' = 1.0, peak: 'np.ndarray | None' = None) -> None`
 
-One place the ligand is found, and the evidence for it.
+One place the ligand is found, and the evidence for it.  Sites compare by identity, so
+``sites.index(site)`` and ``site in sites`` find this very site in any order.
 
 ### `class boonza.SiteSet(sites: 'list[Site]', labels: 'np.ndarray', where: 'np.ndarray', centroids: 'np.ndarray', spacing: 'float', enrichment: 'float', systems: 'list' = <factory>, volume: 'float' = 0.0, density: 'Density | None' = None, occupancy: 'Occupancy | None' = None, drift: 'np.ndarray | None' = None, drift_runs: 'np.ndarray | None' = None) -> None`
 
