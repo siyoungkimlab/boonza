@@ -180,9 +180,36 @@ def test_traj_cli(tmp_path):
     rows = list(csv.DictReader(open(out / "pockets.csv")))
     assert rows and 0 < float(rows[0]["occupancy"]) <= 1
     assert (out / "sites.pkl").exists() and (out / "view.pml").exists()
-    # a second run reuses the frames' sites
+    assert {"md_frame", "best_md_frame", "centre_x", "centre_y", "centre_z"} <= set(rows[0])
+    # a second run reuses the frames' sites, here grouped by the residues lining them
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
-                 "-j", "1", "--top", "3"]) == 0  # fmt: skip
+                 "-j", "1", "--top", "3", "--grouping", "consensus"]) == 0  # fmt: skip
+    assert list(csv.DictReader(open(out / "pockets.csv")))
+
+
+def _frame_site(frame, centre, score, residues=(1, 2, 3)):
+    from boonza.sitemap.traj import FrameSite
+
+    xyz = np.asarray(centre, float) + np.array([[0, 0, 0], [2, 0, 0], [0, 2, 0]], float)
+    return FrameSite(frame, 1, score, {"n": 24.0}, xyz.astype(np.float32), frozenset(residues))
+
+
+def test_centroid_groups():
+    """Sites gather by their centres: two places 20 A apart are two pockets, whatever residues
+    line them; a pocket's centre is its frames' mean and its medoid the frame site nearest it."""
+    from boonza.sitemap import traj as T
+
+    sites = [_frame_site(k, (0.5 * k, 0, 0), 1.0 - 0.01 * k) for k in range(5)]
+    sites += [_frame_site(k, (20, 0, 0), 2.0, residues=(1, 2, 3)) for k in range(3)]
+    pockets = T.group(sites)
+    assert sorted(len(p.sites) for p in pockets) == [3, 5]
+    near = next(p for p in pockets if len(p.sites) == 5)
+    assert np.allclose(near.centre, np.mean([s.xyz.mean(0) for s in sites[:5]], axis=0))
+    assert near.medoid is sites[2]  # its centre is the mean of the five
+    # by the residues instead, the two places are one pocket
+    assert len(T.group(sites, "consensus")) == 1
+    with pytest.raises(ValueError, match="grouping"):
+        T.group(sites, "nonsense")
 
 
 def test_traj_cli_without_sites(tmp_path):

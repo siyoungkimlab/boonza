@@ -62,7 +62,8 @@ def cmd_traj(args) -> int:
             pickle.dump({"key": key, "sites": sites, "fit_rmsd": rmsd}, fh)
         cache.with_suffix(".partial").replace(cache)
         print(f"{len(sites)} sites in {len(coords)} frames ({time.time() - t0:.0f} s)", flush=True)
-    pockets = T.consensus(sites, args.similarity, args.cooccur, absorb=args.absorb)
+    pockets = T.group(sites, args.grouping, args.cutoff, args.similarity, args.cooccur,
+                      absorb=args.absorb)  # fmt: skip
     from .pharm import hotspots
 
     spots, all_frames = [], pcoords
@@ -133,7 +134,7 @@ def cmd_structure(args) -> int:
 
 def main(argv=None) -> int:
     from .presets import STRUCTURE, TRAJ
-    from .traj import COOCCUR, RANKINGS, SIMILARITY
+    from .traj import COOCCUR, CUTOFF, GROUPING, GROUPINGS, RANKINGS, SIMILARITY
 
     ap = argparse.ArgumentParser(
         prog="boonza sitemap",
@@ -160,24 +161,33 @@ def main(argv=None) -> int:
     t.add_argument("--every", type=int, default=1, help="analyse every N-th frame")
     t.add_argument("--first", type=int, default=None, help="first frame index")
     t.add_argument("--last", type=int, default=None, help="stop before this frame index")
+    t.add_argument("--grouping", default=GROUPING, choices=GROUPINGS,
+                   help="how frame sites become pockets: by their centres (centroid, the "
+                        "default) or by the residues lining them (consensus)")  # fmt: skip
+    t.add_argument(
+        "--cutoff",
+        type=float,
+        default=CUTOFF,
+        help="centroid grouping: a site joins a pocket whose centre is this close (A)",
+    )
     t.add_argument(
         "--similarity",
         type=float,
         default=SIMILARITY,
-        help="Jaccard similarity of lining residues to join a pocket",
+        help="consensus grouping: Jaccard similarity of lining residues to join a pocket",
     )
     t.add_argument(
         "--cooccur",
         type=float,
         default=COOCCUR,
-        help="pockets open together in at most this share of frames may merge",
+        help="consensus grouping: pockets open together in at most this share of frames may merge",
     )
     t.add_argument(
         "--no-absorb",
         dest="absorb",
         action="store_false",
-        help="keep fragments (rarely open or small pockets) as pockets of their own "
-        "instead of joining them to a neighbouring pocket",
+        help="consensus grouping: keep fragments (rarely open or small pockets) as pockets "
+        "of their own instead of joining them to a neighbouring pocket",
     )
     t.add_argument(
         "--min-probes",
