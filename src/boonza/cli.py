@@ -538,7 +538,7 @@ def _coarse_grained(system) -> bool:
     under Martini, GN, GC and GO under SIRAH)."""
     from .md.monitor import CG_BACKBONE
 
-    if len(system.select("name CA").ids):
+    if len(system.select("protein and name CA").ids):
         return False
     return len(system.select("name " + " ".join(CG_BACKBONE)).ids) >= 3
 

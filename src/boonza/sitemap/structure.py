@@ -88,7 +88,7 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
     keep = f"protein and {NOT_PROBES}" + (f" and not ({ligand})" if ligand else "")
     if selection:
         keep = f"({selection})" + (f" and not ({ligand})" if ligand else "")
-    all_atom = bool(len(system.select("name CA").ids))
+    all_atom = bool(len(system.select("protein and name CA").ids))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if all_atom:

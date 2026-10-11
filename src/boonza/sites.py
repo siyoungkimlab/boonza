@@ -640,8 +640,9 @@ def known_ligand(holo, reference, ligand: str | None = None, align: str | None =
     """
     from .align import superpose
 
-    names = set(np.asarray(reference.atoms["name"]).tolist())
-    back = next((n for n in ("CA", "BB", "GC") if n in names), None)
+    # an alpha carbon is a protein's: a calcium ion kept as a cofactor is a CA too
+    back = next((s for s in ("protein and name CA", "name BB", "name GC")
+                 if len(_ids(reference, s))), None)  # fmt: skip
     if back is None:
         raise ValueError("the reference has no CA, BB or GC atoms to fit a holo structure on")
     if ligand is None:
@@ -672,7 +673,7 @@ def known_ligand(holo, reference, ligand: str | None = None, align: str | None =
             return None
         try:
             fit = superpose(sub, reference, sel=align or "protein and name CA",
-                            ref_sel=align or f"name {back}", match="sequence")  # fmt: skip
+                            ref_sel=align or back, match="sequence")  # fmt: skip
         except ValueError:
             return None
         return (np.asarray(sub.positions)[lig],
