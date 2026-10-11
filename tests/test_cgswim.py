@@ -173,6 +173,21 @@ def test_the_analysis_knows_a_coarse_grained_run(tmp_path):
     assert unchanged.alignsel == DEFAULT_ALIGN and unchanged.ligandsel == DEFAULT_LIGAND
 
 
+def test_a_calcium_ion_leaves_a_coarse_grained_run_coarse_grained():
+    """A calcium kept as a cofactor is an atom named CA, but no alpha carbon:
+    read as one, the run was all-atom and aligned on protein CAs it has none of."""
+    from boonza.cli import _coarse_grained
+    from boonza.martini import martinize
+    from boonza.md.restraints import coarse_grained
+    from boonza.pharmacophore import _unnamed_beads
+
+    cg = martinize(boonza.load(DATA / "1TEN.pdb")).system()
+    ion = cg.add_residue(cg.add_chain(name="CA"), name="CA", resid=1)
+    cg.add_atom(ion, name="CA", anum=20)
+    assert _coarse_grained(cg) and coarse_grained(cg) == "martini"
+    assert _unnamed_beads(cg, cg.select("all").ids)
+
+
 def test_swim_refuses_a_ligand_library_in_martini(tmp_path):
     from boonza.md.swim import main
 

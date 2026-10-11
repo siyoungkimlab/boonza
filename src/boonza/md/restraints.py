@@ -92,7 +92,7 @@ def sirah_torsions(s) -> list[tuple[int, str, tuple[int, int, int, int]]]:
 def coarse_grained(s) -> str:
     """Which coarse-grained backbone this system has: ``"martini"`` (one bead a
     residue, BB), ``"sirah"`` (three, GN-GC-GO), or ``""`` for atoms."""
-    if len(s.select("name CA").ids):
+    if len(s.select("protein and name CA").ids):
         return ""
     if len(s.select("name BB").ids) >= 4:
         return "martini"

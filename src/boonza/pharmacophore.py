@@ -114,7 +114,7 @@ def _unnamed_beads(system, atoms) -> bool:
     read as an atom, and a backbone that says the system is not all-atom."""
     from .md.monitor import CG_BACKBONE
 
-    if len(system.select("name CA").ids):
+    if len(system.select("protein and name CA").ids):
         return False
     return bool(len(system.select("name " + " ".join(CG_BACKBONE)).ids))
 
