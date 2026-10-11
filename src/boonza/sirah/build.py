@@ -687,7 +687,7 @@ def sirahize(system, atoms: str = "protein", *, termini: str = "Charged",
     # are: dihedral_restraint = 'ss' reads them back from secondary.txt
     from ..martini.build import _dssp
 
-    ss = _dssp(system, atoms) if len(system.select("name CA").ids) else ""
+    ss = _dssp(system, atoms) if len(system.select("protein and name CA").ids) else ""
     return Sirahized(molecules, positions, np.asarray(system.cell, float),
                      nrexcl=bonded.nrexcl, ss=ss)  # fmt: skip
 
