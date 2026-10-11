@@ -78,6 +78,32 @@ mode  runs  share  widest  medoid
    1     1    33%    0.00  run_118
 ```
 
+## What `boonza modes` writes
+
+`review/` holds `modes.csv`, each mode's medoid in `structures/`, and a PyMOL
+and a VMD session over them, largest mode first:
+
+* the medoids are **fitted onto one frame** — the largest mode's pose, or
+  `--reference FILE` — on alpha carbons (backbone beads, coarse-grained).
+  Every run's box leaves its frames tens of Å from the next run's, so without
+  this a viewer opens a scatter of proteins. A shared `--reference` puts the
+  modes of several ligands in one frame, to be overlaid.
+* they are written as `boonza triage` wrote them, which is **`.mae` by
+  default** because it keeps bond orders and PDB does not. VMD and
+  Schrödinger's PyMOL read it; **open-source PyMOL does not** (it is an
+  incentive-only format there), so with that build give `boonza triage
+  --format pdb` and accept the guessed bonds.
+* each mode is one object: the protein as a cartoon, the **pocket** (whole
+  residues within 5 Å of the ligand) as sticks, and the **ligand** as sticks
+  with its carbons in a colour of its own. Hydrogens are shown only where they
+  are polar. The first 20 modes are on when the session opens; the rest are
+  loaded, switched off.
+
+The ligand is the one `boonza triage` was given (it keeps it in
+`triage.json`), or `--ligandsel` in boonza's own syntax. boonza picks the
+atoms and both sessions name them by index, so PyMOL and VMD show the same
+atoms whatever either one's selection language can parse.
+
 **How many independent starting poses found a mode is a stronger signal than
 any score on one run.** `widest` is the largest cosine distance inside a mode:
 a large one says `--cutoff` has merged two things, and is how that cutoff —
