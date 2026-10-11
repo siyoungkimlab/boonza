@@ -336,3 +336,32 @@ def test_structures_that_are_not_the_same_complex_are_left_out(tmp_path, two_sit
 
     assert main(["poses"]) == 1  # neither a trajectory nor a folder
     assert "give SYSTEM with --traj, or --structures" in capsys.readouterr().err
+
+
+def test_the_command_uses_each_frames_own_box(tmp_path, two_sites, capsys):
+    """Under NPT the box drifts from the cell in the structure file. The reference
+    frame and the poses written out take the frame's box, and the written pose
+    has the ligand back beside the protein rather than wrapped across the box."""
+    import json
+
+    from boonza.cli import main
+
+    s, frames = two_sites
+    lig = s.select(DEFAULT_LIGAND).ids
+    box = np.diag([30.0, 30.0, 30.0])  # the cell in the file says 40
+    run = frames.copy()
+    run[:, lig, 0] -= 30.0  # every frame wrapped: the ligand one box length away
+    structure, dcd, out = tmp_path / "s.dms", tmp_path / "npt.dcd", tmp_path / "out"
+    boonza.save(s, structure)
+    with boonza.open_writer(dcd, s.natoms) as w:
+        for x in run:
+            w.write(x, box=box)
+
+    argv = ["poses", str(structure), "--traj", str(dcd), "--pocket-cutoff", "8", "-o", str(out)]
+    assert main(argv) == 0
+    best = json.loads((out / "poses.json").read_text())["poses"][0]
+    written = boonza.load(out / best["file"])
+    assert np.allclose(written.cell, box)
+    protein = written.positions[written.select("protein").ids].mean(0)
+    ligand = written.positions[lig].mean(0)
+    assert np.linalg.norm(ligand - protein) < 10.0  # whole and together, not ~26 A apart
