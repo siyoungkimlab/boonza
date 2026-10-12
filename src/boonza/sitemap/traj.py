@@ -6,10 +6,26 @@ backbone (boonza's Glue; the first frame is the reference), and their sites
 under the model's preset (presets.find; dynamic200 by default), each with the residues
 lining it.
 
-Pockets move and change shape through a run, so a pocket is not a place: it is
-named by the residues that line it.  A site's lining residues are those with a
-bead within that bead's radius + LINING of a site point.  The sites of every
-frame, best SiteScore first, are grouped (consensus):
+The sites of every frame are grouped into pockets in one of two ways.
+
+centroid (the default, GROUPING): fpocket's consensus, as boonza pockets groups its
+pockets.  The sites, best SiteScore first, each join the pocket whose mean centre is
+within CUTOFF (8 A) of the site's centre, else start one; then each site moves to the
+nearest pocket centre within CUTOFF until none moves.  A pocket is then a place.
+
+A pocket is located by its centre -- the mean of the centres of its per-frame best
+sites -- and shown by its medoid, the per-frame best site nearest that centre, rather
+than by its single best-scoring site, which in a run can sit beside the pocket's usual
+place.  On the 40 Schrodinger apo trajectories (dynamic200, every frame) this grouping
+and representation found the ligand's site in the top 10 in 0.80-0.875 of cases,
+against 0.70-0.725 by consensus and the best site (PPc; MxMD + SiteMap's sites,
+scored the same way, 0.925): the residue consensus let a site merge with a
+persistent neighbouring pocket, whose best site then lay off the ligand
+(docs/guide/sitemap_grouping.md).
+
+consensus: pockets are not places but named by the residues that line them.  A
+site's lining residues are those with a bead within that bead's radius + LINING of a
+site point.  The sites of every frame, best SiteScore first, are grouped:
 
   1. each site joins the pocket whose core -- the residues lining at least half
      of that pocket's sites so far -- it is most similar to, by Jaccard
@@ -45,10 +61,22 @@ import numpy as np
 
 LINING = 3.0  # A beyond a bead's radius
 #: ways to rank pockets, each a key of Pocket.summary (higher first):
+#: p_q90_open the 90th percentile over the frames it is open in (boonza pockets' quality),
 #: p_max the best frame, p_mean_open the mean while open, p_mean_all the mean over every
 #: frame (0 where absent: occupancy x p_mean_open), occ_x_pmax occupancy x the best
-#: frame, p_q90 the 90th percentile over every frame, occupancy how often it is open
-RANKINGS = ("p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p_q90", "occupancy")
+#: frame, p_q90 the 90th percentile over every frame (0 where absent), occupancy how often
+#: it is open
+RANKINGS = ("p_q90_open", "p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p_q90",
+            "occupancy")  # fmt: skip
+#: the default: on the 40 Schrodinger apo runs (centroid 8 A, centre, every frame) it found
+#: the ligand's site in the top 5 in 0.775 / 0.75 / 0.65 of cases (Martini 2 / 3 / SIRAH),
+#: p_max 0.75 / 0.725 / 0.70, and in the top 10 in 0.875 / 0.875 / 0.80 (p_max 0.875 /
+#: 0.85 / 0.80); closed frames counted as 0 (p_q90) did worse, 0.75 / 0.80 / 0.625 and
+#: 0.825 / 0.85 / 0.75
+RANK = "p_q90_open"
+GROUPINGS = ("centroid", "consensus")
+GROUPING = "centroid"
+CUTOFF = 8.0  # A: a site joins a pocket whose centre is this close (centroid grouping)
 SIMILARITY = 0.3  # Jaccard of lining residues to join a pocket
 CORE = 0.5  # share of a pocket's sites a residue lines to be in its core
 COOCCUR = 0.1  # pockets present together in at most this share of frames may merge
@@ -90,6 +118,18 @@ class Pocket:
     def best(self) -> FrameSite:
         return max(self.sites, key=lambda s: s.score)
 
+    @property
+    def centre(self) -> np.ndarray:
+        """The mean centre of its per-frame best sites: where the pocket is."""
+        return np.mean([s.xyz.mean(0) for s in self.per_frame_best().values()], axis=0)
+
+    @property
+    def medoid(self) -> FrameSite:
+        """Its per-frame best site nearest its centre: the pocket as it usually is."""
+        c = self.centre
+        return min(self.per_frame_best().values(),
+                   key=lambda s: (float(((s.xyz.mean(0) - c) ** 2).sum()), -s.score))  # fmt: skip
+
     def per_frame_best(self) -> dict:
         out = {}
         for s in self.sites:
@@ -112,6 +152,7 @@ class Pocket:
                 "p_max": float(p.max()), "p_mean_open": float(p.mean()),
                 "p_mean_all": float(every.mean()), "occ_x_pmax": float(occ * p.max()),
                 "p_q90": float(np.quantile(every, 0.9)),
+                "p_q90_open": float(np.quantile(p, 0.9)),
                 "median_volume": float(np.median(vols)), "max_volume": float(vols.max()),
                 "best_frame": int(self.best.frame), "core_residues": len(self.core)}  # fmt: skip
 
@@ -219,6 +260,49 @@ def consensus(sites: list[FrameSite], similarity: float = SIMILARITY,
         merged = pockets[a].sites + pockets[b].sites
         pockets = _reassign(_pockets([merged] + [p.sites for k, p in enumerate(pockets)
                                                  if k not in (a, b)]), similarity)  # fmt: skip
+
+
+def centroid_groups(sites: list[FrameSite], cutoff: float = CUTOFF) -> list[Pocket]:
+    """Pockets of the frame sites by their centres (module docstring, centroid)."""
+    if not sites:
+        return []
+    order = sorted(sites, key=lambda s: -s.score)
+    xyz = np.array([s.xyz.mean(0) for s in order])
+    label = np.empty(len(order), int)
+    sums, counts = [], []
+    for i, x in enumerate(xyz):
+        if sums:
+            dist = np.sqrt(((np.array(sums) / np.array(counts)[:, None] - x) ** 2).sum(1))
+            j = int(np.argmin(dist))
+            if dist[j] <= cutoff:
+                label[i] = j
+                sums[j] = sums[j] + x
+                counts[j] += 1
+                continue
+        label[i] = len(sums)
+        sums.append(x.copy())
+        counts.append(1)
+    for _ in range(ROUNDS):  # each site to its nearest centre within the cutoff
+        centres = np.array([xyz[label == k].mean(0) if (label == k).any() else np.full(3, 1e9)
+                            for k in range(len(sums))])  # fmt: skip
+        dist = np.sqrt(((xyz[:, None] - centres[None]) ** 2).sum(-1))
+        near = dist.argmin(1)
+        moved = np.where(dist[np.arange(len(xyz)), near] <= cutoff, near, label)
+        if (moved == label).all():
+            break
+        label = moved
+    return _pockets([[order[i] for i in np.flatnonzero(label == k)] for k in np.unique(label)])
+
+
+def group(sites: list[FrameSite], grouping: str = GROUPING, cutoff: float = CUTOFF,
+          similarity: float = SIMILARITY, cooccur: float = COOCCUR,
+          absorb: bool = True) -> list[Pocket]:  # fmt: skip
+    """The pockets of the frame sites under ``grouping`` (module docstring)."""
+    if grouping == "centroid":
+        return centroid_groups(sites, cutoff)
+    if grouping == "consensus":
+        return consensus(sites, similarity, cooccur, absorb=absorb)
+    raise ValueError(f"grouping {grouping!r}: one of {', '.join(GROUPINGS)}")
 
 
 def load_run(workdir=None, system=None, trajectory=None, selection: str | None = None,

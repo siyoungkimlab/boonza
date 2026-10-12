@@ -114,27 +114,42 @@ boonza sitemap traj --workdir run/md_solute --model martini3 -o sitemap/ --every
 With `--holo` (and `--holo-ligand`, `--holo-top`, `--holo-fit`, as in
 `boonza pockets traj`) a holo structure's ligand is carried onto the run's
 first fitted frame, which every frame is fitted on, and each pocket is scored
-against it: PPc, MOc, LVC and PVN of its site in its best frame, and the share
-of its frames whose site is PPc-right (`frames_PPc`). The view shows the holo
+against it: PPc at the pocket's centre, MOc, LVC and PVN of its medoid site,
+and the share of its frames whose site is PPc-right (`frames_PPc`). The view shows the holo
 structure (off at the start) and the ligand.
 
 Every analysed frame is made whole and fitted on the backbone (the probe chain
 `LIG` is never part of the protein), and its sites are found under the preset,
-each with the residues lining it. A pocket moves and changes shape through a
-run, so it is named by those residues, not by a place: each frame's site joins
-the pocket whose core (the residues lining at least half its sites) it
-resembles most, by Jaccard similarity of at least `--similarity`; sites are
-reassigned until none moves; two pockets that are rarely open together
-(`--cooccur`) are one pocket in different states and are merged; and a pocket
-open in few frames or very small joins its nearest neighbour (`--no-absorb`
-keeps them apart).
+each with the residues lining it. The sites of every frame are then grouped
+into pockets by place, as `boonza pockets` groups fpocket's (`--grouping
+centroid`, the default): best SiteScore first, each site joins the pocket whose
+mean centre is within `--cutoff` (8 A) of its own, or starts one, and sites are
+reassigned to the nearest centre until none moves.
 
-Pockets are ordered by `--rank`: the best frame's p (`p_max`, the default),
-its mean while open, its mean over every frame (occupancy x the mean while
-open), occupancy x the best, the 90th percentile, or occupancy;
+A pocket is located by its **centre**, the mean centre of its per-frame best
+sites, and drawn and measured by its **medoid**, the per-frame best site
+nearest that centre. Its single best-scoring site is not used for either: in a
+run it can lie beside where the pocket usually is.
+
+`--grouping consensus` groups the sites instead by the residues lining them:
+each site joins the pocket whose core (the residues lining at least half its
+sites) it resembles most, by Jaccard similarity of at least `--similarity`;
+sites are reassigned until none moves; two pockets that are rarely open
+together (`--cooccur`) are merged; and a pocket open in few frames or very
+small joins its nearest neighbour (`--no-absorb` keeps them apart). On cryptic
+sites it let the ligand's site merge with a persistent neighbouring pocket
+([how the grouping was chosen](sitemap_grouping.md)).
+
+Pockets are ordered by `--rank`: the 90th percentile of p over the frames a
+pocket is open in (`p_q90_open`, the default, as `boonza pockets` ranks), the
+best frame's p (`p_max`), its mean while open, its mean over every frame
+(occupancy x the mean while open), occupancy x the best, the 90th percentile
+over every frame (closed frames as 0), or occupancy;
 `pockets.csv` has every one of them and each pocket's place under each, with
-the pocket's occupancy, volumes, best MD frame, lining residues, the probes at
-it in that frame and the probes' pharmacophore hotspots in it.
+the pocket's occupancy, volumes, centre (`centre_x/y/z`), the MD frame it is
+drawn in (`md_frame`, its medoid's) and its best-scoring frame
+(`best_md_frame`), lining residues, the probes at it in that frame and the
+probes' pharmacophore hotspots in it.
 
 The hotspots are `boonza.pharmacophore`'s: the probe beads typed into
 families, each family's density over every frame against bulk, the regions at
@@ -142,8 +157,8 @@ least 20 times bulk kept when at least `--min-probes` distinct probe molecules
 make them, each given to the pocket at it most often. They are shown only: no
 site is found or ranked with the probes.
 
-`view.pml` has a group per pocket: its site in its best frame, the sites of
-every frame (`sites_<rank>`), the protein in the best frame with its bonds but
+`view.pml` has a group per pocket: its medoid site, the sites of
+every frame (`sites_<rank>`), the protein in the medoid's frame with its bonds but
 no elastic network (`frame_<rank>`), the probes there (`probes_<rank>`) and the
 hotspots (`pharm_<rank>`), each sized by its extent and labelled with its
 family, enrichment and probe count (`show labels, pharm_<rank>`). Scene buttons
@@ -151,7 +166,8 @@ return to the opening view (`overview`) or show one pocket alone; the commands
 `overview` and `only <rank>` do the same.
 
 Every frame's sites are kept in `sitemap/sites.pkl`, so regrouping or
-reranking (`--similarity`, `--cooccur`, `--rank`, `--top`) takes seconds; they
+reranking (`--grouping`, `--cutoff`, `--similarity`, `--cooccur`, `--rank`,
+`--top`) takes seconds; they
 are found again when the frames or the presets change. A frame takes about a
 second for a few hundred beads; `--every` analyses fewer frames, and
 `-j` sets the workers (every core but two by default).

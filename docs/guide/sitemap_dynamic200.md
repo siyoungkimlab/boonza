@@ -167,8 +167,9 @@ hence one preset per command.
 
 Per-frame site finding cannot recover a site that is closed in a frame. In
 MD, Top-1 is well below the crystal structures' for both presets. Grouping
-sites across frames into pockets (`boonza sitemap traj`'s consensus) is where
-a run's open frames can count, and its parameters are not tuned yet.
+sites across frames into pockets (`boonza sitemap traj`'s grouping) is where
+a run's open frames can count; how it was chosen is in
+[How traj's grouping was chosen](sitemap_grouping.md).
 
 ## Reproducing
 

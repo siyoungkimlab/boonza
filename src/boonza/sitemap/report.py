@@ -13,13 +13,15 @@ run's fitted frame:
   apo             the all-atom apo structure, superposed on the run (if given)
   beads           the protein's beads in the first frame (off at the start)
   pocket_<rank>   a group per pocket, holding
-    site_<rank>     its site in its best frame, coloured by rank, labelled with
-                    rank, occupancy, p (its best SiteScore as a probability) and
-                    best MD frame
+    site_<rank>     its medoid site, coloured by rank (the top 10 each its own
+                    colour, the rest grey), labelled with rank, occupancy, p90 (the
+                    90th percentile of its p over the frames it is open in), p
+                    (its best SiteScore as a probability) and the medoid's MD
+                    frame
     sites_<rank>    the site of every frame it is in, as small dots (off); the
                     file links each frame's points as site finding does, so
                     "show lines, sites_<rank>" draws how they connect
-    frame_<rank>    the protein in that best frame: beads as spheres and its
+    frame_<rank>    the protein in the medoid's frame: beads as spheres and its
                     bonds as lines, without the elastic network (off)
     probes_<rank>   the probe molecules (chain LIG) with a bead within PROBE_NEAR
                     of the site in that frame (off)
@@ -116,7 +118,7 @@ def _pharm_pdb(path: Path, spots) -> None:
 
 def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coords,
           pids=None, pcoords=None, apo=None, top: int | None = None,
-          rank: str = "p_max", spots=None, view_system=None, holo=None,
+          rank: str = "p_q90_open", spots=None, view_system=None, holo=None,
           holo_ligand: str | None = None, ligand=None) -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 
@@ -128,8 +130,11 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     view.dms, boonza's for_viewing), atom for atom as ``system``, for the frames' bonds.
     ``holo``, ``holo_ligand``, ``ligand``: a holo structure superposed on the run, its
     ligand's selection and that ligand's heavy atoms there: every pocket is measured
-    against it in its best frame (PPc, MOc, LVC, PVN) and by the share of its frames whose
-    site is PPc-right (frames_PPc)."""
+    against it -- PPc at its centre, MOc, LVC and PVN of its medoid site -- and by the
+    share of its frames whose site is PPc-right (frames_PPc).
+
+    A pocket is shown and measured by its medoid (traj.Pocket.medoid) in the medoid's
+    frame, and located by its centre (traj.Pocket.centre)."""
     from ..io import save
     from ..pockets import view as BV
     from .pharm import assign
@@ -158,10 +163,11 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     rows, drawn, objects = [], [], []
     for k, p in enumerate(pockets, 1):
         s = summaries[id(p)]
-        f = p.best.frame
+        site, centre = p.medoid, p.centre
+        f = site.frame
         near = np.zeros(len(pids), bool)
         if len(pids):
-            d2 = ((pcoords[f][:, None] - p.best.xyz[None]) ** 2).sum(-1).min(1)
+            d2 = ((pcoords[f][:, None] - site.xyz[None]) ** 2).sum(-1).min(1)
             near = np.isin(pres, np.unique(pres[d2 <= PROBE_NEAR**2]))
         probe_names = sorted({str(system.residues["name"][r]).strip() for r in pres[near]})
         mine = owned[k - 1]
@@ -171,15 +177,18 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
                      "best_score": round(s["best_score"], 3),
                      "mean_score": round(s["mean_score"], 3),
                      "median_volume": s["median_volume"], "max_volume": s["max_volume"],
-                     "best_md_frame": f * every, "core_residues": _residue_names(system, p.core),
-                     "probes_at_best_frame": " ".join(probe_names),
+                     "md_frame": f * every, "best_md_frame": p.best.frame * every,
+                     **{f"centre_{a}": round(float(v), 2)
+                        for a, v in zip("xyz", centre, strict=True)},
+                     "core_residues": _residue_names(system, p.core),
+                     "probes_at_md_frame": " ".join(probe_names),
                      "hotspots": "; ".join(f"{CODES[h.family]} x{h.enrichment:.0f} "
                                            f"({h.ligands} probes)" for h in mine)})  # fmt: skip
         verdict = ""
         if ligand is not None:
             from ..pockets.overlap import ppc
 
-            m = _against(p.best, spacing, ligand)
+            m = {**_against(site, spacing, ligand), "PPc": ppc(centre[None], ligand)}
             per_frame = p.per_frame_best().values()
             rows[-1].update(
                 {
@@ -190,8 +199,9 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
             verdict = f"{' PPc' if m['PPc'] else ''}{' MOc' if m['MOc'] else ''} LVC {m['LVC']:.2f}"
         if top is not None and k > top:
             continue
-        label = f"{k} occ {s['occupancy']:.2f} p {s['p_max']:.2f} md frame {f * every}{verdict}"
-        drawn.append((k, label, p.best.xyz.mean(0)))
+        label = (f"{k} occ {s['occupancy']:.2f} p90 {s['p_q90_open']:.2f} p {s['p_max']:.2f} "
+                 f"md frame {f * every}{verdict}")  # fmt: skip
+        drawn.append((k, label, centre))
         frame = _drawable(view_system or system, ids, coords[f])
         names = {"frame": f"frame_{k}_md{f * every}.{fmt}", "sites": f"sites_{k}.pdb"}
         _sites_pdb(out / names["sites"], p, spacing)
@@ -215,7 +225,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
         w.writerows(rows)
 
     shown = {k for k, *_ in drawn}
-    BV.write_pqr(out / "sites.pqr", [(k, pockets[k - 1].best.xyz, spacing / 2) for k in shown])
+    BV.write_pqr(out / "sites.pqr", [(k, pockets[k - 1].medoid.xyz, spacing / 2) for k in shown])
     beads = _drawable(view_system or system, ids, coords[0])
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -227,9 +237,10 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
             save(holo.select(holo_ligand).clone(), out / "ligand.pdb")
     lines = [f"# boonza sitemap: pockets of a {model} run ({n_frames} frames, every {every}th MD "
              f"frame, {len(pockets)} pockets ranked by {rank}, the best {len(drawn)} drawn)",
-             "# each pocket is a group, pocket_<rank>: site_<rank> (its site in its best",
-             "# frame), sites_<rank> (every frame's site points), frame_<rank> (the",
-             "# protein in the best frame, no elastic network), probes_<rank> (the probes there",
+             "# each pocket is a group, pocket_<rank>: site_<rank> (its medoid site, the",
+             "# top 10 each its own colour), sites_<rank> (every frame's site points),",
+             "# frame_<rank> (the protein in the medoid's frame, no elastic network),",
+             "# probes_<rank> (the probes there",
              "# then) and pharm_<rank> (the run's pharmacophore hotspots in the pocket:",
              "# donor sky blue, acceptor salmon, cation blue, anion red, aromatic orange,",
              "# hydrophobe green)", *BV.PREAMBLE]  # fmt: skip
