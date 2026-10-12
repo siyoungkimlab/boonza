@@ -13,13 +13,13 @@ run's fitted frame:
   apo             the all-atom apo structure, superposed on the run (if given)
   beads           the protein's beads in the first frame (off at the start)
   pocket_<rank>   a group per pocket, holding
-    site_<rank>     its site in its best frame, coloured by rank, labelled with
-                    rank, occupancy, p (its best SiteScore as a probability) and
-                    best MD frame
+    site_<rank>     its medoid site, coloured by rank (the top 10 each its own
+                    colour, the rest grey), labelled with rank, occupancy, p (its
+                    best SiteScore as a probability) and the medoid's MD frame
     sites_<rank>    the site of every frame it is in, as small dots (off); the
                     file links each frame's points as site finding does, so
                     "show lines, sites_<rank>" draws how they connect
-    frame_<rank>    the protein in that best frame: beads as spheres and its
+    frame_<rank>    the protein in the medoid's frame: beads as spheres and its
                     bonds as lines, without the elastic network (off)
     probes_<rank>   the probe molecules (chain LIG) with a bead within PROBE_NEAR
                     of the site in that frame (off)
@@ -234,9 +234,10 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
             save(holo.select(holo_ligand).clone(), out / "ligand.pdb")
     lines = [f"# boonza sitemap: pockets of a {model} run ({n_frames} frames, every {every}th MD "
              f"frame, {len(pockets)} pockets ranked by {rank}, the best {len(drawn)} drawn)",
-             "# each pocket is a group, pocket_<rank>: site_<rank> (its site in its best",
-             "# frame), sites_<rank> (every frame's site points), frame_<rank> (the",
-             "# protein in the best frame, no elastic network), probes_<rank> (the probes there",
+             "# each pocket is a group, pocket_<rank>: site_<rank> (its medoid site, the",
+             "# top 10 each its own colour), sites_<rank> (every frame's site points),",
+             "# frame_<rank> (the protein in the medoid's frame, no elastic network),",
+             "# probes_<rank> (the probes there",
              "# then) and pharm_<rank> (the run's pharmacophore hotspots in the pocket:",
              "# donor sky blue, acceptor salmon, cation blue, anion red, aromatic orange,",
              "# hydrophobe green)", *BV.PREAMBLE]  # fmt: skip
