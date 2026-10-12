@@ -617,6 +617,10 @@ def _triage(args) -> int:
 
     out = Path(args.out)
     (out / "structures").mkdir(parents=True, exist_ok=True)
+    # boonza modes reads the ligand back from here, so its session shows the same one
+    chosen = {"ligandsel": args.ligandsel, "proteinsel": args.proteinsel,
+              "pocketsel": args.pocketsel}  # fmt: skip
+    (out / "triage.json").write_text(json.dumps(chosen, indent=1))
     rows, prints = [], {}
     for d in args.workdir:
         here = Path(d)
@@ -675,6 +679,7 @@ def _triage(args) -> int:
 def _modes(args) -> int:
     """Group the runs into binding modes, and open one of each rather than a thousand."""
     import csv
+    import json
     import shutil
     from pathlib import Path
 
@@ -718,55 +723,143 @@ def _modes(args) -> int:
         w = csv.DictWriter(fh, cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(sorted(rows, key=lambda r: (r["mode"], -r["is_medoid"], r["run"])))
+    ligand = args.ligandsel
+    if ligand is None and (where / "triage.json").exists():
+        ligand = json.loads((where / "triage.json").read_text()).get("ligandsel")
+    ligand = ligand or "not (polymer or water or ions)"
+    reference = _load(args.reference) if args.reference else None
     picked = []
     for n, medoid in enumerate(found.medoids[: args.max_modes]):
         src = where / "structures"
         for f in sorted(src.glob(f"{names[medoid]}_*")):
             shutil.copy2(f, out / "structures" / f"mode{n:02d}_n{len(found.members[n])}_{f.name}")
         picked.append((n, names[medoid], len(found.members[n])))
-    _write_sessions(out, picked, args.ligandsel)
+    poses = _align_medoids(out, picked, reference)
+    _write_sessions(out, poses, ligand)
     print(f"\n{len(picked)} medoid(s) -> {out / 'modes.csv'} and a session beside it")
     return 0
 
 
-def _write_sessions(out, picked, ligand: str) -> None:
+#: what boonza modes fits the medoids on: alpha carbons, or the backbone beads
+#: of a coarse-grained protein (Martini BB, SIRAH GC)
+MEDOID_FIT = "(protein and name CA) or name BB GC"
+
+
+def _align_medoids(out, picked, reference=None) -> list:
+    """Fit every structure written for a mode onto one frame, in place.
+
+    The frame is ``reference`` when given -- so the modes of several ligands
+    can be overlaid -- and otherwise the largest mode's pose.  Each run's MD
+    box leaves its frames wherever the run put them, tens of A apart, so
+    without this a viewer opens a scatter of proteins.  Returns the pose of
+    each mode, as ``(path, system)``, biggest mode first.
+    """
+    from pathlib import Path
+
+    import boonza
+
+    poses = []
+    for n, run, count in picked:
+        for f in sorted(Path(out, "structures").glob(f"mode{n:02d}_n{count}_{run}_*")):
+            s = _load(f)
+            if reference is None:
+                reference = s  # the largest mode's first file: the frame for the rest
+            else:
+                a, b = s.select(MEDOID_FIT).ids, reference.select(MEDOID_FIT).ids
+                # the same system pairs in order; a reference from elsewhere
+                # (a crystal structure, another ligand's run) by sequence
+                boonza.superpose(s, reference, sel=MEDOID_FIT,
+                                 match="order" if len(a) == len(b) else "sequence")  # fmt: skip
+                boonza.save(s, f)
+            if "_pose." in f.name:
+                poses.append((f, s))
+    return poses
+
+
+#: modes shown when a session opens; the rest are loaded, switched off
+SESSION_SHOWN = 20
+#: each mode's ligand carbons, in turn: (PyMOL colour, VMD ColorID)
+SESSION_COLOURS = (("yellow", 4), ("magenta", 27), ("green", 7), ("orange", 3), ("cyan", 10),
+                   ("salmon", 13), ("purple", 11), ("lime", 12), ("slate", 0), ("wheat", 5),
+                   ("pink", 9), ("teal", 19))  # fmt: skip
+
+
+def _index_ranges(ids, base: int, to: str, sep: str) -> str:
+    """``[3, 4, 5, 9]`` as ``3-5+9`` (PyMOL, base 1) or ``2 to 4 8`` (VMD)."""
+    ids = sorted(int(i) + base for i in ids)
+    runs, start = [], None
+    for k, i in enumerate(ids):
+        if start is None:
+            start = i
+        if k + 1 == len(ids) or ids[k + 1] != i + 1:
+            runs.append(str(start) if start == i else f"{start}{to}{i}")
+            start = None
+    return sep.join(runs)
+
+
+def _write_sessions(out, poses, ligand: str) -> None:
     """A PyMOL and a VMD session over the medoids, biggest mode first.
+
+    Each mode is one object: the protein as a cartoon, the pocket (whole
+    residues within 5 A of the ligand) as sticks, the ligand as sticks with its
+    carbons in a colour of its own.  Hydrogens are shown only where they are
+    polar.  boonza picks the atoms, and both sessions name them by index, so
+    ``ligand`` is boonza's selection syntax and the two viewers show the same.
 
     Each is loaded from ``structures/`` by a relative path, so the folder can
     be copied off a cluster as it is and opened where the eyes are.
     """
     from pathlib import Path
 
+    polar = "(not hydrogen or withinbonds 1 of (element N O S))"
     pml = ["# boonza modes: run from this folder with  pymol session.pml",
-           "bg_color white", "set cartoon_transparency, 0.7"]  # fmt: skip
+           "set retain_order, 1", "bg_color white", "set cartoon_side_chain_helper, 1",
+           "set stick_radius, 0.2", "set valence, 1"]  # fmt: skip
     vmd = ["# boonza modes: run from this folder with  vmd -e session.vmd",
            "display projection orthographic", "color Display Background white",
-           "axes location off"]  # fmt: skip
+           "axes location off", "color Element C silver"]  # fmt: skip
     first = None
-    for k, (n, run, count) in enumerate(picked):
-        files = sorted(Path(out, "structures").glob(f"mode{n:02d}_n{count}_{run}_*"))
-        pose = next((f for f in files if "_pose." in f.name), None)
-        if pose is None:
-            continue
-        name = pose.stem
-        pml.append(f"load structures/{pose.name}, {name}")
-        if first is None:
-            first = name
-        else:
-            # fit, not align: every medoid is the same system, so the backbone
-            # atoms pair in order.  align would try to sequence-align them,
-            # which is slow at best and hangs on coarse-grained residue names
-            pml.append(f"fit {name} and name CA+BB+GC, {first} and name CA+BB+GC")
+    for k, (pose, s) in enumerate(poses):
+        lig = f"same residue as ({ligand})"
+        if not len(s.select(lig).ids):
+            raise ValueError(f"{pose.name}: no atoms in the ligand selection {ligand!r}")
+        # 'same residue as' takes everything after it, so it is closed off
+        # before the polar filter, or the filter is undone by the expansion
+        pocket = s.select(f"(same residue as (polymer and not ({lig}) and within 5 of ({lig})))"
+                          f" and {polar}").ids  # fmt: skip
+        carbons = s.select(f"({lig}) and carbon").ids
+        rest = s.select(f"({lig}) and not carbon and {polar}").ids
+        name, (pcol, vcol) = pose.stem, SESSION_COLOURS[k % len(SESSION_COLOURS)]
+
+        def pyidx(ids, o=name):
+            return f"({o} and index {_index_ranges(ids, 1, '-', '+')})" if len(ids) else "none"
+
+        def vmidx(ids):
+            return f"index {_index_ranges(ids, 0, ' to ', ' ')}" if len(ids) else "none"
+
+        pml += [f"load structures/{pose.name}, {name}", f"hide everything, {name}",
+                f"show cartoon, {name} and polymer.protein",
+                f"color gray80, {name} and elem C",
+                f"show sticks, {pyidx(pocket)} or {pyidx(carbons)} or {pyidx(rest)}",
+                f"color {pcol}, {pyidx(carbons)}", f'util.cnc("{name}")']  # fmt: skip
         vmd += [f"mol new structures/{pose.name} waitfor all", "mol delrep 0 top",
-                "mol representation NewCartoon", "mol selection {protein}",
-                "mol material Transparent", "mol addrep top",
-                "mol representation Licorice 0.2 12 12", f"mol selection {{{ligand}}}",
-                "mol material Opaque", "mol addrep top", f"mol rename top {name}"]  # fmt: skip
-        if k:
+                "mol representation NewCartoon", "mol color ColorID 6",
+                "mol selection {protein}", "mol material Transparent", "mol addrep top",
+                "mol representation Licorice 0.2 12 12", "mol color Element",
+                f"mol selection {{{vmidx(pocket)}}}", "mol material Opaque", "mol addrep top",
+                "mol representation Licorice 0.25 12 12", f"mol color ColorID {vcol}",
+                f"mol selection {{{vmidx(carbons)}}}", "mol addrep top",
+                "mol color Element", f"mol selection {{{vmidx(rest)}}}", "mol addrep top",
+                f"mol rename top {name}"]  # fmt: skip
+        if k >= SESSION_SHOWN:
+            pml.append(f"disable {name}")
             vmd.append("mol off top")
-    pml += ["hide everything", "show cartoon, polymer", f"show sticks, ({ligand}) and not hydro",
-            f"show lines, byres (polymer within 5 of ({ligand})) and not hydro",
-            f"orient {ligand}", "save session.pse"]  # fmt: skip
+        if first is None:
+            first = pyidx(carbons) if len(carbons) else name
+    if first is not None:
+        pml.append(f"orient {first}")
+    pml.append("save session.pse")
+    vmd.append("display resetview")
     Path(out, "session.pml").write_text("\n".join(pml) + "\n")
     Path(out, "session.vmd").write_text("\n".join(vmd) + "\n")
 
@@ -1979,7 +2072,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="measure runs whose ligand left and stopped them, too")  # fmt: skip
     q.add_argument("--all-frames", action="store_true",
                    help="write each run's first and last frame as well as its pose")  # fmt: skip
-    q.add_argument("--format", default="pdb", help="structure format to write (default: pdb)")
+    q.add_argument("--format", default="mae",
+                   help="structure format to write (default: mae, which keeps bond orders; "
+                        "pdb does not, but open-source PyMOL cannot read mae)")  # fmt: skip
     q.set_defaults(run=_triage)
 
     q = sub.add_parser("modes", help="group triaged runs into binding modes, with a session "
@@ -1990,9 +2085,12 @@ def _parser() -> argparse.ArgumentParser:
                    help="cosine distance joining two poses into one mode (default: 0.25); "
                         "check it against the widest pair each mode reports")  # fmt: skip
     q.add_argument("--max-modes", type=int, default=20, help="modes to keep, largest first")
-    q.add_argument("--ligandsel", default="not polymer and not solvent",
-                   help="how the session selects the ligand (the viewer's syntax, "
-                        "not boonza's)")  # fmt: skip
+    q.add_argument("--ligandsel",
+                   help="the ligand the session shows, and whose pocket (default: the "
+                        "one 'boonza triage' was given)")  # fmt: skip
+    q.add_argument("--reference",
+                   help="fit the medoids onto this structure rather than onto the largest "
+                        "mode, e.g. to overlay several ligands' modes")  # fmt: skip
     q.set_defaults(run=_modes)
 
     q = sub.add_parser("probes",

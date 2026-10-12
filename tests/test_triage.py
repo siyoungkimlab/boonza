@@ -158,13 +158,86 @@ def test_both_commands_write_what_they_promise(tmp_path):
     loaded = np.load(out / "fingerprints.npz")
     assert len(loaded.files) == 3
     assert len({loaded[f].shape for f in loaded.files}) == 1  # one width: one system
-    assert (out / "structures" / "run0_pose.pdb").exists()
+    assert (out / "structures" / "run0_pose.mae").exists()  # mae: bond orders kept
+    assert json.loads((out / "triage.json").read_text())["ligandsel"] == LIGAND
 
     review = tmp_path / "review"
-    assert main(["modes", str(out), "-o", str(review), "--ligandsel", "resn HEM"]) == 0
+    # no --ligandsel: the session shows the ligand triage was given
+    assert main(["modes", str(out), "-o", str(review)]) == 0
     assert (review / "modes.csv").exists()
     assert (review / "session.pml").exists() and (review / "session.vmd").exists()
-    body = (review / "session.pml").read_text()
-    assert "fit " in body or body.count("load ") == 1  # one mode needs no fit
-    assert "save session.pse" in body
-    assert len(list((review / "structures").glob("mode*_pose.pdb"))) >= 1
+    assert "save session.pse" in (review / "session.pml").read_text()
+    assert len(list((review / "structures").glob("mode*_pose.mae"))) >= 1
+
+
+def _moved(system):
+    """The same system turned and shifted, as another run's box leaves it."""
+    s = system.clone()
+    th = np.radians(40.0)
+    r = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0], [0, 0, 1]])
+    s.positions = np.asarray(s.positions) @ r.T + np.array([30.0, -12.0, 5.0])
+    return s
+
+
+def test_modes_writes_its_medoids_in_one_frame(tmp_path):
+    """Every medoid comes out fitted onto the largest mode's, or onto --reference."""
+    from boonza.cli import _align_medoids
+
+    s = _one_chain()
+    (tmp_path / "structures").mkdir()
+    boonza.save(s, tmp_path / "structures" / "mode00_n2_a_pose.mae")
+    boonza.save(_moved(s), tmp_path / "structures" / "mode01_n1_b_pose.mae")
+    poses = _align_medoids(tmp_path, [(0, "a", 2), (1, "b", 1)])
+    assert [p.name for p, _ in poses] == ["mode00_n2_a_pose.mae", "mode01_n1_b_pose.mae"]
+    ca = s.select("name CA").ids
+    back = boonza.load(str(tmp_path / "structures" / "mode01_n1_b_pose.mae"))
+    assert np.allclose(np.asarray(back.positions)[ca], np.asarray(s.positions)[ca], atol=1e-3)
+
+    # a reference from elsewhere moves the largest mode too
+    _align_medoids(tmp_path, [(0, "a", 2), (1, "b", 1)], reference=_moved(s))
+    back = boonza.load(str(tmp_path / "structures" / "mode00_n2_a_pose.mae"))
+    assert np.allclose(np.asarray(back.positions)[ca], np.asarray(_moved(s).positions)[ca],
+                       atol=1e-3)  # fmt: skip
+
+
+def test_the_sessions_show_the_same_atoms_in_pymol_and_vmd(tmp_path):
+    """boonza picks the ligand and its pocket and both viewers get them by index,
+    so a selection only one viewer could parse can no longer break the other."""
+    from boonza.cli import _index_ranges, _write_sessions
+
+    s = _one_chain()
+    pose = tmp_path / "structures" / "mode00_n1_a_pose.mae"
+    pose.parent.mkdir()
+    boonza.save(s, pose)
+    _write_sessions(tmp_path, [(pose, s)], "resname HEM")
+    carbons = s.select("resname HEM and carbon").ids
+    assert len(carbons) > 0
+    vmd = (tmp_path / "session.vmd").read_text()
+    pml = (tmp_path / "session.pml").read_text()
+    assert f"mol selection {{index {_index_ranges(carbons, 0, ' to ', ' ')}}}" in vmd
+    assert f"index {_index_ranges(carbons, 1, '-', '+')})" in pml
+    assert "resname HEM" not in vmd + pml  # nothing left for a viewer to parse
+    assert _index_ranges([3, 4, 5, 9], 1, "-", "+") == "4-6+10"
+    assert _index_ranges([3, 4, 5, 9], 0, " to ", " ") == "3 to 5 9"
+
+
+def test_the_pocket_shows_whole_residues_with_polar_hydrogens_only(tmp_path):
+    """Whole residues near the ligand, and of their hydrogens only those on N, O or S."""
+    from boonza.cli import _write_sessions
+
+    s = boonza.peptide("AAFAA")
+    assert len(s.select("hydrogen").ids), "the test needs explicit hydrogens"
+    pose = tmp_path / "structures" / "mode00_n1_a_pose.mae"
+    pose.parent.mkdir()
+    boonza.save(s, pose)
+    _write_sessions(tmp_path, [(pose, s)], "resid 3")
+    line = (tmp_path / "session.vmd").read_text().split("mol selection {index ")[1]
+    shown = set()
+    for part in line.split("}")[0].replace(" to ", ":").split():
+        a, _, b = part.partition(":")
+        shown.update(range(int(a), int(b or a) + 1))
+    near = set(s.select("(same residue as (not resid 3 and within 5 of resid 3)) and noh").ids)
+    assert near and near <= shown  # every heavy atom of the pocket residues
+    on_carbon = set(s.select("hydrogen and withinbonds 1 of carbon").ids)
+    assert not shown & on_carbon  # and no hydrogen on a carbon
+    assert shown & set(s.select("hydrogen and withinbonds 1 of nitrogen").ids)
