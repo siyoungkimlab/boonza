@@ -134,7 +134,7 @@ def cmd_structure(args) -> int:
 
 def main(argv=None) -> int:
     from .presets import STRUCTURE, TRAJ
-    from .traj import COOCCUR, CUTOFF, GROUPING, GROUPINGS, RANKINGS, SIMILARITY
+    from .traj import COOCCUR, CUTOFF, GROUPING, GROUPINGS, RANK, RANKINGS, SIMILARITY
 
     ap = argparse.ArgumentParser(
         prog="boonza sitemap",
@@ -198,7 +198,7 @@ def main(argv=None) -> int:
     t.add_argument("--top", type=int, default=10, help="pockets drawn in the view")
     t.add_argument(
         "--rank",
-        default="p_max",
+        default=RANK,
         choices=RANKINGS,
         help="how pockets are ordered (all are in pockets.csv)",
     )

@@ -61,10 +61,19 @@ import numpy as np
 
 LINING = 3.0  # A beyond a bead's radius
 #: ways to rank pockets, each a key of Pocket.summary (higher first):
+#: p_q90_open the 90th percentile over the frames it is open in (boonza pockets' quality),
 #: p_max the best frame, p_mean_open the mean while open, p_mean_all the mean over every
 #: frame (0 where absent: occupancy x p_mean_open), occ_x_pmax occupancy x the best
-#: frame, p_q90 the 90th percentile over every frame, occupancy how often it is open
-RANKINGS = ("p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p_q90", "occupancy")
+#: frame, p_q90 the 90th percentile over every frame (0 where absent), occupancy how often
+#: it is open
+RANKINGS = ("p_q90_open", "p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p_q90",
+            "occupancy")  # fmt: skip
+#: the default: on the 40 Schrodinger apo runs (centroid 8 A, centre, every frame) it found
+#: the ligand's site in the top 5 in 0.775 / 0.75 / 0.65 of cases (Martini 2 / 3 / SIRAH),
+#: p_max 0.75 / 0.725 / 0.70, and in the top 10 in 0.875 / 0.875 / 0.80 (p_max 0.875 /
+#: 0.85 / 0.80); closed frames counted as 0 (p_q90) did worse, 0.75 / 0.80 / 0.625 and
+#: 0.825 / 0.85 / 0.75
+RANK = "p_q90_open"
 GROUPINGS = ("centroid", "consensus")
 GROUPING = "centroid"
 CUTOFF = 8.0  # A: a site joins a pocket whose centre is this close (centroid grouping)
@@ -143,6 +152,7 @@ class Pocket:
                 "p_max": float(p.max()), "p_mean_open": float(p.mean()),
                 "p_mean_all": float(every.mean()), "occ_x_pmax": float(occ * p.max()),
                 "p_q90": float(np.quantile(every, 0.9)),
+                "p_q90_open": float(np.quantile(p, 0.9)),
                 "median_volume": float(np.median(vols)), "max_volume": float(vols.max()),
                 "best_frame": int(self.best.frame), "core_residues": len(self.core)}  # fmt: skip
 

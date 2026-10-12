@@ -14,8 +14,10 @@ run's fitted frame:
   beads           the protein's beads in the first frame (off at the start)
   pocket_<rank>   a group per pocket, holding
     site_<rank>     its medoid site, coloured by rank (the top 10 each its own
-                    colour, the rest grey), labelled with rank, occupancy, p (its
-                    best SiteScore as a probability) and the medoid's MD frame
+                    colour, the rest grey), labelled with rank, occupancy, p90 (the
+                    90th percentile of its p over the frames it is open in), p
+                    (its best SiteScore as a probability) and the medoid's MD
+                    frame
     sites_<rank>    the site of every frame it is in, as small dots (off); the
                     file links each frame's points as site finding does, so
                     "show lines, sites_<rank>" draws how they connect
@@ -116,7 +118,7 @@ def _pharm_pdb(path: Path, spots) -> None:
 
 def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coords,
           pids=None, pcoords=None, apo=None, top: int | None = None,
-          rank: str = "p_max", spots=None, view_system=None, holo=None,
+          rank: str = "p_q90_open", spots=None, view_system=None, holo=None,
           holo_ligand: str | None = None, ligand=None) -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 
@@ -197,7 +199,8 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
             verdict = f"{' PPc' if m['PPc'] else ''}{' MOc' if m['MOc'] else ''} LVC {m['LVC']:.2f}"
         if top is not None and k > top:
             continue
-        label = f"{k} occ {s['occupancy']:.2f} p {s['p_max']:.2f} md frame {f * every}{verdict}"
+        label = (f"{k} occ {s['occupancy']:.2f} p90 {s['p_q90_open']:.2f} p {s['p_max']:.2f} "
+                 f"md frame {f * every}{verdict}")  # fmt: skip
         drawn.append((k, label, centre))
         frame = _drawable(view_system or system, ids, coords[f])
         names = {"frame": f"frame_{k}_md{f * every}.{fmt}", "sites": f"sites_{k}.pdb"}

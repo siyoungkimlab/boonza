@@ -3,7 +3,7 @@
 `boonza sitemap traj` finds sites in every frame of a run and groups them into
 pockets. This page is how the default grouping (`--grouping centroid`,
 `--cutoff 8`), the point that locates a pocket (its centre) and the ranking
-(`--rank p_max`) were chosen, on the Schrödinger set's apo MD runs. The presets
+(`--rank p_q90_open`) were chosen, on the Schrödinger set's apo MD runs. The presets
 were not changed: every result here is [dynamic200](sitemap_dynamic200.md)'s
 sites, regrouped.
 
@@ -136,15 +136,23 @@ and measures it by its medoid, a real site of a real frame (`md_frame`).
 
 **The ranking**, at 8 A with the centre:
 
-| model | p_max | p_mean_open | p_q90 | p_mean_all | occ_x_pmax | occupancy |
-|---|---|---|---|---|---|---|
-| Martini 2 | 0.50 / 0.675 / 0.75 / 0.875 | 0.40 / 0.65 / 0.775 / 0.875 | 0.425 / 0.65 / 0.75 / 0.825 | 0.40 / 0.475 / 0.60 / 0.80 | 0.425 / 0.475 / 0.60 / 0.75 | 0.325 / 0.425 / 0.575 / 0.675 |
-| Martini 3 | 0.50 / 0.675 / 0.725 / 0.85 | 0.525 / 0.725 / 0.75 / 0.85 | 0.475 / 0.65 / 0.80 / 0.85 | 0.525 / 0.625 / 0.75 / 0.825 | 0.425 / 0.60 / 0.80 / 0.80 | 0.30 / 0.525 / 0.75 / 0.80 |
-| SIRAH | 0.475 / 0.625 / 0.70 / 0.80 | 0.425 / 0.55 / 0.675 / 0.80 | 0.425 / 0.525 / 0.625 / 0.75 | 0.375 / 0.55 / 0.575 / 0.75 | 0.325 / 0.50 / 0.575 / 0.775 | 0.225 / 0.475 / 0.55 / 0.70 |
+| model | p_q90_open | p_max | p_mean_open | p_q90 | p_mean_all | occ_x_pmax | occupancy |
+|---|---|---|---|---|---|---|---|
+| Martini 2 | 0.50 / 0.675 / 0.775 / 0.875 | 0.50 / 0.675 / 0.75 / 0.875 | 0.40 / 0.65 / 0.775 / 0.875 | 0.425 / 0.65 / 0.75 / 0.825 | 0.40 / 0.475 / 0.60 / 0.80 | 0.425 / 0.475 / 0.60 / 0.75 | 0.325 / 0.425 / 0.575 / 0.675 |
+| Martini 3 | 0.50 / 0.70 / 0.75 / 0.875 | 0.50 / 0.675 / 0.725 / 0.85 | 0.525 / 0.725 / 0.75 / 0.85 | 0.475 / 0.65 / 0.80 / 0.85 | 0.525 / 0.625 / 0.75 / 0.825 | 0.425 / 0.60 / 0.80 / 0.80 | 0.30 / 0.525 / 0.75 / 0.80 |
+| SIRAH | 0.425 / 0.60 / 0.65 / 0.80 | 0.475 / 0.625 / 0.70 / 0.80 | 0.425 / 0.55 / 0.675 / 0.80 | 0.425 / 0.525 / 0.625 / 0.75 | 0.375 / 0.55 / 0.575 / 0.75 | 0.325 / 0.50 / 0.575 / 0.775 | 0.225 / 0.475 / 0.55 / 0.70 |
 
-`p_max` stays the default. `p_mean_open`, which most folds picked, trades
-Top-1 for Top-5 in Martini 2, is a pair better in Martini 3 and worse in
-SIRAH; the rankings that reward occupancy are worse throughout.
+The default is `p_q90_open`: the 90th percentile of a pocket's p over the
+frames it is open in, as `boonza pockets` ranks fpocket's pockets (its
+quality). A pocket must score well in a tenth of its open frames, not in one,
+so a site that is large for a moment wins less often. It gains a pair at Top-5
+in Martini 2 and a pair at Top-3, Top-5 and Top-10 in Martini 3, and costs
+SIRAH two pairs at Top-1 and Top-5 and one at Top-3; Top-10 is unchanged in
+Martini 2 and SIRAH. Other percentiles over the open frames: the 95th as the
+90th, the 50th and 75th worse. `p_q90`, the same with closed frames counted as
+0, is worse: it penalises the cryptic sites the set is made of, open in few
+frames. The other tables on this page are with `p_max`, the default the
+grouping and the centre were chosen under.
 
 ## An independent check: the 200 training runs
 

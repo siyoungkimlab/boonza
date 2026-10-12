@@ -181,6 +181,9 @@ def test_traj_cli(tmp_path):
     assert rows and 0 < float(rows[0]["occupancy"]) <= 1
     assert (out / "sites.pkl").exists() and (out / "view.pml").exists()
     assert {"md_frame", "best_md_frame", "centre_x", "centre_y", "centre_z"} <= set(rows[0])
+    # ranked by the 90th percentile of p over the frames each pocket is open in
+    assert [r["rank_p_q90_open"] for r in rows] == [str(k) for k in range(1, len(rows) + 1)]
+    assert all(float(r["p_q90_open"]) <= float(r["p_max"]) for r in rows)
     # a second run reuses the frames' sites, here grouped by the residues lining them
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1", "--top", "3", "--grouping", "consensus"]) == 0  # fmt: skip

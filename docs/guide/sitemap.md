@@ -140,9 +140,11 @@ small joins its nearest neighbour (`--no-absorb` keeps them apart). On cryptic
 sites it let the ligand's site merge with a persistent neighbouring pocket
 ([how the grouping was chosen](sitemap_grouping.md)).
 
-Pockets are ordered by `--rank`: the best frame's p (`p_max`, the default),
-its mean while open, its mean over every frame (occupancy x the mean while
-open), occupancy x the best, the 90th percentile, or occupancy;
+Pockets are ordered by `--rank`: the 90th percentile of p over the frames a
+pocket is open in (`p_q90_open`, the default, as `boonza pockets` ranks), the
+best frame's p (`p_max`), its mean while open, its mean over every frame
+(occupancy x the mean while open), occupancy x the best, the 90th percentile
+over every frame (closed frames as 0), or occupancy;
 `pockets.csv` has every one of them and each pocket's place under each, with
 the pocket's occupancy, volumes, centre (`centre_x/y/z`), the MD frame it is
 drawn in (`md_frame`, its medoid's) and its best-scoring frame
