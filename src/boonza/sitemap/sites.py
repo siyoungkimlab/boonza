@@ -27,6 +27,7 @@ points within 3 A in x, y and z of a site point that contact the protein or lie
   n           site volume, A^3 (SiteMap's number of site points)
   exposure    extension / (site + extension)
   enclosure   share of rays entering a bead within 10 A
+  enclosure_site  the same over the site points alone
   contact     mean -E(probe)
   philic      mean -E(probe, polar beads)
   phobic      mean -E(probe, apolar beads) x share of rays entering a bead within 6 A
@@ -38,7 +39,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .grid import NO_HIT, RAY_STEP, Grid
+from .grid import NO_HIT, Grid
 
 DEFAULTS = {
     "outside": 2.5,
@@ -108,15 +109,15 @@ def _pairs(ijk: np.ndarray, offsets: np.ndarray):
     return np.concatenate(bi), np.concatenate(bj)
 
 
-def _shut(hit: np.ndarray, length: float) -> np.ndarray:
-    """Share of each point's rays that enter a bead within ``length``."""
-    return ((hit != NO_HIT) & (hit * RAY_STEP <= length + 1e-6)).mean(1)
+def _shut(hit: np.ndarray, length: float, step: float) -> np.ndarray:
+    """Share of each point's rays that enter a bead within ``length``, sampled every ``step``."""
+    return ((hit != NO_HIT) & (hit * step <= length + 1e-6)).mean(1)
 
 
 def candidates(g: Grid, p: dict) -> np.ndarray:
     """Indices of the grid points that pass the outside, enclosure, contact and neighbour tests."""
     e = g.energy(p["probe"], p["contact_form"])
-    ok = (g.ratio >= p["outside"]) & (_shut(g.hit, p["ray_length"]) >= p["enclosure"])
+    ok = (g.ratio >= p["outside"]) & (_shut(g.hit, p["ray_length"], g.ray_step) >= p["enclosure"])
     ok &= e <= p["contact"]
     idx = np.flatnonzero(ok)
     if not len(idx):
@@ -225,11 +226,13 @@ def properties(g: Grid, site: Site, p: dict) -> dict:
             ok = (g.ratio[cand] >= p["outside"]) & ((e[cand] < 0) | (g.dmin[cand] >= EXTENSION_FAR))
             ext = cand[ok]
     both = np.r_[pts, ext]
-    shut6 = _shut(g.hit[both], PHOBIC_RAY)
+    shut6 = _shut(g.hit[both], PHOBIC_RAY, g.ray_step)
+    shut = _shut(g.hit[both], PROPERTY_RAY, g.ray_step)
     return {
         "n": len(pts) * v,
         "exposure": len(ext) / len(both),
-        "enclosure": float(_shut(g.hit[both], PROPERTY_RAY).mean()),
+        "enclosure": float(shut.mean()),
+        "enclosure_site": float(shut[: len(pts)].mean()),
         "contact": float(-e[both].mean()),
         "philic": float(-g.energy(p["probe"], p["contact_form"], "polar")[both].mean()),
         "phobic": float(

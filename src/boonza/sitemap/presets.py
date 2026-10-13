@@ -19,6 +19,15 @@ own (a tuning candidate, say).  Named so far:
   dynamic200  static200 fine-tuned on MD frames of the same complexes' runs, their
               ligand removed (5 frames of each of 191 100-ns runs per model;
               docs/guide/sitemap_dynamic200.md)
+  volume200   SiteMap's thresholds with only outside and enclosure tuned (on MD frames of
+              all 200 training runs), rays sampled every 2 A out to 10 A, no contact
+              filter, sites ranked by volume alone (no score weights fitted)
+              (docs/guide/sitemap_volume200.md)
+
+A preset may also give ``ray_step`` (A between ray samples; 1.0 when absent, as the
+named presets were tuned) and ``enclosure_term`` (the site property its SiteScore uses for
+enclosure: ``enclosure``, over the site and its extension points, when absent, or
+``enclosure_site``, over the site points alone).
 
 Each command has its default: ``boonza sitemap traj`` finds a run's sites under
 dynamic200 (TRAJ), tuned on frames like the ones it reads, and ``boonza sitemap
@@ -72,7 +81,8 @@ def score(props: dict, p: dict) -> float:
     """The preset's SiteScore of a site's properties (sites.properties)."""
     w = p["score"]
     return float(w["intercept"] + w["sqrt_n"] * np.sqrt(props["n"])
-                 + w["enclosure"] * props["enclosure"] + w["philic"] * props["philic"])  # fmt: skip
+                 + w["enclosure"] * props[p.get("enclosure_term", "enclosure")]
+                 + w["philic"] * props["philic"])  # fmt: skip
 
 
 def find(beads, model: str | None = None, name: str | None = None):
@@ -83,6 +93,12 @@ def find(beads, model: str | None = None, name: str | None = None):
 
     p = preset(model or beads.model, name)
     params = {**p["params"], "probe": 0}
-    g = compute(beads, p["spacing"], (p["probe"],), outside=params["outside"])
+    g = compute(
+        beads,
+        p["spacing"],
+        (p["probe"],),
+        outside=params["outside"],
+        ray_step=p.get("ray_step", 1.0),
+    )
     found = [(score(s.props, p), s) for s in find_sites(g, params)]
     return sorted(found, key=lambda x: -x[0]), g
