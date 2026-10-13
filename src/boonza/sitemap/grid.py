@@ -9,7 +9,7 @@ a parameter trial (sites.py) only compares and groups:
   ratio       min over beads of d^2 / R_i^2 (SiteMap's "outside": >= 2.5)
   dmin        distance to the nearest bead centre, A
   hit         per ray (RAYS directions), the distance at which it first enters a
-              bead (within R_i of its centre), in RAY_STEP steps; NO_HIT if not
+              bead (within R_i of its centre), in ray_step steps; NO_HIT if not
               within RAY_MAX
   e_polar,    Lennard-Jones energy (kcal/mol) of a probe bead at the point with
   e_apolar    the protein's polar and apolar beads, per probe type, from the
@@ -61,12 +61,13 @@ class Grid:
     ijk: np.ndarray  #: (n, 3) int32 grid indices of the kept points
     ratio: np.ndarray  #: (n,)
     dmin: np.ndarray  #: (n,)
-    hit: np.ndarray  #: (n, RAYS) uint8, in RAY_STEP units
+    hit: np.ndarray  #: (n, RAYS) uint8, in ray_step units
     probes: tuple  #: probe type names
     e_polar: np.ndarray  #: (nprobe, n)
     e_apolar: np.ndarray  #: (nprobe, n)
     c_polar: np.ndarray  #: (nprobe, n), each pair capped at 0
     c_apolar: np.ndarray  #: (nprobe, n)
+    ray_step: float = RAY_STEP  #: A between the samples along a ray
 
     def energy(self, probe: int, form: str = "full", part: str = "both") -> np.ndarray:
         """The contact energy of probe ``probe``: ``form`` full or capped, ``part`` both,
@@ -91,7 +92,7 @@ class Grid:
                             ratio=self.ratio, dmin=self.dmin, hit=self.hit,
                             probes=np.array(self.probes), e_polar=self.e_polar,
                             e_apolar=self.e_apolar, c_polar=self.c_polar,
-                            c_apolar=self.c_apolar)  # fmt: skip
+                            c_apolar=self.c_apolar, ray_step=self.ray_step)  # fmt: skip
         tmp.replace(path)
 
     @classmethod
@@ -99,7 +100,8 @@ class Grid:
         z = np.load(path)
         return cls(float(z["spacing"]), z["origin"], z["ijk"], z["ratio"], z["dmin"], z["hit"],
                    tuple(str(p) for p in z["probes"]), z["e_polar"], z["e_apolar"],
-                   z["c_polar"], z["c_apolar"])  # fmt: skip
+                   z["c_polar"], z["c_apolar"],
+                   float(z["ray_step"]) if "ray_step" in z else RAY_STEP)  # fmt: skip
 
 
 def add_probes(g: Grid, beads: Beads, probes) -> Grid:
@@ -126,12 +128,19 @@ def _by_radius(beads: Beads):
     return [(float(v), beads.xyz[r == v]) for v in np.unique(r)]
 
 
-def compute(beads: Beads, spacing: float = 2.0, probes=None, outside: float = 1.0) -> Grid:
+def compute(
+    beads: Beads,
+    spacing: float = 2.0,
+    probes=None,
+    outside: float = 1.0,
+    ray_step: float = RAY_STEP,
+) -> Grid:
     """The per-point quantities around ``beads`` on a ``spacing`` grid.
 
     ``outside``: keep only points with ratio >= it.  Site finding uses no point below
     its own ``outside`` parameter, so a run with fixed parameters (a trajectory) passes
-    that and skips the rays and energies of points it would never look at."""
+    that and skips the rays and energies of points it would never look at.  ``ray_step``:
+    A between the samples along each ray, out to RAY_MAX."""
     from ..spatial import min_dist2
 
     probes = tuple(probes or PROBES[beads.model])
@@ -150,10 +159,10 @@ def compute(beads: Beads, spacing: float = 2.0, probes=None, outside: float = 1.
         dmin = np.minimum(dmin, np.sqrt(d2))
     keep = (ratio >= max(outside, 1.0)) & (dmin <= KEEP)
     ijk, xyz, ratio, dmin = ijk[keep].astype(np.int32), xyz[keep], ratio[keep], dmin[keep]
-    hit = _rays(xyz, groups)
+    hit = _rays(xyz, groups, step=ray_step)
     energies = _contact(xyz, beads, probes)
     return Grid(spacing, origin, ijk, ratio.astype(np.float32), dmin.astype(np.float32), hit,
-                probes, *energies)  # fmt: skip
+                probes, *energies, ray_step=ray_step)  # fmt: skip
 
 
 CELL = 0.5  # A: the occupancy lattice _rays looks ray samples up in
@@ -226,13 +235,13 @@ class _Occupancy:
         return out
 
 
-def _rays(xyz: np.ndarray, groups, chunk: int = 2000) -> np.ndarray:
-    """First ray step (RAY_STEP units) at which each ray enters a bead; NO_HIT if none.
+def _rays(xyz: np.ndarray, groups, chunk: int = 2000, step: float = RAY_STEP) -> np.ndarray:
+    """First ray step (``step`` units) at which each ray enters a bead; NO_HIT if none.
     Identical to _rays_direct: the samples are looked up in an _Occupancy lattice, and
     each ray is marched one step at a time only until it first enters a bead."""
     occ = _Occupancy(groups)
     dirs = directions()
-    steps = np.arange(1, int(RAY_MAX / RAY_STEP) + 1) * RAY_STEP
+    steps = np.arange(1, int(round(RAY_MAX / step)) + 1) * step
     out = np.full((len(xyz), RAYS), NO_HIT, np.uint8)
     for a in range(0, len(xyz), chunk):
         p = xyz[a : a + chunk]
@@ -250,12 +259,12 @@ def _rays(xyz: np.ndarray, groups, chunk: int = 2000) -> np.ndarray:
     return out
 
 
-def _rays_direct(xyz: np.ndarray, groups, chunk: int = 2000) -> np.ndarray:
+def _rays_direct(xyz: np.ndarray, groups, chunk: int = 2000, step: float = RAY_STEP) -> np.ndarray:
     """_rays by a nearest-bead search for every sample (the reference it must equal)."""
     from ..spatial import min_dist2
 
     dirs = directions()
-    steps = np.arange(1, int(RAY_MAX / RAY_STEP) + 1) * RAY_STEP
+    steps = np.arange(1, int(round(RAY_MAX / step)) + 1) * step
     out = np.full((len(xyz), RAYS), NO_HIT, np.uint8)
     for a in range(0, len(xyz), chunk):
         p = xyz[a : a + chunk]
