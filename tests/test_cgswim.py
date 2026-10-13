@@ -16,7 +16,7 @@ from boonza.martini.probes import (
     probe_sequences,
 )
 from boonza.md.cgswim import build, groups_of, place, prepare
-from boonza.md.config import parse_arguments
+from boonza.md.config import DEFAULTS, parse_arguments
 
 DATA = Path(__file__).parent / "data"
 
@@ -461,6 +461,77 @@ def test_a_coarse_grained_run_holds_the_fold_by_default():
     assert parse_arguments([str(DATA / "1TEN.pdb")]).elastic is False
 
 
+def test_the_elastic_numbers_hold_a_fold_under_either_model():
+    """One fold, one set of numbers.
+
+    Both models hold a protein's shape and both are asked the same three
+    questions about it -- how stiff, how far, how close -- so --elastic-kJ,
+    --elastic-nm and --elastic-lower-nm answer for Martini's rubber bands and
+    SIRAH's springs alike.  What differs is what reads them: martinize writes
+    bands into the topology, and the run puts springs on the beads
+    --elastic-network picks, from elastic_network_* -- which SIRAH's are
+    answered into here.
+    """
+    sirah = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah",
+                             "--elastic-kJ", "500", "--elastic-nm", "1.1"])  # fmt: skip
+    assert (sirah.elastic_kJ, sirah.elastic_nm) == (500.0, 1.1)
+    assert (sirah.elastic_network_kJ, sirah.elastic_network_nm) == (500.0, 1.1)
+
+    # under Martini the two are not one setting: the bands are the topology's
+    # and the springs are a run's, and asking for one must not answer the other
+    martini = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
+                               "--elastic-kJ", "500"])  # fmt: skip
+    assert martini.elastic_kJ == 500.0
+    assert martini.elastic_network_kJ == DEFAULTS["elastic_network_kJ"]
+
+
+def test_the_models_keep_their_own_lower_bound():
+    """The one of the three they answer differently: Martini bands anything,
+    SIRAH's springs skip a pair closer than 0.05 nm."""
+    lower = {m: parse_arguments([str(DATA / "1TEN.pdb"), "--model", m]).elastic_lower_nm
+             for m in ("martini2", "martini3", "sirah")}  # fmt: skip
+    assert lower == {"martini2": 0.0, "martini3": 0.0, "sirah": 0.05}
+    mine = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah",
+                            "--elastic-lower-nm", "0.1"])  # fmt: skip
+    assert mine.elastic_lower_nm == mine.elastic_network_lower_nm == 0.1
+
+
+def test_the_old_elastic_network_numbers_still_load(tmp_path):
+    """A settings file written before the two models shared one name has to run
+    as it was written, and say that the name has moved."""
+    old = tmp_path / "md.toml"
+    old.write_text('model = "sirah"\n'
+                   f'input_structure = "{DATA / "1TEN.pdb"}"\n'
+                   "elastic_network_kJ = 500.0\n"
+                   "elastic_network_nm = 1.1\n"
+                   "elastic_network_lower_nm = 0.07\n")  # fmt: skip
+    with pytest.warns(DeprecationWarning, match="old name for"):
+        args = parse_arguments(["--config", str(old)])
+    assert (args.elastic_kJ, args.elastic_nm, args.elastic_lower_nm) == (500.0, 1.1, 0.07)
+    assert args.elastic_network_kJ == 500.0  # and the run still reads these
+
+
+def test_the_two_names_for_one_setting_may_not_disagree(capsys):
+    """Picking one silently would mean running something nobody asked for."""
+    with pytest.raises(SystemExit):
+        parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah",
+                         "--elastic-kJ", "500", "--elastic-network-kJ", "300"])  # fmt: skip
+    assert "are the same setting under SIRAH and disagree" in capsys.readouterr().err
+    # agreeing is no error, and still says the name has moved
+    with pytest.warns(DeprecationWarning):
+        both = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "sirah",
+                                "--elastic-kJ", "500", "--elastic-network-kJ", "500"])  # fmt: skip
+    assert both.elastic_kJ == 500.0
+
+
+def test_an_all_atom_run_refuses_the_elastic_numbers(capsys):
+    """They belong to a fold held by beads, whichever model holds it."""
+    for flag in ("--elastic-kJ", "--elastic-nm", "--elastic-lower-nm"):
+        with pytest.raises(SystemExit):
+            parse_arguments([str(DATA / "1TEN.pdb"), flag, "0.5"])
+        assert "belongs to a coarse-grained run" in capsys.readouterr().err
+
+
 def test_an_all_atom_run_still_refuses_an_elastic_network(capsys):
     with pytest.raises(SystemExit):
         parse_arguments([str(DATA / "1TEN.pdb"), "--elastic"])
@@ -516,8 +587,17 @@ def test_a_sirah_swim_springs_the_protein_and_leaves_the_probes_free(tmp_path):
 
     on = network_of()
     assert on["elastic_network_selection"] == "name GC and not chain LIG"
-    assert on["elastic_network_nm"] == 0.9
     assert "elastic" not in on  # answered here, not by the run
+    # the springs are asked for by name now, and the file carries the one name:
+    # carrying the old elastic_network_* as well would have it warn about itself
+    # on every run it starts
+    assert on["elastic_nm"] == 0.9
+    assert "elastic_network_nm" not in on
+    # and what matters is that the run still gets its springs from that file
+    args = parse_arguments(["--config", str(tmp_path / "on" / "sim_000" / "md.toml")])
+    assert args.elastic_network_nm == 0.9
+    assert args.elastic_network_kJ == args.elastic_kJ
+    assert args.elastic_network_selection == "name GC and not chain LIG"
     assert "elastic_network_selection" not in network_of("--no-elastic")
 
 

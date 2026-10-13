@@ -166,7 +166,13 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     Martini or SIRAH, by ``args.model``: each maps the protein with its own
     tool, places its own probes and fills the box with its own water.
     """
-    from .config import ALL_ATOM_ONLY, MARTINI_ONLY, settings_of, write_settings
+    from .config import (
+        ALL_ATOM_ONLY,
+        MARTINI_ONLY,
+        OLD_ELASTIC_NAMES,
+        settings_of,
+        write_settings,
+    )
     from .prepare import _check_nothing_is_dropped, _write_built, load_input
 
     gromacs = bool(getattr(args, "gromacs", False))
@@ -301,6 +307,12 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                     "neutral_termini", "lipid_itp", *ALL_ATOM_ONLY,
                     *(MARTINI_ONLY if sirah else ())):  # fmt: skip
             settings.pop(key, None)
+        if sirah:
+            # the springs are answered by elastic_kJ, _nm and _lower_nm now; a
+            # file carrying the old elastic_network_* names as well would warn
+            # about itself on every run it starts, so it carries the one name
+            for _new, old_name in OLD_ELASTIC_NAMES:
+                settings.pop(old_name, None)
         if repel and "repulsion_selection" not in args.specified:
             settings["repulsion_selection"] = f"chain {chain}"  # probes apart
         if sirah and elastic and "elastic_network_selection" not in args.specified:
