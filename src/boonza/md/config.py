@@ -14,6 +14,7 @@ import json
 import math
 import re
 import tomllib
+import warnings
 from pathlib import Path
 
 PLATFORMS = ("CUDA", "OpenCL", "Metal", "CPU", "Reference")
@@ -93,7 +94,10 @@ _MARTINI = {**_CG, "cutoff_nm": 1.1, "elastic": True}
 #: own mdp files do (tutorial 7, md_CGPROT.mdp).  It holds its fold as well,
 #: with springs between its alpha carbons that a swim adds to the run itself
 #: (elastic_network_selection) rather than to the topology, as Martini's are.
-_SIRAH = {**_CG, "cutoff_nm": 1.2, "elastic": True}
+#: Its springs skip a pair closer than 0.05 nm, where Martini's rubber bands
+#: have no lower bound at all -- the one elastic number the two models do not
+#: share, so it is a default of the model rather than of the setting.
+_SIRAH = {**_CG, "cutoff_nm": 1.2, "elastic": True, "elastic_lower_nm": 0.05}
 MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
@@ -102,14 +106,29 @@ ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "pa
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
-MARTINI_ONLY = ("elastic_selection", "elastic_kJ", "elastic_nm", "elastic_lower_nm",
+MARTINI_ONLY = ("elastic_selection",
                 "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
                 "martini_itp")  # fmt: skip
 #: Settings that any coarse-grained run has, Martini's and SIRAH's alike.
+#: ``elastic_kJ``, ``elastic_nm`` and ``elastic_lower_nm`` are here rather than
+#: with Martini's because both models hold a fold and both are asked the same
+#: three questions about it -- how stiff, how far, how close.  What answers them
+#: differs: Martini writes rubber bands into the topology, SIRAH springs into
+#: the run.
 CG_ONLY = ("cg_selection", "gromacs", "elastic", "cofactors", "cofactor_kJ",
-           "cofactor_nm", "cofactor_anchors", "cofactor_side_chains")  # fmt: skip
+           "cofactor_nm", "cofactor_anchors", "cofactor_side_chains",
+           "elastic_kJ", "elastic_nm", "elastic_lower_nm")  # fmt: skip
+
+#: The old names for those three, kept so a settings file written before they
+#: were shared still loads.  Under SIRAH they are the same setting and the old
+#: name is answered by the new one; under Martini they are not -- there
+#: ``elastic_*`` is the topology's rubber bands and ``elastic_network_*`` the
+#: springs a run can add on top of them, which is a different thing to set.
+OLD_ELASTIC_NAMES = (("elastic_kJ", "elastic_network_kJ"),
+                     ("elastic_nm", "elastic_network_nm"),
+                     ("elastic_lower_nm", "elastic_network_lower_nm"))  # fmt: skip
 
 DEFAULTS: dict = {
     "input_structure": None,
@@ -429,15 +448,6 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
 
     cg = p.add_argument_group("Martini (--model martini3 / martini2)")
-    numbers(cg, [("--elastic-kJ", "elastic_kJ",
-                  "how stiff Martini's own rubber bands are (kJ/mol/nm^2); martinize2's -ef"),
-                 ("--elastic-nm", "elastic_nm",
-                  "how far apart two backbone beads may be and still be banded (nm); "
-                  "martinize2's -eu.  These are the bands Martini keeps in the topology; "
-                  "SIRAH's springs are --elastic-network-kJ and -nm"),
-                 ("--elastic-lower-nm", "elastic_lower_nm",
-                  "and how close two of them have to be before a band is not worth "
-                  "adding (nm); martinize2's -el")])  # fmt: skip
     cg.add_argument("--upper", metavar="LIPIDS",
                     help="upper leaflet of the bilayer, e.g. POPC:7,CHOL:3 "
                          "(with --solvate membrane)")  # fmt: skip
@@ -640,11 +650,23 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="hold the protein's fold with an elastic network, which a coarse-grained "
         "model needs to keep one (default: on).  Martini builds its rubber bands into "
-        "the topology; SIRAH gets springs between its alpha carbons instead, which a "
-        "swim writes as --elastic-network below.  --no-elastic lets the protein find "
+        "the topology; SIRAH gets springs between its alpha carbons instead, over the "
+        "beads --elastic-network picks.  How stiff, how far and how close are "
+        "--elastic-kJ, --elastic-nm and --elastic-lower-nm either way.  "
+        "--no-elastic lets the protein find "
         "its own shape -- and SIRAH's wandering backbone is what opens a cryptic "
         "pocket, so a search for one is a reason to turn this off",
     )
+    numbers(hold, [("--elastic-kJ", "elastic_kJ",
+                    "how stiff the network holding the fold is (kJ/mol/nm^2): Martini's "
+                    "rubber bands, martinize2's -ef, or SIRAH's springs"),
+                   ("--elastic-nm", "elastic_nm",
+                    "how far apart two backbone beads may be and still be held (nm); "
+                    "martinize2's -eu"),
+                   ("--elastic-lower-nm", "elastic_lower_nm",
+                    "and how close two of them have to be before holding them is not worth "
+                    "it (nm); martinize2's -el.  The one of the three the models answer "
+                    "differently: 0 under Martini, 0.05 under SIRAH")])  # fmt: skip
     hold.add_argument(
         "--elastic-network",
         dest="elastic_network_selection",
@@ -657,11 +679,14 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "of the topology, so a held pair keeps every nonbonded interaction it had",
     )
     numbers(hold, [("--elastic-network-nm", "elastic_network_nm",
-                    "how far apart two beads may be and still be sprung (nm)"),
+                    "the old name for --elastic-nm under SIRAH, kept so a settings file "
+                    "written before the two models shared one name still loads.  Under "
+                    "Martini it is not that: there it is the springs a run can add on "
+                    "top of the topology's rubber bands, which --elastic-nm does not set"),
                    ("--elastic-network-lower-nm", "elastic_network_lower_nm",
-                    "and how close before a spring is not worth adding (nm)"),
+                    "the old name for --elastic-lower-nm, as above"),
                    ("--elastic-network-kJ", "elastic_network_kJ",
-                    "spring strength (kJ/mol/nm^2)")])  # fmt: skip
+                    "the old name for --elastic-kJ, as above")])  # fmt: skip
     hold.add_argument(
         "--repulsion-selection",
         dest="repulsion_selection",
@@ -869,6 +894,28 @@ def finish(args) -> None:
         args.cutoff_nm = default_cutoff_nm(args)
     if args.hmr and "integration_fs" not in args.specified:
         args.integration_fs = HMR_INTEGRATION_FS
+    if args.model == "sirah":
+        # one fold, one set of numbers: under SIRAH the springs are what holds
+        # it, so --elastic-kJ, --elastic-nm and --elastic-lower-nm are what
+        # answer for them.  The old elastic_network_* names still work, so a
+        # settings file written before they were shared loads and runs as it
+        # was written; where both are given they have to agree, since they are
+        # one setting under two spellings and silently picking one would mean
+        # running something nobody asked for.
+        for new_name, old_name in OLD_ELASTIC_NAMES:
+            if old_name in given:
+                if new_name in given and getattr(args, new_name) != getattr(args, old_name):
+                    raise ValueError(
+                        f"'{new_name}' and '{old_name}' are the same setting under SIRAH and "
+                        f"disagree ({getattr(args, new_name)!r} and {getattr(args, old_name)!r}); "
+                        f"give one of them"
+                    )
+                warnings.warn(f"'{old_name}' is the old name for '{new_name}', which now holds a "
+                              f"fold under SIRAH and under Martini alike; it still works",
+                              DeprecationWarning, stacklevel=2)  # fmt: skip
+                setattr(args, new_name, getattr(args, old_name))
+            # what the run reads is still elastic_network_*, so answer it
+            setattr(args, old_name, getattr(args, new_name))
     if (args.model == "sirah" and args.elastic
             and "elastic_network_selection" not in args.specified
             and getattr(args, "config", None) is None):  # fmt: skip
