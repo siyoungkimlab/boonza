@@ -97,6 +97,9 @@ def test_rays_match_direct_search(model):
     groups = G._by_radius(beads)
     pts = rng.uniform(-4, 18, (600, 3))
     np.testing.assert_array_equal(G._rays(pts, groups), G._rays_direct(pts, groups))
+    np.testing.assert_array_equal(
+        G._rays(pts, groups, step=2.0), G._rays_direct(pts, groups, step=2.0)
+    )
 
 
 def test_structure_cli(tmp_path):
@@ -238,3 +241,34 @@ def test_traj_cli_with_holo(tmp_path):
     assert any(r["PPc"] == "True" for r in rows)
     view = (out / "view.pml").read_text()
     assert "load holo.pdb, holo" in view and (out / "ligand.pdb").exists()
+
+
+def test_grid_keeps_its_ray_step(tmp_path):
+    """A grid saves and loads its ray step; enclosure at 10 A reads hits in that step."""
+    from boonza.sitemap import sites as S
+
+    rng = np.random.default_rng(2)
+    beads = B.from_arrays(
+        "martini3", rng.uniform(0, 20, (150, 3)), ["P2"] * 150, np.zeros(150, bool)
+    )
+    g1 = G.compute(beads, 2.0, ("SC3",))
+    g2 = G.compute(beads, 2.0, ("SC3",), ray_step=2.0)
+    assert g1.ray_step == 1.0 and g2.ray_step == 2.0
+    assert g2.hit[g2.hit != G.NO_HIT].max() <= 5  # 2, 4, 6, 8, 10 A
+    g2.save(tmp_path / "g.npz")
+    assert G.Grid.load(tmp_path / "g.npz").ray_step == 2.0
+    # a 2 A walk can only miss what a 1 A walk sees (grazing hits), never the reverse
+    assert np.all(S._shut(g2.hit, 10.0, 2.0) <= S._shut(g1.hit, 10.0, 1.0) + 1e-9)
+
+
+def test_volume200_ranks_by_volume():
+    """volume200: rays every 2 A, enclosure over the site points, a score ordering by size."""
+    from boonza.sitemap import presets as P
+
+    for model in ("martini2", "martini3", "sirah"):
+        p = P.preset(model, "volume200")
+        assert p["ray_step"] == 2.0 and p["enclosure_term"] == "enclosure_site"
+        assert p["params"]["ray_length"] == 10.0 and p["params"]["contact"] > 1e6
+        small = {"n": 40.0, "enclosure": 0.9, "enclosure_site": 0.9, "philic": 1.0}
+        big = {"n": 400.0, "enclosure": 0.1, "enclosure_site": 0.1, "philic": 0.0}
+        assert P.score(big, p) > P.score(small, p)

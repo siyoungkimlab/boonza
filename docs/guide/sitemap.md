@@ -68,6 +68,9 @@ tuned on what it reads:
 - **dynamic200** (`boonza sitemap traj`'s default): static200 fine-tuned on
   MD frames of the same complexes' runs, their ligand removed
   ([how they were made](sitemap_dynamic200.md)).
+- **volume200** (`--preset volume200`): SiteMap's thresholds with only `outside` and
+  `enclosure` tuned, sites ranked by volume alone
+  ([what it is and how it compares](sitemap_volume200.md)).
 
 On MD frames of the Schrödinger set's apo runs (40 cases, 10 frames each),
 dynamic200 finds the ligand's site more often (Top-1 / Top-3 / Top-10):
