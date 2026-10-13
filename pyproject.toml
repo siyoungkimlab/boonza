@@ -52,3 +52,9 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# one worker per core: the suite takes 15 minutes in one process and 4 across
+# twelve, and a 15-minute wait is one nobody sits through, so it is the default
+# rather than a flag to remember.  pytest-xdist comes with the dev extra.
+# Debugging one test wants it off -- `pytest -n0 tests/test_x.py::test_y` --
+# since workers interleave their output and -x stops them unevenly.
+addopts = "-n auto"
