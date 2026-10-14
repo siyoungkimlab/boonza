@@ -3,7 +3,7 @@
 Per frame: the protein's beads (never the probe chain LIG, which
 boonza.pockets.prepare.protein_ids leaves out), made whole and fitted on the
 backbone (boonza's Glue; the first frame is the reference), and their sites
-under the model's preset (presets.find; dynamic200 by default), each with the residues
+under the model's preset (presets.find; volume200 by default), each with the residues
 lining it.
 
 The sites of every frame are grouped into pockets in one of two ways.
@@ -68,12 +68,11 @@ LINING = 3.0  # A beyond a bead's radius
 #: it is open
 RANKINGS = ("p_q90_open", "p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p_q90",
             "occupancy")  # fmt: skip
-#: the default: on the 40 Schrodinger apo runs (centroid 8 A, centre, every frame) it found
-#: the ligand's site in the top 5 in 0.775 / 0.75 / 0.65 of cases (Martini 2 / 3 / SIRAH),
-#: p_max 0.75 / 0.725 / 0.70, and in the top 10 in 0.875 / 0.875 / 0.80 (p_max 0.875 /
-#: 0.85 / 0.80); closed frames counted as 0 (p_q90) did worse, 0.75 / 0.80 / 0.625 and
-#: 0.825 / 0.85 / 0.75
-RANK = "p_q90_open"
+#: the default, p_max: with volume200 a pocket's largest site.  On the Schrodinger set's 43
+#: final apo runs (probes, every frame) it found the ligand's site in the top 10 in 0.86 /
+#: 0.91 / 0.74 of cases (Martini 2 / 3 / SIRAH), p_q90_open 0.77 / 0.88 / 0.72; p_q90_open
+#: puts it first more often (Martini 3: 0.535 against 0.512) (docs/guide/sitemap_volume200.md)
+RANK = "p_max"
 GROUPINGS = ("centroid", "consensus")
 GROUPING = "centroid"
 CUTOFF = 8.0  # A: a site joins a pocket whose centre is this close (centroid grouping)
@@ -372,10 +371,13 @@ def _frame(job):
 
 
 def frame_sites(system, ids, coords, model: str, jobs: int = 4, progress: bool = True,
-                preset: str | None = "dynamic200") -> list[FrameSite]:  # fmt: skip
+                preset: str | None = None) -> list[FrameSite]:  # fmt: skip
     """The sites of every frame under ``model``'s preset (of presets ``preset``, by default
     presets.TRAJ's, tuned on MD frames: see presets.path), with their lining residues;
     ``progress`` reports frames done, the rate and the time left about every 10%."""
+    from .presets import TRAJ
+
+    preset = preset or TRAJ
     import sys
     import time
 

@@ -118,7 +118,7 @@ def _pharm_pdb(path: Path, spots) -> None:
 
 def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coords,
           pids=None, pcoords=None, apo=None, top: int | None = None,
-          rank: str = "p_q90_open", spots=None, view_system=None, holo=None,
+          rank: str = "p_max", spots=None, view_system=None, holo=None,
           holo_ligand: str | None = None, ligand=None) -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 

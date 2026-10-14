@@ -4,7 +4,7 @@
     boonza sitemap structure APO.pdb --model martini3 -o OUT [--holo HOLO.pdb [--holo-ligand SEL]]
 
 traj: the sites of every frame of a coarse-grained run under the model's preset
-(dynamic200 unless --preset), grouped into pockets by the residues lining them
+(volume200 unless --preset), grouped into pockets by place (traj.group)
 (traj.consensus), written as OUT/pockets.csv and OUT/view.pml (report.py), with
 every frame's sites in OUT/sites.pkl so the grouping can be redone without them.
 """
