@@ -68,7 +68,7 @@ const CHAINS = [
   [0.95, 0.55, 0.45], [0.6, 0.6, 1], [1, 0.6, 0.1], [0.4, 0.85, 0.7],
   [0.85, 0.85, 0.85], [0.7, 0.45, 0.95],
 ];
-// MOE's ribbon colours by secondary structure: helix red, strand yellow, coil light
+// ribbon colours by secondary structure: helix red, strand yellow, coil light
 const SS = { H: [0.9, 0.12, 0.12], E: [1, 0.85, 0.1], C: [0.82, 0.82, 0.85], "": [0.82, 0.82, 0.85] };
 
 function hex(text) {

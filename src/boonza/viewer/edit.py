@@ -1,4 +1,4 @@
-"""Editing a structure from the viewer, and minimizing it, as in MOE.
+"""Editing a structure from the viewer, and minimizing it.
 
 Every operation takes a System and changes it in place:
 
@@ -8,8 +8,8 @@ Every operation takes a System and changes it in place:
     delete(s, atoms)                  # with the hydrogens left on nothing
     adjust_hydrogens(s, atoms)        # as many as valence and charge ask for
 
-and after each one the hydrogens of the atoms it touched are adjusted (MOE
-does the same), unless asked not to.
+and after each one the hydrogens of the atoms it touched are adjusted, unless
+asked not to.
 
 Hydrogens follow from valence: carbon 4, nitrogen 3, oxygen 2, a halogen 1,
 each shifted by the formal charge (N+ 4, O- 1, C+ or C- 3); sulfur and
@@ -286,7 +286,7 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
     """Minimize ``s`` in place: ``mobile`` atoms free, the heavy atoms of the rest held
     to where they are by ``restraint`` (kcal/mol/A^2) springs; hydrogens are free
     everywhere.  Vacuum with a reaction field outside
-    12 A (as MOE's R-field).  Or, as MOE's Constrain: ``fixed`` atoms do not move at
+    12 A.  Or, as Constrain sets them: ``fixed`` atoms do not move at
     all, ``tethered`` ones are held by the springs (their hydrogens excepted) and the
     rest is free; ``mobile`` is then not needed.  ``tolerance`` in kJ/mol/nm.
     Returns energies (kJ/mol), the RMSD and largest move of the mobile atoms and the

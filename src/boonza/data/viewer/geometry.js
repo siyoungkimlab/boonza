@@ -1,5 +1,5 @@
 // A model's render state -> a scene of typed arrays for gl.js.
-// Every atom has its own state, as in MOE: shown or not, a style, a colour; every
+// Every atom has its own state: shown or not, a style, a colour; every
 // residue its ribbon.  Selected atoms are drawn pink, with a ball.
 
 export const STYLES = ["line", "stick", "ballline", "ballstick", "space"];
