@@ -1,0 +1,244 @@
+/* The MOE window: menu bar, rendering area, right button bar, footer, and the
+   trackball corner.  Two themes, as MOE's: Blanc (light, the default) and Noir. */
+
+body.blanc {
+  --chrome: #ececec; --chrome2: #f7f7f7; --line: #c4c4c4; --text: #1d1d1d; --muted: #6d6d6d;
+  --button: #fdfdfd; --button-hover: #e3ecf7; --accent: #1e78e6; --accent-text: #fff;
+  --canvas: #ffffff; --red: #c62828; --panel: #f4f4f4; --field: #ffffff; --menu: #ffffff;
+  --menu-hover: #1e78e6; --shadow: rgba(0, 0, 0, 0.25);
+}
+body.noir {
+  --chrome: #2d2d2d; --chrome2: #373737; --line: #4a4a4a; --text: #e6e6e6; --muted: #9a9a9a;
+  --button: #3b3b3b; --button-hover: #48525e; --accent: #2f86f0; --accent-text: #fff;
+  --canvas: #000000; --red: #ff6b6b; --panel: #303030; --field: #232323; --menu: #333333;
+  --menu-hover: #2f86f0; --shadow: rgba(0, 0, 0, 0.6);
+}
+
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { font: 12px "Segoe UI", Arial, Helvetica, sans-serif; color: var(--text); background: var(--chrome); }
+button, input, select { font: inherit; color: var(--text); }
+
+#window {
+  display: grid; height: 100%;
+  grid-template-columns: 0 1fr 78px var(--rdock, 290px);
+  grid-template-rows: 26px 1fr 26px;
+  grid-template-areas: "menubar menubar rhs rdock" "ldock stage rhs rdock" "footer footer corner rdock";
+}
+#window.docked { grid-template-columns: 272px 1fr 78px var(--rdock, 290px); }
+#window.nomodels { --rdock: 0px; }
+#window.nomodels #rdock { display: none; }
+
+/* --- the models, docked on the right -------------------------------------------------- */
+#rdock { grid-area: rdock; background: var(--panel); border-left: 1px solid var(--line); display: flex;
+  flex-direction: column; min-width: 0; overflow: hidden; }
+#rdock-head { display: flex; gap: 4px; align-items: center; padding: 4px 6px; background: var(--chrome);
+  border-bottom: 1px solid var(--line); }
+#rdock-head .title { font-weight: 700; flex: 1; }
+#rdock-head select, #rdock-head button { background: var(--button); border: 1px solid var(--line);
+  border-radius: 2px; font-size: 11px; padding: 1px 4px; cursor: pointer; }
+#rdock-list { overflow-y: auto; flex: 1; padding: 2px 0; }
+.mgroup { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 6px 8px 2px; }
+.mrow { padding: 3px 6px 4px 6px; border-left: 3px solid transparent; }
+.mrow.current { background: var(--button-hover); border-left-color: var(--accent); }
+.mrow .top { display: flex; align-items: center; gap: 4px; }
+.mrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer; font-weight: 600; }
+.mrow:not(.on) .name { color: var(--muted); font-weight: 400; }
+.mrow select { background: var(--field); border: 1px solid var(--line); font-size: 11px; padding: 0 2px;
+  max-width: 92px; }
+.mrow .swatch { width: 14px; height: 14px; border-radius: 2px; border: 1px solid var(--line); flex: none; }
+.mrow .x { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
+.mrow .x:hover { color: var(--red); }
+.mrow .data { color: var(--muted); font-size: 10.5px; padding-left: 22px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+
+/* --- the builder, docked on the left ---------------------------------------------- */
+#ldock { grid-area: ldock; background: var(--panel); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+#ldock[hidden] { display: none; }
+#ldock-tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--chrome); }
+#ldock-tabs button { flex: 1; border: none; background: none; padding: 5px 4px; cursor: pointer; font-weight: 600; color: var(--muted); }
+#ldock-tabs button.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+#ldock-tabs #ldock-close { flex: 0 0 26px; }
+#ldock-body { padding: 8px; overflow-y: auto; }
+#ldock h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 10px 0 4px; }
+#ldock .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 3px; }
+#ldock .grid.wide { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+#ldock button { background: var(--button); border: 1px solid var(--line); border-radius: 2px; padding: 3px 4px;
+  cursor: pointer; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ldock button.group { display: flex; flex-direction: column; align-items: center; line-height: 1.25; }
+#ldock button.group span, #ldock button.group small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#ldock button.group small { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--muted); }
+#ldock button:hover { background: var(--button-hover); }
+#ldock .row { display: flex; gap: 3px; align-items: center; margin: 3px 0; flex-wrap: wrap; }
+#ldock input:not([type=checkbox]) { background: var(--field); border: 1px solid var(--line); padding: 2px 4px; min-width: 0; flex: 1; }
+#ldock .help { color: var(--muted); font-size: 11px; line-height: 1.4; margin: 6px 0; }
+#ldock .what { color: var(--muted); width: 54px; font-size: 11px; }
+
+/* --- the 2D ligand overlay ----------------------------------------------------------- */
+#lig2d { position: absolute; left: 8px; bottom: 8px; width: 360px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--canvas) 82%, transparent); z-index: 5; }
+#lig2d[hidden] { display: none; }
+.lig2d-title { font-size: 11px; color: var(--muted); padding: 3px 6px; }
+.lig2d-svg { position: relative; }
+.lig2d-svg svg { display: block; }
+.lig2d-svg .hit { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; cursor: pointer; }
+.lig2d-svg .hit:hover { box-shadow: 0 0 0 2px var(--accent); }
+
+/* --- menu bar ----------------------------------------------------------------- */
+#menubar { grid-area: menubar; display: flex; align-items: stretch; background: var(--chrome);
+  border-bottom: 1px solid var(--line); }
+#menus { display: flex; flex: 1; }
+.menutitle { padding: 0 8px; display: flex; align-items: center; cursor: default; font-weight: 600; }
+.menutitle u { text-decoration: underline; }
+.menutitle:hover, .menutitle.open { background: var(--menu-hover); color: var(--accent-text); }
+#menubar-right { display: flex; align-items: center; gap: 2px; padding-right: 4px;
+  border-left: 1px solid var(--line); padding-left: 4px; }
+#menubar-right button { background: none; border: none; font-weight: 700; padding: 2px 6px; cursor: pointer; }
+#menubar-right button:hover:not(:disabled) { background: var(--button-hover); }
+#menubar-right .cancel:disabled { color: var(--muted); font-weight: 400; }
+
+/* --- menus (drop-downs, submenus, popup) --------------------------------------- */
+.menu { position: fixed; z-index: 50; min-width: 170px; background: var(--menu);
+  border: 1px solid var(--line); box-shadow: 2px 3px 8px var(--shadow); padding: 2px 0; }
+.menu .item { padding: 3px 22px 3px 18px; white-space: nowrap; position: relative; cursor: default; }
+.menu .item.sub::after { content: "▸"; position: absolute; right: 7px; }
+.menu .item.checked::before { content: "✓"; position: absolute; left: 5px; }
+.menu .item:hover:not(.disabled) { background: var(--menu-hover); color: var(--accent-text); }
+.menu .item.disabled { color: var(--muted); }
+.menu .item .key { float: right; margin-left: 18px; color: var(--muted); }
+.menu .item:hover .key { color: var(--accent-text); }
+.menu .sep { height: 1px; background: var(--line); margin: 3px 0; }
+
+/* --- rendering area ---------------------------------------------------------------- */
+#stage { grid-area: stage; position: relative; background: var(--canvas); overflow: hidden; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.label { position: absolute; transform: translate(-50%, -50%); font: 11px Arial, sans-serif;
+  color: var(--text); white-space: nowrap; text-shadow: 0 0 2px var(--canvas), 0 0 2px var(--canvas); }
+.label.pocket { font: bold 14px Arial, sans-serif; }
+.label.meter { color: #d4a000; font-weight: 600; }
+body.noir .label.meter { color: #ffd34d; }
+#rubber { position: absolute; border: 1px dashed var(--accent); background: rgba(30, 120, 230, 0.08);
+  pointer-events: none; }
+#message { position: absolute; left: 8px; top: 6px; right: 8px; font: 12px Arial, sans-serif;
+  pointer-events: none; white-space: pre-wrap; }
+#message .err { color: var(--red); }
+#summary { position: absolute; top: 6px; right: 8px; z-index: 5; display: grid; grid-template-columns: auto auto;
+  gap: 1px 10px; padding: 5px 8px; font: 12px Arial, sans-serif; background: var(--panel); opacity: 0.88;
+  border: 1px solid var(--line); border-radius: 3px; }
+#summary[hidden] { display: none; }
+#summary .k { color: var(--muted); }
+#summary .h { grid-column: 1 / -1; font-weight: 700; margin-top: 4px; border-top: 1px solid var(--line); padding-top: 3px; }
+#summary .v { text-align: right; font-variant-numeric: tabular-nums; }
+#bubble { position: absolute; z-index: 20; pointer-events: none; background: #ffffe0; color: #111;
+  border: 1px solid #999; padding: 3px 6px; font-size: 11px; white-space: pre; box-shadow: 1px 2px 4px var(--shadow); }
+
+#cli { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 6px;
+  background: var(--chrome2); border-bottom: 1px solid var(--line); padding: 3px 6px; z-index: 10; }
+#cli .prompt { font: 12px Menlo, monospace; color: var(--muted); }
+#cli input { flex: 1; font: 12px Menlo, monospace; background: var(--field); border: 1px solid var(--line); padding: 2px 4px; }
+#cli button { border: none; background: none; color: var(--red); font-weight: 700; cursor: pointer; }
+
+#player { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center;
+  padding: 4px 8px; background: var(--chrome2); border-top: 1px solid var(--line); }
+#player[hidden], #cli[hidden] { display: none; }
+#slider { flex: 1; }
+#frame-label { font: 11px Menlo, monospace; min-width: 110px; }
+#stride { width: 46px; }
+
+/* --- right button bar --------------------------------------------------------------- */
+#rhs { grid-area: rhs; background: var(--chrome); border-left: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 2px; padding: 3px 4px; overflow-y: auto; }
+#rhs .sep { height: 6px; }
+.rbtn { display: block; width: 100%; text-align: center; padding: 2px 0; background: var(--button);
+  border: 1px solid var(--line); border-radius: 2px; cursor: pointer; position: relative; white-space: nowrap; }
+.rbtn:hover { background: var(--button-hover); }
+.rbtn.sub::after { content: "▸"; position: absolute; right: 3px; font-size: 10px; }
+.rbtn.blue { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.rbtn.red { color: var(--red); }
+.rbtn.on { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* --- footer -------------------------------------------------------------------------- */
+#footer { grid-area: footer; display: flex; justify-content: space-between; align-items: stretch;
+  background: var(--chrome); border-top: 1px solid var(--line); }
+#footer-left, #footer-right { display: flex; align-items: stretch; }
+#footer-left { flex: 1; min-width: 0; }
+.flat { background: none; border: none; border-right: 1px solid var(--line); padding: 0 7px; cursor: pointer; }
+#footer-right .flat { border-right: none; border-left: 1px solid var(--line); }
+.flat:hover { background: var(--button-hover); }
+.flat.on { font-weight: 700; }
+.flat.lit { color: var(--accent); font-weight: 700; }
+#footer-edit { display: flex; align-items: center; gap: 5px; padding: 0 8px; min-width: 0; overflow: hidden;
+  white-space: nowrap; }
+#footer-edit input { width: 64px; background: var(--field); border: 1px solid var(--line); padding: 1px 3px; }
+#footer-edit input.name { width: 52px; }
+#footer-edit button { background: var(--button); border: 1px solid var(--line); border-radius: 2px; padding: 0 6px; cursor: pointer; }
+#footer-edit .what { color: var(--muted); }
+#footer-edit input[type=range] { width: 120px; }
+
+/* --- corner: theme, R S L, trackball, dial ----------------------------------------------- */
+#corner { grid-area: corner; position: relative; }
+#corner > * { position: absolute; }
+#corner { overflow: visible; }
+#corner .corner-row, #trackball, #dial { right: 4px; width: 70px; }
+#corner .corner-row:first-child { bottom: 136px; }
+#rsl { bottom: 116px; display: flex; gap: 1px; }
+#rsl button, #theme-button { flex: 1; padding: 0; height: 18px; background: var(--button);
+  border: 1px solid var(--line); cursor: pointer; font-size: 10px; font-weight: 700; }
+#theme-button { width: 100%; }
+#rsl button.off { background: #d9534f; color: #fff; border-color: #c43c38; }
+#trackball { bottom: 30px; height: 82px; background: var(--chrome2); border: 1px solid var(--line); }
+#ball { width: 100%; height: 100%; cursor: grab; display: block; }
+#ball-mode { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 16px; padding: 0;
+  font-size: 11px; background: none; border: none; cursor: pointer; }
+#dial { bottom: 6px; height: 18px; border: 1px solid var(--line); cursor: ew-resize; overflow: hidden;
+  background: linear-gradient(to bottom, #e9e9e9, #cfcfcf); }
+body.noir #dial { background: linear-gradient(to bottom, #4a4a4a, #2a2a2a); }
+#dial-marks { height: 100%; background: repeating-linear-gradient(to right, transparent 0 6px,
+  rgba(0, 0, 0, 0.25) 6px 7px); }
+
+/* --- floating panels ------------------------------------------------------------------- */
+.panel { position: fixed; z-index: 40; background: var(--panel); border: 1px solid var(--line);
+  box-shadow: 2px 4px 14px var(--shadow); min-width: 220px; max-height: 80vh; display: flex; flex-direction: column; }
+.panel .title { display: flex; align-items: center; justify-content: space-between; padding: 3px 6px;
+  background: var(--chrome); border-bottom: 1px solid var(--line); cursor: move; font-weight: 600; }
+.panel .title button { border: none; background: none; cursor: pointer; font-size: 13px; }
+.panel .body { padding: 8px; overflow: auto; }
+.panel .row { display: flex; gap: 4px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
+.panel .row > .what { width: 70px; color: var(--muted); }
+.panel button { background: var(--button); border: 1px solid var(--line); border-radius: 2px;
+  padding: 2px 7px; cursor: pointer; }
+.panel button:hover { background: var(--button-hover); }
+.panel button.blue { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.panel input:not([type=checkbox]):not([type=range]), .panel select { background: var(--field);
+  border: 1px solid var(--line); padding: 2px 4px; }
+.panel .help { color: var(--muted); font-size: 11px; line-height: 1.4; margin: 6px 0 0; max-width: 340px; }
+.panel table { border-collapse: collapse; font-size: 11px; }
+.panel th { text-align: left; font-weight: 600; padding: 2px 6px; background: var(--chrome);
+  position: sticky; top: 0; cursor: pointer; white-space: nowrap; }
+.panel td { padding: 2px 6px; white-space: nowrap; }
+.panel tr.current td { background: var(--button-hover); }
+.panel tr.group td { color: var(--muted); text-transform: uppercase; font-size: 10px; padding-top: 6px; }
+.panel tr.line:hover td { background: var(--button-hover); cursor: pointer; }
+.swatch { width: 18px; height: 18px; padding: 0 !important; border: 1px solid var(--line) !important; }
+.plot svg { width: 340px; height: 190px; display: block; cursor: crosshair; }
+.plot text { font: 10px Arial, sans-serif; fill: var(--muted); }
+.mouse-table td:first-child { color: var(--muted); }
+
+/* --- the Python console, along the bottom of the rendering area ------------------------ */
+#pyconsole { position: absolute; left: 0; right: 0; bottom: 0; height: 34%; min-height: 120px; z-index: 8;
+  display: flex; flex-direction: column; background: color-mix(in srgb, var(--chrome) 94%, transparent);
+  border-top: 1px solid var(--line); font: 12px Menlo, Consolas, monospace; }
+#pyconsole[hidden] { display: none; }
+#py-out { flex: 1; margin: 0; padding: 6px 8px; overflow-y: auto; white-space: pre-wrap; }
+#py-out .in { color: var(--accent); }
+#py-out .err { color: var(--red); }
+.py-in { display: flex; gap: 6px; align-items: flex-start; padding: 4px 8px; border-top: 1px solid var(--line); }
+.py-in .prompt { color: var(--accent); padding-top: 2px; }
+#py-input { flex: 1; resize: none; background: var(--field); color: var(--text); border: 1px solid var(--line);
+  font: inherit; padding: 2px 4px; }
+
+/* a static page (an export): no server behind it, so nothing that edits */
+html.static #btn-py, html.static #btn-cancel, html.static #ff-button, html.static #ldock { display: none; }

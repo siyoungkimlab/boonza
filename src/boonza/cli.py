@@ -27,6 +27,7 @@ something.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 import numpy as np
@@ -736,6 +737,8 @@ def _modes(args) -> int:
         picked.append((n, names[medoid], len(found.members[n])))
     poses = _align_medoids(out, picked, reference)
     _write_sessions(out, poses, ligand)
+    # boonza view draws the same ligand
+    (out / "modes.json").write_text(json.dumps({"ligandsel": ligand}, indent=1))
     print(f"\n{len(picked)} medoid(s) -> {out / 'modes.csv'} and a session beside it")
     return 0
 
@@ -1743,6 +1746,37 @@ def _parameterize(args) -> int:
     return 0
 
 
+def _view(args) -> int:
+    from pathlib import Path
+
+    import boonza
+    from boonza import viewer
+    from boonza.trajectory import is_trajectory
+
+    paths = args.paths
+    single = len(paths) == 1 and not os.path.isdir(paths[0]) and not paths[0].endswith(".bview")
+    if len(paths) == 2 and is_trajectory(paths[1]) and not os.path.isdir(paths[0]):
+        single = True
+    if not single:
+        if args.coordinates or args.selection or args.center or args.fit:
+            raise ValueError("-c, -s, --center and --fit go with one structure (and trajectory)")
+        what = viewer.from_paths(paths)
+    else:
+        structure, trajectory = paths[0], paths[1] if len(paths) == 2 else None
+        if args.coordinates:
+            system = boonza.load(structure, coordinates=args.coordinates)
+        else:
+            system = _load(structure)
+        traj = boonza.open_trajectory(trajectory, system) if trajectory else None
+        title = " + ".join(os.path.basename(x) for x in (structure, trajectory) if x)
+        what = viewer.Session(system, traj, atoms=args.selection,
+                              whole=False if args.no_whole else None, center=args.center,
+                              fit=args.fit, title=title)  # fmt: skip
+        what.path = Path(structure)
+    viewer.serve(what, host=args.host, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="boonza", description="Molecular system tools.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -1753,6 +1787,26 @@ def _parser() -> argparse.ArgumentParser:
                    "trajectory (boonza pockets --help)")  # fmt: skip
     sub.add_parser("sitemap", help="SiteMap-style sites of coarse-grained proteins, one "
                    "structure or a trajectory (boonza sitemap --help)")  # fmt: skip
+
+    q = sub.add_parser("view", help="look at a structure or trajectory in the browser, "
+                       "all-atom or coarse-grained")  # fmt: skip
+    q.add_argument("paths", nargs="+", help="a structure (a topology with -c) and "
+                   "optionally its trajectory (DCD, XTC, TRR, NetCDF, DTR/STK); or several "
+                   "structures; or the output folder of boonza modes, triage or sitemap, "
+                   "or any folder with a view.json")  # fmt: skip
+    q.add_argument("-c", "--coordinates", help="coordinates for a topology (.top, .psf, "
+                   "prmtop), e.g. a .gro; a Martini .top gives bead sizes")  # fmt: skip
+    q.add_argument("-s", "--selection", help="view only these atoms (e.g. 'not water' for "
+                   "large solvated runs)")  # fmt: skip
+    q.add_argument("--center", help="wrap the box around these atoms")
+    q.add_argument("--fit", help="superpose every frame onto the first on these atoms")
+    q.add_argument("--no-whole", action="store_true", help="leave molecules split across "
+                   "the box")  # fmt: skip
+    q.add_argument("--port", type=int, default=8765, help="0 picks a free port")
+    q.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to serve other machines")
+    q.add_argument("--no-browser", action="store_true", help="do not open a browser (on a "
+                   "cluster, tunnel the port instead)")  # fmt: skip
+    q.set_defaults(run=_view)
 
     q = sub.add_parser("info", help="summarize a structure or trajectory file")
     q.add_argument("file")
