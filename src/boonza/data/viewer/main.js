@@ -1,6 +1,6 @@
 // The page's core: the models (each a structure, pose or set of spheres the server
-// holds) with MOE's per-atom state, the scene, picking, moving atoms, and frames.
-// mouse.js binds MOE's mouse; ui.js builds the menus, button bar, footer and panels.
+// holds) with a state per atom, the scene, picking, moving atoms, and frames.
+// mouse.js binds the mouse; ui.js builds the menus, button bar, footer and panels.
 
 import { Camera } from "./camera.js";
 import { colorAtoms, colorResidues } from "./colors.js";
@@ -134,7 +134,7 @@ function initialState(model) {
     ribbonStyle: "cartoon", constraint: new Uint8Array(n), labels: new Uint8Array(n),
   };
   colorAtoms("element", range(n), topo, model.ss, st.rgb);
-  // ribbons by secondary structure, as MOE (beads: from their trace)
+  // ribbons by secondary structure (beads: from their trace)
   colorResidues("ss", range(nres), topo, model.ss, st.ribbonRGB);
   return st;
 }
@@ -340,7 +340,7 @@ function selection() {
   return shownModels().map(m => [m, selected(m)]).filter(([, ids]) => ids.length);
 }
 
-// the atoms a render command acts on: the selected ones, or all if none are (MOE)
+// the atoms a render command acts on: the selected ones, or all if none are
 function targets() {
   const sel = selection();
   return sel.length ? sel : shownModels().map(m => [m, range(m.topo.natoms)]);
@@ -567,7 +567,7 @@ function sphereOf(flat) {
   return [c, r + 2];
 }
 
-// MOE's Center: the selected atoms, else everything drawn
+// Center: the selected atoms, else everything drawn
 function centerView(animate = true) {
   const sel = selection();
   const keys = sel.length ? new Set(sel.flatMap(([m, ids]) => ids.map(a => `${m.index}:${a}`))) : null;
