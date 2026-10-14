@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>boonza</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="noir">
+<div id="window">
+  <header id="menubar">
+    <nav id="menus"></nav>
+    <div id="menubar-right">
+      <button id="btn-models" title="Models (the systems open)">MDL</button>
+      <button id="btn-cli" title="Command line (Space)">CLI</button>
+      <button id="btn-py" title="Python console (`)">PY</button>
+      <button id="btn-cancel" class="cancel" disabled>Cancel</button>
+    </div>
+  </header>
+
+  <aside id="ldock" hidden>
+    <div id="ldock-tabs">
+      <button data-tab="builder" class="on">Builder</button>
+      <button data-tab="protein">Protein Builder</button>
+      <button id="ldock-close" title="close">✕</button>
+    </div>
+    <div id="ldock-body"></div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="view"></canvas>
+    <div id="labels"></div>
+    <div id="rubber" hidden></div>
+    <div id="message"></div>
+    <div id="summary" hidden></div>
+    <form id="cli" hidden>
+      <span class="prompt">boonza&gt;</span>
+      <input id="cli-input" spellcheck="false" autocomplete="off"
+             placeholder="a selection (e.g. resname LIG or within 5 of resname LIG), or a command: help">
+      <button type="button" id="cli-close" title="Esc">✕</button>
+    </form>
+    <div id="bubble" hidden></div>
+    <div id="lig2d" hidden><div class="lig2d-title"></div><div class="lig2d-svg"></div></div>
+    <div id="pyconsole" hidden>
+      <pre id="py-out"></pre>
+      <div class="py-in"><span class="prompt">&gt;&gt;&gt;</span>
+        <textarea id="py-input" rows="1" spellcheck="false"
+          placeholder="Python with boonza: model0, m (current model), sel (its selected atoms), view.select(...) · Enter runs, Shift+Enter a new line"></textarea>
+      </div>
+    </div>
+    <div id="player" hidden>
+      <button id="play" title="play (Space in the player)">▶</button>
+      <input type="range" id="slider" min="0" value="0">
+      <span id="frame-label"></span>
+      <label>step <input type="number" id="stride" value="1" min="1"></label>
+    </div>
+  </main>
+
+  <aside id="rhs"></aside>
+
+  <aside id="rdock">
+    <div id="rdock-head">
+      <span class="title">Models</span>
+      <select id="rdock-sort" title="sort by"></select>
+      <button id="rdock-all" title="show all">all</button>
+      <button id="rdock-none" title="hide all">none</button>
+    </div>
+    <div id="rdock-list"></div>
+  </aside>
+
+  <footer id="footer">
+    <div id="footer-left">
+      <button id="ff-button" class="flat" title="Force field: what Minimize and the energy profiles use">Amber:ff19SB</button>
+      <button id="pbc-button" class="flat" title="Periodic box">PBC</button>
+      <div id="footer-edit"></div>
+    </div>
+    <div id="footer-right">
+      <button class="flat" id="f-atoms">Atoms</button>
+      <button class="flat" id="f-ribbon">Ribbon</button>
+      <button class="flat" id="f-contacts">Contacts</button>
+      <button class="flat" id="f-fog">Fog</button>
+      <button class="flat" id="f-zclip">ZClip</button>
+      <button class="flat" id="f-2d" title="2D drawing of the ligand">2D</button>
+    </div>
+  </footer>
+
+  <div id="corner">
+    <div class="corner-row">
+      <button id="theme-button" title="Theme: Blanc or Noir; Save Picture">◐ ▸</button>
+    </div>
+    <div class="corner-row" id="rsl">
+      <button data-mask="0" title="Receptor atoms can be picked">R</button>
+      <button data-mask="2" title="Solvent atoms can be picked">S</button>
+      <button data-mask="1" title="Ligand atoms can be picked">L</button>
+      <button data-mask="3" title="Ribbons can be picked">⇨</button>
+    </div>
+    <div id="trackball" title="Drag: rotate (edges: about X or Y, corners: about Z) · Ctrl: zoom · Alt: the selected atoms · right click: View">
+      <svg viewBox="0 0 100 100" id="ball"></svg>
+      <button id="ball-mode" title="Trackball: rotate or translate">⟳</button>
+    </div>
+    <div id="dial" title="Zoom (Ctrl: finer)"><div id="dial-marks"></div></div>
+  </div>
+</div>
+
+<div id="popup" class="menu" hidden></div>
+<div id="panels"></div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

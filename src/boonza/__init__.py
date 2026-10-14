@@ -30,6 +30,7 @@ from .analysis import (  # noqa: E402
     sasa,
     settled,
 )
+from .bondorders import guess_bond_orders  # noqa: E402
 from .build import (  # noqa: E402
     from_smiles,
     neutralize,
@@ -166,6 +167,7 @@ __all__ = [
     "diff",
     "canonical_forcefield",
     "assign_bond_orders",
+    "guess_bond_orders",
     "fragments_to_rdkit",
     "from_rdkit",
     "to_rdkit",
