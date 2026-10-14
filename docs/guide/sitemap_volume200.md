@@ -57,5 +57,21 @@ On those frames (Top-1 / 3 / 5 / 10, fill):
 MxMD + SiteMap on the same pairs, scored the same way: 0.50 / 0.68 / 0.75 / 0.93.
 
 Martini 3 matches or beats the tuned presets with two thresholds; Martini 2 and SIRAH lose
-a pair or two at Top-10. dynamic200 stays `traj`'s default until volume200 is checked on
-more runs.
+a pair or two at Top-10.
+
+## The default: volume200, pockets ranked by p_max
+
+`boonza sitemap traj` uses volume200 and ranks pockets by `p_max` unless told otherwise
+(`--preset`, `--rank`). With volume200, `p_max` is the pocket's largest site over the
+frames it is open in. On the Schrödinger set's 43 final apo runs (EN 700 kJ/mol/nm^2 at
+0.9 nm, every frame; both 5UXA ligands included), PPc Top-1 / 3 / 5 / 10:
+
+| model | with probes | without probes |
+|---|---|---|
+| Martini 2 | 0.44 / 0.63 / 0.72 / 0.86 | 0.42 / 0.70 / 0.77 / 0.86 |
+| Martini 3 | 0.51 / 0.77 / 0.81 / 0.91 | 0.58 / 0.79 / 0.81 / 0.86 |
+| SIRAH | 0.47 / 0.60 / 0.67 / 0.74 | 0.51 / 0.65 / 0.74 / 0.84 |
+
+MxMD + SiteMap on the same 43 pairs, scored the same way: 0.47 / 0.65 / 0.74 / 0.93. Ranked
+by `p_q90_open` the same pockets reach Top-10 0.77 / 0.88 / 0.72 with probes: `p_max` gains
+a pair or two at Top-10 and `p_q90_open` a pair at Top-1.
