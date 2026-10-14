@@ -126,7 +126,7 @@ def test_named_presets(tmp_path):
     assert {static[m]["probe"] for m in static} == {"AC2", "SC3", "Y4Cv"}
     dynamic = P.presets("dynamic200")  # fine-tuned from static200: the same probes
     assert {m: dynamic[m]["probe"] for m in dynamic} == {m: static[m]["probe"] for m in static}
-    assert (P.TRAJ, P.STRUCTURE) == ("dynamic200", "static200")
+    assert (P.TRAJ, P.STRUCTURE) == ("volume200", "static200")
     mine = {**static, "martini3": {**static["martini3"], "spacing": 3.0}}
     (tmp_path / "mine.json").write_text(json.dumps(mine))
     assert P.preset("martini3", str(tmp_path / "mine.json"))["spacing"] == 3.0
@@ -184,8 +184,8 @@ def test_traj_cli(tmp_path):
     assert rows and 0 < float(rows[0]["occupancy"]) <= 1
     assert (out / "sites.pkl").exists() and (out / "view.pml").exists()
     assert {"md_frame", "best_md_frame", "centre_x", "centre_y", "centre_z"} <= set(rows[0])
-    # ranked by the 90th percentile of p over the frames each pocket is open in
-    assert [r["rank_p_q90_open"] for r in rows] == [str(k) for k in range(1, len(rows) + 1)]
+    # ranked by each pocket's best frame (p_max: with volume200, its largest site)
+    assert [r["rank_p_max"] for r in rows] == [str(k) for k in range(1, len(rows) + 1)]
     assert all(float(r["p_q90_open"]) <= float(r["p_max"]) for r in rows)
     # a second run reuses the frames' sites, here grouped by the residues lining them
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),

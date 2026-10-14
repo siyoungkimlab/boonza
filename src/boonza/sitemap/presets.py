@@ -30,7 +30,7 @@ enclosure: ``enclosure``, over the site and its extension points, when absent, o
 ``enclosure_site``, over the site points alone).
 
 Each command has its default: ``boonza sitemap traj`` finds a run's sites under
-dynamic200 (TRAJ), tuned on frames like the ones it reads, and ``boonza sitemap
+volume200 (TRAJ), tuned on frames like the ones it reads, and ``boonza sitemap
 structure`` under static200 (STRUCTURE), tuned on crystal structures.
 presets.json is what :func:`find` uses when given no name.
 """
@@ -45,7 +45,7 @@ import numpy as np
 
 PRESETS = Path(__file__).resolve().parents[1] / "data" / "sitemap" / "presets.json"
 NAMED = PRESETS.parent / "presets"
-TRAJ = "dynamic200"  #: boonza sitemap traj's default presets
+TRAJ = "volume200"  #: boonza sitemap traj's default presets
 STRUCTURE = "static200"  #: boonza sitemap structure's default presets
 
 

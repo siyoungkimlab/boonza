@@ -65,10 +65,10 @@ tuned on what it reads:
 
 - **static200** (`boonza sitemap structure`'s default), tuned on the 200
   crystal structures above ([how they were made](sitemap_static200.md));
-- **dynamic200** (`boonza sitemap traj`'s default): static200 fine-tuned on
+- **dynamic200** (`--preset dynamic200`): static200 fine-tuned on
   MD frames of the same complexes' runs, their ligand removed
   ([how they were made](sitemap_dynamic200.md)).
-- **volume200** (`--preset volume200`): SiteMap's thresholds with only `outside` and
+- **volume200** (`boonza sitemap traj`'s default): SiteMap's thresholds with only `outside` and
   `enclosure` tuned, sites ranked by volume alone
   ([what it is and how it compares](sitemap_volume200.md)).
 
@@ -143,9 +143,9 @@ small joins its nearest neighbour (`--no-absorb` keeps them apart). On cryptic
 sites it let the ligand's site merge with a persistent neighbouring pocket
 ([how the grouping was chosen](sitemap_grouping.md)).
 
-Pockets are ordered by `--rank`: the 90th percentile of p over the frames a
-pocket is open in (`p_q90_open`, the default, as `boonza pockets` ranks), the
-best frame's p (`p_max`), its mean while open, its mean over every frame
+Pockets are ordered by `--rank`: the best frame's p (`p_max`, the default; with
+volume200, the pocket's largest site), the 90th percentile of p over the frames a
+pocket is open in (`p_q90_open`, as `boonza pockets` ranks), its mean while open, its mean over every frame
 (occupancy x the mean while open), occupancy x the best, the 90th percentile
 over every frame (closed frames as 0), or occupancy;
 `pockets.csv` has every one of them and each pocket's place under each, with
