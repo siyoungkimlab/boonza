@@ -1,7 +1,7 @@
-// The MOE window around the rendering area: the menu bar, the right button bar,
+// The window around the rendering area: the menu bar, the right button bar,
 // the popup menu, the footer (editing area, Atoms, Ribbon, Contacts, Fog, ZClip),
 // the corner (theme, R S L, trackball, dial), the command line and the panels.
-// Render commands act on the selected atoms, or on all of them if none are (MOE).
+// Render commands act on the selected atoms, or on all of them if none are.
 
 import { colorAtoms, colorResidues, isColor, named } from "./colors.js";
 import { STYLE_NAMES, STYLES } from "./geometry.js";
@@ -130,7 +130,7 @@ export function setupUI(app) {
     ? `(same residue as ((same residue as name BB GC PX) and within 6 of (${m.topo.ligand}))) and not (${m.topo.ligand})`
     : `(same residue as ((protein or nucleic) and within 4.5 of (${m.topo.ligand}))) and not (${m.topo.ligand})`;
 
-  // MOE's SiteView: the ligand and its pocket, everything else as ribbon, looked at
+  // SiteView: the ligand and its pocket, everything else as ribbon, looked at
   async function siteView() {
     const m = app.currentModel();
     if (!m.topo) return;
@@ -151,7 +151,7 @@ export function setupUI(app) {
     app.flyTo(c, Math.max(r, 8));
   }
 
-  // WholeView, what MOE lacks: the display from before SiteView back, and everything in view
+  // WholeView: the display from before SiteView back, and everything in view
   function wholeView() {
     for (const m of app.shownModels()) {
       const b = m.beforeSite;
@@ -461,7 +461,7 @@ export function setupUI(app) {
     }
   }
 
-  // constraints, as MOE's Constrain: 0 free, 1 tethered, 2 fixed
+  // constraints (Constrain): 0 free, 1 tethered, 2 fixed
   function constrain(kind) {
     const sel = app.selection();
     if (!sel.length && kind !== "freeall") { app.message("select atoms first", true); return; }
@@ -1213,7 +1213,7 @@ export function setupUI(app) {
   }
 
   let marker = () => {};
-  // two curves, as MOE's: in context (the rest rigid; angles that clash are forbidden,
+  // two curves: in context (the rest rigid; angles that clash are forbidden,
   // shaded) and the residue or molecule alone (dotted)
   function plot(scan, onPick) {
     const W = 340, H = 190, L = 34, R = 6, T = 8, B = 22;

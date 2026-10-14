@@ -594,7 +594,7 @@ def test_geometry_edits_redo_and_constraints(served):
     assert np.allclose(session.system.positions[0], xyz[0])
     assert post("api/redo", {})[0] == 400  # nothing left to redo
 
-    # MOE's constraints: fixed atoms stay exactly, tethered heavy atoms barely move
+    # constraints: fixed atoms stay exactly, tethered heavy atoms barely move
     p = viewer.Session(_peptide(), cg=False)
     before = p.system.positions.copy()
     fixed = p.system.select("resid 1").ids.tolist()

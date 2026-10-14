@@ -7,7 +7,7 @@ export class Camera {
     this.distance = 50;
     this.radius = 20;  // of the scene, for clipping and fog
     this.fov = 0.6;    // vertical, radians
-    this.pivot = null; // the centre of rotation (MOE: middle-click an atom), else the view's
+    this.pivot = null; // the centre of rotation (middle-click an atom), else the view's
     this.zclip = [1, 1]; // front and back clipping, as fractions of the default depth
     this.ortho = true;   // orthographic by default; perspective on request
   }

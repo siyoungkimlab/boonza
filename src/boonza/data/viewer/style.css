@@ -1,5 +1,5 @@
-/* The MOE window: menu bar, rendering area, right button bar, footer, and the
-   trackball corner.  Two themes, as MOE's: Blanc (light, the default) and Noir. */
+/* The window: menu bar, rendering area, right button bar, footer, and the
+   trackball corner.  Two themes: Blanc (light, the default) and Noir. */
 
 body.blanc {
   --chrome: #ececec; --chrome2: #f7f7f7; --line: #c4c4c4; --text: #1d1d1d; --muted: #6d6d6d;

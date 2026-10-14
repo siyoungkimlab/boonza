@@ -416,7 +416,7 @@ class Session:
             radius[s.select(sel).ids] = r
         carbon = self.carbon
         reps = self.reps or default_reps(s, self.cg, self.ligand, carbon)
-        # MOE's classes, for the R, S and L picking buttons: 0 receptor, 1 ligand, 2 solvent
+        # classes, for the R, S and L picking buttons: 0 receptor, 1 ligand, 2 solvent
         klass = np.ones(s.natoms, np.int64)
         if self.radii is None:
             poly = CG_POLYMER if self.cg else "protein or nucleic"
@@ -848,7 +848,7 @@ class Session:
     def minimize(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
                  tethered=None) -> dict:  # fmt: skip
         """Relax ``mobile`` (default the ligand and its pocket), the other heavy atoms
-        restrained; or, given ``fixed`` and ``tethered`` atoms (MOE's Constrain), those
+        restrained; or, given ``fixed`` and ``tethered`` atoms (Constrain), those
         held and the rest free.  Hydrogens are never restrained."""
         from .edit import minimize, pocket_selection
 

@@ -1,4 +1,4 @@
-// MOE's mouse in the rendering area (MOE | Help | Mouse), and right-drag to zoom:
+// The mouse in the rendering area (Help | Mouse), and right-drag to zoom:
 //
 //   left    click: select an atom (or a bond, or a ribbon's residue); Shift toggles;
 //           Ctrl (or Cmd) takes the residue; double-click: the molecule (of its class);
@@ -10,7 +10,7 @@
 //   right   the popup menu;  wheel: zoom;  Shift over an atom: what it is
 //
 // A two-button mouse (Help | Mouse) uses the right button as the middle one and
-// opens the popup when Alt is pressed and released alone, as MOE does.
+// opens the popup when Alt is pressed and released alone.
 
 const PERIMETER = 0.07;  // the band at the edges where dragging turns about z
 
@@ -49,7 +49,7 @@ export function setupMouse(app) {
     e.preventDefault();
   });
 
-  // Alt + left: two bonded atoms selected turn the bond, as MOE's rotate-about-bond
+  // Alt + left: two bonded atoms selected turn the bond
   async function startDihedral() {
     const sel = app.selection();
     const d = drag;
