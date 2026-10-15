@@ -311,12 +311,18 @@ def test_a_coincident_site_is_excluded_from_its_bead(built):
     the pair is worth nothing either way, so boonza excludes it on the way into
     OpenMM and reaches GROMACS's energy all the same.
     """
-    from boonza.omm import _pair_terms
+    mm = pytest.importorskip("openmm")
+    from boonza.martini import OPENMM_OPTIONS
 
     s = built.system()
-    excl, _ = _pair_terms(s)
+    _, system, _ = boonza.to_openmm(s, **OPENMM_OPTIONS)
+    force = next(f for f in system.getForces() if isinstance(f, mm.NonbondedForce))
+    exceptions = {}
+    for k in range(force.getNumExceptions()):
+        i, j, q, _, epsilon = force.getExceptionParameters(k)
+        exceptions[min(i, j), max(i, j)] = (q._value, epsilon._value)
     for site, bead in s.tables["virtual_lc1"].atoms.tolist():
-        assert (min(site, bead), max(site, bead)) in excl
+        assert exceptions[min(site, bead), max(site, bead)] == (0.0, 0.0)
 
 
 def test_the_energy_is_gromacs(built, tmp_path):

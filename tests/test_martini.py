@@ -246,6 +246,84 @@ def test_virtual_sites_from_any_number_of_atoms(tmp_path, funct, parents, weight
     assert site[4][:2] == pytest.approx((RING * w[:, None]).sum(0) / w.sum(), abs=1e-6)
 
 
+def test_a_site_that_lands_on_one_parent_is_excluded_from_it(tmp_path):
+    """A weighted average whose weights collapse puts the site on that parent,
+    where a nonbonded term between the two would divide by zero: OpenMM's
+    Lennard-Jones is 1/0 at r = 0 and the energy comes back NaN.
+
+    GROMACS's kernels step around the singularity and the topology excludes
+    nothing, so boonza excludes the pair on the way into OpenMM, where it is
+    worth nothing anyway.  A Go model's sites are the reason this matters --
+    every one of them sits on its backbone bead -- but the reading is from the
+    weights, so any site that collapses is caught.
+    """
+    beads = [("R", n, x, y) for n, (x, y) in zip("ABCD", RING, strict=True)]
+    gro = _gro(*beads, ("R", "S", 0.0, 0.0))
+    top = VSITE.format(funct=3, parents="1 1.0 2 0.0 3 0.0 4 0.0")
+    s = _load(tmp_path, top, gro)
+    e, system, ctx = _energies(s, nonbonded_method="CutoffPeriodic", cutoff=11.0)
+    assert np.isfinite(sum(e.values()))  # and not NaN, which is what the exclusion is for
+    ctx.computeVirtualSites()
+    x = ctx.getState(getPositions=True).getPositions(asNumpy=True).value_in_unit(unit.nanometer)
+    assert x[4] == pytest.approx(x[0], abs=1e-9)  # the site is on bead A
+    force = next(f for f in system.getForces() if isinstance(f, mm.NonbondedForce))
+    n = force.getNumExceptions()
+    pairs = {tuple(sorted(force.getExceptionParameters(k)[:2])) for k in range(n)}
+    assert (0, 4) in pairs
+
+
+def test_a_force_on_a_coincident_site_lands_on_its_parent(tmp_path):
+    """A site sitting on its one parent carries what acts on it straight
+    through: OpenMM builds it as a two-particle average over that parent twice,
+    so its position is the parent's and the whole of the force lands there.
+
+    That is what makes a Go model work at all -- every well acts between sites,
+    and what it pulls on is the backbone beads they stand for.
+    """
+    beads = [("R", n, x, y) for n, (x, y) in zip("ABCD", RING, strict=True)]
+    gro = _gro(*beads, ("R", "S", 0.0, 0.0))
+
+    def pulled(partner):
+        """Forces with bead A bonded to ``partner`` (the site, or bead B itself)."""
+        top = VSITE.format(funct=1, parents="2")  # the site sits on bead B
+        top = top.replace("[ system ]", f"[ bonds ]\n1 {partner} 1 0.50 1000\n[ system ]")
+        s = _load(tmp_path, top, gro)
+        assert len(s.tables["virtual_lc1"]) == 1
+        _top, system, pos = boonza.to_openmm(s, nonbonded_method="CutoffPeriodic", cutoff=11.0)
+        ctx = mm.Context(system, mm.VerletIntegrator(0.001),
+                         mm.Platform.getPlatformByName("Reference"))  # fmt: skip
+        ctx.setPeriodicBoxVectors(*system.getDefaultPeriodicBoxVectors())
+        ctx.setPositions(pos)
+        ctx.computeVirtualSites()
+        state = ctx.getState(getForces=True, getEnergy=True)
+        per_nm = unit.kilojoule_per_mole / unit.nanometer
+        return (state.getForces(asNumpy=True).value_in_unit(per_nm),
+                state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole))  # fmt: skip
+
+    through_site, e_site = pulled(5)
+    direct, e_direct = pulled(2)
+    assert e_site == pytest.approx(e_direct, abs=1e-9)
+    assert through_site[:4] == pytest.approx(direct[:4], abs=1e-6)
+    # beads A and B are 0.4 nm apart and the bond wants 0.5, so it pushes them
+    # apart with k |r - r0| = 1000 * 0.1, and B is the one the site stands for
+    assert through_site[1] == pytest.approx([100.0, 0.0, 0.0], abs=1e-6)
+
+
+def test_a_coincident_site_that_would_interact_is_an_error(tmp_path):
+    """Excluding the pair is only the same physics while it is worth nothing.
+    A site with a Lennard-Jones of its own sitting on an atom is a topology
+    GROMACS could not run either, so it is an error and not a finite number
+    nobody can check."""
+    beads = [("R", n, x, y) for n, (x, y) in zip("ABCD", RING, strict=True)]
+    gro = _gro(*beads, ("R", "S", 0.0, 0.0))
+    # both ends of the pair need a Lennard-Jones for it to be worth anything
+    top = (VSITE.replace("V 0.0 0.0 A 0.0 0.0", "V 0.0 0.0 A 0.30 1.50")
+                .replace("C 36.0 0.0 A 0.0 0.0", "C 36.0 0.0 A 0.30 1.50"))  # fmt: skip
+    s = _load(tmp_path, top.format(funct=3, parents="1 1.0 2 0.0 3 0.0 4 0.0"), gro)
+    with pytest.raises(NotImplementedError, match="sits on atom"):
+        boonza.to_openmm(s, nonbonded_method="CutoffPeriodic", cutoff=11.0)
+
+
 CONSTRAINED = """[ defaults ]
 1 2
 [ atomtypes ]

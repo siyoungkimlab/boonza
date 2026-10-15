@@ -316,15 +316,6 @@ def _pair_terms(s):
     if "exclusion" in s.tables:
         a = np.sort(s.tables["exclusion"].atoms, axis=1)
         excl = set(map(tuple, a.tolist()))
-    if "virtual_lc1" in s.tables:
-        # a site sitting on its parent is nowhere else, so the pair is at r = 0
-        # -- where a Lennard-Jones term is 1/0 and OpenMM returns NaN, while
-        # GROMACS's kernels step around it and neither topology excludes it.
-        # Such a site carries no charge and no well of its own (a Go model's
-        # are the wells between sites), so the pair is worth nothing either
-        # way and excluding it is the same physics, arrived at in numbers.
-        a = np.sort(s.tables["virtual_lc1"].atoms, axis=1)
-        excl |= set(map(tuple, a.tolist()))
     pairs: dict = {}
     if "pair_12_6_es" in s.tables:
         t = s.tables["pair_12_6_es"]
@@ -333,6 +324,71 @@ def _pair_terms(s):
             old = pairs.get((i, j), (0.0, 0.0, 0.0))
             pairs[(i, j)] = tuple(o + v for o, v in zip(old, row, strict=True))
     return excl, pairs
+
+
+#: The virtual sites that are a weighted average of their parents, where the
+#: site lands on a parent that takes all of the weight.  ``out3`` and ``fdat3``
+#: sit at an offset from a frame and so never land on one.
+_AVERAGE_SITES = ("virtual_lc1", "virtual_midpoint", *[f"virtual_lc{n}" for n in range(2, 8)])
+
+
+def _coincident_sites(s):
+    """``(site, parent)`` for every virtual site that sits on one of its parents.
+
+    Always for ``virtual_lc1``, whose site has one parent and no weight to
+    share, and for any other average whose weights happen to collapse onto one.
+    Such a pair is at r = 0, which is where a nonbonded term divides by zero.
+
+    It is read from the weights rather than from the positions: where a site is
+    belongs to its construction, and a file may carry anything for it --
+    martinize2 writes NaN for a bead it cannot place.
+    """
+    out = []
+    for name in _AVERAGE_SITES:
+        t = s.tables.get(name)
+        if t is None:
+            continue
+        c = [t.values(p) for p in t.params.props if p.startswith("c")]
+        for k, atoms in enumerate(t.atoms.tolist()):
+            w = [row[k] for row in c]
+            for parent, weight in zip(atoms[1:], [1.0 - sum(w), *w], strict=True):
+                if weight == 1.0 and parent != atoms[0]:
+                    out.append((atoms[0], parent))
+    return out
+
+
+def _exclude_coincident_sites(s, excl, pairs, eps, charge, nb):
+    """Exclude every pair of a virtual site and the parent it sits on.
+
+    GROMACS's kernels step around the singularity and neither Martini's
+    topology nor martinize2's excludes the pair -- a Go site's exclusion list
+    holds nothing but the site itself.  OpenMM's Lennard-Jones is 1/0 there and
+    the energy comes back NaN, so the pair has to go.  It is only the same
+    physics while the pair is worth nothing, which is what a site standing for
+    a residue is built to be: no charge, no Lennard-Jones of its own.  A site
+    that would interact is a topology GROMACS could not run either, so it is an
+    error here rather than a finite number nobody can check.
+    """
+    for site, parent in _coincident_sites(s):
+        pair = (min(site, parent), max(site, parent))
+        if pair in excl:  # the topology said so itself
+            continue
+        epsilon = math.sqrt(max(eps[site], 0.0) * max(eps[parent], 0.0))
+        if nb is not None and len(nb.overrides):
+            over = nb.overrides.get(int(nb.param_ids[site]), int(nb.param_ids[parent]))
+            if over is not None:
+                epsilon = over["epsilon"]
+        a, b, q = pairs.get(pair, (0.0, 0.0, 0.0))
+        together = charge[site] * charge[parent]
+        if epsilon or together or a or b or q:
+            raise NotImplementedError(
+                f"virtual site {site} sits on atom {parent}, and the two interact "
+                f"(epsilon {epsilon:g} kcal/mol, charges {together:g} e^2): a nonbonded "
+                f"term between two points in the same place divides by zero, which "
+                f"GROMACS cannot run either.  A site standing for an atom carries no "
+                f"charge and no Lennard-Jones of its own; exclude the pair otherwise"
+            )
+        excl.add(pair)
 
 
 def _combine(rule, s1, e1, s2, e2):
@@ -391,6 +447,7 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
         sig = sigma[i] * NM if sigma[i] > 0 else NM
         f.addParticle(charge[i], sig, 0.0 if custom else eps[i] * KCAL)
     excl, pairs = _pair_terms(s)
+    _exclude_coincident_sites(s, excl, pairs, eps, charge, nb)
     extra = []
     for i, j in sorted(excl):
         a, b, q = pairs.pop((i, j), (0.0, 0.0, 0.0))
