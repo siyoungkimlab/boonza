@@ -13,7 +13,13 @@ from .. import gaff, viparr
 from ..build import neutralize, repartition_hydrogen_masses, solvate
 from ..io import load, save
 from ..system import System
-from .config import HYDROGEN_MASS_AMU, describe_forcefields, forcefield_kind, ion_water_mismatch
+from .config import (
+    HYDROGEN_MASS_AMU,
+    describe_forcefields,
+    forcefield_kind,
+    go_options,
+    ion_water_mismatch,
+)
 
 #: Residue names of Martini water: a bead is four waters, and carries no
 #: element that the all-atom ``water`` selection could find it by.
@@ -700,10 +706,12 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
                                cofactor_reach=10.0 * float(args.cofactor_nm),  # nm to A
                                cofactor_anchors=bool(args.cofactor_anchors),
                                cofactor_side_chains=bool(args.cofactor_side_chains),
-                               forcefield=mt.FORCEFIELD_FOR[version])  # fmt: skip
+                               forcefield=mt.FORCEFIELD_FOR[version],
+                               **go_options(args))  # fmt: skip
+        held = (f", Go model: {len(protein.go.pairs)} wells over {protein.go.sites} sites"
+                if protein.go else ", elastic network" if args.elastic else "")  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
-            f"{len(protein.molecules)} molecule(s)"
-            f"{', elastic network' if args.elastic else ''}")  # fmt: skip
+            f"{len(protein.molecules)} molecule(s){held}")  # fmt: skip
     elif mode != "membrane":
         raise ValueError("give a structure to coarse-grain, or solvate = 'membrane' "
                          "with upper = 'POPC:7,CHOL:3' to build a bilayer on its own")  # fmt: skip

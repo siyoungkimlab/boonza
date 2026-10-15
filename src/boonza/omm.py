@@ -17,7 +17,8 @@ radians.  Functional forms follow the DMS specification:
 * ``nonbonded`` ``vdw_12_6`` with ``arithmetic/geometric`` or ``geometric``
   combining and pair overrides (NBFIX), ``exclusion``
 * constraints (``constraint_ahN``, ``constraint_hoh``), virtual sites
-  (``virtual_lc2``, ``virtual_lc3``, ``virtual_out3``, and ``virtual_fdat3``
+  (``virtual_lc1`` for a site sitting on its one parent, as a Go model's do,
+  ``virtual_lc2``, ``virtual_lc3``, ``virtual_out3``, and ``virtual_fdat3``
   for CHARMM lone pairs, angles in degrees), ``posre_harm``,
   ``torsiontorsion_cmap``
 """
@@ -38,7 +39,8 @@ _KNOWN = {
     "stretch_harm", "angle_harm", "dihedral_trig", "dihedral_periodic", "improper_harm",
     "pair_12_6_es",
     "angle_cosine_harm", "angle_restricted", *[f"virtual_lc{n}" for n in range(4, 8)],
-    "nonbonded", "exclusion", "constraint_hoh", "virtual_lc2", "virtual_lc3", "virtual_out3",
+    "nonbonded", "exclusion", "constraint_hoh", "virtual_lc1", "virtual_lc2", "virtual_lc3",
+    "virtual_out3",
     "virtual_midpoint", "virtual_fdat3", "posre_harm", "torsiontorsion_cmap",
     *[f"constraint_ah{n}" for n in range(1, 9)],
 }  # fmt: skip
@@ -257,7 +259,12 @@ def _add_virtual_sites(s, omm, mm):
         for k, atoms in enumerate(t.atoms.tolist()):
             v = atoms[0]
             omm.setParticleMass(v, 0.0)
-            if name in ("virtual_lc2", "virtual_midpoint"):
+            if name == "virtual_lc1":
+                # the site sits on its one parent and nowhere else, which is a
+                # two-particle average over that parent twice: the position is
+                # the parent's and the force on the site lands wholly on it
+                site = mm.TwoParticleAverageSite(atoms[1], atoms[1], 0.5, 0.5)
+            elif name in ("virtual_lc2", "virtual_midpoint"):
                 w = c[0][k]
                 site = mm.TwoParticleAverageSite(atoms[1], atoms[2], 1 - w, w)
             elif name == "virtual_lc3":
@@ -309,6 +316,15 @@ def _pair_terms(s):
     if "exclusion" in s.tables:
         a = np.sort(s.tables["exclusion"].atoms, axis=1)
         excl = set(map(tuple, a.tolist()))
+    if "virtual_lc1" in s.tables:
+        # a site sitting on its parent is nowhere else, so the pair is at r = 0
+        # -- where a Lennard-Jones term is 1/0 and OpenMM returns NaN, while
+        # GROMACS's kernels step around it and neither topology excludes it.
+        # Such a site carries no charge and no well of its own (a Go model's
+        # are the wells between sites), so the pair is worth nothing either
+        # way and excluding it is the same physics, arrived at in numbers.
+        a = np.sort(s.tables["virtual_lc1"].atoms, axis=1)
+        excl |= set(map(tuple, a.tolist()))
     pairs: dict = {}
     if "pair_12_6_es" in s.tables:
         t = s.tables["pair_12_6_es"]
@@ -1120,7 +1136,10 @@ def _virtual_sites_from_openmm(s, omm_system, mm):
         kind = type(site).__name__
         parents = [site.getParticle(k) for k in range(site.getNumParticles())]
         if kind == "TwoParticleAverageSite":
-            name, vals = "virtual_lc2", [site.getWeight(1)]
+            if parents[0] == parents[1]:  # a site on its parent, written as lc1
+                parents, name, vals = parents[:1], "virtual_lc1", []
+            else:
+                name, vals = "virtual_lc2", [site.getWeight(1)]
         elif kind == "ThreeParticleAverageSite":
             name, vals = "virtual_lc3", [site.getWeight(1), site.getWeight(2)]
         elif kind == "OutOfPlaneSite":

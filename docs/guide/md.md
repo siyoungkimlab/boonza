@@ -180,6 +180,9 @@ ligands included.
 | `elastic_network_selection` | `name GC` in a SIRAH run, `name GC and not chain LIG` in a SIRAH swim, none otherwise | hold a fold with springs between the beads this selects, for a model whose topology has no rubber bands: E = k (r - r0)^2 at the starting distance r0, between pairs within `elastic_network_nm` that are more than `elastic_network_res_min_dist` residues apart. The springs are forces, no part of the topology, so a held pair keeps every nonbonded interaction it had. `--no-elastic` leaves them out; a run started from a settings file does only what the file says, so an `md.toml` written without this keeps running without it |
 | `elastic_network_res_min_dist` | 2 | how many residues apart a pair must be before a spring holds it; the bonded terms already hold anything nearer |
 | `elastic_network_nm`, `elastic_network_lower_nm`, `elastic_network_kJ` | as `elastic_nm`, `elastic_lower_nm`, `elastic_kJ` | the old names, kept so a settings file written before the two models shared one still loads: under SIRAH they are the same setting, giving both disagreeing values is an error, and a run says the name has moved. Under Martini they are **not** the same setting -- there `elastic_*` is the topology's rubber bands and these are the springs a run can add on top of them, which is a different thing to set |
+| `structure_bias` (`--structure-bias`) | `elastic` | Martini only: what holds the protein's fold. `elastic` spans every pair of backbone beads in range with a rubber band, which holds the fold at the shape it arrived in; `go` puts a Lennard-Jones well on each pair of residues that touch in the structure, so the fold is a minimum rather than a constraint and a contact can break and come back. A fold is held one way or the other, so `go` turns the elastic network off and asking for both is an error |
+| `go_map` (`--go-map`) | none | the contact map `structure_bias = "go"` builds its wells from: the 18-column file the RCSU program and the Martini contact-map server write ([doi:10.5281/zenodo.3817447](https://doi.org/10.5281/zenodo.3817447)), or martinize2's `-go-write-file`. Its residue numbers are read as the structure's own, so it has to be the map computed for this structure; a map whose residues this one does not have is an error rather than an empty model. On its own it does nothing |
+| `go_eps`, `go_low`, `go_up`, `go_res_dist` | 9.414, 0.3, 1.1, 3 | how deep a well is (kJ/mol), the window its two backbone beads have to be inside (nm, both bounds strict), and how many residues apart along the chain they have to be -- what the bonded terms already hold is no business of the Go model's. martinize2's `-go-eps`, `-go-low`, `-go-up` and `-go-res-dist` |
 | `elastic_kJ`, `elastic_nm`, `elastic_lower_nm` | 700, 0.9, 0.0 under Martini and 0.05 under SIRAH | how stiff the network holding the fold is, how far apart two backbone beads may be and still be held, and how close before holding them is not worth it -- martinize2's `-ef`, `-eu` and `-el`. Both models are asked the same three questions; what answers them differs. Martini writes rubber bands into the topology (2.2 as bond type 6, a potential with no exclusions; 3 as type 1, a bond that excludes the pair's nonbonded interactions), and SIRAH gets springs in the run instead, over the beads `elastic_network_selection` picks. The lower bound is the one of the three the models answer differently |
 | `repulsion_selection`, `repulsion_distance_nm`, `repulsion_kJ` | none, 0.5, 500 | keep the molecules a selection picks from sticking together: E = k (d0 - r)^2 between heavy atoms of different ones closer than d0 (k in kJ/mol/nm^2); `boonza swim` sets it for its ligands |
 | `early_stop` and `monitor_*`, `*_cutoff_nm`, `confirmation_checks` | off | see below |
@@ -218,6 +221,31 @@ without it drifts several Å of backbone RMSD in tens of nanoseconds, so
 ```bash
 boonza md protein.pdb --model martini3 --production-ns 5000
 ```
+
+### Holding a fold with native contacts instead
+
+A rubber band holds a pair at a fixed length, so an elastic network holds a
+fold at the shape it arrived in: it cannot unfold, and it cannot open either.
+A Go model puts a Lennard-Jones well on each pair of residues that touch in
+the structure, so the fold is a minimum rather than a constraint and a contact
+can break and come back. `--structure-bias go` asks for one, from a contact
+map computed for the structure:
+
+```bash
+boonza md protein.pdb --model martini3 --structure-bias go --go-map contacts.out
+```
+
+The map is the 18-column file the RCSU program and the Martini contact-map
+server write; martinize2's `-go-write-file` writes the same format. Its
+residue numbers are read as the structure's own, so a map computed for
+another numbering of the same protein is an error and not a silent half of a
+model. The wells land in `go_nbparams.itp` between one virtual site per
+backbone bead, and the numbers are martinize2's: `--go-eps` 9.414 kJ/mol,
+`--go-low` 0.3 nm, `--go-up` 1.1 nm, `--go-res-dist` 3. See
+[Martini](martini.md#a-fold-held-by-native-contacts) for what is built.
+
+A fold is held one way or the other: `--structure-bias go` turns the elastic
+network off, and asking for both is an error rather than a protein held twice.
 
 `cg_selection` is `protein`, and Martini has parameters for nothing else
 here, so **a ligand beside the protein cannot be mapped**. Rather than leave
