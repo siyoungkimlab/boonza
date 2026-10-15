@@ -681,8 +681,10 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "pair of backbone beads in range with a rubber band, which holds the fold at "
         "its input shape; 'go' puts a Lennard-Jones well on each pair of residues that "
         "touch in the structure, so the fold is a minimum rather than a constraint and "
-        "a contact can break and come back.  'go' reads the contacts from --go-map and "
-        "turns the elastic network off -- a fold is held one way or the other",
+        "a contact can break and come back.  'go' works out the contacts from the "
+        "structure itself (RCSU/OV, written to go_contacts.out beside the topology), or "
+        "reads a map of them from --go-map, and turns the elastic network off -- a fold "
+        "is held one way or the other",
     )
     hold.add_argument(
         "--elastic",
@@ -730,11 +732,12 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "--go-map",
         dest="go_map",
         metavar="FILE",
-        help="the contact map a Go model is built from: the 18-column file the RCSU "
-        "program and the Martini contact-map server write "
-        "(doi:10.5281/zenodo.3817447).  The residue numbers in it are read as the "
-        "structure's own, so the map has to be the one computed for this structure.  "
-        "Needed by --structure-bias go and ignored without it",
+        help="a contact map to build the Go model from instead of working one out: "
+        "the 18-column file the RCSU program and the Martini contact-map server write "
+        "(doi:10.5281/zenodo.3817447), or one boonza wrote earlier.  The residue "
+        "numbers in it are read as the structure's own, so the map has to be the one "
+        "computed for this structure.  Without this --structure-bias go computes the "
+        "map itself; on its own this does nothing",
     )
     numbers(hold, [("--go-eps", "go_eps",
                     "how deep a Go well is (kJ/mol); martinize2's -go-eps"),
@@ -985,10 +988,6 @@ def finish(args) -> None:
             raise ValueError("structure_bias = 'go' holds the fold with native contacts "
                              "instead of an elastic network; drop 'elastic' or ask for "
                              "structure_bias = 'elastic'")  # fmt: skip
-        if not args.go_map:
-            raise ValueError("structure_bias = 'go' needs the contacts to hold: go_map = "
-                             "'contacts.out', the 18-column map the RCSU program or the "
-                             "Martini contact-map server writes for this structure")  # fmt: skip
         args.elastic = False
         if not args.go_low < args.go_up:
             raise ValueError(f"'go_low' has to be under 'go_up' for a well to fit between "
@@ -1022,11 +1021,14 @@ def go_options(args) -> dict:
 
     ``structure_bias = 'go'`` is what turns a Go model on, so without it there
     is nothing to pass and the elastic network answers for the fold instead.
+    ``go_map`` is a map to read; without one the structure answers for itself.
     """
     if getattr(args, "structure_bias", "elastic") != "go":
         return {}
-    return {"go": args.go_map, "go_eps": float(args.go_eps), "go_low": float(args.go_low),
-            "go_up": float(args.go_up), "go_res_dist": int(args.go_res_dist)}  # fmt: skip
+    # a map to read, or True to work one out from the structure
+    return {"go": args.go_map or True, "go_eps": float(args.go_eps),
+            "go_low": float(args.go_low), "go_up": float(args.go_up),
+            "go_res_dist": int(args.go_res_dist)}  # fmt: skip
 
 
 def default_cutoff_nm(args) -> float:

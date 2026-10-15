@@ -234,21 +234,29 @@ minimum rather than a constraint — a contact can break and come back, and a
 pocket can breathe.
 
 ```python
-m = boonza.martinize(s, go="contacts.out")  # instead of elastic=True
+m = boonza.martinize(s, go=True)  # instead of elastic=True
+m = boonza.martinize(s, go="contacts.out")  # or from a map of your own
 ```
 
 ```bash
-boonza martinize protein.pdb cg --go-map contacts.out
-boonza md protein.pdb --model martini3 --structure-bias go --go-map contacts.out
+boonza martinize protein.pdb cg --go
+boonza md protein.pdb --model martini3 --structure-bias go
 ```
 
-The contacts come from a map, not from a distance rule: a residue pair is in
-it when the two overlap (OV) or when the RCSU surface rules call them a
-contact. `boonza` reads the 18-column format the RCSU program and the Martini
-contact-map server write ([doi:10.5281/zenodo.3817447](https://doi.org/10.5281/zenodo.3817447));
-martinize2's `-go-write-file` writes the same format. The residue numbers in
-it are the structure's own, so the map has to be the one computed for this
-structure — matching contacts up by position would quietly pair the wrong
+The contacts come from a **contact map**, not from a distance rule, and boonza
+computes one from the structure. A residue pair is in it when the two overlap
+(OV) or when the RCSU surface rules call them a contact and the touching is
+stabilising on balance (rCSU) — see
+[the map itself](#the-contact-map) below. The map goes out as
+`go_contacts.out` beside the topology, in the 18-column format the RCSU
+program and the Martini contact-map server write
+([doi:10.5281/zenodo.3817447](https://doi.org/10.5281/zenodo.3817447)), so it
+can be read, kept, or handed back with `--go-map`.
+
+`go=` also takes a map from somewhere else — that server, the RCSU program,
+martinize2's `-go-write-file`, or one boonza wrote earlier. The residue
+numbers in it are the structure's own, so it has to be the map computed for
+this structure: matching contacts up by position would quietly pair the wrong
 residues on anything numbered its own way, a chymotrypsin or a chain that
 starts at 803.
 
@@ -287,6 +295,50 @@ The beads a well joins are excluded from each other, so the well is the whole
 of what acts between them. A Go model is what the elastic network would
 otherwise be, not something to add to it: `--structure-bias go` turns the
 network off, and `boonza md` refuses to be asked for both.
+
+### The contact map
+
+`boonza.martini.contact_map(system)` is the map on its own, and says more than
+a distance would: two residues can be close and not touch, because something
+else is in the way, and can touch without being close, across a gap a water
+could not enter.
+
+**Overlap (OV)** is the distance question: two atoms overlap when they come
+within 1.24 times the sum of their van der Waals radii, the 24% standing for
+the attraction between them.
+
+**CSU** is the surface question — what each atom can still see. Every atom is
+given a sphere of its own radius plus a water's (2.80 Å), sampled at 610
+points (the 14th Fibonacci number, spread on a spiral), and each point is
+awarded to the nearest atom whose own sphere covers it. A point an atom wins
+is surface the two share, so the number of points one atom wins from another
+is how much of it that atom touches. What the touching is worth comes from the
+two atoms' chemical characters: a hydrogen bond, a hydrophobic or aromatic
+contact, or an ionic bridge stabilises, and a pair whose characters disagree
+destabilises. A residue pair whose stabilising points outnumber its
+destabilising ones is an **rCSU** contact.
+
+Both are atom-level questions summed over each residue pair, which is how the
+RCSU program does it. The radii, the atom characters and the table that reads
+a pair of them as a bond type are its own numbers, carried in
+`boonza/data/martini/rcsu/protein_map.json`.
+
+Two things worth deciding on purpose:
+
+- **Which atoms the map is read over** (`atoms`, `--cg-selection`). Every chain
+  is read together, so a contact across two of them counts as the structure
+  shows it.
+- **Whether a cofactor is in it.** An atom of a residue the tables do not hold
+  — a haem, a nucleotide, a water — has no radius and no character, so it
+  shares no surface with anything; but it is still in the way, and a point of
+  a residue's surface it wins is surface that residue no longer shares across
+  the pocket. On haemoglobin (1HHO), reading the map over the protein and its
+  haem together takes a share of the surface of 161 residue pairs and ends
+  nine contacts between residues altogether.
+
+It is quick: about 20 ms for haemoglobin's 2192 atoms, some 55 times faster
+than vermouth's own implementation of the same method, which is what makes
+computing a map the ordinary way in rather than something to prepare.
 
 ## What martinize does
 
@@ -345,7 +397,7 @@ Options map to martinize2's flags. Distances are in Å here and in nm there:
 |---|---|
 | `ss="..."` / default | `-ss` / `-dssp` |
 | `elastic`, `elastic_fc`, `elastic_lower`, `elastic_upper` | `-elastic`, `-ef`, `-el`, `-eu` |
-| `go` (a contact map), `go_eps`, `go_low`, `go_up`, `go_res_dist` | `-go`, `-go-eps`, `-go-low`, `-go-up`, `-go-res-dist` |
+| `go=True` or a contact map, `go_eps`, `go_low`, `go_up`, `go_res_dist` | `-go`, `-go-eps`, `-go-low`, `-go-up`, `-go-res-dist` |
 | `elastic_selection` | none: martinize2 holds every molecule |
 | `elastic_decay`, `elastic_power`, `elastic_min_fc`, `res_min_dist` | `-ea`, `-ep`, `-em`, `-ermd` |
 | `cys="auto"`, `"none"`, or a distance | `-cys` |
@@ -366,18 +418,31 @@ These cases are rare, and each difference is deliberate:
 - **Hydrogen names.** Any names work in boonza, because it reads hydrogens
   by their bonds. martinize2 needs names its reference residues know, and
   fails on others (boonza's own peptides name them H1, H2, ...).
-- **A contact map boonza will not compute itself (yet).** `go=` takes a map;
-  martinize2 can also compute one in-process from the structure. Its
-  `-go-write-file` is the way to get that map as a file, and in vermouth
-  0.15.1.dev it raises `IndexError` on a structure holding a residue whose
-  alpha carbon has no coordinates -- a partly resolved terminus, which is
-  ordinary in an X-ray entry (1TEN's first residue is an arginine present as a
-  C and an O). It indexes the alpha-carbon positions by residue while
-  collecting only the residues it has coordinates for, so the list is short by
-  one and the distance column is wrong for everything past the gap. Running it
-  on `select("protein")`, which leaves such a residue out, works.
+- **A protonated acid's two carboxyl oxygens.** The contact tables give an
+  aspartate's OD1 and a glutamate's OE1 a radius 0.04 Å larger than their
+  OD2/OE2, which is the reference residue's hydroxyl oxygen. Which of the two
+  a structure calls OE1 is the structure's business: martinize2 relabels them
+  to match its reference while reading, and boonza takes the names as given.
+  On a protein with a protonated glutamate labelled the other way round (1TEN)
+  that moves five of 777 surface-point counts by at most five of some hundreds,
+  and **no contact flag** — so not one contact, and not one well.
+- **A residue the contact tables do not name.** boonza reads CYX, CYM, HIE,
+  HIP, HID, the CHARMM spellings and the neutral acids as the residues they
+  are, since a protonation or a disulfide changes neither which atoms a
+  residue has nor how big they are. vermouth's table lists CYM, CYX, HIE and
+  HIP but leaves them empty, so looking an atom of one up raises `KeyError`
+  there, and it does not list the others at all, which reads every radius as
+  zero. It does not meet the difference itself, because it reads the map after
+  repairing the graph, which renames every atom and residue to its force
+  field's own.
+- **An isoleucine's delta carbon.** The tables name it CD, as CHARMM does;
+  a PDB calls it CD1. boonza reads either.
 - **A residue with no alpha carbon.** boonza maps no bead onto it and says so;
-  martinize2 maps its beads and leaves their coordinates NaN.
+  martinize2 maps its beads and leaves their coordinates NaN. Its
+  `-go-write-file` also raises `IndexError` on such a structure in vermouth
+  0.15.1.dev — it indexes the alpha-carbon positions by residue while
+  collecting only the ones with coordinates — which is a reason not to depend
+  on it for a map.
 - **Proteins only.** `martinize` maps proteins; water and ions come from
   `solvate`, and other Martini molecules from their own topologies (see
   below). Leave everything else out of `atoms` (the default is

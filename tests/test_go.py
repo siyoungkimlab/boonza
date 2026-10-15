@@ -381,10 +381,15 @@ def test_asking_for_both_ways_of_holding_a_fold_is_an_error(capsys, contact_map)
     assert "instead of an elastic network" in capsys.readouterr().err
 
 
-def test_a_go_model_needs_its_contacts(capsys):
-    with pytest.raises(SystemExit):
-        parse_arguments([str(STRUCTURE), "--model", "martini3", "--structure-bias", "go"])
-    assert "needs the contacts to hold" in capsys.readouterr().err
+def test_a_go_model_can_work_its_contacts_out(contact_map):
+    """A map is one way in and not the only one: without ``--go-map`` the
+    structure answers for itself (tests/test_rcsu.py has the map it works out).
+    """
+    bare = parse_arguments([str(STRUCTURE), "--model", "martini3", "--structure-bias", "go"])
+    assert go_options(bare)["go"] is True
+    given = parse_arguments([str(STRUCTURE), "--model", "martini3", "--structure-bias",
+                             "go", "--go-map", str(contact_map)])  # fmt: skip
+    assert go_options(given)["go"] == str(contact_map)
 
 
 def test_a_map_on_its_own_does_nothing(capsys, contact_map):

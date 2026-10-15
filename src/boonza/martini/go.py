@@ -142,6 +142,9 @@ def go_pairs(molecule, contacts, *, eps: float = GO_EPS, low: float = GO_LOW,
 #: on in Martini's own parameter file.
 ATOMTYPES_ITP = "go_atomtypes.itp"
 NBPARAMS_ITP = "go_nbparams.itp"
+#: Where a build writes a map it computed itself, beside the topology: the same
+#: 18-column format, so it can be read back, kept, or compared with another.
+CONTACTS_OUT = "go_contacts.out"
 GO_DEFINE = "#define GO_VIRT"
 #: The name a virtual site takes, which a viewer and GROMACS both read as an
 #: alpha carbon standing for its residue.
@@ -156,6 +159,9 @@ class GoModel:
     sites: int  # how many virtual sites were added
     atomtypes: str
     nbparams: str
+    #: The map the wells came from, when boonza computed it rather than read
+    #: it, so that a build writes down what it held the fold by
+    contact_map: str = ""
 
 
 def add_go_sites(molecule, pairs, moltype: str, backbone: str = "BB") -> dict[int, str]:

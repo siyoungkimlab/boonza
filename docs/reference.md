@@ -585,6 +585,20 @@ every bead in Å, ``cell`` the box.  ``itp``/``top`` give GROMACS text;
 ``save`` writes the files; ``system`` loads them into a boonza System for
 OpenMM.
 
+### `boonza.martini.contact_map(system, atoms: 'str' = 'protein') -> 'ContactMap'`
+
+The RCSU/OV contact map of an all-atom structure.
+
+``atoms`` is what to read it over, as a selection; every chain is read
+together, so a contact between two of them counts as the structure shows
+it.  The residue numbers and chains are the structure's own, which is what
+a Go model keys its wells by.
+
+An atom with no coordinates takes no part, and neither does one whose
+residue the tables do not hold -- a cofactor, a ligand, a water -- though
+such an atom still takes up room: it can win a point of another atom's
+sphere and so keep it from touching a third.
+
 ### `boonza.martini.parameters(*names) -> list[pathlib._local.Path]`
 
 Parameter files that came with boonza, by name; all of them with none.
@@ -1322,6 +1336,12 @@ adduct (a ligand bound to an amino acid other than by a peptide bond)
 with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
+
+### `boonza.guess_bond_orders(system, atoms=None, force: 'bool' = False) -> 'int'`
+
+Double and triple bonds from names (amino acids) and geometry (the rest), in
+place.  Only when no bond of ``atoms`` (default all) is above single, unless
+``force``.  Returns the number of bonds made double or triple.
 
 ### `boonza.hotspots(maps, enrichment: 'float' = 20.0, min_volume: 'float' = 3.0) -> 'list[Hotspot]'`
 

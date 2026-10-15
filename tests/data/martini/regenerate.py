@@ -45,9 +45,13 @@ ALSO_MARTINI22 = ("2TRX",)
 #: The same, with its fold held by native contacts instead of rubber bands,
 #: under <name>.go: martinize2's own Go model, and beside it the contact map it
 #: was built from, so boonza can build the same wells from the same contacts.
-#: 1TEN is enough to pin it -- one chain, 89 mapped residues, 287 beads, 89
-#: virtual sites and 185 wells, which boonza reaches bead for bead.
-ALSO_GO = ("1TEN",)
+#: 1TEN pins the ordinary case -- one chain, 89 mapped residues, 287 beads, 89
+#: virtual sites and 185 wells, which boonza reaches bead for bead.  It also
+#: carries a protonated aspartate and a protonated glutamate, where the two
+#: tools label a carboxyl oxygen differently.  2TRX and 1HHO add a second
+#: chain each, so that a contact across two of them counts as the structure
+#: shows it, and 1HHO is large enough (2959 residue pairs) to be worth having.
+ALSO_GO = ("1TEN", "2TRX", "1HHO")
 CHARMM_NAMES = {"HIS": "HSD", "HID": "HSD", "HIE": "HSE", "HIP": "HSP"}
 
 

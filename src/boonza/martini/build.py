@@ -383,10 +383,12 @@ class Martinized:
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         if self.go:
-            from .go import ATOMTYPES_ITP, NBPARAMS_ITP
+            from .go import ATOMTYPES_ITP, CONTACTS_OUT, NBPARAMS_ITP
 
             (d / ATOMTYPES_ITP).write_text(self.go.atomtypes)
             (d / NBPARAMS_ITP).write_text(self.go.nbparams)
+            if self.go.contact_map:  # a map boonza computed is worth keeping
+                (d / CONTACTS_OUT).write_text(self.go.contact_map)
         for k, name in enumerate(self.names):
             (d / f"{name}.itp").write_text(self.itp(k, serial_resids))
         if any(c for _, c in self.solvent) and self.martini == 3:
@@ -780,7 +782,8 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     built = Martinized(molecules, np.asarray(positions) * 10, None if cell is None else
                        np.asarray(cell), names, "".join(ss), martini=version)  # fmt: skip
     if go is not None:
-        built.go = _hold_by_contacts(built, go, go_eps, go_low, go_up, go_res_dist)
+        built.go = _hold_by_contacts(built, go, go_eps, go_low, go_up, go_res_dist,
+                                     system=system, atoms=atoms)  # fmt: skip
         # the sites are beads of the molecules now, so the positions follow them
         built.positions = np.concatenate(
             [np.asarray(m.positions, float) for m in built.molecules]) * 10  # fmt: skip
@@ -1402,7 +1405,8 @@ _SECTIONS = ("bonds", "constraints", "pairs", "angles", "dihedrals", "impropers"
              "virtual_sitesn", "exclusions")  # fmt: skip
 
 
-def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_dist: int):
+def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_dist: int,
+                      system=None, atoms: str = "protein"):  # fmt: skip
     """A Go model over the molecules: a well on every pair of residues that touch.
 
     An elastic network holds every pair it spans at a fixed length, so a fold
@@ -1412,7 +1416,13 @@ def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_di
     """
     from .go import GoModel, add_go_sites, go_files, go_pairs, read_contact_map
 
-    if isinstance(contacts, str | Path):
+    written = ""
+    if contacts is True:  # compute it from the structure rather than read one
+        from .rcsu import contact_map
+
+        computed = contact_map(system, atoms)
+        written, contacts = computed.text(), computed.kept()
+    elif isinstance(contacts, str | Path):
         contacts = read_contact_map(contacts)
     models, every, offset = [], [], 0
     for mol, name in zip(built.molecules, built.names, strict=True):
@@ -1427,7 +1437,7 @@ def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_di
     if not every:
         raise ValueError("the contact map holds no pair this structure can make a well "
                          "of: is it this structure's map, with its own numbering?")  # fmt: skip
-    return GoModel(every, sites, atomtypes, nbparams)
+    return GoModel(every, sites, atomtypes, nbparams, written)
 
 
 def _write_itp(mol: CGMolecule, name: str, serial_resids: bool = False) -> str:

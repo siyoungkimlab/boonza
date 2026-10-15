@@ -5,6 +5,7 @@ from pathlib import Path
 from .build import Martinized, convert_dssp_to_martini, force_field, martinize
 from .md import equilibrate
 from .membrane import bilayer, lipid_templates
+from .rcsu import contact_map
 from .solvate import solvate
 
 PARAMETERS = Path(__file__).resolve().parent.parent / "data" / "martini" / "params"
@@ -67,6 +68,7 @@ OPENMM_OPTIONS = {
 }
 
 __all__ = ["FORCEFIELD_FOR", "IONS_FOR", "LIPIDS", "LIPIDS_FOR", "NONBONDED",
+           "contact_map",
            "NONBONDED_FOR", "OPENMM_OPTIONS",
            "PARAMETERS", "VERSIONS", "Martinized", "bilayer", "convert_dssp_to_martini",
            "equilibrate", "force_field", "lipid_templates", "martinize", "parameters",
