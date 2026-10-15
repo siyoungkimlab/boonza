@@ -168,7 +168,7 @@ def test_every_residue_gets_a_site_whether_a_well_reaches_it_or_not(built):
 
 def test_the_go_topology_is_martinize2s(built, tmp_path):
     """Beads, virtual sites and exclusions, term for term."""
-    from tests.test_martinize import _parse_itp
+    from test_martinize import _parse_itp  # tests/ is on the path, as conftest puts it
 
     # the site types carry the molecule's name, which the two tools spell
     # differently; nothing else in the topology mentions it
