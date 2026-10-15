@@ -192,6 +192,77 @@ def test_the_go_topology_is_martinize2s(built, tmp_path):
     assert len(_exclusion_pairs(ours_text)) == 242  # 185 wells, 57 the chain's own
 
 
+#: What martinize2's reference holds for each structure: beads, Go sites and
+#: wells.  2TRX and 1HHO have two chains each, where some of the wells hold a
+#: contact across them.
+COMPLEXES = [("1TEN", 287, 89, 185), ("2TRX", 700, 216, 423), ("1HHO", 967, 287, 545)]
+
+
+@pytest.mark.parametrize(("name", "beads", "sites", "wells"), COMPLEXES)
+def test_a_complex_is_held_across_its_chains(name, beads, sites, wells, tmp_path):
+    """A residue pair that touches across two chains is as native a contact as
+    one inside a chain, so an interface is held like any other part of the fold.
+
+    The well itself would act whatever molecule each of its sites is in, being
+    a nonbonded term between atom types; the exclusion that keeps it from
+    doubling Martini's own attraction would not, since ``[ exclusions ]`` is a
+    section of one moleculetype.  So a Go model makes the molecules one, which
+    is what martinize2 does before it reads a contact map at all.  Held per
+    molecule instead, haemoglobin would quietly lose 48 of its 545 wells.
+    """
+    from test_martinize import _parse_itp  # tests/ is on the path, as conftest puts it
+
+    d = REF.parent / f"{name}.go"
+    reference = gzip.decompress((d / "molecule.itp.gz").read_bytes()).decode()
+    s = boonza.load(DATA / f"{name}.pdb").select("protein").clone()
+    ss = "".join("C" if c in ("NA", " ") else c for c in boonza.dssp(s)[0])
+    m = martinize(s, "protein", ss=ss, go=True)
+
+    assert len(m.molecules) == 1  # whatever the structure's chains
+    assert m.nbeads == beads
+    assert m.go.sites == sites
+    assert len(m.go.pairs) == wells
+
+    ours = m.itp(0).replace("molecule_0_", "molecule_")
+    ours_atoms, ours_terms = _parse_itp(ours)
+    ref_atoms, ref_terms = _parse_itp(reference)
+    assert ours_atoms == ref_atoms
+    assert {k: v for k, v in ours_terms.items() if k != "exclusions"} == {
+        k: v for k, v in ref_terms.items() if k != "exclusions"
+    }
+    assert _exclusion_pairs(ours) == _exclusion_pairs(reference)
+
+    theirs = gzip.decompress((d / "go_nbparams.itp.gz").read_bytes()).decode()
+    assert _wells(m.go.nbparams, "molecule_0").keys() == _wells(theirs, "molecule").keys()
+    for pair, (_, sigma, epsilon) in _wells(m.go.nbparams, "molecule_0").items():
+        assert (sigma, epsilon) == pytest.approx(_wells(theirs, "molecule")[pair][1:], abs=1e-8)
+
+
+def test_merging_is_only_for_a_go_model(tmp_path):
+    """An elastic network holds each molecule's own fold and never joins two of
+    them, so a bound peptide can still leave; nothing there needs merging."""
+    s = boonza.load(DATA / "2TRX.pdb").select("protein").clone()
+    assert len(martinize(s, "protein").molecules) == 2
+    assert len(martinize(s, "protein", elastic=True).molecules) == 2
+    assert len(martinize(s, "protein", go=True).molecules) == 1
+
+
+def test_a_merged_molecule_numbers_its_residues_through(tmp_path):
+    """Two chains commonly carry the same numbers, and what is one residue has
+    to stay one residue -- but each bead keeps the chain and the number the
+    structure gave it, which is what the contact map is keyed by."""
+    s = boonza.load(DATA / "2TRX.pdb").select("protein").clone()
+    merged = martinize(s, "protein", go=True).molecules[0]
+    resids = [int(n["resid"]) for n in merged.nodes]
+    assert (min(resids), max(resids)) == (1, 216)  # 108 residues in each chain
+    assert len({n["resid"] for n in merged.nodes}) == 216
+    assert {str(n.get("chain", "")) for n in merged.nodes} == {"A", "B"}
+    # and the structure's own numbering is still there to write
+    inputs = {(str(n.get("chain", "")), int(n["input_resid"])) for n in merged.nodes}
+    assert len(inputs) == 216
+    assert {r for _, r in inputs} == set(range(1, 109))
+
+
 def test_the_topology_switches_the_virtual_sites_on(built):
     """GO_VIRT is what Martini's own parameter file reads to let a residue carry
     one, and the two Go files have to come before the molecule that uses their

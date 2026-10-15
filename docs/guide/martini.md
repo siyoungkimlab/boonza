@@ -296,6 +296,23 @@ of what acts between them. A Go model is what the elastic network would
 otherwise be, not something to add to it: `--structure-bias go` turns the
 network off, and `boonza md` refuses to be asked for both.
 
+**A Go model makes the molecules one.** A residue pair that touches across two
+chains is as native a contact as one inside a chain, and an interface deserves
+to be held like any other part of the fold. The well itself would act whatever
+molecule each of its sites is in, being a nonbonded term between atom types;
+the exclusion that keeps it from doubling Martini's own attraction would not,
+since `[ exclusions ]` is a section of one moleculetype. So the chains become
+one moleculetype, which is what martinize2 does before it reads a contact map
+at all, and the residues are renumbered through — each bead keeping the chain
+and the number the structure gave it. Held per molecule instead, haemoglobin
+would quietly lose 48 of its 545 wells.
+
+This is the one place a Go model and an elastic network part company on
+principle. A rubber band is a bond of one molecule and never joins two, so a
+bound peptide keeps its own topology and can leave; a well is a minimum, so a
+peptide held by one can still leave, and holding the interface costs nothing
+that matters.
+
 ### The contact map
 
 `boonza.martini.contact_map(system)` is the map on its own, and says more than

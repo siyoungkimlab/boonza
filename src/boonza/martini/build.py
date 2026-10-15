@@ -782,6 +782,8 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     built = Martinized(molecules, np.asarray(positions) * 10, None if cell is None else
                        np.asarray(cell), names, "".join(ss), martini=version)  # fmt: skip
     if go is not None:
+        # one moleculetype, so that a well can hold a contact across two chains
+        _merge_for_contacts(built)
         built.go = _hold_by_contacts(built, go, go_eps, go_low, go_up, go_res_dist,
                                      system=system, atoms=atoms)  # fmt: skip
         # the sites are beads of the molecules now, so the positions follow them
@@ -1403,6 +1405,51 @@ def _num(x) -> str:
 
 _SECTIONS = ("bonds", "constraints", "pairs", "angles", "dihedrals", "impropers",
              "virtual_sitesn", "exclusions")  # fmt: skip
+
+
+def _merge_for_contacts(built) -> None:
+    """Make the molecules one, for a Go model to hold across them.
+
+    A residue pair that touches across two chains is as native a contact as
+    one inside a chain, and a well between them is a nonbonded term between
+    two virtual sites, which would act whatever molecule each site is in.  The
+    exclusion is the problem: it keeps the well from doubling Martini's own
+    attraction between the pair's beads, and ``[ exclusions ]`` is a section of
+    one moleculetype that can name no atom outside it.  So the molecules become
+    one, which is what martinize2 does before it reads a contact map at all
+    (``MergeAllMolecules``), and a complex's interface is held like any other
+    part of the fold.
+
+    The residues are renumbered through, as martinize2's merge renumbers them,
+    since two chains commonly carry the same numbers and what is one residue
+    has to stay one residue.  Each bead keeps the chain and the number the
+    structure gave it, which is what a contact map is keyed by and what the
+    topology is written with.
+    """
+    from .ff import Interaction
+    from .links import CGMolecule
+
+    if len(built.molecules) < 2:
+        return
+    merged = CGMolecule()
+    merged.meta = dict(built.molecules[0].meta)
+    offset = shift = 0
+    for mol in built.molecules:
+        for k, node in enumerate(mol.nodes):
+            merged.add_node({**node, "resid": int(node["resid"]) + shift}, mol.positions[k])
+        for a, neighbours in enumerate(mol.adj):
+            for b in neighbours:
+                merged.add_edge(a + offset, b + offset)
+        for kind, terms in mol.interactions.items():
+            for term in terms:
+                if term is None:  # removed by a link
+                    continue
+                merged.add(kind, Interaction(tuple(int(x) + offset for x in term.atoms),
+                                             term.params, term.meta, term.atom_attrs))  # fmt: skip
+        offset += len(mol.nodes)
+        shift = max(int(n["resid"]) for n in merged.nodes)
+    built.molecules = [merged]
+    built.names = built.names[:1]
 
 
 def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_dist: int,

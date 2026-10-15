@@ -245,7 +245,8 @@ silent half of a model.
 
 The wells land in `go_nbparams.itp` between one virtual site per backbone
 bead, and the numbers are martinize2's: `--go-eps` 9.414 kJ/mol, `--go-low`
-0.3 nm, `--go-up` 1.1 nm, `--go-res-dist` 3. See
+0.3 nm, `--go-up` 1.1 nm, `--go-res-dist` 3. A Go model holds a complex's
+interface too, which means its chains come out as one moleculetype. See
 [Martini](martini.md#a-fold-held-by-native-contacts) for what is built and
 [the contact map](martini.md#the-contact-map) for how the contacts are found.
 
