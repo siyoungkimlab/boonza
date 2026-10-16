@@ -17,7 +17,8 @@ radians.  Functional forms follow the DMS specification:
 * ``nonbonded`` ``vdw_12_6`` with ``arithmetic/geometric`` or ``geometric``
   combining and pair overrides (NBFIX), ``exclusion``
 * constraints (``constraint_ahN``, ``constraint_hoh``), virtual sites
-  (``virtual_lc2``, ``virtual_lc3``, ``virtual_out3``, and ``virtual_fdat3``
+  (``virtual_lc1`` for a site sitting on its one parent, as a Go model's do,
+  ``virtual_lc2``, ``virtual_lc3``, ``virtual_out3``, and ``virtual_fdat3``
   for CHARMM lone pairs, angles in degrees), ``posre_harm``,
   ``torsiontorsion_cmap``
 """
@@ -38,7 +39,8 @@ _KNOWN = {
     "stretch_harm", "angle_harm", "dihedral_trig", "dihedral_periodic", "improper_harm",
     "pair_12_6_es",
     "angle_cosine_harm", "angle_restricted", *[f"virtual_lc{n}" for n in range(4, 8)],
-    "nonbonded", "exclusion", "constraint_hoh", "virtual_lc2", "virtual_lc3", "virtual_out3",
+    "nonbonded", "exclusion", "constraint_hoh", "virtual_lc1", "virtual_lc2", "virtual_lc3",
+    "virtual_out3",
     "virtual_midpoint", "virtual_fdat3", "posre_harm", "torsiontorsion_cmap",
     *[f"constraint_ah{n}" for n in range(1, 9)],
 }  # fmt: skip
@@ -257,7 +259,12 @@ def _add_virtual_sites(s, omm, mm):
         for k, atoms in enumerate(t.atoms.tolist()):
             v = atoms[0]
             omm.setParticleMass(v, 0.0)
-            if name in ("virtual_lc2", "virtual_midpoint"):
+            if name == "virtual_lc1":
+                # the site sits on its one parent and nowhere else, which is a
+                # two-particle average over that parent twice: the position is
+                # the parent's and the force on the site lands wholly on it
+                site = mm.TwoParticleAverageSite(atoms[1], atoms[1], 0.5, 0.5)
+            elif name in ("virtual_lc2", "virtual_midpoint"):
                 w = c[0][k]
                 site = mm.TwoParticleAverageSite(atoms[1], atoms[2], 1 - w, w)
             elif name == "virtual_lc3":
@@ -319,6 +326,71 @@ def _pair_terms(s):
     return excl, pairs
 
 
+#: The virtual sites that are a weighted average of their parents, where the
+#: site lands on a parent that takes all of the weight.  ``out3`` and ``fdat3``
+#: sit at an offset from a frame and so never land on one.
+_AVERAGE_SITES = ("virtual_lc1", "virtual_midpoint", *[f"virtual_lc{n}" for n in range(2, 8)])
+
+
+def _coincident_sites(s):
+    """``(site, parent)`` for every virtual site that sits on one of its parents.
+
+    Always for ``virtual_lc1``, whose site has one parent and no weight to
+    share, and for any other average whose weights happen to collapse onto one.
+    Such a pair is at r = 0, which is where a nonbonded term divides by zero.
+
+    It is read from the weights rather than from the positions: where a site is
+    belongs to its construction, and a file may carry anything for it --
+    martinize2 writes NaN for a bead it cannot place.
+    """
+    out = []
+    for name in _AVERAGE_SITES:
+        t = s.tables.get(name)
+        if t is None:
+            continue
+        c = [t.values(p) for p in t.params.props if p.startswith("c")]
+        for k, atoms in enumerate(t.atoms.tolist()):
+            w = [row[k] for row in c]
+            for parent, weight in zip(atoms[1:], [1.0 - sum(w), *w], strict=True):
+                if weight == 1.0 and parent != atoms[0]:
+                    out.append((atoms[0], parent))
+    return out
+
+
+def _exclude_coincident_sites(s, excl, pairs, eps, charge, nb):
+    """Exclude every pair of a virtual site and the parent it sits on.
+
+    GROMACS's kernels step around the singularity and neither Martini's
+    topology nor martinize2's excludes the pair -- a Go site's exclusion list
+    holds nothing but the site itself.  OpenMM's Lennard-Jones is 1/0 there and
+    the energy comes back NaN, so the pair has to go.  It is only the same
+    physics while the pair is worth nothing, which is what a site standing for
+    a residue is built to be: no charge, no Lennard-Jones of its own.  A site
+    that would interact is a topology GROMACS could not run either, so it is an
+    error here rather than a finite number nobody can check.
+    """
+    for site, parent in _coincident_sites(s):
+        pair = (min(site, parent), max(site, parent))
+        if pair in excl:  # the topology said so itself
+            continue
+        epsilon = math.sqrt(max(eps[site], 0.0) * max(eps[parent], 0.0))
+        if nb is not None and len(nb.overrides):
+            over = nb.overrides.get(int(nb.param_ids[site]), int(nb.param_ids[parent]))
+            if over is not None:
+                epsilon = over["epsilon"]
+        a, b, q = pairs.get(pair, (0.0, 0.0, 0.0))
+        together = charge[site] * charge[parent]
+        if epsilon or together or a or b or q:
+            raise NotImplementedError(
+                f"virtual site {site} sits on atom {parent}, and the two interact "
+                f"(epsilon {epsilon:g} kcal/mol, charges {together:g} e^2): a nonbonded "
+                f"term between two points in the same place divides by zero, which "
+                f"GROMACS cannot run either.  A site standing for an atom carries no "
+                f"charge and no Lennard-Jones of its own; exclude the pair otherwise"
+            )
+        excl.add(pair)
+
+
 def _combine(rule, s1, e1, s2, e2):
     if rule == "geometric":
         return np.sqrt(s1 * s2), np.sqrt(e1 * e2)
@@ -375,6 +447,7 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
         sig = sigma[i] * NM if sigma[i] > 0 else NM
         f.addParticle(charge[i], sig, 0.0 if custom else eps[i] * KCAL)
     excl, pairs = _pair_terms(s)
+    _exclude_coincident_sites(s, excl, pairs, eps, charge, nb)
     extra = []
     for i, j in sorted(excl):
         a, b, q = pairs.pop((i, j), (0.0, 0.0, 0.0))
@@ -1120,7 +1193,10 @@ def _virtual_sites_from_openmm(s, omm_system, mm):
         kind = type(site).__name__
         parents = [site.getParticle(k) for k in range(site.getNumParticles())]
         if kind == "TwoParticleAverageSite":
-            name, vals = "virtual_lc2", [site.getWeight(1)]
+            if parents[0] == parents[1]:  # a site on its parent, written as lc1
+                parents, name, vals = parents[:1], "virtual_lc1", []
+            else:
+                name, vals = "virtual_lc2", [site.getWeight(1)]
         elif kind == "ThreeParticleAverageSite":
             name, vals = "virtual_lc3", [site.getWeight(1), site.getWeight(2)]
         elif kind == "OutOfPlaneSite":

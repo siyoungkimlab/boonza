@@ -40,6 +40,7 @@ from .ff import (
     read_modification_mappings,
     read_rtp_parents,
 )
+from .go import GO_EPS, GO_LOW, GO_RES_DIST, GO_UP
 from .links import CGMolecule, apply_links
 
 #: What Martini calls the backbone bead, and what a viewer wants it called: a
@@ -243,6 +244,7 @@ class Martinized:
     lipids: list = field(default_factory=list)  # (name, count, bead names), in order
     includes: list = field(default_factory=list)  # topology files the lipids come from
     martini: int = 3  # which Martini the beads are, for the parameters to include
+    go: object | None = None  # a GoModel when the fold is held by native contacts
 
     @property
     def nbeads(self) -> int:
@@ -252,7 +254,14 @@ class Martinized:
         return _write_itp(self.molecules[k], self.names[k], serial_resids)
 
     def top(self, martini_itp=None) -> str:
-        lines = [f'#include "{_nonbonded(martini_itp, self.martini)}"']
+        from .go import ATOMTYPES_ITP, GO_DEFINE, NBPARAMS_ITP
+
+        # the define switches on Martini's own virtual-site block, and the two
+        # files have to come before the molecule that uses their types
+        lines = [GO_DEFINE] if self.go else []
+        lines += [f'#include "{_nonbonded(martini_itp, self.martini)}"']
+        if self.go:
+            lines += [f'#include "{ATOMTYPES_ITP}"', f'#include "{NBPARAMS_ITP}"']
         lines += [f'#include "{p}"' for p in self.includes]
         lines += [f'#include "{n}.itp"' for n in self.names]
         if any(c for _, c in self.solvent):  # a list of zero counts is no solvent
@@ -373,6 +382,11 @@ class Martinized:
         what :meth:`system` needs to read its parameters back."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
+        if self.go:
+            from .go import ATOMTYPES_ITP, NBPARAMS_ITP
+
+            (d / ATOMTYPES_ITP).write_text(self.go.atomtypes)
+            (d / NBPARAMS_ITP).write_text(self.go.nbparams)
         for k, name in enumerate(self.names):
             (d / f"{name}.itp").write_text(self.itp(k, serial_resids))
         if any(c for _, c in self.solvent) and self.martini == 3:
@@ -594,7 +608,9 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
               cofactor_neighbours=COFACTOR_NEIGHBOURS, cofactor_tethers=COFACTOR_TETHERS,
               cofactor_reach: float = COFACTOR_REACH,
               cofactor_anchors: bool = True,
-              cofactor_side_chains: bool = False) -> Martinized:  # fmt: skip
+              cofactor_side_chains: bool = False,
+              go=None, go_eps: float = GO_EPS, go_low: float = GO_LOW,
+              go_up: float = GO_UP, go_res_dist: int = GO_RES_DIST) -> Martinized:  # fmt: skip
     """Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
     ``forcefield`` is the version: ``"martini3001"`` or ``"martini22"``, each
@@ -639,6 +655,18 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     neutral, and His is typed by which ring nitrogens carry one.  A capping
     group at a chain end (ACE, NME) is left out, and the end it capped made
     neutral, as the cap had it.
+
+    ``go`` holds the fold with native contacts instead of an elastic network:
+    a GoMartini model, from the 18-column RCSU contact map it names (a path, or
+    the contacts :func:`boonza.martini.go.read_contact_map` reads from one).
+    Every pair of residues the map holds both ways, more than ``go_res_dist``
+    residues apart along the chain and between ``go_low`` and ``go_up`` nm
+    apart, gets a Lennard-Jones well ``go_eps`` kJ/mol deep at the distance it
+    is already at, between virtual sites of their backbone beads
+    (martinize2's ``-go``, ``-go-eps``, ``-go-low``, ``-go-up``,
+    ``-go-res-dist``).  A well is a minimum rather than a constraint, so a
+    contact can break and come back where a rubber band cannot; it is what the
+    network would otherwise be and not something to add to it.
     """
     ff = force_field(forcefield)
     atoms, capped, notes = _without_caps(system, atoms)
@@ -749,8 +777,14 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     from . import FORCEFIELD_FOR
 
     version = next((v for v, name in FORCEFIELD_FOR.items() if name == forcefield), 3)
-    return Martinized(molecules, np.asarray(positions) * 10, None if cell is None else
-                      np.asarray(cell), names, "".join(ss), martini=version)  # fmt: skip
+    built = Martinized(molecules, np.asarray(positions) * 10, None if cell is None else
+                       np.asarray(cell), names, "".join(ss), martini=version)  # fmt: skip
+    if go is not None:
+        built.go = _hold_by_contacts(built, go, go_eps, go_low, go_up, go_res_dist)
+        # the sites are beads of the molecules now, so the positions follow them
+        built.positions = np.concatenate(
+            [np.asarray(m.positions, float) for m in built.molecules]) * 10  # fmt: skip
+    return built
 
 
 def _residues(system, atoms) -> tuple[list[_Residue], dict]:
@@ -1366,6 +1400,34 @@ def _num(x) -> str:
 
 _SECTIONS = ("bonds", "constraints", "pairs", "angles", "dihedrals", "impropers",
              "virtual_sitesn", "exclusions")  # fmt: skip
+
+
+def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_dist: int):
+    """A Go model over the molecules: a well on every pair of residues that touch.
+
+    An elastic network holds every pair it spans at a fixed length, so a fold
+    can neither unfold nor open.  A well is a minimum instead, so a contact can
+    break and come back -- which is what a Go model is for, and why it is an
+    alternative to the network rather than something to add to it.
+    """
+    from .go import GoModel, add_go_sites, go_files, go_pairs, read_contact_map
+
+    if isinstance(contacts, str | Path):
+        contacts = read_contact_map(contacts)
+    models, every, offset = [], [], 0
+    for mol, name in zip(built.molecules, built.names, strict=True):
+        pairs = go_pairs(mol, contacts, eps=eps, low=low, up=up, res_dist=res_dist)
+        type_of = add_go_sites(mol, pairs, name)
+        models.append((type_of, pairs))
+        every += [type(p)(p.i + offset, p.j + offset, p.distance, p.sigma, p.epsilon)
+                  for p in pairs]  # fmt: skip
+        offset += len(mol.nodes)
+    atomtypes, nbparams = go_files(models)
+    sites = sum(len(type_of) for type_of, _ in models)
+    if not every:
+        raise ValueError("the contact map holds no pair this structure can make a well "
+                         "of: is it this structure's map, with its own numbering?")  # fmt: skip
+    return GoModel(every, sites, atomtypes, nbparams)
 
 
 def _write_itp(mol: CGMolecule, name: str, serial_resids: bool = False) -> str:

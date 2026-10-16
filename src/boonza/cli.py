@@ -1662,7 +1662,9 @@ def _martinize(args) -> int:
                          res_min_dist=args.res_min_dist, cys=cys,
                          neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
                          extdih=args.extdih, forcefield=FORCEFIELD_FOR[version],
-                         cofactors=args.cofactors)  # fmt: skip
+                         cofactors=args.cofactors, go=args.go_map, go_eps=args.go_eps,
+                         go_low=args.go_low, go_up=args.go_up,
+                         go_res_dist=args.go_res_dist)  # fmt: skip
     if args.solvate:
         from .martini import solvate
 
@@ -1674,6 +1676,9 @@ def _martinize(args) -> int:
         f"wrote {top} ({len(m.molecules)} molecules, {m.nbeads} beads"
         f"{'; ' + water if water else ''}) and cg.gro; it includes {_where(itp)}"
     )
+    if m.go:
+        print(f"  Go model: {len(m.go.pairs)} wells over {m.go.sites} virtual sites, "
+              f"in go_atomtypes.itp and go_nbparams.itp")  # fmt: skip
     return 0
 
 
@@ -1778,6 +1783,8 @@ def _view(args) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
+    from .martini.go import GO_EPS, GO_LOW, GO_RES_DIST, GO_UP
+
     p = argparse.ArgumentParser(prog="boonza", description="Molecular system tools.")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
@@ -1951,6 +1958,25 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--elastic-power", type=float, default=0.0, help="-ep")
     q.add_argument("--elastic-min-fc", type=float, default=0.0, help="-em")
     q.add_argument("--res-min-dist", type=int, help="-ermd (default 2)")
+    q.add_argument("--go-map", metavar="FILE",
+                   help="hold the fold with native contacts instead of an elastic network "
+                        "(-go): the 18-column contact map the RCSU program or the Martini "
+                        "contact-map server writes for this structure.  Every contact in it "
+                        "becomes a Lennard-Jones well between virtual sites, so a contact can "
+                        "break and come back where a rubber band cannot.  --elastic as well "
+                        "writes both, as martinize2 allows; boonza md asks for one or the "
+                        "other (--structure-bias)")  # fmt: skip
+    q.add_argument("--go-eps", type=float, default=GO_EPS,
+                   help=f"how deep a well is, kJ/mol (-go-eps, default {GO_EPS})")  # fmt: skip
+    q.add_argument("--go-low", type=float, default=GO_LOW,
+                   help=f"nm, under which a pair is the bonded terms' business "
+                        f"(-go-low, default {GO_LOW})")  # fmt: skip
+    q.add_argument("--go-up", type=float, default=GO_UP,
+                   help=f"nm, beyond which a pair is not touching "
+                        f"(-go-up, default {GO_UP})")  # fmt: skip
+    q.add_argument("--go-res-dist", type=int, default=GO_RES_DIST,
+                   help=f"residues apart along the chain a pair has to be "
+                        f"(-go-res-dist, default {GO_RES_DIST})")  # fmt: skip
     q.add_argument("--cys", default="auto", help="auto, none, or an S-S distance in A")
     q.add_argument("--neutral-termini", action="store_true")
     q.add_argument("--no-scfix", action="store_true", help="no side-chain corrections")

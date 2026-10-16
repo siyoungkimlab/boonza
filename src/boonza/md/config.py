@@ -20,6 +20,17 @@ from pathlib import Path
 PLATFORMS = ("CUDA", "OpenCL", "Metal", "CPU", "Reference")
 PRECISIONS = ("mixed", "single", "double")
 DIHEDRAL_RESTRAINTS = ("none", "bb", "ss")
+#: What holds a coarse-grained protein's fold.  An elastic network holds every
+#: pair of beads it spans at a fixed length, so the fold can neither unfold nor
+#: open; a Go model puts a Lennard-Jones well on each pair of residues that
+#: touch in the structure, so a contact can break and come back.  They are
+#: alternatives rather than things to add together, which is why this is one
+#: setting and not two switches.
+STRUCTURE_BIAS = ("elastic", "go")
+#: The settings a Go model is asked for.  Like Martini's rubber bands they are
+#: answered when the topology is written, so a run reading a topology that is
+#: already built -- a swim's, a restart's -- has nothing left to do with them.
+GO_SETTINGS = ("structure_bias", "go_map", "go_eps", "go_low", "go_up", "go_res_dist")
 #: Pressure coupling: one scale factor for the box, x and y together with z
 #: free (a planar membrane), or constant volume.
 BAROSTATS = ("isotropic", "membrane", "none")
@@ -107,6 +118,7 @@ ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "pa
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
 MARTINI_ONLY = ("elastic_selection",
+                "structure_bias", "go_map", "go_eps", "go_low", "go_up", "go_res_dist",
                 "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
                 "opm", "shift_nm", "neutral_termini", "lipid_itp",
@@ -169,6 +181,14 @@ DEFAULTS: dict = {
     "elastic_kJ": 700.0,
     "elastic_nm": 0.9,
     "elastic_lower_nm": 0.0,
+    "structure_bias": "elastic",
+    "go_map": None,
+    # martinize2's -go-eps, -go-low, -go-up and -go-res-dist, which is where
+    # these numbers come from; boonza.martini.go holds them as GO_* constants
+    "go_eps": 9.414,
+    "go_low": 0.3,
+    "go_up": 1.1,
+    "go_res_dist": 3,
     "elastic_network_selection": None,
     "elastic_network_nm": 0.9,
     "elastic_network_kJ": 700.0,
@@ -227,6 +247,13 @@ _NUMBERS = {
     "elastic_kJ",
     "elastic_nm",
     "elastic_lower_nm",
+    "go_eps",
+    "go_low",
+    "go_up",
+    # a residue count, kept a number rather than an integer so the float the
+    # command line parses round-trips through a settings file, as
+    # elastic_network_res_min_dist does
+    "go_res_dist",
     "elastic_network_lower_nm",
     "elastic_network_nm",
     "elastic_network_kJ",
@@ -251,6 +278,7 @@ _CHOICES = {
     "ligandff": LIGAND_FORCE_FIELDS,
     "protein_extent": PROTEIN_EXTENTS,
     "dihedral_restraint": DIHEDRAL_RESTRAINTS,
+    "structure_bias": STRUCTURE_BIAS,
     "precision": PRECISIONS,
     "platform": PLATFORMS,
     "barostat": BAROSTATS,
@@ -646,6 +674,17 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     numbers(hold, [("--dihedral-restraint-kJ", "dihedral_restraint_kJ",
                     "restraint strength (kJ/mol)")])  # fmt: skip
     hold.add_argument(
+        "--structure-bias",
+        dest="structure_bias",
+        choices=STRUCTURE_BIAS,
+        help="what holds a Martini protein's fold: 'elastic' (default) spans every "
+        "pair of backbone beads in range with a rubber band, which holds the fold at "
+        "its input shape; 'go' puts a Lennard-Jones well on each pair of residues that "
+        "touch in the structure, so the fold is a minimum rather than a constraint and "
+        "a contact can break and come back.  'go' reads the contacts from --go-map and "
+        "turns the elastic network off -- a fold is held one way or the other",
+    )
+    hold.add_argument(
         "--elastic",
         action=argparse.BooleanOptionalAction,
         help="hold the protein's fold with an elastic network, which a coarse-grained "
@@ -687,6 +726,28 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
                     "the old name for --elastic-lower-nm, as above"),
                    ("--elastic-network-kJ", "elastic_network_kJ",
                     "the old name for --elastic-kJ, as above")])  # fmt: skip
+    hold.add_argument(
+        "--go-map",
+        dest="go_map",
+        metavar="FILE",
+        help="the contact map a Go model is built from: the 18-column file the RCSU "
+        "program and the Martini contact-map server write "
+        "(doi:10.5281/zenodo.3817447).  The residue numbers in it are read as the "
+        "structure's own, so the map has to be the one computed for this structure.  "
+        "Needed by --structure-bias go and ignored without it",
+    )
+    numbers(hold, [("--go-eps", "go_eps",
+                    "how deep a Go well is (kJ/mol); martinize2's -go-eps"),
+                   ("--go-low", "go_low",
+                    "how close two backbone beads have to be before a well between them "
+                    "is not worth it (nm); martinize2's -go-low"),
+                   ("--go-up", "go_up",
+                    "and how far apart they may be and still touch (nm); martinize2's "
+                    "-go-up"),
+                   ("--go-res-dist", "go_res_dist",
+                    "how many residues apart along the chain two residues must be to get "
+                    "a well, what the bonded terms already hold being no business of the "
+                    "Go model's; martinize2's -go-res-dist")])  # fmt: skip
     hold.add_argument(
         "--repulsion-selection",
         dest="repulsion_selection",
@@ -916,6 +977,30 @@ def finish(args) -> None:
                 setattr(args, new_name, getattr(args, old_name))
             # what the run reads is still elastic_network_*, so answer it
             setattr(args, old_name, getattr(args, new_name))
+    if args.structure_bias == "go":
+        # a fold is held one way or the other: a Go model is what the network
+        # would otherwise be, not something to put on top of it, so asking for
+        # both is a contradiction rather than a stiffer protein
+        if "elastic" in given and args.elastic:
+            raise ValueError("structure_bias = 'go' holds the fold with native contacts "
+                             "instead of an elastic network; drop 'elastic' or ask for "
+                             "structure_bias = 'elastic'")  # fmt: skip
+        if not args.go_map:
+            raise ValueError("structure_bias = 'go' needs the contacts to hold: go_map = "
+                             "'contacts.out', the 18-column map the RCSU program or the "
+                             "Martini contact-map server writes for this structure")  # fmt: skip
+        args.elastic = False
+        if not args.go_low < args.go_up:
+            raise ValueError(f"'go_low' has to be under 'go_up' for a well to fit between "
+                             f"them ({args.go_low!r} and {args.go_up!r})")  # fmt: skip
+        for key in ("go_eps", "go_up"):
+            if getattr(args, key) <= 0:
+                raise ValueError(f"'{key}' must be positive")
+        if args.go_low < 0 or args.go_res_dist < 0:
+            raise ValueError("'go_low' and 'go_res_dist' cannot be negative")
+    elif args.go_map and "go_map" in given:
+        raise ValueError("'go_map' holds a fold with native contacts, which is "
+                         "structure_bias = 'go'; on its own it does nothing")  # fmt: skip
     if (args.model == "sirah" and args.elastic
             and "elastic_network_selection" not in args.specified
             and getattr(args, "config", None) is None):  # fmt: skip
@@ -930,6 +1015,18 @@ def finish(args) -> None:
     chosen = [k for k in MONITOR_SELECTORS if getattr(args, k) is not None]
     if len(chosen) > 1:
         raise ValueError("choose at most one early-stop target: " + ", ".join(chosen))
+
+
+def go_options(args) -> dict:
+    """The Go-model arguments for :func:`boonza.martini.martinize`, or none.
+
+    ``structure_bias = 'go'`` is what turns a Go model on, so without it there
+    is nothing to pass and the elastic network answers for the fold instead.
+    """
+    if getattr(args, "structure_bias", "elastic") != "go":
+        return {}
+    return {"go": args.go_map, "go_eps": float(args.go_eps), "go_low": float(args.go_low),
+            "go_up": float(args.go_up), "go_res_dist": int(args.go_res_dist)}  # fmt: skip
 
 
 def default_cutoff_nm(args) -> float:

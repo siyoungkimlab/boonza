@@ -168,8 +168,10 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
     """
     from .config import (
         ALL_ATOM_ONLY,
+        GO_SETTINGS,
         MARTINI_ONLY,
         OLD_ELASTIC_NAMES,
+        go_options,
         settings_of,
         write_settings,
     )
@@ -220,10 +222,11 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
                             cofactor_reach=10.0 * float(args.cofactor_nm),  # nm to A
                             cofactor_anchors=bool(args.cofactor_anchors),
                             cofactor_side_chains=bool(args.cofactor_side_chains),
-                            **made_of)  # fmt: skip
+                            **go_options(args), **made_of)  # fmt: skip
+        held = (f", Go model: {len(protein.go.pairs)} wells over {protein.go.sites} sites"
+                if protein.go else ", elastic network" if elastic else "")  # fmt: skip
         log(f"Martinized as Martini {version}: {protein.nbeads} beads in "
-            f"{len(protein.molecules)} molecule(s)"
-            f"{', elastic network' if elastic else ''}")  # fmt: skip
+            f"{len(protein.molecules)} molecule(s){held}")  # fmt: skip
     chain = probe_chain(protein)  # the probes', free of the protein's
     extent = float((protein.positions.max(0) - protein.positions.min(0)).max())
     edge = extent + 20.0 * args.padding_nm
@@ -304,7 +307,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
         # answered here, by martinize's bands or by the springs written below
         for key in ("upper", "lower", "size_nm", "opm", "shift_nm", "elastic",
                     "elastic_selection", "cg_selection", "termini",
-                    "neutral_termini", "lipid_itp", *ALL_ATOM_ONLY,
+                    "neutral_termini", "lipid_itp", *GO_SETTINGS, *ALL_ATOM_ONLY,
                     *(MARTINI_ONLY if sirah else ())):  # fmt: skip
             settings.pop(key, None)
         if sirah:

@@ -6,6 +6,14 @@ Needs martinize2 (vermouth) on PATH; the references in this directory were
 made with vermouth 0.15.1.dev86 (commit a9b62ee).  Each case is martinized
 with the secondary structure boonza's DSSP assigns, so both tools see the
 same one.  Command-line headers are dropped from the itp files.
+
+The Go case writes the contact map as well, with ``-go-write-file``.  That
+flag raises IndexError in this vermouth on a structure holding a residue whose
+alpha carbon has no coordinates -- it indexes the alpha-carbon positions by
+residue and collects only the ones it has -- which 1TEN.pdb does, its first
+residue being an arginine present as a C and an O.  It is not hit here because
+the input is ``select("protein")``, which leaves that residue out before
+martinize2 sees it, so both tools see the same 89 residues.
 """
 
 import gzip
@@ -34,6 +42,12 @@ CASES = {  # name: (input, elastic)
 #: N-terminus with it, which boonza applies, the two having nothing to do with
 #: each other.
 ALSO_MARTINI22 = ("2TRX",)
+#: The same, with its fold held by native contacts instead of rubber bands,
+#: under <name>.go: martinize2's own Go model, and beside it the contact map it
+#: was built from, so boonza can build the same wells from the same contacts.
+#: 1TEN is enough to pin it -- one chain, 89 mapped residues, 287 beads, 89
+#: virtual sites and 185 wells, which boonza reaches bead for bead.
+ALSO_GO = ("1TEN",)
 CHARMM_NAMES = {"HIS": "HSD", "HID": "HSD", "HIE": "HSE", "HIP": "HSP"}
 
 
@@ -50,9 +64,11 @@ def main():
     for name, (src, elastic) in CASES.items():
         for forcefield in ("martini3001", *(("martini22",) if name in ALSO_MARTINI22 else ())):
             one(name, src, elastic, forcefield)
+        if name in ALSO_GO:
+            one(name, src, elastic=False, forcefield="martini3001", go=True)
 
 
-def one(name, src, elastic, forcefield):
+def one(name, src, elastic, forcefield, go=False):
     s = load(src)
     s = s.select("protein").clone()
     if forcefield == "martini22":
@@ -67,19 +83,29 @@ def one(name, src, elastic, forcefield):
                    "-ff", forcefield, "-ss", ss, "-maxwarn", "100"]  # fmt: skip
         if elastic:
             cmd += ["-elastic", "-ef", "700", "-el", "0", "-eu", "0.9"]
+        if go:  # the defaults, named so the reference says what it was built with
+            cmd += ["-go", "-go-write-file", "go_contacts.out", "-go-eps", "9.414",
+                    "-go-low", "0.3", "-go-up", "1.1", "-go-res-dist", "3"]  # fmt: skip
         subprocess.run(cmd, cwd=tmp, check=True, capture_output=True)
-        out = HERE / (name if forcefield == "martini3001" else f"{name}.{forcefield}")
+        out = HERE / (f"{name}.go" if go else
+                      name if forcefield == "martini3001" else f"{name}.{forcefield}")  # fmt: skip
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir()
         (out / "ss.txt").write_text(ss + "\n")
         tmp = Path(tmp)
-        for f in [tmp / "topol.top", tmp / "cg.pdb", *tmp.glob("molecule_*.itp")]:
+        # martinize2 writes molecule_0.itp, or molecule.itp for a Go model,
+        # whose moltype names the virtual-site atom types as well
+        files = [tmp / "topol.top", tmp / "cg.pdb", *tmp.glob("molecule*.itp")]
+        if go:
+            files += [tmp / "go_contacts.out", tmp / "go_atomtypes.itp",
+                      tmp / "go_nbparams.itp"]  # fmt: skip
+        for f in files:
             lines = f.read_text().splitlines(keepends=True)
-            if f.suffix == ".itp":
+            if f.name.startswith("molecule"):  # drop the command-line header
                 lines = lines[lines.index("[ moleculetype ]\n") :]
             text = "".join(lines).encode()
             (out / (f.name + ".gz")).write_bytes(gzip.compress(text, mtime=0))
-    print(name, forcefield, "done")
+    print(name, forcefield, "go" if go else "", "done")
 
 
 if __name__ == "__main__":
