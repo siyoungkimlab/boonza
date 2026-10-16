@@ -285,6 +285,86 @@ def test_a_merged_molecule_numbers_its_residues_through(tmp_path):
     assert {r for _, r in inputs} == set(range(1, 109))
 
 
+# ---------------------------------------------------------------------------
+# the model has to survive everything built around it
+
+
+def test_a_swim_carries_the_go_model(tmp_path):
+    """A swim builds its own system -- the protein, its probes, then water and
+    ions -- and the Go model has to come with it.
+
+    Its wells are named after the beads they join and its sites are beads of
+    the protein's own molecule, which goes in first, so the probes change
+    nothing about it.  But the files the wells live in have to be carried: a
+    topology that names atom types nothing defines is one GROMACS will not
+    read ("Atomtype molecule_0_1 not found"), and the swim would have gone on
+    to say it had built a Go model of 185 wells.
+    """
+    import numpy as np
+
+    from boonza.martini.probes import probe
+    from boonza.md.cgswim import build
+
+    protein = martinize(boonza.load(STRUCTURE), "protein", go=True)
+    probes = [probe("WY")]
+    whole = build(protein, probes, 1, [80.0, 80.0, 80.0], np.random.default_rng(0))
+    assert whole.go == protein.go  # solvating deep-copies, so by value
+    top = whole.top(martini_itp="martini.itp")
+    assert "#define GO_VIRT" in top
+    assert '#include "go_atomtypes.itp"' in top and '#include "go_nbparams.itp"' in top
+    whole.save(tmp_path, martini_itp="martini.itp")
+    assert (tmp_path / "go_nbparams.itp").read_text() == protein.go.nbparams
+    # and the probes are their own molecules, with no site of their own to hold
+    assert len(whole.molecules) == 1 + len(probes)
+    assert sum(1 for n in whole.molecules[1].nodes if n.get("go_site")) == 0
+
+
+def test_a_bilayer_carries_the_go_model():
+    """So does a membrane build, which puts lipids and water around the
+    protein and must leave its wells where they were."""
+    from boonza.martini import LIPIDS_FOR, bilayer, parameters
+
+    protein = martinize(boonza.load(STRUCTURE), "protein", go=True)
+    itps = [str(p) for p in parameters(*LIPIDS_FOR[3])]
+    whole = bilayer(itps, {"POPC": 1}, size=80.0, protein=protein, water=15.0)
+    assert whole.go == protein.go
+    assert len(whole.go.pairs) == 185
+    assert "#define GO_VIRT" in whole.top(martini_itp="martini.itp")
+
+
+def test_a_cofactor_takes_no_well_and_no_site():
+    """A cofactor's beads have no backbone bead among them, so no site stands
+    for one and no well holds one -- it is held by its own bands.  It does
+    shade the contact map, which is read over whatever is coarse-grained.
+    """
+    s = boonza.load(DATA / "1HHO.pdb")
+    m = martinize(s, "protein or resname HEM", cofactors=True, go=True)
+    mol = m.molecules[0]
+    haem = {k for k, n in enumerate(mol.nodes) if str(n.get("resname", "")).strip() == "HEM"}
+    assert haem  # the cofactor is in there
+    assert not [p for p in m.go.pairs if p.i in haem or p.j in haem]
+    assert not [k for k in haem if mol.nodes[k].get("go_site")]
+    assert len(m.go.pairs) == 545  # the protein's own wells, as martinize2 has them
+
+
+def test_a_chain_break_is_held_across(tmp_path):
+    """A break splits a chain into two molecules, which a Go model makes one
+    again; residues either side are not near along any bond, so a contact
+    across the break is a well like any other."""
+    plain = (DATA / "1TEN.pdb").read_text().splitlines(keepends=True)
+    cut = [line for line in plain
+           if not (line.startswith("ATOM") and 830 <= int(line[22:26]) <= 839)]  # fmt: skip
+    gapped = tmp_path / "gapped.pdb"
+    gapped.write_text("".join(cut))
+    m = martinize(boonza.load(gapped), "protein", go=True)
+    assert len(m.molecules) == 1  # the two sides are one moleculetype again
+    assert m.go.sites == 79  # ten residues fewer than the whole
+    assert len(m.go.pairs) == 126
+    mol = m.molecules[0]
+    edges = {int(mol.nodes[k]["input_resid"]) for p in m.go.pairs for k in (p.i, p.j)}
+    assert 829 in edges and 840 in edges  # both sides of the break are held
+
+
 def test_the_topology_switches_the_virtual_sites_on(built):
     """GO_VIRT is what Martini's own parameter file reads to let a residue carry
     one, and the two Go files have to come before the molecule that uses their
