@@ -17,6 +17,7 @@ const camera = new Camera();
 const CACHE_BYTES = 256e6;  // frames kept in the page, over all models
 const CONTACT_COLOR = [0.2, 0.75, 1];
 const METER_COLOR = [0.95, 0.75, 0.1];
+const HBOND_COLOR = [0.3, 0.9, 0.45];
 const STYLE = Object.fromEntries(STYLES.map((s, k) => [s, k]));
 const FROM_REP = { cartoon: null, sticks: STYLE.stick, ballstick: STYLE.ballstick,
                    lines: STYLE.line, spheres: STYLE.space, picked: STYLE.ballstick };
@@ -419,6 +420,7 @@ function rebuild() {
     for (let a = 0; a < n; a++) show[a] = visibleAtom(m, a) ? 1 : 0;
     const dashes = [];
     if (state.contacts) for (const [i, j] of m.contacts || []) dashes.push([...xyz(m, i), ...xyz(m, j), ...CONTACT_COLOR]);
+    if (state.hbonds) for (const [i, j] of m.hbonds || []) dashes.push([...xyz(m, i), ...xyz(m, j), ...HBOND_COLOR]);
     for (const meter of state.meters) {
       if (meter.model !== m) continue;
       const a = meter.atoms;
@@ -804,12 +806,31 @@ function updatePlayer() {
 }
 
 async function refreshContacts() {
+  if (state.hbonds) await refreshHbonds();
   if (!state.contacts) return;
   await Promise.all(shownModels().map(async m => {
     const i = Math.min(state.frame, m.topo.nframes - 1);
     try { m.contacts = (await getJSON(`api/contacts?m=${m.index}&i=${i}`)).contacts; }
     catch (e) { m.contacts = []; }
   }));
+}
+
+// hydrogen bonds between two selections (Compute | Hydrogen Bonds), in each shown model
+async function refreshHbonds() {
+  const { b, sel } = state.hbonds;
+  let n = 0, how = "";
+  const found = new Set();  // the methods of the models that found some
+  await Promise.all(shownModels().map(async m => {
+    const frame = Math.min(state.frame, m.topo.nframes - 1);
+    const a = sel ? selected(m) : state.hbonds.a;  // the selection: in the models that have one
+    if (sel && !a.length) { m.hbonds = []; return; }
+    try {
+      const out = await post("api/hbonds", { m: m.index, a, b, frame });
+      m.hbonds = out.pairs; n += out.pairs.length;
+      if (out.pairs.length) found.add(out.method); else how = how || out.method;
+    } catch (e) { m.hbonds = []; how = e.message; }
+  }));
+  return { n, how: found.size ? [...found].join("; ") : how };
 }
 
 async function setFrame(i) {
@@ -945,7 +966,7 @@ const app = {
   selected, selection, targets, select, clearSelection, visibleAtom,
   rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
-  setFrame, play, nframes, updatePlayer, refreshContacts,
+  setFrame, play, nframes, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
   range, STYLE, pageState, restorePage, PYTHON, withPictureScene,
   onSelection: () => {}, onModels: () => {}, onEmpty: () => {},  // ui.js fills these in
 };

@@ -19,6 +19,10 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/set_distance, /api/set_angle   {"m": M, "atoms": [...], "value": x}
     POST /api/open            {"path": file or folder} -> the new models; /api/close {"m": M}
     POST /api/build           {"smiles": ..., "centre": [x, y, z]} -> a new model of it
+    POST /api/upload          a file's bytes (its name in X-Filename) -> opened
+    POST /api/copy_into       {"m": from, "into": to, "atoms": [...]} -> appended there
+    POST /api/hbonds          {"m": M, "a": sel, "b": sel or none, "frame": N} -> pairs
+    POST /api/download        {"m": M, "fmt": pdb|cif|sdf|mae|dms|gro, "atoms": [...]} -> a file
     POST /api/python          {"code": ..., "m": current, "sel": [...]} -> output, actions
                               (only on 127.0.0.1; every POST carries the page's token)
     POST /api/fetch           {"id": PDB ID} -> downloads it (mmCIF) and opens it
@@ -134,10 +138,17 @@ class _Handler(BaseHTTPRequestHandler):
     def _post(self) -> None:
         url = urlparse(self.path)
         n = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(n) or b"{}")
+        raw = self.rfile.read(n)
         if not secrets.compare_digest(self.headers.get("X-Boonza-Token", ""), self.token):
             self._json({"error": "this request did not come from the viewer's page"}, 403)
             return
+        if url.path == "/api/upload":  # a file's bytes, its name in a header
+            from urllib.parse import unquote
+
+            name = unquote(self.headers.get("X-Filename", ""))
+            self._json({"added": self.viewer.upload(name, raw), **self.viewer.listing()})
+            return
+        body = json.loads(raw or b"{}")
         if url.path == "/api/python":
             if self.console is None:
                 self._json({"error": "the Python line is offered only when boonza view listens "
@@ -164,6 +175,11 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/api/save_session":
             self._json({"path": self.viewer.save_session(body["path"], body.get("page") or {})})
             return
+        if url.path == "/api/copy_into":
+            self._json(self.viewer.copy_into(int(body["m"]), int(body["into"]),
+                                             body.get("atoms") or None,
+                                             int(body.get("frame", 0))))  # fmt: skip
+            return
         if url.path == "/api/close":
             self.viewer.close(int(body["m"]))
             self._json(self.viewer.listing())
@@ -172,6 +188,15 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/api/select":
             ids = session.select(str(body.get("sel", "")), int(body.get("frame", 0)))
             self._json({"ids": ids.tolist()})
+        elif url.path == "/api/download":
+            data, name = session.export(str(body.get("fmt", "pdb")), body.get("atoms") or (),
+                                        int(body.get("frame", 0)))  # fmt: skip
+            saved = {"Content-Disposition": f'attachment; filename="{name}"'}
+            self._send(data, "application/octet-stream", headers=saved)
+        elif url.path == "/api/hbonds":
+            a = body["a"] if isinstance(body["a"], list) else str(body["a"])
+            self._json(session.hbonds(a, body.get("b") or None,
+                                      int(body.get("frame", 0))))  # fmt: skip
         elif url.path == "/api/glue":
             session.set_glue(bool(body.get("whole", True)), body.get("center"), body.get("fit"))
             self._json({"ok": True})

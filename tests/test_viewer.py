@@ -974,3 +974,42 @@ def test_a_placeholder_cell_is_no_cell(tmp_path):
     assert s.cell.any()
     near = viewer.Session(s).select("within 3 of resid 1")
     assert len(near) == len(s.select("within 3 of resid 1"))
+
+
+def test_download_upload_copy_into_and_hbonds(served):
+    v = viewer.Viewer([])
+    get, post = served(v)
+    post("api/build", {"smiles": "CC(=O)Nc1ccc(O)cc1", "centre": [0, 0, 0]})
+    post("api/edit", {"m": 0, "op": "molecule", "value": {"smiles": "CCO", "centre": [8, 0, 0]}})
+    # SDF: one entry per molecule, and a file name to keep
+    status, _ = post("api/download", {"m": 0, "fmt": "xyz"})
+    assert status == 400
+    session = v.session(0)
+    data, name = session.export("sdf")
+    assert data.decode().count("$$$$") == 2 and name.endswith("_molecules.sdf")
+    data, name = session.export("pdb", [0, 1, 2])
+    lines = data.decode().splitlines()
+    assert (
+        name.endswith("_selection.pdb") and sum(ln[:6] in ("ATOM  ", "HETATM") for ln in lines) == 3
+    )
+    with pytest.raises(ValueError, match="download as"):
+        session.export("xyz")
+    # a file from the browser: opened, saved by default where boonza view runs
+    added = v.upload("lyz.pdb", (DATA / "1LYZ.pdb").read_bytes())
+    lyz = v.session(added[0])
+    assert lyz.system.natoms == 1102 and lyz.path.name == "lyz.pdb"
+    # the ligand into the protein, and back out with Undo
+    out = v.copy_into(0, added[0])
+    assert out["added"] == session.system.natoms and lyz.system.natoms == 1102 + out["added"]
+    lyz.undo()
+    assert lyz.system.natoms == 1102
+    # hydrogen bonds: without hydrogens by N and O distance; with them by geometry
+    plain = lyz.hbonds("resid 1 to 20", "resid 21 to 129")
+    assert plain["method"].startswith("no hydrogens") and len(plain["pairs"]) > 10
+    lyz.edit("protonate")
+    placed = lyz.hbonds("resid 1 to 20", "resid 21 to 129")
+    assert placed["method"].startswith("D-A") and placed["pairs"]
+    hho = viewer.Session(boonza.load(DATA / "1HHO.pdb"))
+    chains = np.asarray(hho.system.residues["chain"])[np.asarray(hho.system.atoms["residue"])]
+    pairs = hho.hbonds("@chains")["pairs"]
+    assert pairs and all(chains[i] != chains[j] for i, j, _ in pairs)

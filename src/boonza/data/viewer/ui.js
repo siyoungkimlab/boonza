@@ -42,7 +42,9 @@ export function setupUI(app) {
         closeMenus(depth + 1);
         if (sub && !off) {
           const r = row.getBoundingClientRect();
-          menu(sub, r.right - 2, r.top - 3, depth + 1);
+          const m = menu(sub, r.right - 2, r.top - 3, depth + 1);
+          const w = m.getBoundingClientRect().width;
+          if (r.right - 2 + w > innerWidth) m.style.left = `${Math.max(0, r.left - w + 2)}px`;  // no room: to the left
         }
       };
       row.onclick = e => {
@@ -656,6 +658,8 @@ export function setupUI(app) {
     File: () => [
       { label: "Open…", run: openPanel, key: "Ctrl O" },
       { label: "Save…", run: savePanel, key: "Ctrl S" },
+      { label: "Open from This Computer…", run: browse },
+      { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: () => download(fmt) })) },
       { label: "Save Session…", run: saveSessionPanel },
       { label: "Close", run: () => closeModel() },
       "-",
@@ -691,6 +695,7 @@ export function setupUI(app) {
       { label: "Energy Minimize…", run: minimizePanel },
       { label: "Conformations", sub: [{ label: "Torsion Profile…", run: () => profilePanel() }] },
       { label: "Ligand Interactions", run: toggleContacts, checked: () => state.contacts },
+      { label: "Hydrogen Bonds…", run: hbondPanel, checked: () => !!state.hbonds },
       { label: "Dynamics Player", run: () => { $("player").hidden = app.nframes() < 2; },
         off: () => app.nframes() < 2 },
     ],
@@ -861,6 +866,7 @@ export function setupUI(app) {
       { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
       ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
       { label: "Copy Its SMILES", run: () => { app.select(c.m, c.molecule); copySmiles(); } },
+      { label: "Copy Molecule Into", sub: copyIntoItems(c.m, c.molecule) },
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
       "-",
     ] : [])(clicked(hit)),
@@ -1193,6 +1199,119 @@ export function setupUI(app) {
   $("play").onclick = () => app.play();
   window.addEventListener("resize", app.draw);
 
+  // --- files to and from this computer -----------------------------------------------------------
+
+  const DOWNLOADS = [["pdb", "PDB"], ["cif", "mmCIF"], ["sdf", "SDF (each molecule)"], ["mae", "Maestro (.mae)"],
+                     ["dms", "DMS"], ["gro", "GROMACS (.gro)"]];
+  // the selection's model and atoms (else the current model, whole) as a file in Downloads
+  async function download(fmt, m = null, atoms = null) {
+    const sel = app.selection();
+    m = m || sel[0]?.[0] || app.currentModel();
+    if (!m?.topo) { app.message("no model to download", true); return; }
+    atoms = atoms ?? (sel.find(([x]) => x === m)?.[1] || []);
+    try {
+      const r = await fetch("api/download", { method: "POST", headers: { "Content-Type": "application/json", "X-Boonza-Token": app.TOKEN },
+        body: JSON.stringify({ m: m.index, fmt, atoms, frame: Math.min(state.frame, m.topo.nframes - 1) }) });
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || `model.${fmt}`;
+      el("a", { href: URL.createObjectURL(await r.blob()), download: name }).click();
+      app.message(`downloaded ${name}${atoms.length && fmt !== "sdf" ? ` (${atoms.length} selected atoms)` : ""}`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  // files from this computer (dropped on the window, or picked): sent to boonza view and opened
+  async function uploadFiles(files) {
+    for (const f of files) {
+      try {
+        const r = await app.busy(`opening ${f.name}`, () => fetch("api/upload", { method: "POST", body: f,
+          headers: { "X-Boonza-Token": app.TOKEN, "X-Filename": encodeURIComponent(f.name) } }));
+        const out = await r.json();
+        if (!r.ok) throw new Error(out.error || r.statusText);
+        await addModels(out);
+        app.message(`opened ${f.name}: ${out.added.length} model${out.added.length === 1 ? "" : "s"}`);
+      } catch (e) { app.message(`${f.name}: ${e.message}`, true); }
+    }
+  }
+  function browse() {
+    const input = el("input", { type: "file", multiple: true });
+    input.onchange = () => { panels.open?.remove(); delete panels.open; uploadFiles([...input.files]); };
+    input.click();
+  }
+  if (!app.STATIC) {
+    const files = e => [...(e.dataTransfer?.types || [])].includes("Files");
+    window.addEventListener("dragover", e => { if (!files(e)) return; e.preventDefault(); $("stage").classList.add("dropping"); });
+    window.addEventListener("dragleave", e => { if (!e.relatedTarget) $("stage").classList.remove("dropping"); });
+    window.addEventListener("drop", e => {
+      if (!files(e)) return;
+      e.preventDefault();
+      $("stage").classList.remove("dropping");
+      uploadFiles([...e.dataTransfer.files]);
+    });
+  }
+
+  // copy a model's atoms (a built ligand) into another model, where they are
+  const copyIntoItems = (m, atoms) => () => {
+    const others = app.live().filter(o => o !== m);
+    return others.length ? others.map(o => ({ label: o.name, run: () => copyInto(m, o, atoms) }))
+      : [{ label: "(no other model)", off: () => true }];
+  };
+  async function copyInto(m, o, atoms) {
+    try {
+      await app.load(o);
+      const out = await app.post("api/copy_into", { m: m.index, into: o.index, atoms,
+                                                     frame: Math.min(state.frame, m.topo.nframes - 1) });
+      state.current = o.index;
+      await app.reloadModel(o, true);
+      await app.show([o]);
+      app.message(`copied ${out.added} atoms of ${m.name} into ${o.name} · Edit | Undo with ${o.name} current takes them out`);
+    } catch (e) { app.message(e.message, true); }
+  }
+
+  // Compute | Hydrogen Bonds: between two selections, drawn green and dashed
+  const HBOND_SETS = [["@ligand", "the ligand and the rest"], ["@sel", "the selection and the rest"],
+    ["@chains", "chains (every interface)"], ["protein|water", "protein and water"], ["custom", "two selections…"]];
+  function hbondPanel() {
+    panel("hbonds", "Hydrogen Bonds", body => {
+      const kind = el("select");
+      for (const [v, l] of HBOND_SETS) kind.add(new Option(l, v));
+      if (app.selection().length) kind.value = "@sel";
+      const a = el("input", { placeholder: "selection A, e.g. chain A", spellcheck: false, style: "width:220px" });
+      const b = el("input", { placeholder: "selection B (empty: the rest)", spellcheck: false, style: "width:220px" });
+      const custom = [row(el("span", { className: "what" }, "A"), a), row(el("span", { className: "what" }, "B"), b)];
+      const sync = () => custom.forEach(r => { r.style.display = kind.value === "custom" ? "" : "none"; });
+      kind.onchange = sync;
+      const result = el("p", { className: "help" });
+      const go = button("Show", async () => {
+        const v = kind.value;
+        state.hbonds = v === "@sel" ? { sel: true } : v === "custom" ? { a: a.value.trim(), b: b.value.trim() || null }
+          : v === "protein|water" ? { a: "protein", b: "water" } : { a: v, b: null };
+        if (v === "custom" && !state.hbonds.a) { app.message("give selection A", true); return; }
+        if (v === "@sel" && !app.selection().length) { app.message("select atoms first", true); return; }
+        const { n, how } = await app.busy("finding hydrogen bonds", () => app.refreshHbonds());
+        // the residues at both ends, so no bond hangs in the air
+        for (const m of app.shownModels()) {
+          for (const [i, j] of m.hbonds || []) {
+            for (const r of [m.topo.atoms.residue[i], m.topo.atoms.residue[j]]) {
+              for (const a of m.topo.residueAtoms[r]) if (!m.state.show[a]) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; }
+            }
+          }
+        }
+        app.rebuild();
+        result.textContent = `${n} hydrogen bond${n === 1 ? "" : "s"} (${how})`;
+        app.message(result.textContent);
+      }, "blue");
+      const clear = button("Clear", () => {
+        state.hbonds = null;
+        for (const m of app.live()) m.hbonds = [];
+        app.rebuild(); result.textContent = "";
+      });
+      body.append(row(el("span", { className: "what" }, "between"), kind), ...custom, row(go, clear), result);
+      body.append(el("p", { className: "help" }, "With hydrogens: donor-acceptor within 3.5 Å and D-H…A above 120°. "
+        + "Without (most PDB entries): N and O of different residues within 3.5 Å; Edit | Build | Hydrogens | "
+        + "Add Hydrogens adds them. Followed frame by frame."));
+      sync();
+    }, [innerWidth / 2 - 180, 80]);
+  }
+
   // --- panels -----------------------------------------------------------------------------------------
 
   const panels = {};
@@ -1408,10 +1527,12 @@ export function setupUI(app) {
       box.append(el("div", { className: "smiles-row" }, el("span", { className: "what" }, `${x.name} · ${x.heavy}`), text, copy));
       if (x.smiles && x.note) box.append(el("p", { className: "help" }, x.note));
     }
-    if (mols.length > 1) box.append(row(button("Copy all", async () => {
-      const all = mols.filter(x => x.smiles).map(x => x.smiles).join("\n");
-      app.message((await copyText(all)) ? `copied ${mols.length} SMILES` : all);
-    })));
+    box.append(row(
+      ...(mols.length > 1 ? [button("Copy all", async () => {
+        const all = mols.filter(x => x.smiles).map(x => x.smiles).join("\n");
+        app.message((await copyText(all)) ? `copied ${mols.length} SMILES` : all);
+      })] : []),
+      button("Download SDF", () => download("sdf", m, sel[0]?.[1] || []))));
   }
 
   function atomBuilder(body) {
@@ -1708,6 +1829,8 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          { label: "Copy Into", sub: copyIntoItems(m, []) },
+          { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: async () => { await app.load(m); download(fmt, m, []); } })) },
           { label: "Save…", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; app.rebuild(); savePanel(); } },
           "-",
           { label: "Close", run: () => closeModel(m) },
@@ -2031,7 +2154,7 @@ export function setupUI(app) {
 
   // open and save: paths on the server (where the files are)
   function pathPanel(id, title, value, run) {
-    panel(id, title, body => {
+    return panel(id, title, body => {
       const input = el("input", { value, style: "width:360px", spellcheck: false });
       const go = button(title.split(" ")[0], () => run(input.value.trim()), "blue");
       input.onkeydown = e => { if (e.key === "Enter") go.click(); };
@@ -2041,7 +2164,11 @@ export function setupUI(app) {
       setTimeout(() => input.focus(), 0);
     }, [innerWidth / 2 - 220, 80]);
   }
-  function openPanel() { pathPanel("open", "Open File", "", async p => { if (await openPath(p)) panels.open?.remove(); }); }
+  function openPanel() {
+    const p = pathPanel("open", "Open File", "", async path => { if (await openPath(path)) panels.open?.remove(); });
+    p.querySelector(".body").append(row(button("Browse this computer…", browse)),
+      el("p", { className: "help" }, "Or drop files anywhere on the window."));
+  }
   function savePanel() {
     const m = actingModel();
     if (!m) return;

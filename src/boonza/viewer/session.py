@@ -691,6 +691,115 @@ class Session:
                         "note": note})  # fmt: skip
         return out
 
+    #: what Download writes, by extension
+    FORMATS = ("pdb", "cif", "sdf", "mae", "dms", "gro")
+
+    def molecules(self, atoms=()) -> list[np.ndarray]:
+        """The atoms of each molecule ``atoms`` are in (default: each small molecule)."""
+        s = self.system
+        frag = np.asarray(s.fragids)
+        if len(atoms):
+            frags = sorted({int(frag[int(a)]) for a in atoms})
+        else:
+            small = CG_LIGAND if self.cg else "not (protein or nucleic or water or ions)"
+            frags = sorted({int(f) for f in frag[s.select(small).ids]})
+        return [np.flatnonzero(frag == f) for f in frags]
+
+    def export(self, fmt: str, atoms=(), frame: int = 0) -> tuple[bytes, str]:
+        """The model (or ``atoms``) as a file's bytes and a name for it, at ``frame``.
+        SDF holds one entry per molecule: those of ``atoms``, else the small ones."""
+        import tempfile
+        from pathlib import Path
+
+        from ..io import save
+        from ..io.sdf import save_sdf
+
+        fmt = fmt.lower().lstrip(".")
+        if fmt not in self.FORMATS:
+            raise ValueError(f"download as one of {', '.join(self.FORMATS)}")
+        s = self.system.clone()
+        s.positions = np.asarray(self.frame(frame)[0], float)
+        atoms = [int(a) for a in atoms]
+        stem = Path(self.title or "model").name.split(".")[0].replace(" ", "_") or "model"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"out.{fmt}"
+            if fmt == "sdf":
+                mols = self.molecules(atoms)
+                if not mols:
+                    raise ValueError("no molecule to write: select one (double-click it)")
+                if sum(len(m) for m in mols) > 20000:
+                    raise ValueError("SDF is for molecules: select the ligands to write")
+                for k, ids in enumerate(mols):
+                    save_sdf(s.clone(ids), path, append=k > 0)
+                name = f"{stem}_{'molecules' if len(mols) > 1 else 'molecule'}.sdf"
+            else:
+                save(s.clone(atoms) if atoms else s, path)
+                name = f"{stem}{'_selection' if atoms else ''}.{fmt}"
+            return path.read_bytes(), name
+
+    def hbonds(self, a: str, b: str | None = None, frame: int = 0) -> dict:
+        """Hydrogen bonds between selections ``a`` and ``b`` (default: ``a`` and the
+        rest).  With hydrogens, by geometry (D-A within 3.5 A, D-H...A above 120
+        degrees, as viewers draw them); without, N and O pairs within 3.5 A of different
+        residues."""
+        from ..hbonds import hbonds
+
+        if self.cg or self.radii is not None:
+            raise ValueError("hydrogen bonds need atoms, not beads or points")
+        s = self.system
+        pos, box = self.frame(frame)
+        pos = np.asarray(pos, np.float64)
+        chains = a == "@chains"  # every interface: pairs of atoms in different chains
+
+        def side(x):
+            if isinstance(x, list | tuple | np.ndarray):
+                return np.asarray(x, np.int64)
+            if x == "@ligand":
+                x = f"same residue as ({self.ligand or LIGAND})"
+            return self.select("not water" if x == "@chains" else x, frame)
+
+        A = side(a)
+        B = A if chains else side(b) if b else np.setdiff1d(np.arange(s.natoms), A)
+        if not len(A) or not len(B):
+            raise ValueError("no atoms on one side")
+        anum = np.asarray(s.atoms["anum"])
+        both = np.union1d(A, B)
+        # hydrogens placed: most nitrogens carry one (a ligand built with them beside a
+        # crystal structure without them does not count)
+        bi, bj = np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"])
+        with_h = np.zeros(s.natoms, bool)
+        with_h[bi[anum[bj] == 1]] = True
+        with_h[bj[anum[bi] == 1]] = True
+        nitrogens = both[anum[both] == 7]
+        if len(nitrogens) and with_h[nitrogens].mean() > 0.5:
+            box = self._box(box)
+            r = hbonds(
+                s,
+                pos,
+                box=box if box is not None else np.zeros((3, 3)),
+                between=(A, B),
+                d_a_cutoff=3.5,
+                angle_cutoff=120.0,
+            )  # a viewer's, looser than MD's
+            found = zip(r.donor, r.acceptor, r.distance, strict=True)
+            pairs = [[int(d), int(x), round(float(dist), 2)] for d, x, dist in found]
+            how = "D-A within 3.5 A, D-H...A above 120 degrees"
+        else:
+            res = np.asarray(s.atoms["residue"])
+            na = A[np.isin(anum[A], (7, 8))]
+            nb = B[np.isin(anum[B], (7, 8))]
+            pairs = []
+            if len(na) and len(nb):
+                d = np.linalg.norm(pos[na][:, None] - pos[nb][None], axis=2)
+                i, j = np.nonzero((d <= 3.5) & (res[na][:, None] != res[nb][None]))
+                pairs = [[int(na[x]), int(nb[y]), round(float(d[x, y]), 2)]
+                         for x, y in zip(i, j, strict=True)]  # fmt: skip
+            how = "no hydrogens: N and O pairs within 3.5 A"
+        if chains:
+            chain = np.asarray(s.residues["chain"])[np.asarray(s.atoms["residue"])]
+            pairs = [p for p in pairs if chain[p[0]] != chain[p[1]]]
+        return {"pairs": pairs, "method": how}
+
     def undo(self) -> dict:
         if not getattr(self, "_undo", None):
             raise ValueError("nothing to undo")
