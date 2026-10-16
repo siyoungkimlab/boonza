@@ -91,6 +91,22 @@ def read_contact_map(path) -> list[tuple[int, str, int, str]]:
     return out
 
 
+def _residue_keys(contact) -> tuple[tuple, tuple]:
+    """The two residues a contact names, as ``(chain, resid, insertion)``.
+
+    A contact comes either from a file, which gives a chain and a residue
+    number and has no column for an insertion code, or from a map boonza
+    computed, which gives the code as well.  ``None`` for the code means the
+    map did not say, and a residue number then has to pick out one residue.
+    """
+    if len(contact) == 6:
+        resid_a, chain_a, insert_a, resid_b, chain_b, insert_b = contact
+        return ((str(chain_a), int(resid_a), str(insert_a or "").strip()),
+                (str(chain_b), int(resid_b), str(insert_b or "").strip()))  # fmt: skip
+    resid_a, chain_a, resid_b, chain_b = contact
+    return (str(chain_a), int(resid_a), None), (str(chain_b), int(resid_b), None)
+
+
 def go_pairs(molecule, contacts, *, eps: float = GO_EPS, low: float = GO_LOW,
              up: float = GO_UP, res_dist: int = GO_RES_DIST,
              backbone: str = "BB") -> list[GoPair]:  # fmt: skip
@@ -99,18 +115,50 @@ def go_pairs(molecule, contacts, *, eps: float = GO_EPS, low: float = GO_LOW,
     ``molecule`` is a :class:`~boonza.martini.build.CGMolecule`, whose
     positions are in nanometres, as ``low`` and ``up`` are.  A contact naming a
     residue the molecule does not hold is skipped: a map is written for a whole
-    structure and a molecule is one chain of it.
+    structure and a molecule need not be the whole of it.
+
+    A residue is named by its chain, its number and its insertion code, since
+    a number alone does not pick one out -- an antibody's loop or a
+    chymotrypsin numbers several residues 100A, 100B, 100C.  A map boonza
+    computed carries the code; one read from a file cannot, the format having
+    no column for it, and a number that then names more than one residue is an
+    error rather than a well on whichever came first.
     """
+    from collections import defaultdict
+
     from .build import _residues_within
 
-    bead_of: dict[tuple[str, int], int] = {}
+    bead_of: dict[tuple[str, int, str], int] = {}
+    sharing: dict[tuple[str, int], list] = defaultdict(list)
     for k, node in enumerate(molecule.nodes):
         if str(node.get("atomname", "")) != backbone:
             continue
-        key = (str(node.get("chain", "") or ""), int(node["input_resid"]))
-        bead_of.setdefault(key, k)
+        key = (str(node.get("chain", "") or ""), int(node["input_resid"]),
+               str(node.get("insertion", "") or "").strip())  # fmt: skip
+        if key not in bead_of:
+            bead_of[key] = k
+            sharing[key[:2]].append(key)
     if not bead_of:
         raise ValueError(f"no {backbone!r} beads: a Go model needs one backbone bead a residue")
+
+    def bead(key):
+        """The bead of the residue a contact names, or None if this molecule
+        has none.  A map read from a file carries no insertion code, since the
+        format has nowhere to put one, so a residue number it gives has to pick
+        out one residue on its own."""
+        if key[2] is not None:
+            return bead_of.get(key)
+        same = sharing.get(key[:2], ())
+        if len(same) > 1:
+            codes = ", ".join(repr(k[2]) for k in same)
+            raise ValueError(
+                f"the map names residue {key[1]} of chain {key[0]!r}, and this structure has "
+                f"{len(same)} of them (insertion codes {codes}): a map read from a file cannot "
+                f"say which, the format having no column for an insertion code.  Let boonza "
+                f"work the contacts out instead (go=True), where nothing is written down in "
+                f"between"
+            )
+        return bead_of.get(same[0]) if same else None
 
     near = _residues_within(molecule, res_dist)  # what the bonded terms hold
     residue_of = {k: int(molecule.nodes[k]["resid"]) for k in bead_of.values()}
@@ -118,9 +166,9 @@ def go_pairs(molecule, contacts, *, eps: float = GO_EPS, low: float = GO_LOW,
 
     seen: set[tuple[int, int]] = set()
     out: dict[tuple[int, int], GoPair] = {}
-    for resid_a, chain_a, resid_b, chain_b in contacts:
-        i = bead_of.get((chain_a, resid_a))
-        j = bead_of.get((chain_b, resid_b))
+    for contact in contacts:
+        key_a, key_b = _residue_keys(contact)
+        i, j = bead(key_a), bead(key_b)
         if i is None or j is None or i == j:
             continue
         if residue_of[j] in near.get(residue_of[i], ()):
@@ -137,11 +185,15 @@ def go_pairs(molecule, contacts, *, eps: float = GO_EPS, low: float = GO_LOW,
 
 #: What the virtual sites are called in the topology, and the files that carry
 #: them.  A Go model's wells are nonbonded terms between sites that stand for
-#: residues, so they live in files of their own that the topology includes
-#: -- which is how martinize2 writes them, and what ``#define GO_VIRT`` turns
-#: on in Martini's own parameter file.
+#: residues, so they live in files of their own that the topology includes,
+#: which is how martinize2 writes them.  ``#define GO_VIRT`` goes at the top
+#: because martinize2 writes that too; nothing boonza carries reads it, and a
+#: parameter file of your own may.
 ATOMTYPES_ITP = "go_atomtypes.itp"
 NBPARAMS_ITP = "go_nbparams.itp"
+#: Where a build writes a map it computed itself, beside the topology: the same
+#: 18-column format, so it can be read back, kept, or compared with another.
+CONTACTS_OUT = "go_contacts.out"
 GO_DEFINE = "#define GO_VIRT"
 #: The name a virtual site takes, which a viewer and GROMACS both read as an
 #: alpha carbon standing for its residue.
@@ -156,6 +208,9 @@ class GoModel:
     sites: int  # how many virtual sites were added
     atomtypes: str
     nbparams: str
+    #: The map the wells came from, when boonza computed it rather than read
+    #: it, so that a build writes down what it held the fold by
+    contact_map: str = ""
 
 
 def add_go_sites(molecule, pairs, moltype: str, backbone: str = "BB") -> dict[int, str]:

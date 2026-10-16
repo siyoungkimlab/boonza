@@ -1662,7 +1662,8 @@ def _martinize(args) -> int:
                          res_min_dist=args.res_min_dist, cys=cys,
                          neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
                          extdih=args.extdih, forcefield=FORCEFIELD_FOR[version],
-                         cofactors=args.cofactors, go=args.go_map, go_eps=args.go_eps,
+                         cofactors=args.cofactors, go=args.go_map or args.go or None,
+                         go_eps=args.go_eps,
                          go_low=args.go_low, go_up=args.go_up,
                          go_res_dist=args.go_res_dist)  # fmt: skip
     if args.solvate:
@@ -1677,8 +1678,11 @@ def _martinize(args) -> int:
         f"{'; ' + water if water else ''}) and cg.gro; it includes {_where(itp)}"
     )
     if m.go:
-        print(f"  Go model: {len(m.go.pairs)} wells over {m.go.sites} virtual sites, "
-              f"in go_atomtypes.itp and go_nbparams.itp")  # fmt: skip
+        files = "go_atomtypes.itp and go_nbparams.itp"
+        if m.go.contact_map:
+            rows = sum(1 for line in m.go.contact_map.splitlines() if line.startswith("R "))
+            files += f", the {rows} residue pairs it read in go_contacts.out"
+        print(f"  Go model: {len(m.go.pairs)} wells over {m.go.sites} virtual sites, in {files}")
     return 0
 
 
@@ -1958,14 +1962,19 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--elastic-power", type=float, default=0.0, help="-ep")
     q.add_argument("--elastic-min-fc", type=float, default=0.0, help="-em")
     q.add_argument("--res-min-dist", type=int, help="-ermd (default 2)")
-    q.add_argument("--go-map", metavar="FILE",
+    q.add_argument("--go", action="store_true",
                    help="hold the fold with native contacts instead of an elastic network "
-                        "(-go): the 18-column contact map the RCSU program or the Martini "
-                        "contact-map server writes for this structure.  Every contact in it "
-                        "becomes a Lennard-Jones well between virtual sites, so a contact can "
-                        "break and come back where a rubber band cannot.  --elastic as well "
-                        "writes both, as martinize2 allows; boonza md asks for one or the "
-                        "other (--structure-bias)")  # fmt: skip
+                        "(-go), working the contacts out from the structure: the RCSU/OV "
+                        "contact map, written beside the topology as go_contacts.out.  Every "
+                        "contact becomes a Lennard-Jones well between virtual sites, so a "
+                        "contact can break and come back where a rubber band cannot.  "
+                        "--elastic as well writes both, as martinize2 allows; boonza md asks "
+                        "for one or the other (--structure-bias)")  # fmt: skip
+    q.add_argument("--go-map", metavar="FILE",
+                   help="build the Go model from this contact map instead of working one "
+                        "out: the 18-column file the RCSU program or the Martini "
+                        "contact-map server writes for this structure, or one boonza wrote "
+                        "earlier.  Implies --go")  # fmt: skip
     q.add_argument("--go-eps", type=float, default=GO_EPS,
                    help=f"how deep a well is, kJ/mol (-go-eps, default {GO_EPS})")  # fmt: skip
     q.add_argument("--go-low", type=float, default=GO_LOW,
