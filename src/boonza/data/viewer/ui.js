@@ -833,7 +833,37 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
 
-  app.popup = (x, y) => menu(() => [
+  // delete these atoms of a model: all of them closes it
+  async function removeAtoms(m, ids, what) {
+    if (ids.length >= m.topo.natoms) { await closeModel(m); return; }
+    const out = await serverEdit(m, "api/edit", { op: "delete", atoms: ids, hydrogens: autoH() });
+    if (out) app.message(`deleted ${what} (${ids.length} atoms) · Edit | Undo puts it back`);
+  }
+  // the atoms of what a right click landed on: its atom, residue, molecule
+  function clicked(hit) {
+    if (!hit) return null;
+    const m = hit.model, A = m.topo.atoms;
+    const a = hit.atom ?? hit.atoms?.[0] ?? m.topo.residues.trace[hit.residue];
+    if (a === undefined || a < 0) return null;
+    const r = A.residue[a], R = m.topo.residues;
+    // the molecule as double-click takes it: bonded atoms of its kind (a heme on its
+    // histidine is the heme, not the chain)
+    const molecule = app.range(m.topo.natoms).filter(b => A.fragment[b] === A.fragment[a] && A.class[b] === A.class[a]);
+    return { m, a, residue: m.topo.residueAtoms[r], molecule, resName: `${R.name[r]}${R.resid[r]}`,
+             molName: molecule.length === m.topo.residueAtoms[r].length ? `${R.name[r]}${R.resid[r]}` : `molecule of ${R.name[r]}${R.resid[r]}` };
+  }
+
+  app.popup = (x, y, hit = null) => menu(() => [
+    ...(c => c ? [
+      { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
+      { label: "Select Molecule", run: () => app.select(c.m, c.molecule) },
+      { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
+      { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
+      ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
+      { label: "Copy Its SMILES", run: () => { app.select(c.m, c.molecule); copySmiles(); } },
+      { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
+      "-",
+    ] : [])(clicked(hit)),
     ...renderItems().slice(0, 9),
     "-",
     { label: "Select", sub: selectItems },
@@ -1669,6 +1699,20 @@ export function setupUI(app) {
       const x = el("button", { className: "x", title: "close this model" }, "✕");
       x.onclick = () => closeModel(m);
       row.append(el("div", { className: "top" }, box, sw, name, color, rep, x));
+      row.oncontextmenu = e => {
+        e.preventDefault();
+        menu([
+          { label: "Show Only This", run: () => { for (const o of app.live()) o.shown = o === m; app.solo(m); } },
+          { label: m.shown ? "Hide" : "Show", run: () => { state.current = m.index; app.show([m], !m.shown); } },
+          { label: "Center", run: async () => { await app.show([m]); const [c, r] = app.bounds(m, app.range(m.topo.natoms)); app.flyTo(c, Math.max(r, 6)); } },
+          "-",
+          { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
+          { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          { label: "Save…", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; app.rebuild(); savePanel(); } },
+          "-",
+          { label: "Close", run: () => closeModel(m) },
+        ], e.clientX, e.clientY);
+      };
       const data = Object.entries(m.row || {}).filter(([k]) => k !== "name");
       if (data.length) row.append(el("div", { className: "data", title: data.map(([k, v]) => `${k} ${cell(v)}`).join("\n") },
         data.map(([k, v]) => `${k} ${cell(v)}`).join(" · ")));

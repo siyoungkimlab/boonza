@@ -175,7 +175,7 @@ export function setupMouse(app) {
       }
       return;
     }
-    if (d.role === "right" && !d.moved) app.popup(e.clientX, e.clientY);
+    if (d.role === "right" && !d.moved) app.popup(e.clientX, e.clientY, app.pick(x, y));
   });
 
   function residuesOf(m, ids) {

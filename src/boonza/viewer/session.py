@@ -318,9 +318,14 @@ class Session:
                 self._cache.popitem(last=False)
             return out
 
+    def _box(self, box):
+        """The box distances wrap in: a trajectory's; a structure's crystal cell is not
+        one (it would put symmetry mates' contacts in the asymmetric unit)."""
+        return box if self.trajectory is not None and box.any() else None
+
     def select(self, text: str, frame: int = 0) -> np.ndarray:
         pos, box = self.frame(frame)
-        return self.system.select(text, pos=pos.astype(np.float64), cell=box).ids
+        return self.system.select(text, pos=pos.astype(np.float64), cell=self._box(box)).ids
 
     def ss(self, frame: int = 0) -> list[str]:
         """Simplified DSSP per residue ("H", "E", "C", "" for non-protein)."""
@@ -335,7 +340,7 @@ class Session:
                 else:
                     pos, box = self.frame(frame)
                     row = dssp(self.system, pos.astype(np.float64), simplified=True,
-                               box=box if box.any() else None)[0]  # fmt: skip
+                               box=self._box(box))[0]  # fmt: skip
                     codes = ["" if c == "NA" else str(c) for c in row]
                 if len(self._ss) > CACHE:
                     self._ss.clear()

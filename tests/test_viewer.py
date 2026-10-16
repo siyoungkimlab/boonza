@@ -956,3 +956,21 @@ def test_add_hydrogens_then_minimize_a_crystal_structure():
     session.undo()
     session.undo()
     assert session.system.natoms == 1102
+
+
+def test_a_placeholder_cell_is_no_cell(tmp_path):
+    """Cryo-EM and NMR entries carry a 1 x 1 x 1 A cell: no box, so secondary
+    structure and distances are those of the structure itself."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    ss = viewer.Session(s).topology()["ss"]
+    text = (DATA / "1LYZ.pdb").read_text().splitlines()
+    text = [ln for ln in text if not ln.startswith("CRYST1")]
+    text.insert(0, "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1")
+    path = tmp_path / "em.pdb"
+    path.write_text("\n".join(text) + "\n")
+    em = boonza.load(path)  # the cell is read as msys reads it: 1 A
+    assert viewer.Session(em).topology()["ss"] == ss and "H" in ss
+    # a crystal's cell is kept, but distances do not wrap in it for one structure
+    assert s.cell.any()
+    near = viewer.Session(s).select("within 3 of resid 1")
+    assert len(near) == len(s.select("within 3 of resid 1"))
