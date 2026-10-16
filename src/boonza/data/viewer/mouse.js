@@ -39,6 +39,9 @@ export function setupMouse(app) {
   canvas.addEventListener("contextmenu", e => e.preventDefault());
 
   canvas.addEventListener("pointerdown", e => {
+    // the view takes the keys back (Delete, Ctrl Z ...) from a field or list clicked before
+    const focused = document.activeElement;
+    if (focused && focused !== document.body && focused.blur) focused.blur();
     app.stopFlight();
     altAlone = false;
     const [x, y] = local(e);
@@ -183,6 +186,7 @@ export function setupMouse(app) {
 
   function click(x, y, d) {
     const hit = app.pick(x, y);
+    if (app.applyTool?.(hit, x, y)) return;  // a builder tool in hand takes the click
     if (!hit) {
       if (!d.shift && !d.ctrl) { app.clearSelection(); app.rebuild(); app.onSelection(); }
       return;
@@ -198,6 +202,7 @@ export function setupMouse(app) {
 
   // double-click: the atom's molecule, as far as it is of the atom's class
   canvas.addEventListener("dblclick", e => {
+    if (app.toolActive?.()) return;
     const [x, y] = local(e);
     const hit = app.pick(x, y);
     if (!hit || hit.atom === undefined) return;

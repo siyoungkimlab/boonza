@@ -87,9 +87,7 @@ class Viewer:
     """The models a page shows; ``align`` fits each onto the first as it loads."""
 
     def __init__(self, models: list[Model], title: str = "", columns=(), align: str | None = None):
-        if not models:
-            raise ValueError("nothing to view")
-        self.models = list(models)
+        self.models = list(models)  # none: an empty view, to build or open into
         self.title = title
         self.columns = list(columns)
         self.align = align
@@ -208,6 +206,22 @@ class Viewer:
             except Exception as e:
                 raise ValueError(f"could not download {code}: {e}") from e
         return self.open(path)
+
+    def build(self, smiles: str, centre=(0.0, 0.0, 0.0), name: str = "") -> list[int]:
+        """A new model of one molecule from SMILES (3D, hydrogens added), centred at
+        ``centre``: what the builder starts from when no model can take it."""
+        from ..system import System
+        from .edit import add_molecule
+
+        s = System()
+        add_molecule(s, smiles, np.asarray(centre, float))
+        k = sum(1 for m in self.models if m.group == "built") + 1
+        name = name or f"molecule {k}"
+        # every atom, hydrogens too: they are where the builder grows the molecule
+        reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
+        session = Session(s, title=name, reps=reps)
+        self.models.append(Model(name, lambda: session, group="built", _session=session))
+        return [len(self.models) - 1]
 
     def close(self, m: int) -> None:
         """Close a model; indices stay as they are (the page keys models by them)."""

@@ -9,6 +9,7 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
                               (natoms * 3), after Glue; the cell in X-Box
     GET  /api/ss?m=M&i=N      DSSP (simplified: H, E, C) of frame N
     GET  /api/contacts?m=M&i=N   the ligand's polar contacts in frame N
+    GET  /api/smiles?m=M&sel=a,b  SMILES of the molecules of those atoms (default: ligands)
     POST /api/select          {"m": M, "sel": text, "frame": N} -> {"ids": [...]}
     POST /api/glue            {"m": M, "whole": bool, "center": sel, "fit": sel}
     POST /api/edit            {"m": M, "op": element|charge|bond|delete|hydrogens,
@@ -17,6 +18,7 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/set_positions   {"m": M, "atoms": [...], "xyz": [...]} (atoms moved by mouse)
     POST /api/set_distance, /api/set_angle   {"m": M, "atoms": [...], "value": x}
     POST /api/open            {"path": file or folder} -> the new models; /api/close {"m": M}
+    POST /api/build           {"smiles": ..., "centre": [x, y, z]} -> a new model of it
     POST /api/python          {"code": ..., "m": current, "sel": [...]} -> output, actions
                               (only on 127.0.0.1; every POST carries the page's token)
     POST /api/fetch           {"id": PDB ID} -> downloads it (mmCIF) and opens it
@@ -35,6 +37,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -45,6 +48,11 @@ from .session import Session
 
 STATIC = Path(__file__).parent.parent / "data" / "viewer"
 TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
+
+
+#: one request works on the models at a time: numba's default threading layer aborts
+#: the process when two threads run its parallel code at once (two models loading)
+WORK = threading.RLock()
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -82,10 +90,15 @@ class _Handler(BaseHTTPRequestHandler):
             raise
 
     def do_GET(self) -> None:
-        self._guard(self._get)
+        if not self.path.startswith("/api/"):
+            self._guard(self._get)
+            return
+        with WORK:
+            self._guard(self._get)
 
     def do_POST(self) -> None:
-        self._guard(self._post)
+        with WORK:
+            self._guard(self._post)
 
     def _get(self) -> None:
         url = urlparse(self.path)
@@ -110,6 +123,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.viewer.session(arg("m")).ligand2d(sel, dark=dark))
         elif url.path == "/api/atom":
             self._json(self.viewer.session(arg("m")).atom_info(arg("a")))
+        elif url.path == "/api/smiles":
+            sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
+            self._json({"molecules": self.viewer.session(arg("m")).smiles(sel)})
         elif url.path == "/api/contacts":
             self._json({"contacts": self.viewer.session(arg("m")).contacts(arg("i"))})
         else:
@@ -132,6 +148,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if url.path == "/api/open":
             self._json({"added": self.viewer.open(body["path"]), **self.viewer.listing()})
+            return
+        if url.path == "/api/build":
+            added = self.viewer.build(str(body["smiles"]), body.get("centre") or (0, 0, 0))
+            self._json({"added": added, **self.viewer.listing()})
             return
         if url.path == "/api/fetch":
             self._json({"added": self.viewer.fetch(body["id"]), **self.viewer.listing()})
@@ -195,6 +215,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def _static(self, path: str) -> None:
+        if path == "/favicon.ico":  # none: say so without an error in the page's console
+            self._send(b"", "image/x-icon", 204)
+            return
         name = "index.html" if path in ("", "/") else path.lstrip("/")
         f = STATIC / name
         # only files directly in the viewer directory
@@ -247,7 +270,8 @@ def serve(what, trajectory=None, atoms=None, host: str = "127.0.0.1", port: int 
     server = make_server(viewer, host, port)
     port = server.server_address[1]
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}/"
-    what = f"{len(viewer)} models" if len(viewer) > 1 else viewer.title or "1 model"
+    what = (f"{len(viewer)} models" if len(viewer) > 1 else
+            viewer.title or ("1 model" if len(viewer) else "an empty view"))  # fmt: skip
     print(f"boonza view: {what} at {url}")
     print(f"  (on a remote machine: ssh -L {port}:localhost:{port} <host>, then open {url}; "
           "Ctrl-C stops)")  # fmt: skip

@@ -179,7 +179,7 @@ class Console:
             if (now_topo, now_pos) == (topo, pos):
                 continue
             s._undo = getattr(s, "_undo", [])
-            s._undo.append((copy, getattr(s, "topo_version", 0)))
+            s._undo.append((copy, getattr(s, "topo_version", 0), s.ids, s.radii))
             s._redo = []
             changed.append({"m": k, "topology": now_topo != topo})
             s._changed(topology=now_topo != topo)

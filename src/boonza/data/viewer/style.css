@@ -21,8 +21,9 @@ button, input, select { font: inherit; color: var(--text); }
 #window {
   display: grid; height: 100%;
   grid-template-columns: 0 1fr 78px var(--rdock, 290px);
-  grid-template-rows: 26px 1fr 26px;
-  grid-template-areas: "menubar menubar rhs rdock" "ldock stage rhs rdock" "footer footer corner rdock";
+  grid-template-rows: 26px auto 1fr 26px;
+  grid-template-areas: "menubar menubar rhs rdock" "ldock seq rhs rdock" "ldock stage rhs rdock"
+                       "footer footer corner rdock";
 }
 #window.docked { grid-template-columns: 272px 1fr 78px var(--rdock, 290px); }
 #window.nomodels { --rdock: 0px; }
@@ -242,3 +243,33 @@ body.noir #dial { background: linear-gradient(to bottom, #4a4a4a, #2a2a2a); }
 
 /* a static page (an export): no server behind it, so nothing that edits */
 html.static #btn-py, html.static #btn-cancel, html.static #ff-button, html.static #ldock { display: none; }
+
+/* --- the sequence, above the view ------------------------------------------------------- */
+#seqbar { grid-area: seq; max-height: 28vh; overflow-y: auto; background: var(--chrome2);
+  border-bottom: 1px solid var(--line); padding: 0 6px 3px; min-width: 0; }
+#seqbar[hidden], #seqbar.none { display: none; }
+.seqline { display: flex; align-items: flex-start; gap: 6px; }
+.seqlabel { flex: none; width: 52px; padding-top: 11px; color: var(--muted); font: 600 11px Arial, sans-serif;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seqres { display: flex; flex-wrap: wrap; padding-top: 10px; row-gap: 10px; user-select: none; min-width: 0;
+  font: 12px ui-monospace, Menlo, Consolas, monospace; }
+.seqres .aa { width: 9px; text-align: center; line-height: 15px; cursor: pointer; position: relative;
+  border-bottom: 2px solid transparent; }
+.seqres .aa[data-n]::before { content: attr(data-n); position: absolute; left: 0; top: -10px;
+  font: 8px Arial, sans-serif; color: var(--muted); pointer-events: none; }
+.seqres .aa.ss-H { border-bottom-color: #e53935; }
+.seqres .aa.ss-E { border-bottom-color: #f2b400; }
+.seqres .aa:hover { background: var(--button-hover); }
+.seqres .aa.sel { background: #ff73d9; color: #000; }
+.seqres .gap { width: 9px; text-align: center; color: var(--muted); line-height: 15px; }
+
+/* --- the builder's tools and SMILES ------------------------------------------------------- */
+#ldock button.armed { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+#ldock button.armed small { color: var(--accent-text); }
+#stage.drawing #view { cursor: crosshair; }
+.smiles-row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
+.smiles-row code, #footer-edit code.smiles { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font: 11px ui-monospace, Menlo, monospace; background: var(--field);
+  border: 1px solid var(--line); padding: 1px 4px; user-select: all; }
+#footer-edit code.smiles { flex: 0 1 auto; max-width: 340px; }
+.smiles-row .what { flex: none; width: auto !important; }

@@ -4,7 +4,7 @@
 
 import { Camera } from "./camera.js";
 import { colorAtoms, colorResidues } from "./colors.js";
-import { buildScene, STYLES } from "./geometry.js";
+import { buildScene, setDetail, STYLES } from "./geometry.js";
 import { Renderer } from "./gl.js";
 import { setupMouse } from "./mouse.js";
 import { surface } from "./surface.js";
@@ -236,7 +236,8 @@ function carryOver(old, model) {
   }
   // new atoms (a group, a side chain, hydrogens) look like the atoms they hang on:
   // spread outward through the bonds, never selected
-  let known = found.map(o => o >= 0 ? 1 : 0), grew = true;
+  const known = found.map(o => o >= 0 ? 1 : 0);
+  let grew = true;
   while (grew) {
     grew = false;
     for (let a = 0; a < n; a++) {
@@ -249,6 +250,9 @@ function carryOver(old, model) {
       known[a] = 1; grew = true;
     }
   }
+  // a new molecule, bonded to nothing that was there: sticks, coloured by element
+  const style = model.group === "built" ? STYLE.ballstick : STYLE.stick;
+  for (let a = 0; a < n; a++) if (!known[a]) { st.show[a] = 1; st.style[a] = style; }
   st.ribbon.set(old.ribbon.subarray(0, Math.min(old.ribbon.length, st.ribbon.length)));
   st.ribbonRGB.set(old.ribbonRGB.subarray(0, Math.min(old.ribbonRGB.length, st.ribbonRGB.length)));
   st.ribbonStyle = old.ribbonStyle;
@@ -421,7 +425,9 @@ function rebuild() {
       for (let k = 0; k + 1 < a.length; k++) dashes.push([...xyz(m, a[k]), ...xyz(m, a[k + 1]), ...METER_COLOR]);
     }
     m.drawn = show;
-    return { topo: m.topo, pos: m.pos, ss: m.ss, state: { ...st, show }, dashes, surface: surfaceOf(m) };
+    // a picture leaves out the selection's highlight
+    const sel = state.picture ? new Uint8Array(n) : st.sel;
+    return { topo: m.topo, pos: m.pos, ss: m.ss, state: { ...st, show, sel }, dashes, surface: surfaceOf(m) };
   });
   const scene = buildScene(items);
   showSummary();
@@ -441,6 +447,21 @@ function rebuild() {
 }
 
 const xyz = (m, a) => [m.pos[3 * a], m.pos[3 * a + 1], m.pos[3 * a + 2]];
+
+// a picture: the scene drawn in detail (rounder sticks and ribbons, lines as sticks),
+// without the selection's highlight; ``draw(renderer)`` makes it, then the screen's is back
+function withPictureScene(draw) {
+  state.picture = true;
+  setDetail(2); renderer.detail = 2;
+  try {
+    rebuild();
+    return draw(renderer);
+  } finally {
+    state.picture = false;
+    setDetail(1); renderer.detail = 1;
+    rebuild();
+  }
+}
 
 // --- labels: atom labels, meters, pocket numbers ------------------------------------
 
@@ -588,6 +609,20 @@ function resetView() {
   camera.pivot = null;
   camera.fit(...sphereOf(drawnXYZ()), canvas.clientWidth / canvas.clientHeight);
   draw();
+}
+
+// the point under screen (x, y), in the plane through the view's centre facing the eye
+function unproject(x, y) {
+  const r = camera.rot, scale = 2 * camera.distance * Math.tan(camera.fov / 2) / canvas.clientHeight;
+  const vx = (x - canvas.clientWidth / 2) * scale, vy = -(y - canvas.clientHeight / 2) * scale;
+  return [0, 1, 2].map(d => camera.center[d] + r[d] * vx + r[3 + d] * vy);
+}
+
+// of a bond's two atoms, the one nearer screen (x, y)
+function nearerAtom(m, atoms, x, y) {
+  const project = projector();
+  const d = a => { const p = project(m, a); return p ? Math.hypot(p[0] - x, p[1] - y) : Infinity; };
+  return d(atoms[0]) <= d(atoms[1]) ? atoms[0] : atoms[1];
 }
 
 // --- picking -----------------------------------------------------------------------
@@ -909,10 +944,10 @@ const app = {
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
   selected, selection, targets, select, clearSelection, visibleAtom,
   rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
-  pick, inRect, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
+  pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
   setFrame, play, nframes, updatePlayer, refreshContacts,
-  range, STYLE, pageState, restorePage, PYTHON,
-  onSelection: () => {}, onModels: () => {},  // ui.js fills these in
+  range, STYLE, pageState, restorePage, PYTHON, withPictureScene,
+  onSelection: () => {}, onModels: () => {}, onEmpty: () => {},  // ui.js fills these in
 };
 app.STATIC = STATIC;
 window.boonzaView = app;  // for scripting the page (and testing it)
@@ -952,6 +987,11 @@ async function main() {
     state.groups = listing.groups || {};  // the builder's functional groups: name -> SMILES
     state.models = listing.models.map((m, index) => newModel(m, index));
     document.title = listing.title ? `${listing.title} · boonza` : "boonza";
+    if (!state.models.length) {  // an empty view: build something, or open it
+      rebuild();
+      app.onEmpty();
+      return;
+    }
     const first = state.models.find(m => m.shown) || state.models[0];
     first.shown = true;
     state.current = first.index;
