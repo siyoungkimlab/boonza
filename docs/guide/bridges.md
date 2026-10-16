@@ -39,7 +39,7 @@ boonza.save(s, "system.dms")
 - `pair_12_6_es` 1-4 pairs and exclusions;
 - Lorentz-Berthelot or geometric combining, NBFIX overrides;
 - constraints, including rigid water;
-- virtual sites (`lc2`-`lc7`, `out3`, `fdat3`);
+- virtual sites (`lc1`-`lc7`, `out3`, `fdat3`);
 - position restraints and CMAP.
 
 Constrained stretch and angle terms are left out when `constraints=True`.
@@ -78,6 +78,18 @@ To build Martini proteins from all-atom structures, see [Martini](martini.md).
   `virtual_lc4`-`virtual_lc7` become centre-of-weight sites.
 - GROMACS's `-rerun` takes virtual sites as they are in the file, so
   compare energies with sites placed by the same construction.
+- A site that sits **on** one of its parents -- `virtual_lc1`, which is how a
+  Go model's sites reach a residue's backbone bead, or any other average whose
+  weights collapse onto one parent -- is built as a two-particle average over
+  that parent twice, so its position is the parent's and the whole of the
+  force on it lands there. The pair is then at r = 0, where OpenMM's
+  Lennard-Jones divides by zero and the energy comes back NaN, while GROMACS's
+  kernels step around the singularity and neither topology excludes it. Such a
+  site carries no charge and no Lennard-Jones of its own, so the pair is worth
+  nothing and `to_openmm` excludes it -- which is why boonza still reaches
+  GROMACS's energy to the digit. A coincident site that *would* interact is a
+  topology GROMACS could not run either, and is an error here rather than a
+  finite number nobody can check.
 
 `from_openmm` reads what OpenMM builds from Amber, CHARMM and GROMACS inputs
 and from `ForceField` XML:

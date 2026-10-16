@@ -515,7 +515,7 @@ that carries names needs nothing else to make a legible picture.
 
 ## Martini
 
-### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False) -> 'Martinized'`
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False, go=None, go_eps: 'float' = 9.414, go_low: 'float' = 0.3, go_up: 'float' = 1.1, go_res_dist: 'int' = 3) -> 'Martinized'`
 
 Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
@@ -562,7 +562,19 @@ neutral, and His is typed by which ring nitrogens carry one.  A capping
 group at a chain end (ACE, NME) is left out, and the end it capped made
 neutral, as the cap had it.
 
-### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, copies: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3) -> None`
+``go`` holds the fold with native contacts instead of an elastic network:
+a GoMartini model, from the 18-column RCSU contact map it names (a path, or
+the contacts :func:`boonza.martini.go.read_contact_map` reads from one).
+Every pair of residues the map holds both ways, more than ``go_res_dist``
+residues apart along the chain and between ``go_low`` and ``go_up`` nm
+apart, gets a Lennard-Jones well ``go_eps`` kJ/mol deep at the distance it
+is already at, between virtual sites of their backbone beads
+(martinize2's ``-go``, ``-go-eps``, ``-go-low``, ``-go-up``,
+``-go-res-dist``).  A well is a minimum rather than a constraint, so a
+contact can break and come back where a rubber band cannot; it is what the
+network would otherwise be and not something to add to it.
+
+### `class boonza.Martinized(molecules: 'list', positions: 'np.ndarray', cell: 'np.ndarray | None', names: 'list' = <factory>, ss: 'str' = '', solvent: 'list' = <factory>, copies: 'list' = <factory>, lipids: 'list' = <factory>, includes: 'list' = <factory>, martini: 'int' = 3, go: 'object | None' = None) -> None`
 
 The Martini beads of a system and their GROMACS topology.
 

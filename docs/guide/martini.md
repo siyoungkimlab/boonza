@@ -19,6 +19,7 @@ topology, system, positions = boonza.to_openmm(cg, **OPENMM_OPTIONS)
 
 ```bash
 boonza martinize protein.pdb cg --elastic --solvate   # the same, from the command line
+boonza martinize protein.pdb cg --go-map contacts.out # a fold held by native contacts
 ```
 
 The bead types' nonbonded parameters come from the Martini release file
@@ -223,6 +224,70 @@ and leave it out of the selection. boonza carries Martini 3's nucleobases and a
 library of rings and heterocycles to build one from, and both versions have a
 divalent cation (`CA`) for a calcium that really is a free ion in a site.
 
+## A fold held by native contacts
+
+An elastic network spans every pair of backbone beads in range with a rubber
+band at a fixed length, so the fold it holds is the one that arrived: it
+cannot unfold, and it cannot open. A **Go model** puts a Lennard-Jones well
+on each pair of residues that touch in the structure instead, so the fold is a
+minimum rather than a constraint — a contact can break and come back, and a
+pocket can breathe.
+
+```python
+m = boonza.martinize(s, go="contacts.out")  # instead of elastic=True
+```
+
+```bash
+boonza martinize protein.pdb cg --go-map contacts.out
+boonza md protein.pdb --model martini3 --structure-bias go --go-map contacts.out
+```
+
+The contacts come from a map, not from a distance rule: a residue pair is in
+it when the two overlap (OV) or when the RCSU surface rules call them a
+contact. `boonza` reads the 18-column format the RCSU program and the Martini
+contact-map server write ([doi:10.5281/zenodo.3817447](https://doi.org/10.5281/zenodo.3817447));
+martinize2's `-go-write-file` writes the same format. The residue numbers in
+it are the structure's own, so the map has to be the one computed for this
+structure — matching contacts up by position would quietly pair the wrong
+residues on anything numbered its own way, a chymotrypsin or a chain that
+starts at 803.
+
+Which pairs of a map become wells follows martinize2:
+
+- the pair must be in the map,
+- the two residues must be more than `go_res_dist` residues apart along the
+  chain (3 by default) — what the bonded terms already hold is not the Go
+  model's business,
+- their backbone beads must be between `go_low` and `go_up` apart (0.3 and
+  1.1 nm, both bounds strict),
+- and the map must name the pair **both ways**. A contact is a statement about
+  a pair, so one written only one way is one the map is unsure of, and the
+  RCSU rules are not symmetric: whether A reaches B is asked of A's surface and
+  of B's separately, and the two can disagree. On a fibronectin domain (1TEN)
+  seven of 354 pairs are one-way, and dropping them is the difference between
+  185 wells and 189.
+
+A well sits where the pair is — sigma = d / 2^(1/6), so d is the minimum —
+and is `go_eps` deep (9.414 kJ/mol). The wells are nonbonded terms between
+**virtual sites**, one on each backbone bead, so they cannot be confused with
+Martini's own interactions: the site carries the Go interaction and the bead
+carries Martini's. Every residue gets a site whether a well reaches it or not,
+as martinize2 does; a type with no pair simply never interacts. The topology
+is written as martinize2 writes it:
+
+```
+#define GO_VIRT
+#include "martini_v3.0.0.itp"
+#include "go_atomtypes.itp"      ; one zero-interaction type per site
+#include "go_nbparams.itp"       ; [ nonbond_params ]: one line per well
+#include "molecule_0.itp"
+```
+
+The beads a well joins are excluded from each other, so the well is the whole
+of what acts between them. A Go model is what the elastic network would
+otherwise be, not something to add to it: `--structure-bias go` turns the
+network off, and `boonza md` refuses to be asked for both.
+
 ## What martinize does
 
 This is martinize2's method, run on vermouth's own data files: the residue
@@ -280,6 +345,7 @@ Options map to martinize2's flags. Distances are in Å here and in nm there:
 |---|---|
 | `ss="..."` / default | `-ss` / `-dssp` |
 | `elastic`, `elastic_fc`, `elastic_lower`, `elastic_upper` | `-elastic`, `-ef`, `-el`, `-eu` |
+| `go` (a contact map), `go_eps`, `go_low`, `go_up`, `go_res_dist` | `-go`, `-go-eps`, `-go-low`, `-go-up`, `-go-res-dist` |
 | `elastic_selection` | none: martinize2 holds every molecule |
 | `elastic_decay`, `elastic_power`, `elastic_min_fc`, `res_min_dist` | `-ea`, `-ep`, `-em`, `-ermd` |
 | `cys="auto"`, `"none"`, or a distance | `-cys` |
@@ -300,6 +366,18 @@ These cases are rare, and each difference is deliberate:
 - **Hydrogen names.** Any names work in boonza, because it reads hydrogens
   by their bonds. martinize2 needs names its reference residues know, and
   fails on others (boonza's own peptides name them H1, H2, ...).
+- **A contact map boonza will not compute itself (yet).** `go=` takes a map;
+  martinize2 can also compute one in-process from the structure. Its
+  `-go-write-file` is the way to get that map as a file, and in vermouth
+  0.15.1.dev it raises `IndexError` on a structure holding a residue whose
+  alpha carbon has no coordinates -- a partly resolved terminus, which is
+  ordinary in an X-ray entry (1TEN's first residue is an arginine present as a
+  C and an O). It indexes the alpha-carbon positions by residue while
+  collecting only the residues it has coordinates for, so the list is short by
+  one and the distance column is wrong for everything past the gap. Running it
+  on `select("protein")`, which leaves such a residue out, works.
+- **A residue with no alpha carbon.** boonza maps no bead onto it and says so;
+  martinize2 maps its beads and leaves their coordinates NaN.
 - **Proteins only.** `martinize` maps proteins; water and ions come from
   `solvate`, and other Martini molecules from their own topologies (see
   below). Leave everything else out of `atoms` (the default is
