@@ -1763,6 +1763,12 @@ def _view(args) -> int:
     from boonza.trajectory import is_trajectory
 
     paths = args.paths
+    if not paths:  # an empty view: build molecules, or open and fetch structures from it
+        if args.coordinates or args.selection or args.center or args.fit:
+            raise ValueError("-c, -s, --center and --fit go with a structure")
+        viewer.serve(viewer.Viewer([]), host=args.host, port=args.port,
+                     open_browser=not args.no_browser)  # fmt: skip
+        return 0
     single = len(paths) == 1 and not os.path.isdir(paths[0]) and not paths[0].endswith(".bview")
     if len(paths) == 2 and is_trajectory(paths[1]) and not os.path.isdir(paths[0]):
         single = True
@@ -1801,7 +1807,8 @@ def _parser() -> argparse.ArgumentParser:
 
     q = sub.add_parser("view", help="look at a structure or trajectory in the browser, "
                        "all-atom or coarse-grained")  # fmt: skip
-    q.add_argument("paths", nargs="+", help="a structure (a topology with -c) and "
+    q.add_argument("paths", nargs="*", help="none (an empty view, to build molecules or "
+                   "open files in), a structure (a topology with -c) and "
                    "optionally its trajectory (DCD, XTC, TRR, NetCDF, DTR/STK); or several "
                    "structures; or the output folder of boonza modes, triage or sitemap, "
                    "or any folder with a view.json")  # fmt: skip

@@ -87,9 +87,7 @@ class Viewer:
     """The models a page shows; ``align`` fits each onto the first as it loads."""
 
     def __init__(self, models: list[Model], title: str = "", columns=(), align: str | None = None):
-        if not models:
-            raise ValueError("nothing to view")
-        self.models = list(models)
+        self.models = list(models)  # none: an empty view, to build or open into
         self.title = title
         self.columns = list(columns)
         self.align = align
@@ -111,6 +109,8 @@ class Viewer:
                 s = model.load()
                 if self.align and m:
                     self._fit(s, self.session(0))
+                if getattr(model, "upload", None) is not None:
+                    s.path = model.upload  # where Save suggests: the folder it runs in
                 model._session = s
             return model._session
 
@@ -208,6 +208,57 @@ class Viewer:
             except Exception as e:
                 raise ValueError(f"could not download {code}: {e}") from e
         return self.open(path)
+
+    def build(self, smiles: str, centre=(0.0, 0.0, 0.0), name: str = "") -> list[int]:
+        """A new model of one molecule from SMILES (3D, hydrogens added), centred at
+        ``centre``: what the builder starts from when no model can take it."""
+        from ..system import System
+        from .edit import add_molecule
+
+        s = System()
+        add_molecule(s, smiles, np.asarray(centre, float))
+        k = sum(1 for m in self.models if m.group == "built") + 1
+        name = name or f"molecule {k}"
+        # every atom, hydrogens too: they are where the builder grows the molecule
+        reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
+        session = Session(s, title=name, reps=reps)
+        self.models.append(Model(name, lambda: session, group="built", _session=session))
+        return [len(self.models) - 1]
+
+    def upload(self, name: str, data: bytes) -> list[int]:
+        """A file the page sent (dropped or picked in the browser): written to a folder
+        of its own, opened, and saved by default where boonza view was started."""
+        import atexit
+        import shutil
+        import tempfile
+
+        name = Path(name).name
+        if not name or name.startswith("."):
+            raise ValueError("a file needs a name")
+        if getattr(self, "_uploads", None) is None:
+            self._uploads = Path(tempfile.mkdtemp(prefix="boonza-view-"))
+            atexit.register(shutil.rmtree, self._uploads, True)
+        path = self._uploads / name
+        path.write_bytes(data)
+        added = self.open(path)
+        for k in added:
+            self.models[k].upload = Path.cwd() / name
+        return added
+
+    def copy_into(self, src: int, dst: int, atoms=None, frame: int = 0) -> dict:
+        """Copy model ``src``'s ``atoms`` (default all) into model ``dst`` where they
+        are (a built ligand into its protein); undone as an edit of ``dst``."""
+        if src == dst:
+            raise ValueError("copy into another model")
+        a, b = self.session(src), self.session(dst)
+        b._editable()
+        piece = a.system.clone(atoms if atoms else None)
+        pos = np.asarray(a.frame(frame)[0], float)
+        piece.positions = pos[np.asarray(atoms, np.int64)] if atoms else pos
+        with b._lock:
+            b._remember()
+            new = b.system.append(piece)
+            return {**b._changed(topology=True), "added": len(new)}
 
     def close(self, m: int) -> None:
         """Close a model; indices stay as they are (the page keys models by them)."""
