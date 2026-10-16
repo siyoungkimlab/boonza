@@ -454,8 +454,20 @@ def _write_built(m, directory: Path, system: System, gromacs: bool, log=print,
     runs.  With ``gromacs`` the same thing goes out in GROMACS's form beside it
     -- ``topol.top``, an ``.itp`` per molecule, ``cg.gro``, and for SIRAH the
     force field the topology includes -- for running or checking it there.
+
+    A contact map boonza worked out itself is written whichever form is asked
+    for: the wells are in the system either way, and what held the fold is
+    worth having on disk to read, to keep, or to hand back with ``--go-map``.
     """
     directory.mkdir(parents=True, exist_ok=True)
+    computed = getattr(getattr(m, "go", None), "contact_map", "")
+    if computed:
+        from ..martini.go import CONTACTS_OUT
+
+        (directory / CONTACTS_OUT).write_text(computed)
+        rows = sum(1 for line in computed.splitlines() if line.startswith("R "))
+        log(f"Wrote the contact map the fold is held by: {directory.name}/{CONTACTS_OUT} "
+            f"({rows} residue pairs)")  # fmt: skip
     if not gromacs:
         save(system, directory / "cg.dms")
         return directory / "cg.dms"

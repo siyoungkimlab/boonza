@@ -108,7 +108,14 @@ def place(protein_xyz, probes, copies: int, box, rng, clearance: float = CLEARAN
 def build(protein, probes, copies: int, box, rng, salt: float = 0.15,
           clearance: float = CLEARANCE):  # fmt: skip
     """One simulation's system: the martinized protein, ``copies`` of each probe,
-    then water and ions."""
+    then water and ions.
+
+    The protein's Go model comes with it.  Its wells are named after the beads
+    they join and its sites are beads of the protein's own molecule, which goes
+    in first, so the probes change nothing about it -- but the files the wells
+    live in have to be carried, or the topology names atom types nothing
+    defines.
+    """
     from ..martini import solvate
     from ..martini.build import Martinized
 
@@ -119,7 +126,8 @@ def build(protein, probes, copies: int, box, rng, salt: float = 0.15,
     names = [*protein.names, *(m.names[0] for m in probes)]
     counts = [*([1] * len(protein.molecules)), *([copies] * len(probes))]
     system = Martinized(molecules, np.vstack([protein_xyz, *placed]), np.diag(box), names,
-                        protein.ss, copies=counts, martini=protein.martini)  # fmt: skip
+                        protein.ss, copies=counts, martini=protein.martini,
+                        go=protein.go)  # fmt: skip
     return solvate(system, box=box, salt=salt, seed=int(rng.integers(1 << 30)))
 
 

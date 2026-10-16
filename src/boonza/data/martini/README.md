@@ -23,6 +23,16 @@ commit a9b62ee, Apache License 2.0, see `LICENSE`), unchanged:
   `00-modifications.ff`): the reference residues whose hydrogens the mappings
   name (`vermouth/data/force_fields/charmm`).
 
+`rcsu/protein_map.json` is vermouth's too, extracted from
+`vermouth/rcsu/contact_map.py` rather than copied as a file: the van der Waals
+radius and chemical character of every atom of the twenty residues
+(`PROTEIN_MAP`), and the table that reads a pair of characters as a bond type
+(`BOND_TYPE`).  They are the numbers of the RCSU contact-map program
+(doi:10.5281/zenodo.3817447), which `boonza.martini.contact_map` needs to
+compute the same map.  Four names that file lists with no atoms at all -- CYM,
+CYX, HIE and HIP -- are left out, and `boonza.martini.rcsu.ALIASES` reads them
+as the residues they are.
+
 `water.gro` is boonza's own: 1000 Martini 3 water beads equilibrated in
 OpenMM at 300 K and 1 bar (`tests/data/martini/make_water_box.py` remakes
 it).

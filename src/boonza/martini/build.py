@@ -383,10 +383,12 @@ class Martinized:
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         if self.go:
-            from .go import ATOMTYPES_ITP, NBPARAMS_ITP
+            from .go import ATOMTYPES_ITP, CONTACTS_OUT, NBPARAMS_ITP
 
             (d / ATOMTYPES_ITP).write_text(self.go.atomtypes)
             (d / NBPARAMS_ITP).write_text(self.go.nbparams)
+            if self.go.contact_map:  # a map boonza computed is worth keeping
+                (d / CONTACTS_OUT).write_text(self.go.contact_map)
         for k, name in enumerate(self.names):
             (d / f"{name}.itp").write_text(self.itp(k, serial_resids))
         if any(c for _, c in self.solvent) and self.martini == 3:
@@ -669,6 +671,20 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     network would otherwise be and not something to add to it.
     """
     ff = force_field(forcefield)
+    if go is not None and forcefield != "martini3001":
+        # GoMartini is Martini 3's.  Martini 2.2's parameter file declares
+        # combination rule 1, where the two numbers of a [ nonbond_params ]
+        # line are C6 and C12 and not sigma and epsilon, so a well written for
+        # Martini 3 would be read as one 800 times too shallow and half a
+        # nanometre past the cutoff; the file also carries moleculetypes of
+        # its own, after which GROMACS will not read another [ atomtypes ], so
+        # the topology does not even assemble.  martinize2 refuses the pair
+        # too -- its Go bead type is a Martini 3 one.
+        raise ValueError(f"a Go model is Martini 3's, and this is {forcefield}: Martini 2.2 "
+                         f"reads a [ nonbond_params ] line as C6 and C12 rather than sigma "
+                         f"and epsilon, so its wells would be neither the right depth nor in "
+                         f"the right place.  Give forcefield='martini3001', or hold the fold "
+                         f"with an elastic network")  # fmt: skip
     atoms, capped, notes = _without_caps(system, atoms)
     for note in notes:
         warnings.warn(note, stacklevel=2)
@@ -780,7 +796,10 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     built = Martinized(molecules, np.asarray(positions) * 10, None if cell is None else
                        np.asarray(cell), names, "".join(ss), martini=version)  # fmt: skip
     if go is not None:
-        built.go = _hold_by_contacts(built, go, go_eps, go_low, go_up, go_res_dist)
+        # one moleculetype, so that a well can hold a contact across two chains
+        _merge_for_contacts(built)
+        built.go = _hold_by_contacts(built, go, go_eps, go_low, go_up, go_res_dist,
+                                     system=system, atoms=atoms)  # fmt: skip
         # the sites are beads of the molecules now, so the positions follow them
         built.positions = np.concatenate(
             [np.asarray(m.positions, float) for m in built.molecules]) * 10  # fmt: skip
@@ -1402,7 +1421,53 @@ _SECTIONS = ("bonds", "constraints", "pairs", "angles", "dihedrals", "impropers"
              "virtual_sitesn", "exclusions")  # fmt: skip
 
 
-def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_dist: int):
+def _merge_for_contacts(built) -> None:
+    """Make the molecules one, for a Go model to hold across them.
+
+    A residue pair that touches across two chains is as native a contact as
+    one inside a chain, and a well between them is a nonbonded term between
+    two virtual sites, which would act whatever molecule each site is in.  The
+    exclusion is the problem: it keeps the well from doubling Martini's own
+    attraction between the pair's beads, and ``[ exclusions ]`` is a section of
+    one moleculetype that can name no atom outside it.  So the molecules become
+    one, which is what martinize2 does before it reads a contact map at all
+    (``MergeAllMolecules``), and a complex's interface is held like any other
+    part of the fold.
+
+    The residues are renumbered through, as martinize2's merge renumbers them,
+    since two chains commonly carry the same numbers and what is one residue
+    has to stay one residue.  Each bead keeps the chain and the number the
+    structure gave it, which is what a contact map is keyed by and what the
+    topology is written with.
+    """
+    from .ff import Interaction
+    from .links import CGMolecule
+
+    if len(built.molecules) < 2:
+        return
+    merged = CGMolecule()
+    merged.meta = dict(built.molecules[0].meta)
+    offset = shift = 0
+    for mol in built.molecules:
+        for k, node in enumerate(mol.nodes):
+            merged.add_node({**node, "resid": int(node["resid"]) + shift}, mol.positions[k])
+        for a, neighbours in enumerate(mol.adj):
+            for b in neighbours:
+                merged.add_edge(a + offset, b + offset)
+        for kind, terms in mol.interactions.items():
+            for term in terms:
+                if term is None:  # removed by a link
+                    continue
+                merged.add(kind, Interaction(tuple(int(x) + offset for x in term.atoms),
+                                             term.params, term.meta, term.atom_attrs))  # fmt: skip
+        offset += len(mol.nodes)
+        shift = max(int(n["resid"]) for n in merged.nodes)
+    built.molecules = [merged]
+    built.names = built.names[:1]
+
+
+def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_dist: int,
+                      system=None, atoms: str = "protein"):  # fmt: skip
     """A Go model over the molecules: a well on every pair of residues that touch.
 
     An elastic network holds every pair it spans at a fixed length, so a fold
@@ -1412,7 +1477,13 @@ def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_di
     """
     from .go import GoModel, add_go_sites, go_files, go_pairs, read_contact_map
 
-    if isinstance(contacts, str | Path):
+    written = ""
+    if contacts is True:  # compute it from the structure rather than read one
+        from .rcsu import contact_map
+
+        computed = contact_map(system, atoms)
+        written, contacts = computed.text(), computed.kept()
+    elif isinstance(contacts, str | Path):
         contacts = read_contact_map(contacts)
     models, every, offset = [], [], 0
     for mol, name in zip(built.molecules, built.names, strict=True):
@@ -1427,7 +1498,7 @@ def _hold_by_contacts(built, contacts, eps: float, low: float, up: float, res_di
     if not every:
         raise ValueError("the contact map holds no pair this structure can make a well "
                          "of: is it this structure's map, with its own numbering?")  # fmt: skip
-    return GoModel(every, sites, atomtypes, nbparams)
+    return GoModel(every, sites, atomtypes, nbparams, written)
 
 
 def _write_itp(mol: CGMolecule, name: str, serial_resids: bool = False) -> str:
