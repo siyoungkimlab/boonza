@@ -284,12 +284,24 @@ as martinize2 does; a type with no pair simply never interacts. The topology
 is written as martinize2 writes it:
 
 ```
-#define GO_VIRT
+#define GO_VIRT                  ; as martinize2 writes it
 #include "martini_v3.0.0.itp"
 #include "go_atomtypes.itp"      ; one zero-interaction type per site
 #include "go_nbparams.itp"       ; [ nonbond_params ]: one line per well
 #include "molecule_0.itp"
 ```
+
+**A Go model is Martini 3's.** `martinize(..., forcefield="martini22", go=...)`
+and `--model martini2 --structure-bias go` are refused, for three reasons any
+one of which would be enough. Martini 2.2's parameter file declares
+combination rule 1, where the two numbers of a `[ nonbond_params ]` line are
+C6 and C12 and not sigma and epsilon — a 9.414 kJ/mol well at 0.75 nm read
+that way is a 0.012 kJ/mol well at 1.75 nm, eight hundred times too shallow
+and past the cutoff. The same file carries moleculetypes of its own, after
+which GROMACS will read no further `[ atomtypes ]`, so the topology does not
+assemble at all. And martinize2 refuses the pair too: `-go -ff martini22`
+raises `KeyError: 'M3_GO'`, its Go bead type being a Martini 3 one. Martini 2
+holds a fold with an elastic network.
 
 The beads a well joins are excluded from each other, so the well is the whole
 of what acts between them. A Go model is what the elastic network would

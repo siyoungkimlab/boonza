@@ -238,6 +238,28 @@ def test_a_complex_is_held_across_its_chains(name, beads, sites, wells, tmp_path
         assert (sigma, epsilon) == pytest.approx(_wells(theirs, "molecule")[pair][1:], abs=1e-8)
 
 
+def test_a_go_model_is_martini_3s(capsys):
+    """Three reasons, any one of them enough.
+
+    Martini 2.2's parameter file declares combination rule 1, where the two
+    numbers of a ``[ nonbond_params ]`` line are C6 and C12 and not sigma and
+    epsilon: a 9.414 kJ/mol well at 0.75 nm read that way is a 0.012 kJ/mol
+    well at 1.75 nm, eight hundred times too shallow and past the cutoff.  The
+    same file carries moleculetypes of its own, after which GROMACS will read
+    no further ``[ atomtypes ]``, so the topology does not even assemble.  And
+    martinize2 refuses the pair as well -- ``-go -ff martini22`` raises
+    ``KeyError: 'M3_GO'``, its Go bead type being a Martini 3 one.
+    """
+    s = boonza.load(STRUCTURE)
+    with pytest.raises(ValueError, match="a Go model is Martini 3's"):
+        martinize(s, "protein", forcefield="martini22", go=True)
+    with pytest.raises(SystemExit):
+        parse_arguments([str(STRUCTURE), "--model", "martini2", "--structure-bias", "go"])
+    assert "is Martini 3's" in capsys.readouterr().err
+    # and an elastic network is Martini 2's to have
+    assert martinize(s, "protein", forcefield="martini22", elastic=True).martini == 2
+
+
 def test_merging_is_only_for_a_go_model(tmp_path):
     """An elastic network holds each molecule's own fold and never joins two of
     them, so a bound peptide can still leave; nothing there needs merging."""

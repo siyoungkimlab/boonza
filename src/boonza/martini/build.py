@@ -671,6 +671,20 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
     network would otherwise be and not something to add to it.
     """
     ff = force_field(forcefield)
+    if go is not None and forcefield != "martini3001":
+        # GoMartini is Martini 3's.  Martini 2.2's parameter file declares
+        # combination rule 1, where the two numbers of a [ nonbond_params ]
+        # line are C6 and C12 and not sigma and epsilon, so a well written for
+        # Martini 3 would be read as one 800 times too shallow and half a
+        # nanometre past the cutoff; the file also carries moleculetypes of
+        # its own, after which GROMACS will not read another [ atomtypes ], so
+        # the topology does not even assemble.  martinize2 refuses the pair
+        # too -- its Go bead type is a Martini 3 one.
+        raise ValueError(f"a Go model is Martini 3's, and this is {forcefield}: Martini 2.2 "
+                         f"reads a [ nonbond_params ] line as C6 and C12 rather than sigma "
+                         f"and epsilon, so its wells would be neither the right depth nor in "
+                         f"the right place.  Give forcefield='martini3001', or hold the fold "
+                         f"with an elastic network")  # fmt: skip
     atoms, capped, notes = _without_caps(system, atoms)
     for note in notes:
         warnings.warn(note, stacklevel=2)

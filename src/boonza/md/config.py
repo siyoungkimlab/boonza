@@ -980,6 +980,12 @@ def finish(args) -> None:
                 setattr(args, new_name, getattr(args, old_name))
             # what the run reads is still elastic_network_*, so answer it
             setattr(args, old_name, getattr(args, new_name))
+    if args.structure_bias == "go" and args.model == "martini2":
+        raise ValueError("structure_bias = 'go' is Martini 3's: Martini 2.2 reads a well's "
+                         "two numbers as C6 and C12 rather than sigma and epsilon, so they "
+                         "would be neither the right depth nor in the right place (martinize2 "
+                         "refuses the pair as well).  Give model = 'martini3', or hold the "
+                         "fold with an elastic network")  # fmt: skip
     if args.structure_bias == "go":
         # a fold is held one way or the other: a Go model is what the network
         # would otherwise be, not something to put on top of it, so asking for

@@ -137,9 +137,10 @@ def go_pairs(molecule, contacts, *, eps: float = GO_EPS, low: float = GO_LOW,
 
 #: What the virtual sites are called in the topology, and the files that carry
 #: them.  A Go model's wells are nonbonded terms between sites that stand for
-#: residues, so they live in files of their own that the topology includes
-#: -- which is how martinize2 writes them, and what ``#define GO_VIRT`` turns
-#: on in Martini's own parameter file.
+#: residues, so they live in files of their own that the topology includes,
+#: which is how martinize2 writes them.  ``#define GO_VIRT`` goes at the top
+#: because martinize2 writes that too; nothing boonza carries reads it, and a
+#: parameter file of your own may.
 ATOMTYPES_ITP = "go_atomtypes.itp"
 NBPARAMS_ITP = "go_nbparams.itp"
 #: Where a build writes a map it computed itself, beside the topology: the same
