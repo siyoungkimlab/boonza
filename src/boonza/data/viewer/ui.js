@@ -42,7 +42,9 @@ export function setupUI(app) {
         closeMenus(depth + 1);
         if (sub && !off) {
           const r = row.getBoundingClientRect();
-          menu(sub, r.right - 2, r.top - 3, depth + 1);
+          const m = menu(sub, r.right - 2, r.top - 3, depth + 1);
+          const w = m.getBoundingClientRect().width;
+          if (r.right - 2 + w > innerWidth) m.style.left = `${Math.max(0, r.left - w + 2)}px`;  // no room: to the left
         }
       };
       row.onclick = e => {
@@ -372,44 +374,138 @@ export function setupUI(app) {
     localStorage.setItem("boonza.theme", name);
     app.draw();
   }
-  // File | Save Picture: the view as it is, larger and finished (outlines, occlusion)
+  // File | Save Picture: the view as it is, drawn larger in detail and finished
+  // (outlines, occlusion), with the labels; a PNG that carries its print resolution
+  const PICTURE_SIZES = [["view3", "3 × the view"], ["view2", "2 × the view"], ["view4", "4 × the view"],
+    ["col1", "1 journal column (3.5 in)"], ["col2", "2 journal columns (7 in)"],
+    ["slide", "slide (1920 × 1080)"], ["uhd", "3840 × 2160"], ["custom", "custom"]];
   function savePicture() {
     panel("picture", "Save Picture", body => {
       const w0 = app.canvas.clientWidth, h0 = app.canvas.clientHeight;
-      const size = el("select");
-      for (const k of [1, 2, 3, 4]) size.add(new Option(`${k}× · ${k * w0} × ${k * h0}`, k, false, k === 3));
-      const back = el("select");
-      for (const [v, l] of [["view", "as the view"], ["white", "white"], ["black", "black"], ["none", "transparent"]]) back.add(new Option(l, v));
-      const check = (label, on) => {
-        const box = el("input", { type: "checkbox", checked: on });
+      const saved = (k, d) => { try { return localStorage.getItem(`boonza.picture.${k}`) ?? d; } catch (e) { return d; } };
+      const keep = (k, v) => { try { localStorage.setItem(`boonza.picture.${k}`, v); } catch (e) { /* not kept */ } };
+      const select = (pairs, value) => {
+        const s = el("select");
+        for (const [v, l] of pairs) s.add(new Option(l, v, false, v === value));
+        return s;
+      };
+      const size = select(PICTURE_SIZES, saved("size", "view3"));
+      const width = el("input", { type: "number", min: 16, max: 16000, style: "width:70px" });
+      const height = el("input", { type: "number", min: 16, max: 16000, style: "width:70px" });
+      const dpi = el("input", { type: "number", min: 72, max: 2400, value: saved("dpi", 300), style: "width:56px" });
+      const fill = () => {
+        const d = +dpi.value || 300, v = size.value;
+        const set = (w, h) => { width.value = Math.round(w); height.value = Math.round(h); };
+        if (v.startsWith("view")) set(+v[4] * w0, +v[4] * h0);
+        else if (v === "col1" || v === "col2") { const w = (v === "col1" ? 3.5 : 7) * d; set(w, w * h0 / w0); }
+        else if (v === "slide") set(1920, 1080);
+        else if (v === "uhd") set(3840, 2160);
+        info();
+      };
+      const info = () => {
+        const d = +dpi.value || 300;
+        note.textContent = `${width.value} × ${height.value} px = ${(width.value / d).toFixed(2)} × ${(height.value / d).toFixed(2)} in at ${d} dpi`
+          + (Math.abs(width.value / height.value - w0 / h0) > 0.01 ? " · a different shape from the view: more or less is seen at the sides" : "");
+      };
+      const note = el("p", { className: "help" });
+      size.onchange = () => { keep("size", size.value); fill(); };
+      dpi.oninput = () => { keep("dpi", dpi.value); if (size.value.startsWith("col")) fill(); else info(); };
+      width.oninput = height.oninput = () => { size.value = "custom"; info(); };
+      const quality = select([["2", "good (2 × 2 samples)"], ["3", "fine (3 × 3)"], ["4", "finest (4 × 4)"]], saved("quality", "3"));
+      quality.onchange = () => keep("quality", quality.value);
+      const back = select([["white", "white"], ["black", "black"], ["none", "transparent"], ["view", "as the view"]], saved("back", "white"));
+      back.onchange = () => keep("back", back.value);
+      const check = (key, label, on) => {
+        const box = el("input", { type: "checkbox", checked: saved(key, on ? "1" : "0") === "1" });
+        box.onchange = () => keep(key, box.checked ? "1" : "0");
         return [box, el("label", {}, box, ` ${label}`)];
       };
-      const [outline, outlineLabel] = check("outlines", true);
-      const [ao, aoLabel] = check("ambient occlusion (shadows in crevices)", true);
-      const [fog, fogLabel] = check("fog (depth cue)", app.renderer.fog.on);
-      const go = button("Save PNG", () => {
-        const k = +size.value;
+      const [outline, outlineLabel] = check("outline", "outlines", true);
+      const [ao, aoLabel] = check("ao", "ambient occlusion (shade in crevices)", true);
+      const [fog, fogLabel] = check("fog", "fog (depth cue)", false);
+      const [labels, labelsLabel] = check("labels", "labels and measurements", true);
+      const font = el("input", { type: "number", min: 4, max: 36, value: saved("font", 8), style: "width:46px" });
+      font.onchange = () => keep("font", font.value);
+      const render = async () => {
+        const w = Math.round(+width.value), h = Math.round(+height.value);
+        if (!(w >= 16 && h >= 16 && w <= 16000 && h <= 16000)) throw new Error("a picture is 16 to 16000 pixels on a side");
         const bg = { white: [1, 1, 1], black: [0, 0, 0] }[back.value] || null;
-        app.message("drawing the picture…");
-        setTimeout(() => {  // let the message show first
-          try {
-            const pic = app.renderer.picture(app.camera, k * w0, k * h0, { outline: outline.checked, ao: ao.checked,
-              background: bg, transparent: back.value === "none", fog: fog.checked });
-            pic.toBlob(blob => {
-              const name = (state.title || "boonza").replace(/[\s:/·+]+/g, "_").replace(/_+$/, "");
-              el("a", { href: URL.createObjectURL(blob), download: `${name}-${state.frame + 1}.png` }).click();
-              app.message(`saved a ${pic.width} × ${pic.height} picture`);
-            });
-          } catch (e) { app.message(e.message, true); }
-          app.draw();
-        }, 30);
+        app.message(`drawing a ${w} × ${h} picture…`);
+        await new Promise(ok => setTimeout(ok, 30));  // let the message show
+        const pic = app.withPictureScene(r => r.picture(app.camera, w, h, { outline: outline.checked, ao: ao.checked,
+          background: bg, transparent: back.value === "none", fog: fog.checked, quality: +quality.value }));
+        const dark = back.value === "black" || (back.value === "view" && document.body.classList.contains("noir"));
+        if (labels.checked) drawLabels(pic, (+font.value || 8) / 72 * (+dpi.value || 300), dark);
+        const blob = await new Promise(ok => pic.toBlob(ok, "image/png"));
+        return [withDpi(new Uint8Array(await blob.arrayBuffer()), +dpi.value || 300), pic];
+      };
+      const go = button("Save PNG", async () => {
+        try {
+          const [png, pic] = await render();
+          const name = (state.title || app.currentModel()?.name || "boonza").replace(/[\s:/·+]+/g, "_").replace(/_+$/, "");
+          el("a", { href: URL.createObjectURL(new Blob([png], { type: "image/png" })), download: `${name}-${state.frame + 1}.png` }).click();
+          app.message(`saved a ${pic.width} × ${pic.height} picture (${dpi.value} dpi) to your downloads`);
+        } catch (e) { app.message(e.message, true); }
+        app.draw();
       }, "blue");
+      const copy = button("Copy", async () => {
+        try {
+          const [png, pic] = await render();
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) })]);
+          app.message(`copied a ${pic.width} × ${pic.height} picture`);
+        } catch (e) { app.message(`could not copy the picture: ${e.message}`, true); }
+        app.draw();
+      });
       body.append(row(el("span", { className: "what" }, "size"), size));
+      body.append(row(el("span", { className: "what" }, "pixels"), width, el("span", {}, "×"), height,
+                      el("span", { className: "what", style: "width:auto" }, "dpi"), dpi));
+      body.append(note);
+      body.append(row(el("span", { className: "what" }, "quality"), quality));
       body.append(row(el("span", { className: "what" }, "background"), back));
-      body.append(row(outlineLabel), row(aoLabel), row(fogLabel), row(go));
-      body.append(el("p", { className: "help" }, "Labels are not drawn into the picture. Render | Lighting | Publication "
-        + "shows outlines and occlusion on screen as well."));
+      body.append(row(outlineLabel), row(aoLabel), row(fogLabel),
+                  row(labelsLabel, el("span", { className: "what", style: "width:auto;margin-left:6px" }, "size (pt)"), font));
+      body.append(row(go, copy));
+      body.append(el("p", { className: "help" }, "Drawn in tiles at several samples per pixel, so any size is sharp: "
+        + "rounder sticks and ribbons than on screen, lines drawn as thin sticks, the selection's pink left out. "
+        + "Render | Lighting | Publication shows outlines and occlusion on screen too."));
+      fill();
     });
+  }
+
+  // the labels (atom labels, meters, pocket numbers) onto a picture, `px` pixels high
+  function drawLabels(pic, px, dark) {
+    const g = pic.getContext("2d");
+    g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
+    for (const div of $("labels").children) {
+      const v = app.camera.toView(JSON.parse(div.dataset.at));
+      if (v[2] >= -0.5) continue;
+      const [x, y] = app.camera.screen(v, pic.width, pic.height);
+      const pocket = div.classList.contains("pocket"), meter = div.classList.contains("meter");
+      const size = px * (pocket ? 1.3 : 1);
+      g.font = `${pocket || meter ? "bold " : ""}${size}px Arial, Helvetica, sans-serif`;
+      g.lineWidth = Math.max(1, size * 0.22);
+      g.strokeStyle = dark ? "#000" : "#fff";
+      g.fillStyle = meter ? (dark ? "#ffd34d" : "#a67c00") : dark ? "#fff" : "#000";
+      g.strokeText(div.textContent, x, y);
+      g.fillText(div.textContent, x, y);
+    }
+  }
+
+  // a PNG with its resolution (a pHYs chunk after IHDR), so it places at its size in print
+  const CRC = (() => {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; table[n] = c >>> 0; }
+    return bytes => { let c = 0xffffffff; for (const b of bytes) c = table[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  })();
+  function withDpi(png, dpi) {
+    const chunk = new Uint8Array(21), view = new DataView(chunk.buffer), ppm = Math.round(dpi / 0.0254);
+    view.setUint32(0, 9);
+    chunk.set([0x70, 0x48, 0x59, 0x73], 4);  // "pHYs"
+    view.setUint32(8, ppm); view.setUint32(12, ppm); chunk[16] = 1;  // per metre
+    view.setUint32(17, CRC(chunk.subarray(4, 17)));
+    const out = new Uint8Array(png.length + 21);
+    out.set(png.subarray(0, 33)); out.set(chunk, 33); out.set(png.subarray(33), 54);
+    return out;
   }
 
   // --- editing ----------------------------------------------------------------------
@@ -431,6 +527,12 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); return null; }
   }
   const autoH = () => localStorage.getItem("boonza.autoH") !== "0";
+  // the model a command acts on: the selection's, else the current one
+  function actingModel() {
+    const m = app.selection()[0]?.[0] || app.currentModel();
+    if (!m || m.closed || !m.topo) { app.message("no model: build one (Builder) or open one (File | Open)", true); return null; }
+    return m;
+  }
   async function edit(op, value) {
     const t = editTarget(op === "bond" ? 2 : 1);
     if (!t) return;
@@ -439,22 +541,44 @@ export function setupUI(app) {
     await serverEdit(m, "api/edit", { op, atoms, value, hydrogens: op === "name" ? false : autoH() });
   }
   async function undo(redo = false) {
-    const m = app.selection()[0]?.[0] || app.currentModel();
+    const m = actingModel();
+    if (!m) return;
     const out = await serverEdit(m, redo ? "api/redo" : "api/undo", {});
     if (out) app.message(redo ? "redone" : "undone");
   }
   async function deleteSelected() {
-    const t = editTarget();
-    if (t) await serverEdit(t[0], "api/edit", { op: "delete", atoms: t[1], hydrogens: autoH() });
+    const sel = app.selection();
+    if (!sel.length) { app.message("nothing selected to delete: click atoms, drag a box, or use Select", true); return; }
+    let gone = 0;
+    for (const [m, ids] of sel) {
+      if (ids.length === m.topo.natoms) { await closeModel(m); gone += ids.length; continue; }
+      const out = await serverEdit(m, "api/edit", { op: "delete", atoms: ids, hydrogens: autoH() });
+      if (!out) return;  // its error is showing
+      gone += ids.length;
+    }
+    app.message(`deleted ${gone} atom${gone === 1 ? "" : "s"} (and their hydrogens) · Edit | Undo puts them back`);
   }
   async function hydrogens(what) {
-    const m = app.selection()[0]?.[0] || app.currentModel();
+    const m = actingModel();
+    if (!m) return;
     const sel = app.selected(m);
     const A = m.topo.atoms;
     const pool = sel.length ? sel : app.range(m.topo.natoms);
     if (what === "delete") {
       const hs = pool.filter(a => A.element[a] === "H");
       if (hs.length) await serverEdit(m, "api/edit", { op: "delete", atoms: hs, hydrogens: false });
+    } else if (!sel.length && m.topo.residues.kind.some(k => k === 1)) {
+      // a protein: every hydrogen as the force field names it (templates), then ligands'
+      const out = await busyEdit(m, "adding hydrogens from the force field's templates", { op: "protonate" });
+      if (!out) return;
+      const notes = [];
+      if (out.rebuilt.length) notes.push(`side chains built for ${out.rebuilt.join(", ")}`);
+      if (out.alternates) notes.push(`${out.alternates} alternate-location atoms dropped`);
+      if (out.incomplete.length) notes.push(`incomplete, left as they are: ${out.incomplete.join(", ")}`);
+      if (out.skipped.length) notes.push(`${out.skipped.join(", ")} by valence (${out.ligand_hydrogens} H)`);
+      app.message(`added ${out.hydrogens} hydrogens with ff19SB's names to ${out.residues} residues `
+        + `(charged termini, Lys/Arg/Asp/Glu charged, His as HIE)${notes.length ? "; " + notes.join("; ") : ""}`,
+        out.incomplete.length > 0);
     } else {
       const heavy = pool.filter(a => A.element[a] !== "H");
       if (heavy.length) await serverEdit(m, "api/edit", { op: "hydrogens", atoms: heavy });
@@ -481,7 +605,8 @@ export function setupUI(app) {
   }
 
   async function minimize({ ligandOnly = false, restraint = null } = {}) {
-    const m = app.selection()[0]?.[0] || app.currentModel();
+    const m = actingModel();
+    if (!m) return;
     if (!m.topo?.editable) { app.message("this model cannot be minimized", true); return; }
     const k = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
     const c = m.state.constraint, body = { m: m.index, restraint: k };
@@ -495,9 +620,11 @@ export function setupUI(app) {
       const out = await app.busy("minimizing (the first time sets up the force field)", () => app.post("api/minimize", body));
       await app.reloadModel(m, false);
       const how = out.mobile === "constraints" ? `${out.fixed_atoms} fixed, ${out.held_atoms} tethered`
-        : `the ligand and its pocket free, ${out.held_atoms} heavy atoms tethered`;
-      app.message(`Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol; ${how}; `
-        + `moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)`);
+        : out.mobile_atoms === 0 || out.mobile_rmsd === 0
+          ? `no ligand, so only hydrogens were free (${out.held_atoms} heavy atoms tethered): Constrain sets what moves`
+          : `the ligand and its pocket free, ${out.held_atoms} heavy atoms tethered`;
+      app.message(`Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol; ${how}`
+        + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : ""));
     } catch (e) { app.message(e.message, true); }
   }
 
@@ -531,6 +658,8 @@ export function setupUI(app) {
     File: () => [
       { label: "Open…", run: openPanel, key: "Ctrl O" },
       { label: "Save…", run: savePanel, key: "Ctrl S" },
+      { label: "Open from This Computer…", run: browse },
+      { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: () => download(fmt) })) },
       { label: "Save Session…", run: saveSessionPanel },
       { label: "Close", run: () => closeModel() },
       "-",
@@ -541,6 +670,7 @@ export function setupUI(app) {
       { label: "Redo", run: () => undo(true), key: "Ctrl Y" },
       "-",
       { label: "Delete", run: deleteSelected, key: "Del" },
+      { label: "Copy SMILES", run: copySmiles, key: "Ctrl C" },
       { label: "Build", sub: [
         { label: "Builder…", run: builderPanel },
         { label: "Hydrogens", sub: [
@@ -565,11 +695,14 @@ export function setupUI(app) {
       { label: "Energy Minimize…", run: minimizePanel },
       { label: "Conformations", sub: [{ label: "Torsion Profile…", run: () => profilePanel() }] },
       { label: "Ligand Interactions", run: toggleContacts, checked: () => state.contacts },
+      { label: "Hydrogen Bonds…", run: hbondPanel, checked: () => !!state.hbonds },
       { label: "Dynamics Player", run: () => { $("player").hidden = app.nframes() < 2; },
         off: () => app.nframes() < 2 },
     ],
     Window: () => [
       { label: "Models", run: modelsPanel, checked: () => !$("window").classList.contains("nomodels") },
+      { label: "Sequence", run: () => toggleSequence(), checked: () => !$("seqbar").hidden },
+      { label: "Builder", run: builderPanel, checked: () => !$("ldock").hidden },
       { label: "Command Line", run: () => openCLI(), key: "Space" },
       { label: "Python Console", run: togglePython, key: "`", off: () => !app.PYTHON },
     ],
@@ -694,7 +827,8 @@ export function setupUI(app) {
     } catch (e) { /* the label alone */ }
   };
   async function assignForceField() {
-    const m = app.selection()[0]?.[0] || app.currentModel();
+    const m = actingModel();
+    if (!m) return;
     if (!m.topo?.editable) { app.message("this model has no atoms to assign a force field to", true); return; }
     try {
       await app.busy("assigning the force field (Amber ff19SB, GAFF2 for ligands)", () => app.post("api/assign_ff", { m: m.index }));
@@ -704,12 +838,46 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
 
-  app.popup = (x, y) => menu(() => [
+  // delete these atoms of a model: all of them closes it
+  async function removeAtoms(m, ids, what) {
+    if (ids.length >= m.topo.natoms) { await closeModel(m); return; }
+    const out = await serverEdit(m, "api/edit", { op: "delete", atoms: ids, hydrogens: autoH() });
+    if (out) app.message(`deleted ${what} (${ids.length} atoms) · Edit | Undo puts it back`);
+  }
+  // the atoms of what a right click landed on: its atom, residue, molecule
+  function clicked(hit) {
+    if (!hit) return null;
+    const m = hit.model, A = m.topo.atoms;
+    const a = hit.atom ?? hit.atoms?.[0] ?? m.topo.residues.trace[hit.residue];
+    if (a === undefined || a < 0) return null;
+    const r = A.residue[a], R = m.topo.residues;
+    // the molecule as double-click takes it: bonded atoms of its kind (a heme on its
+    // histidine is the heme, not the chain)
+    const molecule = app.range(m.topo.natoms).filter(b => A.fragment[b] === A.fragment[a] && A.class[b] === A.class[a]);
+    return { m, a, residue: m.topo.residueAtoms[r], molecule, resName: `${R.name[r]}${R.resid[r]}`,
+             molName: molecule.length === m.topo.residueAtoms[r].length ? `${R.name[r]}${R.resid[r]}` : `molecule of ${R.name[r]}${R.resid[r]}` };
+  }
+
+  app.popup = (x, y, hit = null) => menu(() => [
+    ...(c => c ? [
+      { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
+      { label: "Select Molecule", run: () => app.select(c.m, c.molecule) },
+      { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
+      { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
+      ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
+      { label: "Copy Its SMILES", run: () => { app.select(c.m, c.molecule); copySmiles(); } },
+      { label: "Copy Molecule Into", sub: copyIntoItems(c.m, c.molecule) },
+      { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
+      "-",
+    ] : [])(clicked(hit)),
     ...renderItems().slice(0, 9),
     "-",
     { label: "Select", sub: selectItems },
     { label: "Extend", sub: extendItems },
     { label: "System", sub: systemItems },
+    "-",
+    { label: "Copy SMILES", run: copySmiles },
+    { label: "Delete", run: deleteSelected },
   ], x, y);
 
   // --- footer ---------------------------------------------------------------------------------
@@ -757,6 +925,12 @@ export function setupUI(app) {
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {
+    footerEdit();
+    footerSmiles();
+    refreshSmilesBox();
+    paintSequence();
+  };
+  function footerEdit() {
     setTimeout(refresh2D, 0);
     const box = $("footer-edit");
     box.innerHTML = "";
@@ -806,7 +980,7 @@ export function setupUI(app) {
       prof.onclick = () => profilePanel(m, atoms);
       if (editable) box.append(prof);
     }
-  };
+  }
 
   // two bonded atoms: the Rotate wheel turns the bond, and Profile plots its energy
   async function rotateWheel(box, m, atoms) {
@@ -998,9 +1172,10 @@ export function setupUI(app) {
 
   window.addEventListener("keydown", e => {
     const typing = e.target.tagName === "INPUT" && !["range", "checkbox"].includes(e.target.type) || ["SELECT", "TEXTAREA"].includes(e.target.tagName);
-    if (e.key === "Escape") { closeMenus(); if (!$("cli").hidden) closeCLI(); return; }
+    if (e.key === "Escape") { closeMenus(); if (!$("cli").hidden) closeCLI(); if (app.toolActive()) app.dropTool(); return; }
     if (typing) return;
     const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.key.toLowerCase() === "c" && !String(window.getSelection())) { e.preventDefault(); copySmiles(); return; }
     if (ctrl && e.key.toLowerCase() === "z") { e.preventDefault(); undo(e.shiftKey); }
     else if (ctrl && e.key.toLowerCase() === "y") { e.preventDefault(); undo(true); }
     else if (ctrl && e.key.toLowerCase() === "a") { e.preventDefault(); selectWhere(() => true); }
@@ -1023,6 +1198,119 @@ export function setupUI(app) {
   $("slider").oninput = () => app.setFrame(parseInt($("slider").value));
   $("play").onclick = () => app.play();
   window.addEventListener("resize", app.draw);
+
+  // --- files to and from this computer -----------------------------------------------------------
+
+  const DOWNLOADS = [["pdb", "PDB"], ["cif", "mmCIF"], ["sdf", "SDF (each molecule)"], ["mae", "Maestro (.mae)"],
+                     ["dms", "DMS"], ["gro", "GROMACS (.gro)"]];
+  // the selection's model and atoms (else the current model, whole) as a file in Downloads
+  async function download(fmt, m = null, atoms = null) {
+    const sel = app.selection();
+    m = m || sel[0]?.[0] || app.currentModel();
+    if (!m?.topo) { app.message("no model to download", true); return; }
+    atoms = atoms ?? (sel.find(([x]) => x === m)?.[1] || []);
+    try {
+      const r = await fetch("api/download", { method: "POST", headers: { "Content-Type": "application/json", "X-Boonza-Token": app.TOKEN },
+        body: JSON.stringify({ m: m.index, fmt, atoms, frame: Math.min(state.frame, m.topo.nframes - 1) }) });
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || `model.${fmt}`;
+      el("a", { href: URL.createObjectURL(await r.blob()), download: name }).click();
+      app.message(`downloaded ${name}${atoms.length && fmt !== "sdf" ? ` (${atoms.length} selected atoms)` : ""}`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  // files from this computer (dropped on the window, or picked): sent to boonza view and opened
+  async function uploadFiles(files) {
+    for (const f of files) {
+      try {
+        const r = await app.busy(`opening ${f.name}`, () => fetch("api/upload", { method: "POST", body: f,
+          headers: { "X-Boonza-Token": app.TOKEN, "X-Filename": encodeURIComponent(f.name) } }));
+        const out = await r.json();
+        if (!r.ok) throw new Error(out.error || r.statusText);
+        await addModels(out);
+        app.message(`opened ${f.name}: ${out.added.length} model${out.added.length === 1 ? "" : "s"}`);
+      } catch (e) { app.message(`${f.name}: ${e.message}`, true); }
+    }
+  }
+  function browse() {
+    const input = el("input", { type: "file", multiple: true });
+    input.onchange = () => { panels.open?.remove(); delete panels.open; uploadFiles([...input.files]); };
+    input.click();
+  }
+  if (!app.STATIC) {
+    const files = e => [...(e.dataTransfer?.types || [])].includes("Files");
+    window.addEventListener("dragover", e => { if (!files(e)) return; e.preventDefault(); $("stage").classList.add("dropping"); });
+    window.addEventListener("dragleave", e => { if (!e.relatedTarget) $("stage").classList.remove("dropping"); });
+    window.addEventListener("drop", e => {
+      if (!files(e)) return;
+      e.preventDefault();
+      $("stage").classList.remove("dropping");
+      uploadFiles([...e.dataTransfer.files]);
+    });
+  }
+
+  // copy a model's atoms (a built ligand) into another model, where they are
+  const copyIntoItems = (m, atoms) => () => {
+    const others = app.live().filter(o => o !== m);
+    return others.length ? others.map(o => ({ label: o.name, run: () => copyInto(m, o, atoms) }))
+      : [{ label: "(no other model)", off: () => true }];
+  };
+  async function copyInto(m, o, atoms) {
+    try {
+      await app.load(o);
+      const out = await app.post("api/copy_into", { m: m.index, into: o.index, atoms,
+                                                     frame: Math.min(state.frame, m.topo.nframes - 1) });
+      state.current = o.index;
+      await app.reloadModel(o, true);
+      await app.show([o]);
+      app.message(`copied ${out.added} atoms of ${m.name} into ${o.name} · Edit | Undo with ${o.name} current takes them out`);
+    } catch (e) { app.message(e.message, true); }
+  }
+
+  // Compute | Hydrogen Bonds: between two selections, drawn green and dashed
+  const HBOND_SETS = [["@ligand", "the ligand and the rest"], ["@sel", "the selection and the rest"],
+    ["@chains", "chains (every interface)"], ["protein|water", "protein and water"], ["custom", "two selections…"]];
+  function hbondPanel() {
+    panel("hbonds", "Hydrogen Bonds", body => {
+      const kind = el("select");
+      for (const [v, l] of HBOND_SETS) kind.add(new Option(l, v));
+      if (app.selection().length) kind.value = "@sel";
+      const a = el("input", { placeholder: "selection A, e.g. chain A", spellcheck: false, style: "width:220px" });
+      const b = el("input", { placeholder: "selection B (empty: the rest)", spellcheck: false, style: "width:220px" });
+      const custom = [row(el("span", { className: "what" }, "A"), a), row(el("span", { className: "what" }, "B"), b)];
+      const sync = () => custom.forEach(r => { r.style.display = kind.value === "custom" ? "" : "none"; });
+      kind.onchange = sync;
+      const result = el("p", { className: "help" });
+      const go = button("Show", async () => {
+        const v = kind.value;
+        state.hbonds = v === "@sel" ? { sel: true } : v === "custom" ? { a: a.value.trim(), b: b.value.trim() || null }
+          : v === "protein|water" ? { a: "protein", b: "water" } : { a: v, b: null };
+        if (v === "custom" && !state.hbonds.a) { app.message("give selection A", true); return; }
+        if (v === "@sel" && !app.selection().length) { app.message("select atoms first", true); return; }
+        const { n, how } = await app.busy("finding hydrogen bonds", () => app.refreshHbonds());
+        // the residues at both ends, so no bond hangs in the air
+        for (const m of app.shownModels()) {
+          for (const [i, j] of m.hbonds || []) {
+            for (const r of [m.topo.atoms.residue[i], m.topo.atoms.residue[j]]) {
+              for (const a of m.topo.residueAtoms[r]) if (!m.state.show[a]) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; }
+            }
+          }
+        }
+        app.rebuild();
+        result.textContent = `${n} hydrogen bond${n === 1 ? "" : "s"} (${how})`;
+        app.message(result.textContent);
+      }, "blue");
+      const clear = button("Clear", () => {
+        state.hbonds = null;
+        for (const m of app.live()) m.hbonds = [];
+        app.rebuild(); result.textContent = "";
+      });
+      body.append(row(el("span", { className: "what" }, "between"), kind), ...custom, row(go, clear), result);
+      body.append(el("p", { className: "help" }, "With hydrogens: donor-acceptor within 3.5 Å and D-H…A above 120°. "
+        + "Without (most PDB entries): N and O of different residues within 3.5 Å; Edit | Build | Hydrogens | "
+        + "Add Hydrogens adds them. Followed frame by frame."));
+      sync();
+    }, [innerWidth / 2 - 180, 80]);
+  }
 
   // --- panels -----------------------------------------------------------------------------------------
 
@@ -1070,57 +1358,243 @@ export function setupUI(app) {
     const body = $("ldock-body");
     body.innerHTML = "";
     (tab === "protein" ? proteinBuilder : atomBuilder)(body);
+    if (tab === "builder") {  // the hydrogens are where molecules grow: those of shown molecules too
+      state.hydrogens = "all";
+      for (const m of app.shownModels()) {
+        const A = m.topo.atoms, st = m.state;
+        for (let a = 0; a < m.topo.natoms; a++) {
+          if (A.element[a] !== "H" || A.class[a] !== 1) continue;
+          const heavy = m.topo.bondsOf[a][0];
+          if (heavy !== undefined && st.show[heavy]) { st.show[a] = 1; st.style[a] = st.style[heavy]; }
+        }
+      }
+      app.rebuild();
+    }
     app.draw();
   }
-  function closeDock() { $("ldock").hidden = true; $("window").classList.remove("docked"); app.draw(); }
+  function closeDock() { setTool(null); $("ldock").hidden = true; $("window").classList.remove("docked"); app.draw(); }
   function toggleDock(tab) { if (!$("ldock").hidden && dockTab === tab) closeDock(); else openDock(tab); }
   for (const b of document.querySelectorAll("#ldock-tabs [data-tab]")) b.onclick = () => openDock(b.dataset.tab);
   $("ldock-close").onclick = closeDock;
   const grid = (cls = "grid") => el("div", { className: cls });
 
+  // Draw tools: pick one, then click in the view -- a hydrogen grows the molecule from
+  // it, an atom is changed, a bond takes the order, empty space starts a new molecule.
+  // With atoms selected, a tool acts on them at once instead.
+  const ELEMENT_SMILES = { C: "C", N: "N", O: "O", S: "S", P: "P", F: "F", Cl: "Cl", Br: "Br", I: "I" };
+  const RINGS = [["Benzene", "c1ccccc1"], ["Pyridine", "c1ccncc1"], ["Pyrimidine", "c1cncnc1"], ["Pyrrole", "c1cc[nH]c1"],
+    ["Imidazole", "c1c[nH]cn1"], ["Pyrazole", "c1cn[nH]c1"], ["Thiophene", "c1ccsc1"], ["Furan", "c1ccoc1"],
+    ["Cyclopropane", "C1CC1"], ["Cyclopentane", "C1CCCC1"], ["Cyclohexane", "C1CCCCC1"], ["Piperidine", "C1CCNCC1"],
+    ["Piperazine", "C1CNCCN1"], ["Morpholine", "C1COCCN1"], ["Naphthalene", "c1ccc2ccccc2c1"], ["Indole", "c1ccc2[nH]ccc2c1"]];
+  let tool = null;  // {kind: element|smiles|bond|charge|erase, value, label}
+
+  function setTool(next) {
+    const same = tool && next && tool.kind === next.kind && tool.value === next.value;
+    tool = same ? null : next;
+    for (const b of document.querySelectorAll("#ldock [data-tool]")) b.classList.toggle("armed", !!tool && b.dataset.tool === `${tool.kind}:${tool.value}`);
+    $("stage").classList.toggle("drawing", !!tool);
+    if (tool) app.message(toolHelp(tool));
+    else app.message("");
+  }
+  function toolHelp(t) {
+    if (t.kind === "bond") return `${t.label}: click a bond (Esc: done)`;
+    if (t.kind === "charge") return `charge ${t.label}: click an atom (Esc: done)`;
+    if (t.kind === "erase") return "Erase: click an atom or a bond to remove it (Esc: done)";
+    return `${t.label}: click a hydrogen to grow from it, ${t.kind === "element" ? "an atom to make it " + t.value + ", " : "an atom to attach it, "}`
+      + "or empty space for a new molecule (Esc: done)";
+  }
+  app.toolActive = () => !!tool;
+  app.dropTool = () => setTool(null);
+
+  // a tool's button: with atoms selected it acts on them, else it is picked up
+  function toolButton(label, next, cls = "") {
+    const b = button(label, () => {
+      const sel = app.selection();
+      if (sel.length && next.kind !== "erase") { applyToAtoms(next, sel); return; }
+      setTool(next);
+    }, cls);
+    b.dataset.tool = `${next.kind}:${next.value}`;
+    if (tool && tool.kind === next.kind && tool.value === next.value) b.classList.add("armed");
+    return b;
+  }
+
+  async function applyToAtoms(t, sel) {
+    const [m, atoms] = sel[0];
+    if (t.kind === "element") await serverEdit(m, "api/edit", { op: "element", atoms, value: t.value, hydrogens: autoH() });
+    else if (t.kind === "charge") await serverEdit(m, "api/edit", { op: "charge", atoms, value: t.value, hydrogens: autoH() });
+    else if (t.kind === "bond") {
+      if (atoms.length !== 2) { app.message("select the bond's two atoms (or click a bond with the tool)", true); return; }
+      await serverEdit(m, "api/edit", { op: "bond", atoms, value: t.value, hydrogens: autoH() });
+    } else if (t.kind === "smiles") await serverEdit(m, "api/edit", { op: "attach", atoms: [atoms[0]], value: t.value, hydrogens: false });
+  }
+
+  // the model new molecules go into: the current one if it can take them, else a new one
+  const canTake = m => m && !m.closed && m.shown && m.topo?.editable;
+  async function newMolecule(smiles, centre, intoNew = false) {
+    const m = app.currentModel();
+    try {
+      if (!intoNew && canTake(m)) {
+        await serverEdit(m, "api/edit", { op: "molecule", value: { smiles, centre } });
+      } else {
+        const out = await app.busy("building", () => app.post("api/build", { smiles, centre }));
+        await addModels(out, false);
+        state.hydrogens = "all";
+        app.rebuild();
+      }
+      app.message(`added ${smiles}: grow it by clicking its hydrogens with a tool`);
+    } catch (e) { app.message(e.message, true); }
+  }
+
+  // a click in the view while a tool is picked up: true when the tool took it
+  app.applyTool = (hit, x, y) => {
+    if (!tool) return false;
+    const t = tool;
+    (async () => {
+      if (!hit) {
+        if (t.kind === "element" || t.kind === "smiles") await newMolecule(t.kind === "element" ? ELEMENT_SMILES[t.value] || t.value : t.value, app.unproject(x, y));
+        return;
+      }
+      const m = hit.model;
+      if (!m.topo.editable) { app.message("this model cannot be edited (a trajectory or a set of points)", true); return; }
+      const A = m.topo.atoms;
+      let atom = hit.atom;
+      if (atom === undefined && hit.atoms) {
+        if (t.kind === "bond" || t.kind === "erase") {
+          await serverEdit(m, "api/edit", { op: "bond", atoms: hit.atoms, value: t.kind === "erase" ? 0 : t.value, hydrogens: autoH() });
+          return;
+        }
+        atom = app.nearerAtom(hit.model, hit.atoms, x, y);
+      }
+      if (atom === undefined) { app.message("click an atom or a bond", true); return; }
+      if (t.kind === "bond") { app.message("click a bond (between two atoms), not an atom", true); return; }
+      if (t.kind === "erase") { await serverEdit(m, "api/edit", { op: "delete", atoms: [atom], hydrogens: autoH() }); return; }
+      if (t.kind === "charge") { await serverEdit(m, "api/edit", { op: "charge", atoms: [atom], value: t.value, hydrogens: autoH() }); return; }
+      if (t.kind === "element" && A.element[atom] !== "H") {
+        await serverEdit(m, "api/edit", { op: "element", atoms: [atom], value: t.value, hydrogens: autoH() });
+        return;
+      }
+      const smiles = t.kind === "element" ? ELEMENT_SMILES[t.value] : t.value;
+      if (!smiles) { app.message("hydrogens grow from atoms: pick C, N, O or a group", true); return; }
+      await serverEdit(m, "api/edit", { op: "attach", atoms: [atom], value: smiles, hydrogens: false });
+    })();
+    return true;
+  };
+
+  // SMILES of the selected molecules (else of the current model's ligands)
+  async function smilesOf(m, ids = []) {
+    return (await app.getJSON(`api/smiles?m=${m.index}&sel=${ids.slice(0, 5000).join(",")}`)).molecules;
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) {
+      const ta = el("textarea", { value: text });
+      document.body.append(ta); ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    }
+  }
+  async function copySmiles() {
+    const sel = app.selection();
+    const m = sel[0]?.[0] || app.currentModel();
+    if (!m?.topo) { app.message("no molecule: build or open one", true); return; }
+    try {
+      const mols = (await smilesOf(m, sel[0]?.[1] || [])).filter(x => x.smiles);
+      if (!mols.length) { app.message("no molecule with a SMILES here: select one (double-click picks a molecule)", true); return; }
+      const text = mols.map(x => x.smiles).join("\n");
+      app.message((await copyText(text)) ? `copied: ${mols.map(x => x.smiles).join("  ")}` : `could not reach the clipboard: ${text}`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  app.copySmiles = copySmiles;
+
+  // the builder's SMILES box: what is selected, or the model's molecules
+  let smilesTicket = 0;
+  async function refreshSmilesBox() {
+    const box = document.querySelector("#ldock .smiles-box");
+    if (!box) return;
+    const ticket = ++smilesTicket;
+    const sel = app.selection();
+    const m = sel[0]?.[0] || app.currentModel();
+    box.innerHTML = "";
+    if (!m?.topo || m.closed) { box.append(el("p", { className: "help" }, "Nothing built yet.")); return; }
+    let mols;
+    try { mols = await smilesOf(m, sel[0]?.[1] || []); } catch (e) { mols = []; }
+    if (ticket !== smilesTicket) return;
+    if (!mols.length) { box.append(el("p", { className: "help" }, "Select a molecule (double-click it) to see its SMILES.")); return; }
+    for (const x of mols.slice(0, 12)) {
+      const text = el("code", { title: x.smiles || x.note }, x.smiles || x.note);
+      const copy = button("Copy", async () => app.message((await copyText(x.smiles)) ? `copied ${x.smiles}` : x.smiles));
+      copy.disabled = !x.smiles;
+      box.append(el("div", { className: "smiles-row" }, el("span", { className: "what" }, `${x.name} · ${x.heavy}`), text, copy));
+      if (x.smiles && x.note) box.append(el("p", { className: "help" }, x.note));
+    }
+    box.append(row(
+      ...(mols.length > 1 ? [button("Copy all", async () => {
+        const all = mols.filter(x => x.smiles).map(x => x.smiles).join("\n");
+        app.message((await copyText(all)) ? `copied ${mols.length} SMILES` : all);
+      })] : []),
+      button("Download SDF", () => download("sdf", m, sel[0]?.[1] || []))));
+  }
+
   function atomBuilder(body) {
-    body.append(el("h3", {}, "Element"));
+    body.append(el("h3", {}, "SMILES"));
+    body.append(el("div", { className: "smiles-box" }));
+    refreshSmilesBox();
+    body.append(el("p", { className: "help" }, "Pick a tool, then click in the view: a hydrogen grows the molecule "
+      + "from it, an atom changes, empty space starts a new molecule. With atoms selected, a tool acts on them. Esc puts the tool down."));
+    body.append(el("h3", {}, "Atoms"));
     const g = grid();
-    for (const e of ELEMENTS) g.append(button(e, () => edit("element", e)));
+    for (const e of ELEMENTS) if (e !== "H") g.append(toolButton(e, { kind: "element", value: e, label: e }));
+    g.append(toolButton("H", { kind: "element", value: "H", label: "H" }));
+    g.append(toolButton("Erase", { kind: "erase", value: "", label: "Erase" }));
     body.append(g);
-    const other = el("input", { placeholder: "other element", spellcheck: false });
-    body.append(row(other, button("Set", () => other.value && edit("element", other.value))));
-    body.append(el("h3", {}, "Charge and bond"));
-    body.append(row(el("span", { className: "what" }, "charge"), button("−1", () => edit("charge", -1)),
-                    button("0", () => edit("charge", 0)), button("+1", () => edit("charge", 1))));
-    body.append(row(el("span", { className: "what" }, "bond"), button("none", () => edit("bond", 0)),
-                    button("single", () => edit("bond", 1)), button("double", () => edit("bond", 2)),
-                    button("triple", () => edit("bond", 3))));
+    const other = el("input", { placeholder: "other element (e.g. Se)", spellcheck: false });
+    body.append(row(other, button("Pick", () => other.value.trim() && setTool({ kind: "element", value: other.value.trim(), label: other.value.trim() }))));
+    body.append(el("h3", {}, "Bonds and charges"));
+    body.append(row(...[["Single", 1], ["Double", 2], ["Triple", 3]].map(([l, v]) => toolButton(l, { kind: "bond", value: v, label: `${l} bond` }))));
+    body.append(row(...[["−1", -1], ["0", 0], ["+1", 1]].map(([l, v]) => toolButton(l, { kind: "charge", value: v, label: l }))));
+    body.append(el("h3", {}, "Rings"));
+    const rings = grid("grid wide");
+    for (const [n, smi] of RINGS) {
+      const b = toolButton("", { kind: "smiles", value: smi, label: n }, "group");
+      b.title = `${n}: ${smi}`;
+      b.append(el("span", {}, n), el("small", {}, smi));
+      rings.append(b);
+    }
+    body.append(rings);
     body.append(el("h3", {}, "Functional groups"));
-    body.append(el("p", { className: "help" }, "Select a hydrogen (or the atom carrying it): the group takes its place."));
     const fg = grid("grid wide");
     for (const [n, smi] of Object.entries(app.state.groups || {})) {  // the name, its SMILES below
-      const b = button("", () => edit("attach", n), "group");
+      const b = toolButton("", { kind: "smiles", value: smi, label: n }, "group");
       b.title = `${n}: ${smi} (the first atom bonds)`;
       b.append(el("span", {}, n), el("small", {}, smi));
       fg.append(b);
     }
     body.append(fg);
     const smiles = el("input", { placeholder: "a group as SMILES, first atom bonds", spellcheck: false });
-    body.append(row(smiles, button("Attach", () => smiles.value && edit("attach", smiles.value.trim()))));
-    body.append(el("h3", {}, "New molecule"));
-    const mol = el("input", { placeholder: "SMILES, e.g. c1ccccc1", spellcheck: false });
-    const add = button("Add", async () => {
-      const m = app.currentModel();
-      if (!mol.value.trim() || !m?.topo?.editable) return;
-      await serverEdit(m, "api/edit", { op: "molecule", value: { smiles: mol.value.trim(), centre: app.camera.center } });
-    });
+    body.append(row(smiles, button("Pick", () => smiles.value.trim() && setTool({ kind: "smiles", value: smiles.value.trim(), label: smiles.value.trim() }))));
+    body.append(el("h3", {}, "New molecule from SMILES"));
+    const mol = el("input", { placeholder: "e.g. CC(=O)Oc1ccccc1C(=O)O", spellcheck: false });
+    const fresh = el("input", { type: "checkbox", checked: !canTake(app.currentModel()) || app.currentModel()?.group !== "built" });
+    const add = button("Add", () => mol.value.trim() && newMolecule(mol.value.trim(), app.camera.center.slice(), fresh.checked));
     mol.onkeydown = e => { if (e.key === "Enter") add.click(); };
-    body.append(row(mol, add));
-    body.append(el("h3", {}, "Hydrogens and atoms"));
+    body.append(row(mol, add), row(el("label", {}, fresh, " as a new model")));
+    body.append(el("h3", {}, "Hydrogens, geometry"));
     body.append(row(button("Add / Adjust H", () => hydrogens("add")), button("Delete H", () => hydrogens("delete")),
-                    button("Delete atoms", deleteSelected)));
-    body.append(row(button("Undo", () => undo()), button("Redo", () => undo(true))));
+                    button("Clean Up", cleanUp)));
+    body.append(row(button("Delete selected", deleteSelected), button("Undo", () => undo()), button("Redo", () => undo(true))));
     const auto = el("input", { type: "checkbox", checked: autoH() });
     auto.onchange = () => localStorage.setItem("boonza.autoH", auto.checked ? "1" : "0");
     body.append(row(el("label", {}, auto, " adjust hydrogens after each edit")));
-    body.append(el("p", { className: "help" }, "Acts on the selected atoms. Alt + middle drag moves them, "
-      + "Shift + Alt + middle translates them, Alt + left drag turns a selected bond."));
+    body.append(el("p", { className: "help" }, "Clean Up relaxes the selected molecules (else every small molecule) "
+      + "with MMFF94, alone. Alt + middle drag moves the selected atoms, Alt + left drag turns a selected bond."));
+  }
+
+  async function cleanUp() {
+    const m = actingModel();
+    if (!m) return;
+    const sel = app.selected(m);
+    const out = await busyEdit(m, "cleaning up", { op: "cleanup", atoms: sel });
+    if (out) app.message(`cleaned up ${out.molecules} molecule${out.molecules === 1 ? "" : "s"} (${out.forcefield})`);
   }
 
   function proteinBuilder(body) {
@@ -1346,6 +1820,22 @@ export function setupUI(app) {
       const x = el("button", { className: "x", title: "close this model" }, "✕");
       x.onclick = () => closeModel(m);
       row.append(el("div", { className: "top" }, box, sw, name, color, rep, x));
+      row.oncontextmenu = e => {
+        e.preventDefault();
+        menu([
+          { label: "Show Only This", run: () => { for (const o of app.live()) o.shown = o === m; app.solo(m); } },
+          { label: m.shown ? "Hide" : "Show", run: () => { state.current = m.index; app.show([m], !m.shown); } },
+          { label: "Center", run: async () => { await app.show([m]); const [c, r] = app.bounds(m, app.range(m.topo.natoms)); app.flyTo(c, Math.max(r, 6)); } },
+          "-",
+          { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
+          { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          { label: "Copy Into", sub: copyIntoItems(m, []) },
+          { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: async () => { await app.load(m); download(fmt, m, []); } })) },
+          { label: "Save…", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; app.rebuild(); savePanel(); } },
+          "-",
+          { label: "Close", run: () => closeModel(m) },
+        ], e.clientX, e.clientY);
+      };
       const data = Object.entries(m.row || {}).filter(([k]) => k !== "name");
       if (data.length) row.append(el("div", { className: "data", title: data.map(([k, v]) => `${k} ${cell(v)}`).join("\n") },
         data.map(([k, v]) => `${k} ${cell(v)}`).join(" · ")));
@@ -1384,6 +1874,166 @@ export function setupUI(app) {
     if (next && next !== now) app.solo(next);
   }
   $("btn-models").onclick = modelsPanel;
+  $("btn-pic").onclick = savePicture;
+
+  // --- the sequence, above the view: click a residue to select it (drag or Shift: a
+  // run of them; Ctrl: add or take away), right click to mutate, centre or show it ------
+
+  const ONE = { ALA: "A", ARG: "R", ASN: "N", ASP: "D", CYS: "C", GLN: "Q", GLU: "E", GLY: "G", HIS: "H", ILE: "I",
+    LEU: "L", LYS: "K", MET: "M", PHE: "F", PRO: "P", SER: "S", THR: "T", TRP: "W", TYR: "Y", VAL: "V",
+    HID: "H", HIE: "H", HIP: "H", HSD: "H", HSE: "H", HSP: "H", CYX: "C", CYM: "C", ASH: "D", GLH: "E", LYN: "K",
+    MSE: "M", SEP: "S", TPO: "T", PTR: "Y", DA: "A", DC: "C", DG: "G", DT: "T", DU: "U", A: "A", C: "C", G: "G",
+    U: "U", T: "T", RA: "A", RC: "C", RG: "G", RU: "U", ADE: "A", CYT: "C", GUA: "G", THY: "T", URA: "U" };
+  const letter = name => ONE[name.toUpperCase()] || (name.length === 1 ? name : "X");
+  let seqKey = "", seqAnchor = null, seqDrag = null;
+
+  function toggleSequence(on = $("seqbar").hidden) {
+    $("seqbar").hidden = !on;
+    try { localStorage.setItem("boonza.sequence", on ? "1" : "0"); } catch (e) { /* not kept */ }
+    seqKey = "";
+    paintSequence();
+    app.draw();
+  }
+  $("btn-seq").onclick = () => toggleSequence();
+
+  // per shown model, its chains' traced residues (amino acids, nucleotides, Martini's BB)
+  function sequenceChains() {
+    const out = [];
+    for (const m of app.shownModels()) {
+      const R = m.topo.residues, C = m.topo.chains, chains = new Map();
+      for (let r = 0; r < R.name.length; r++) {
+        // traced residues, and amino acids and nucleotides the trace missed (a broken backbone)
+        if (!R.kind[r] && !(R.name[r].toUpperCase() in ONE && m.topo.residueAtoms[r].length > 3)) continue;
+        if (!chains.has(R.chain[r])) chains.set(R.chain[r], []);
+        chains.get(R.chain[r]).push(r);
+      }
+      for (const [c, rs] of chains) out.push({ m, chain: C.name[c] || C.segid[c] || "-", rs });
+    }
+    return out;
+  }
+
+  function buildSequence() {
+    const bar = $("seqbar");
+    bar.innerHTML = "";
+    const lines = sequenceChains();
+    bar.classList.toggle("none", !lines.length);  // nothing to show: no room taken
+    if (!lines.length) return;
+    const many = new Set(lines.map(l => l.m)).size > 1;
+    for (const { m, chain, rs } of lines) {
+      const R = m.topo.residues, ss = m.ss || [];
+      const label = el("span", { className: "seqlabel", title: `${m.name}, chain ${chain}: ${rs.length} residues` },
+                       many ? `${m.name.slice(0, 8)} ${chain}` : chain);
+      const res = el("div", { className: "seqres" });
+      let prev = null;
+      for (const r of rs) {
+        if (prev !== null && R.resid[r] - R.resid[prev] > 1)
+          res.append(el("span", { className: "gap", title: `${R.resid[r] - R.resid[prev] - 1} residues not in the structure` }, "·"));
+        const s = el("span", { className: `aa ss-${ss[r] || "C"}` }, letter(R.name[r]));
+        s.dataset.m = m.index; s.dataset.r = r;
+        if (R.resid[r] % 10 === 0) s.dataset.n = R.resid[r];
+        s.title = `${R.name[r]} ${R.resid[r]}${R.insertion[r].trim()} · chain ${chain}`;
+        res.append(s);
+        prev = r;
+      }
+      bar.append(el("div", { className: "seqline" }, label, res));
+    }
+  }
+
+  // build when the models or their atoms change; mark the selected residues
+  function paintSequence() {
+    const bar = $("seqbar");
+    if (bar.hidden) return;
+    const key = app.shownModels().map(m => `${m.index}:${m.topo.natoms}:${m.topo.version}`).join("|");
+    if (key !== seqKey) { seqKey = key; buildSequence(); }
+    const picked = new Map();
+    for (const [m, ids] of app.selection()) picked.set(m.index, new Set(ids.map(a => m.topo.atoms.residue[a])));
+    for (const s of bar.querySelectorAll(".aa")) s.classList.toggle("sel", !!picked.get(+s.dataset.m)?.has(+s.dataset.r));
+  }
+
+  // residues from one to another along a chain's line
+  function residueRun(m, r0, r1) {
+    const line = sequenceChains().find(l => l.m === m && l.rs.includes(r0) && l.rs.includes(r1));
+    if (!line) return [r1];
+    const [i, j] = [line.rs.indexOf(r0), line.rs.indexOf(r1)].sort((a, b) => a - b);
+    return line.rs.slice(i, j + 1);
+  }
+  const residueAtoms = (m, rs) => rs.flatMap(r => m.topo.residueAtoms[r]);
+  const seqTarget = e => e.target.closest?.(".aa");
+
+  $("seqbar").addEventListener("pointerdown", e => {
+    const s = seqTarget(e);
+    if (!s || e.button !== 0) return;
+    e.preventDefault();
+    const m = state.models[+s.dataset.m], r = +s.dataset.r;
+    const add = e.ctrlKey || e.metaKey;
+    if (e.shiftKey && seqAnchor && seqAnchor.m === m) {
+      app.select(m, residueAtoms(m, residueRun(m, seqAnchor.r, r)), add ? "add" : "set");
+    } else {
+      app.select(m, residueAtoms(m, [r]), add ? "toggle" : "set");
+      seqAnchor = { m, r };
+    }
+    seqDrag = { m, r, add, before: add ? new Set(app.selected(m)) : null };
+    $("seqbar").setPointerCapture(e.pointerId);
+  });
+  $("seqbar").addEventListener("pointermove", e => {
+    if (!seqDrag) return;
+    const s = document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".aa");
+    if (!s || +s.dataset.m !== seqDrag.m.index || +s.dataset.r === seqDrag.last) return;
+    seqDrag.last = +s.dataset.r;
+    const m = seqDrag.m, run = residueAtoms(m, residueRun(m, seqDrag.r, +s.dataset.r));
+    app.select(m, seqDrag.add ? [...seqDrag.before, ...run] : run, "set");
+  });
+  $("seqbar").addEventListener("pointerup", () => { seqDrag = null; });
+  $("seqbar").addEventListener("dblclick", () => app.centerView());
+  $("seqbar").addEventListener("contextmenu", e => {
+    e.preventDefault();
+    const s = seqTarget(e);
+    if (s) {
+      const m = state.models[+s.dataset.m], r = +s.dataset.r;
+      if (!app.selected(m).some(a => m.topo.atoms.residue[a] === r)) app.select(m, residueAtoms(m, [r]), "set");
+    }
+    const sel = app.selection();
+    if (!sel.length) return;
+    const [m, ids] = sel[0];
+    const names = [...new Set(ids.map(a => m.topo.atoms.residue[a]))].map(r => `${m.topo.residues.name[r]}${m.topo.residues.resid[r]}`);
+    const what = names.length > 3 ? `${names.length} residues` : names.join(", ");
+    menu([
+      { label: `Mutate ${what} to`, sub: () => AMINO.map(aa => ({ label: `${aa} (${ONE[aa]})`, run: () => mutate(aa) })),
+        off: () => !m.topo.editable },
+      "-",
+      { label: "Center", run: () => app.centerView() },
+      { label: "Show Side Chains", run: () => { for (const a of ids) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; } app.rebuild(); } },
+      { label: "Hide Atoms", run: () => { for (const a of ids) m.state.show[a] = 0; app.rebuild(); } },
+      { label: "Ribbon Color", sub: () => SINGLE.map(c => ({ label: c, run: () => ribbonColor(c) })) },
+      "-",
+      { label: "Delete", run: deleteSelected },
+    ], e.clientX, e.clientY);
+  });
+
+  // the selection's SMILES in the footer, for a small molecule
+  let footTicket = 0;
+  async function footerSmiles() {
+    const ticket = ++footTicket;
+    const sel = app.selection();
+    if (sel.length !== 1) return;
+    const [m, ids] = sel[0];
+    if (!m.topo || !ids.every(a => m.topo.atoms.class[a] === 1)) return;
+    let mols;
+    try { mols = (await smilesOf(m, ids)).filter(x => x.smiles); } catch (e) { return; }
+    if (ticket !== footTicket || !mols.length) return;
+    const text = mols.map(x => x.smiles).join(".");
+    $("footer-edit").append(el("span", { className: "what" }, "SMILES"), el("code", { className: "smiles", title: text }, text),
+      button("Copy", async () => app.message((await copyText(text)) ? `copied ${text}` : text)));
+  }
+
+  // an empty view (nothing given, or the last model closed): the builder, to start
+  app.onEmpty = () => {
+    openDock("builder");
+    state.hydrogens = "all";
+    app.message("An empty view: pick an atom or a ring in the Builder and click in the view to start a molecule, "
+      + "or type its SMILES. File | Open and Protein | Fetch from PDB bring in structures.");
+  };
+
 
   function mousePanel() {
     panel("mouse", "Mouse", body => {
@@ -1418,7 +2068,7 @@ export function setupUI(app) {
       on.onchange = start.oninput = strength.oninput = apply;
       body.append(row(el("label", {}, on, " depth cue")), row(el("span", { className: "what" }, "Start"), start),
                   row(el("span", { className: "what" }, "Strength"), strength));
-    }, [innerWidth - 400, innerHeight - 220]);
+    }, [innerWidth - 880, innerHeight - 210]);
   }
   function zclipPanel() {
     panel("zclip", "ZClip", body => {
@@ -1429,7 +2079,7 @@ export function setupUI(app) {
       front.oninput = back.oninput = apply;
       body.append(row(el("span", { className: "what" }, "Front"), front), row(el("span", { className: "what" }, "Back"), back),
                   row(button("Reset", () => { front.value = back.value = 1; apply(); })));
-    }, [innerWidth - 400, innerHeight - 220]);
+    }, [innerWidth - 630, innerHeight - 210]);
   }
 
   // boonza on the models: fetch a PDB entry, superpose one model on another
@@ -1492,17 +2142,19 @@ export function setupUI(app) {
     }, [innerWidth / 2 - 200, 80]);
   }
 
-  async function addModels(out) {
+  async function addModels(out, look = true) {
+    const empty = !app.shownModels().length;
     for (const info of out.models.slice(state.models.length)) state.models.push(app.newModel(info, state.models.length));
     const first = state.models[out.added[0]];
     state.current = first.index;
     await app.show([first]);
-    app.centerView();
+    if (empty) app.resetView();
+    else if (look) app.centerView();
   }
 
   // open and save: paths on the server (where the files are)
   function pathPanel(id, title, value, run) {
-    panel(id, title, body => {
+    return panel(id, title, body => {
       const input = el("input", { value, style: "width:360px", spellcheck: false });
       const go = button(title.split(" ")[0], () => run(input.value.trim()), "blue");
       input.onkeydown = e => { if (e.key === "Enter") go.click(); };
@@ -1512,9 +2164,14 @@ export function setupUI(app) {
       setTimeout(() => input.focus(), 0);
     }, [innerWidth / 2 - 220, 80]);
   }
-  function openPanel() { pathPanel("open", "Open File", "", async p => { if (await openPath(p)) panels.open?.remove(); }); }
+  function openPanel() {
+    const p = pathPanel("open", "Open File", "", async path => { if (await openPath(path)) panels.open?.remove(); });
+    p.querySelector(".body").append(row(button("Browse this computer…", browse)),
+      el("p", { className: "help" }, "Or drop files anywhere on the window."));
+  }
   function savePanel() {
-    const m = app.selection()[0]?.[0] || app.currentModel();
+    const m = actingModel();
+    if (!m) return;
     const base = (m.topo?.path || m.name).replace(/(\.[A-Za-z0-9]+)?(\.gz|\.bz2)?$/, "_edited$1");
     pathPanel("save", "Save Model", base, async p => { if (await savePath(p)) panels.save?.remove(); });
   }
@@ -1538,24 +2195,33 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); return false; }
   }
   async function savePath(path) {
-    const m = app.selection()[0]?.[0] || app.currentModel();
+    const m = actingModel();
+    if (!m) return false;
     try { const out = await app.post("api/save", { m: m.index, path }); app.message(`saved ${out.path}`); return true; }
     catch (e) { app.message(e.message, true); return false; }
   }
   async function closeModel(which = null) {
     const m = which || app.currentModel();
-    if (!m || app.live().length < 2) { app.message("the last model stays open", true); return; }
+    if (!m || m.closed) return;
     try {
       await app.post("api/close", { m: m.index });
       m.closed = true; m.shown = false;
       state.meters = state.meters.filter(x => x.model !== m);
-      state.current = app.live()[0].index;
-      if (!app.shownModels().length) await app.show([app.live()[0]]);
+      const rest = app.live();
+      if (rest.length) {
+        state.current = rest[0].index;
+        if (!app.shownModels().length) await app.show([rest[0]]);
+      }
       app.rebuild(); app.onModels(); app.onSelection();
+      app.message(`closed ${m.name}`);
+      if (!rest.length) app.onEmpty();
     } catch (e) { app.message(e.message, true); }
   }
 
   theme(localStorage.getItem("boonza.theme") || "noir");  // black by default
+  $("seqbar").hidden = localStorage.getItem("boonza.sequence") === "0";
+  const onModels = app.onModels;
+  app.onModels = () => { onModels(); paintSequence(); };
 }
 
 // --- the trackball and the dial --------------------------------------------------------------

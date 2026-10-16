@@ -137,6 +137,7 @@ uniform float uOrtho;
 uniform float uPx;         // pixels per A at the scene's centre
 uniform float uOutline;    // line width in pixels (0: none)
 uniform float uAO;         // occlusion strength (0: none)
+uniform float uRadius;     // how far occlusion looks, in pixels
 uniform vec4 uBack;        // background (alpha 0: transparent)
 out vec4 frag;
 float viewZ(ivec2 q) {     // distance in front of the eye (A)
@@ -152,8 +153,10 @@ void main() {
   float edge = 0.0;
   if (uOutline > 0.0) {
     int w = int(max(uOutline, 1.0));
-    for (int k = 0; k < 4; k++) {
-      ivec2 o = ivec2(k == 0 ? w : k == 1 ? -w : 0, k == 2 ? w : k == 3 ? -w : 0);
+    for (int k = 0; k < 8; k++) {   // the four sides and the four corners
+      ivec2 o = ivec2(k < 4 ? (k == 0 ? w : k == 1 ? -w : 0) : (k < 6 ? w : -w),
+                      k < 4 ? (k == 2 ? w : k == 3 ? -w : 0) : (k % 2 == 0 ? w : -w));
+      if (k >= 4) o = ivec2(vec2(o) * 0.7071);
       float z2 = viewZ(clamp(q + o, ivec2(0), size - 1));
       if (z2 - z > 1.5) edge = 1.0;   // something 1.5 A or more behind it: an edge
     }
@@ -164,12 +167,13 @@ void main() {
   }
   float occ = 0.0;
   if (uAO > 0.0) {
-    const int N = 24;
-    float r = 6.0 * uPx;   // look 6 A around
+    const int N = 32;
+    // each pixel turns the spiral of samples its own way: noise that averages out
+    float turn = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     for (int k = 0; k < N; k++) {
-      float a = float(k) * 2.39996;            // golden angle: a spiral of samples
+      float a = float(k) * 2.39996 + turn;     // golden angle: a spiral of samples
       float s = sqrt((float(k) + 0.5) / float(N));
-      ivec2 o = ivec2(cos(a) * s * r, sin(a) * s * r);
+      ivec2 o = ivec2(cos(a) * s * uRadius, sin(a) * s * uRadius);
       float z2 = viewZ(clamp(q + o, ivec2(0), size - 1));
       float dz = z - z2;                        // how much nearer the surface there is
       occ += smoothstep(0.3, 2.5, dz) * (1.0 - smoothstep(6.0, 10.0, dz));
@@ -195,7 +199,7 @@ export class Renderer {
       cylinder: this.program(CYLINDER_VS, SURFACE_FS),
       mesh: this.program(MESH_VS, SURFACE_FS),
       line: this.program(LINE_VS, LINE_FS),
-      post: this.program(POST_VS, POST_FS, ["uColor", "uDepth", "uClip", "uOrtho", "uPx", "uOutline", "uAO", "uBack"]),
+      post: this.program(POST_VS, POST_FS, ["uColor", "uDepth", "uClip", "uOrtho", "uPx", "uOutline", "uAO", "uRadius", "uBack"]),
     };
     this.publication = false;  // the finishing pass on screen too
     this.counts = { spheres: 0, cylinders: 0, mesh: 0, lines: 0 };
@@ -207,24 +211,34 @@ export class Renderer {
     this.sphereBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 1, null, 1),
                       this.attribute(3, 3, null, 1)];
 
-    // cylinders: an open tube of SIDES quads, plus per-instance ends, radius, color
-    const local = [], index = [];
-    for (let k = 0; k <= SIDES; k++) {
-      const a = 2 * Math.PI * k / SIDES;
-      local.push(Math.cos(a), Math.sin(a), 0, Math.cos(a), Math.sin(a), 1);
+    // cylinders: an open tube of quads, plus per-instance ends, radius, color; a
+    // picture (detail 2) draws them rounder from the same instances
+    this.cylinderBuf = null;
+    this.cylinders = {};
+    for (const [detail, sides] of [[1, SIDES], [2, 36]]) {
+      const local = [], index = [];
+      for (let k = 0; k <= sides; k++) {
+        const a = 2 * Math.PI * k / sides;
+        local.push(Math.cos(a), Math.sin(a), 0, Math.cos(a), Math.sin(a), 1);
+      }
+      for (let k = 0; k < sides; k++) {
+        const i = 2 * k;
+        index.push(i, i + 2, i + 1, i + 1, i + 2, i + 3);
+      }
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      this.attribute(0, 3, new Float32Array(local));
+      if (!this.cylinderBuf) {
+        this.cylinderBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 3, null, 1),
+                            this.attribute(3, 1, null, 1), this.attribute(4, 3, null, 1)];
+      } else {
+        [[1, 3], [2, 3], [3, 1], [4, 3]].forEach(([loc, size], k) => this.bind(this.cylinderBuf[k], loc, size, 1));
+      }
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(index), gl.STATIC_DRAW);
+      this.cylinders[detail] = { vao, count: index.length };
     }
-    for (let k = 0; k < SIDES; k++) {
-      const i = 2 * k;
-      index.push(i, i + 2, i + 1, i + 1, i + 2, i + 3);
-    }
-    this.cylinderVao = gl.createVertexArray();
-    gl.bindVertexArray(this.cylinderVao);
-    this.attribute(0, 3, new Float32Array(local));
-    this.cylinderBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 3, null, 1),
-                        this.attribute(3, 1, null, 1), this.attribute(4, 3, null, 1)];
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(index), gl.STATIC_DRAW);
-    this.cylinderIndices = index.length;
+    this.detail = 1;
 
     this.meshVao = gl.createVertexArray();
     gl.bindVertexArray(this.meshVao);
@@ -262,6 +276,14 @@ export class Renderer {
     gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
     if (divisor) gl.vertexAttribDivisor(loc, divisor);
     return buf;
+  }
+
+  bind(buf, loc, size, divisor = 0) {  // an existing buffer as an attribute of the bound VAO
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    if (divisor) gl.vertexAttribDivisor(loc, divisor);
   }
 
   upload(buffers, arrays) {
@@ -333,8 +355,9 @@ export class Renderer {
     return this.targets[key];
   }
 
-  // the finishing pass, from a target into the bound framebuffer
-  finish(camera, t, w, h, { outline = 1, ao = 0.6, back = null } = {}) {
+  // the finishing pass, from a target into the bound framebuffer; ``px``: pixels per A
+  // at the scene's centre (a picture's tiles pass the whole picture's)
+  finish(camera, t, w, h, { outline = 1, ao = 0.6, back = null, px = null, radius = null } = {}) {
     const gl = this.gl, { p, uniforms: u } = this.programs.post;
     gl.viewport(0, 0, w, h);
     gl.disable(gl.DEPTH_TEST);
@@ -343,63 +366,102 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, t.depth); gl.uniform1i(u.uDepth, 1);
     gl.uniform2fv(u.uClip, camera.clip());
     gl.uniform1f(u.uOrtho, camera.ortho ? 1 : 0);
-    const px = camera.ortho ? h / (2 * camera.halfHeight()) : h / 2 / Math.tan(camera.fov / 2) / camera.distance;
+    px = px ?? (camera.ortho ? h / (2 * camera.halfHeight()) : h / 2 / Math.tan(camera.fov / 2) / camera.distance);
     gl.uniform1f(u.uPx, px);
     gl.uniform1f(u.uOutline, outline);
     gl.uniform1f(u.uAO, ao);
+    gl.uniform1f(u.uRadius, radius ?? Math.min(5 * px, 0.08 * Math.min(w, h)));
     gl.uniform4fv(u.uBack, back || [...this.background, 1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.activeTexture(gl.TEXTURE0);
     gl.enable(gl.DEPTH_TEST);
   }
 
-  // a picture of w x h pixels (sharper than the screen: drawn at up to twice that
-  // and scaled down), finished with outlines and occlusion; a canvas to save
-  picture(camera, w, h, { outline = true, ao = true, background = null, transparent = false, fog = true } = {}) {
-    const gl = this.gl, max = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), 8192);
-    const ss = Math.max(1, Math.min(2, Math.floor(max / Math.max(w, h))));
-    const W = w * ss, H = h * ss;
+  // a picture of w x h pixels: drawn `quality` times larger in tiles (so any size fits
+  // the GPU), finished with outlines and occlusion, and averaged down -- the edges come
+  // out smooth.  Returns a canvas.
+  picture(camera, w, h, { outline = true, ao = true, background = null, transparent = false, fog = true,
+                          quality = 3 } = {}) {
+    const gl = this.gl;
+    const ss = Math.max(1, Math.min(4, Math.round(quality)));
+    const vp = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+    const maxTex = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), vp[0], vp[1], 4096);
+    const W = w * ss, H = h * ss;  // the whole drawing, never held at once
+    const proj = camera.projection(W / H);
+    const px = camera.ortho ? H / (2 * camera.halfHeight()) : H / 2 / Math.tan(camera.fov / 2) / camera.distance;
+    const radius = ao ? Math.min(5 * px, 0.15 * maxTex) : 0;
+    const line = outline ? Math.max(1, Math.round(ss * Math.max(1, Math.min(w, h) / 1100))) : 0;
+    const pad = Math.ceil(radius + line + 2);
+    const tile = Math.max(64, Math.floor((maxTex - 2 * pad) / ss));  // output pixels per tile side
     const keep = { bg: this.background, fog: this.fog.on };
     if (background) this.background = background;
     this.fog.on = fog && !transparent;
-    const scene = this.target(W, H, "picture-scene");
-    this.drawScene(camera, W, H, scene.fb);
-    const out = this.target(W, H, "picture-out");
-    gl.bindFramebuffer(gl.FRAMEBUFFER, out.fb);
-    this.finish(camera, scene, W, H, { outline: outline ? Math.max(1, Math.round(ss * h / 900)) : 0,
-                                       ao: ao ? 0.6 : 0, back: transparent ? [0, 0, 0, 0] : null });
-    const pixels = new Uint8Array(W * H * 4);
-    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    for (const k of ["picture-scene", "picture-out"]) {  // big: let them go
-      const t = this.targets[k];
-      gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.color); gl.deleteTexture(t.depth);
-      delete this.targets[k];
+    const out = new ImageData(w, h), n = ss * ss;
+    try {
+      for (let y0 = 0; y0 < h; y0 += tile) {
+        for (let x0 = 0; x0 < w; x0 += tile) {
+          const tw = Math.min(tile, w - x0), th = Math.min(tile, h - y0);
+          // the tile's part of the drawing, padded (y counts down from the top)
+          const X0 = x0 * ss - pad, Y0 = y0 * ss - pad, TW = tw * ss + 2 * pad, TH = th * ss + 2 * pad;
+          const xl = 2 * X0 / W - 1, xr = 2 * (X0 + TW) / W - 1;
+          const yt = 1 - 2 * Y0 / H, yb = 1 - 2 * (Y0 + TH) / H;
+          const sx = 2 / (xr - xl), sy = 2 / (yt - yb), tx = -(xr + xl) / (xr - xl), ty = -(yt + yb) / (yt - yb);
+          const P = new Float32Array(16);  // [sx 0 0 tx; 0 sy 0 ty; 0 0 1 0; 0 0 0 1] * proj
+          for (let c = 0; c < 4; c++) {
+            const p0 = proj[4 * c], p1 = proj[4 * c + 1], p2 = proj[4 * c + 2], p3 = proj[4 * c + 3];
+            P[4 * c] = sx * p0 + tx * p3; P[4 * c + 1] = sy * p1 + ty * p3; P[4 * c + 2] = p2; P[4 * c + 3] = p3;
+          }
+          const scene = this.target(TW, TH, "picture-scene");
+          this.drawScene(camera, TW, TH, scene.fb, P);
+          const fin = this.target(TW, TH, "picture-out");
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fin.fb);
+          this.finish(camera, scene, TW, TH, { outline: line, ao: ao ? 0.6 : 0, px, radius,
+                                                back: transparent ? [0, 0, 0, 0] : null });
+          const pixels = new Uint8Array(TW * TH * 4);
+          gl.readPixels(0, 0, TW, TH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+          // average each ss x ss block (colours weighted by coverage, for transparency)
+          for (let oy = 0; oy < th; oy++) {
+            for (let ox = 0; ox < tw; ox++) {
+              let r = 0, g = 0, b = 0, a = 0;
+              for (let dy = 0; dy < ss; dy++) {
+                const row = TH - 1 - (pad + oy * ss + dy);  // GL rows count up from the bottom
+                let k = 4 * (row * TW + pad + ox * ss);
+                for (let dx = 0; dx < ss; dx++, k += 4) {
+                  const al = pixels[k + 3];
+                  r += pixels[k] * al; g += pixels[k + 1] * al; b += pixels[k + 2] * al; a += al;
+                }
+              }
+              const o = 4 * ((y0 + oy) * w + x0 + ox);
+              if (a > 0) { out.data[o] = r / a; out.data[o + 1] = g / a; out.data[o + 2] = b / a; }
+              out.data[o + 3] = a / n;
+            }
+          }
+        }
+      }
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      for (const k of ["picture-scene", "picture-out"]) {  // big: let them go
+        const t = this.targets?.[k];
+        if (!t) continue;
+        gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.color); gl.deleteTexture(t.depth);
+        delete this.targets[k];
+      }
+      this.background = keep.bg; this.fog.on = keep.fog;
     }
-    this.background = keep.bg; this.fog.on = keep.fog;
-    // rows come bottom up; turn them over, then scale down to w x h
-    const big = document.createElement("canvas");
-    big.width = W; big.height = H;
-    const img = new ImageData(W, H), row = W * 4;
-    for (let y = 0; y < H; y++) img.data.set(pixels.subarray((H - 1 - y) * row, (H - y) * row), y * row);
-    big.getContext("2d").putImageData(img, 0, 0);
-    if (ss === 1) return big;
-    const small = document.createElement("canvas");
-    small.width = w; small.height = h;
-    const g = small.getContext("2d");
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
-    g.drawImage(big, 0, 0, w, h);
-    return small;
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").putImageData(out, 0, 0);
+    return canvas;
   }
 
-  drawScene(camera, width, height, fb = null) {
+  drawScene(camera, width, height, fb = null, projection = null) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.viewport(0, 0, width, height);
     gl.clearColor(...this.background, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
-    const view = camera.view(), proj = camera.projection(width / height);
+    const view = camera.view(), proj = projection || camera.projection(width / height);
     // fog: from `start` (a fraction of the scene's depth in front of its centre) to its back
     const f = this.fog, depth = camera.radius * 1.5;
     const fog = f.on
@@ -422,8 +484,9 @@ export class Renderer {
     }
     if (n.cylinders) {
       use(this.programs.cylinder);
-      gl.bindVertexArray(this.cylinderVao);
-      gl.drawElementsInstanced(gl.TRIANGLES, this.cylinderIndices, gl.UNSIGNED_SHORT, 0, n.cylinders);
+      const cyl = this.cylinders[this.detail] || this.cylinders[1];
+      gl.bindVertexArray(cyl.vao);
+      gl.drawElementsInstanced(gl.TRIANGLES, cyl.count, gl.UNSIGNED_SHORT, 0, n.cylinders);
     }
     if (n.mesh) {
       use(this.programs.mesh);

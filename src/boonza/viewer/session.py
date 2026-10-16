@@ -318,9 +318,14 @@ class Session:
                 self._cache.popitem(last=False)
             return out
 
+    def _box(self, box):
+        """The box distances wrap in: a trajectory's; a structure's crystal cell is not
+        one (it would put symmetry mates' contacts in the asymmetric unit)."""
+        return box if self.trajectory is not None and box.any() else None
+
     def select(self, text: str, frame: int = 0) -> np.ndarray:
         pos, box = self.frame(frame)
-        return self.system.select(text, pos=pos.astype(np.float64), cell=box).ids
+        return self.system.select(text, pos=pos.astype(np.float64), cell=self._box(box)).ids
 
     def ss(self, frame: int = 0) -> list[str]:
         """Simplified DSSP per residue ("H", "E", "C", "" for non-protein)."""
@@ -335,7 +340,7 @@ class Session:
                 else:
                     pos, box = self.frame(frame)
                     row = dssp(self.system, pos.astype(np.float64), simplified=True,
-                               box=box if box.any() else None)[0]  # fmt: skip
+                               box=self._box(box))[0]  # fmt: skip
                     codes = ["" if c == "NA" else str(c) for c in row]
                 if len(self._ss) > CACHE:
                     self._ss.clear()
@@ -493,7 +498,8 @@ class Session:
 
     def _remember(self) -> None:
         self._undo = getattr(self, "_undo", [])
-        self._undo.append((self.system.copy(), getattr(self, "topo_version", 0)))
+        self._undo.append((self.system.copy(), getattr(self, "topo_version", 0), self.ids,
+                           self.radii))  # fmt: skip
         del self._undo[: -self.UNDO]
         self._redo = []  # a new edit ends what could be redone
 
@@ -512,12 +518,14 @@ class Session:
         result's ``picked`` is where ``atoms`` went (-1 for deleted ones)."""
         from . import edit
 
-        self._editable()
         s = self.system
         atoms = [int(a) for a in atoms]
         if any(not 0 <= a < s.natoms for a in atoms):
             raise IndexError("atom index out of range")
-        if not atoms and op not in ("molecule", "cap"):
+        if op == "delete" and (self.trajectory is not None or self.radii is not None):
+            return self._drop(atoms)
+        self._editable()
+        if not atoms and op not in ("molecule", "cap", "cleanup", "protonate"):
             raise ValueError("pick atoms first")
         if op == "molecule":  # a new molecule from SMILES, at the view's centre
             from .edit import add_molecule
@@ -533,6 +541,25 @@ class Session:
                 return {**self._changed(topology=True), "picked": []}
         if op == "cap" and not atoms:  # every chain
             atoms = list(range(s.natoms))
+        if op == "cleanup":  # positions only
+            return self._geometry_edit(lambda s: edit.clean_up(s, atoms))
+        if op == "protonate":  # the force field's hydrogens: amino acids and water by template
+            with self._lock:
+                self._remember()
+                try:
+                    report = edit.protonate(s)
+                    # the rest (ligands, cofactors) by valence
+                    known = self.system.select("protein or water").ids
+                    rest = np.setdiff1d(np.arange(s.natoms), known)
+                    rest = rest[np.asarray(s.atoms["anum"])[rest] > 1]
+                    before = s.natoms
+                    edit.adjust_hydrogens(s, rest.tolist())
+                    report["ligand_hydrogens"] = s.natoms - before
+                except Exception:
+                    self.system = self._undo.pop()[0]
+                    raise
+                self._param = None
+                return {**self._changed(topology=True), **report, "picked": []}
         with self._lock:
             self._remember()
             s.atoms["view_edit"] = np.arange(1, s.natoms + 1, dtype=np.int64)  # follows atoms
@@ -585,7 +612,8 @@ class Session:
                     hydrogens = False
                 else:
                     raise ValueError(f"unknown edit {op!r}")
-                if hydrogens:
+                # a structure without hydrogens (most PDB entries) keeps none
+                if hydrogens and (np.asarray(s.atoms["anum"]) == 1).any():
                     edit.adjust_hydrogens(s, [a for a in touched if a < s.natoms])
             except Exception:
                 self.system = self._undo.pop()[0]
@@ -595,23 +623,200 @@ class Session:
             s.atoms.del_prop("view_edit")
             return {**self._changed(topology=True), "picked": [where.get(a, -1) for a in atoms]}
 
+    def _drop(self, atoms) -> dict:
+        """Delete from a trajectory's view, or points of a set of spheres: the atoms
+        (and their hydrogens) leave what is drawn; the file and trajectory stay."""
+        from .edit import neighbors
+
+        if not atoms:
+            raise ValueError("pick atoms first")
+        s = self.system
+        gone = set(atoms)
+        for a in atoms:
+            gone |= {b for b, _ in neighbors(s, a) if s.atoms["anum"][b] == 1}
+        keep = np.setdiff1d(np.arange(s.natoms), sorted(gone))
+        if not len(keep):
+            raise ValueError("that is every atom: close the model instead (File | Close)")
+        with self._lock:
+            self._remember()
+            full = np.arange(s.natoms) if self.ids is None else self.ids
+            self.ids = np.asarray(full[keep], np.int64)
+            self.system = s.clone(keep)
+            if self.radii is not None:
+                self.radii = self.radii[keep]
+            picked = np.full(s.natoms, -1, np.int64)
+            picked[keep] = np.arange(len(keep))
+            return {**self._changed(topology=True), "picked": picked[atoms].tolist()}
+
+    def smiles(self, atoms=()) -> list[dict]:
+        """SMILES of each molecule the atoms are in (default: every molecule that is not
+        polymer, water or ions): canonical, isomeric, hydrogens implicit."""
+        from rdkit import Chem
+
+        from ..chem import to_rdkit
+
+        s = self.system
+        if self.radii is not None:
+            return []
+        frag = np.asarray(s.fragids)
+        if len(atoms):
+            frags = sorted({int(frag[int(a)]) for a in atoms})
+        else:
+            small = CG_LIGAND if self.cg else "not (protein or nucleic or water or ions)"
+            ids = s.select(small).ids
+            frags = sorted({int(f) for f in frag[ids]})
+        out = []
+        for f in frags[:50]:
+            ids = np.flatnonzero(frag == f)
+            heavy = int((np.asarray(s.atoms["anum"])[ids] > 1).sum())
+            r = int(s.atoms["residue"][ids[0]])
+            name = str(s.residues["name"][r])
+            if self.cg:
+                out.append({"name": name, "atoms": len(ids), "heavy": heavy, "smiles": "",
+                            "note": "beads have no SMILES"})  # fmt: skip
+                continue
+            if heavy > 300:
+                out.append({"name": name, "atoms": len(ids), "heavy": heavy, "smiles": "",
+                            "note": f"{heavy} heavy atoms: too large for a SMILES"})  # fmt: skip
+                continue
+            try:
+                mol = to_rdkit(s, ids, sanitize=True, implicit_hydrogens=True)
+                text = Chem.MolToSmiles(Chem.RemoveHs(mol))
+                note = ""
+            except Exception as e:  # a valence RDKit rejects (a metal, a half-built atom)
+                mol = to_rdkit(s, ids, sanitize=False, implicit_hydrogens=False)
+                text = Chem.MolToSmiles(mol)
+                note = f"not a valid molecule ({str(e).splitlines()[0][:80]})"
+            out.append({"name": name, "atoms": len(ids), "heavy": heavy, "smiles": text,
+                        "note": note})  # fmt: skip
+        return out
+
+    #: what Download writes, by extension
+    FORMATS = ("pdb", "cif", "sdf", "mae", "dms", "gro")
+
+    def molecules(self, atoms=()) -> list[np.ndarray]:
+        """The atoms of each molecule ``atoms`` are in (default: each small molecule)."""
+        s = self.system
+        frag = np.asarray(s.fragids)
+        if len(atoms):
+            frags = sorted({int(frag[int(a)]) for a in atoms})
+        else:
+            small = CG_LIGAND if self.cg else "not (protein or nucleic or water or ions)"
+            frags = sorted({int(f) for f in frag[s.select(small).ids]})
+        return [np.flatnonzero(frag == f) for f in frags]
+
+    def export(self, fmt: str, atoms=(), frame: int = 0) -> tuple[bytes, str]:
+        """The model (or ``atoms``) as a file's bytes and a name for it, at ``frame``.
+        SDF holds one entry per molecule: those of ``atoms``, else the small ones."""
+        import tempfile
+        from pathlib import Path
+
+        from ..io import save
+        from ..io.sdf import save_sdf
+
+        fmt = fmt.lower().lstrip(".")
+        if fmt not in self.FORMATS:
+            raise ValueError(f"download as one of {', '.join(self.FORMATS)}")
+        s = self.system.clone()
+        s.positions = np.asarray(self.frame(frame)[0], float)
+        atoms = [int(a) for a in atoms]
+        stem = Path(self.title or "model").name.split(".")[0].replace(" ", "_") or "model"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"out.{fmt}"
+            if fmt == "sdf":
+                mols = self.molecules(atoms)
+                if not mols:
+                    raise ValueError("no molecule to write: select one (double-click it)")
+                if sum(len(m) for m in mols) > 20000:
+                    raise ValueError("SDF is for molecules: select the ligands to write")
+                for k, ids in enumerate(mols):
+                    save_sdf(s.clone(ids), path, append=k > 0)
+                name = f"{stem}_{'molecules' if len(mols) > 1 else 'molecule'}.sdf"
+            else:
+                save(s.clone(atoms) if atoms else s, path)
+                name = f"{stem}{'_selection' if atoms else ''}.{fmt}"
+            return path.read_bytes(), name
+
+    def hbonds(self, a: str, b: str | None = None, frame: int = 0) -> dict:
+        """Hydrogen bonds between selections ``a`` and ``b`` (default: ``a`` and the
+        rest).  With hydrogens, by geometry (D-A within 3.5 A, D-H...A above 120
+        degrees, as viewers draw them); without, N and O pairs within 3.5 A of different
+        residues."""
+        from ..hbonds import hbonds
+
+        if self.cg or self.radii is not None:
+            raise ValueError("hydrogen bonds need atoms, not beads or points")
+        s = self.system
+        pos, box = self.frame(frame)
+        pos = np.asarray(pos, np.float64)
+        chains = a == "@chains"  # every interface: pairs of atoms in different chains
+
+        def side(x):
+            if isinstance(x, list | tuple | np.ndarray):
+                return np.asarray(x, np.int64)
+            if x == "@ligand":
+                x = f"same residue as ({self.ligand or LIGAND})"
+            return self.select("not water" if x == "@chains" else x, frame)
+
+        A = side(a)
+        B = A if chains else side(b) if b else np.setdiff1d(np.arange(s.natoms), A)
+        if not len(A) or not len(B):
+            raise ValueError("no atoms on one side")
+        anum = np.asarray(s.atoms["anum"])
+        both = np.union1d(A, B)
+        # hydrogens placed: most nitrogens carry one (a ligand built with them beside a
+        # crystal structure without them does not count)
+        bi, bj = np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"])
+        with_h = np.zeros(s.natoms, bool)
+        with_h[bi[anum[bj] == 1]] = True
+        with_h[bj[anum[bi] == 1]] = True
+        nitrogens = both[anum[both] == 7]
+        if len(nitrogens) and with_h[nitrogens].mean() > 0.5:
+            box = self._box(box)
+            r = hbonds(
+                s,
+                pos,
+                box=box if box is not None else np.zeros((3, 3)),
+                between=(A, B),
+                d_a_cutoff=3.5,
+                angle_cutoff=120.0,
+            )  # a viewer's, looser than MD's
+            found = zip(r.donor, r.acceptor, r.distance, strict=True)
+            pairs = [[int(d), int(x), round(float(dist), 2)] for d, x, dist in found]
+            how = "D-A within 3.5 A, D-H...A above 120 degrees"
+        else:
+            res = np.asarray(s.atoms["residue"])
+            na = A[np.isin(anum[A], (7, 8))]
+            nb = B[np.isin(anum[B], (7, 8))]
+            pairs = []
+            if len(na) and len(nb):
+                d = np.linalg.norm(pos[na][:, None] - pos[nb][None], axis=2)
+                i, j = np.nonzero((d <= 3.5) & (res[na][:, None] != res[nb][None]))
+                pairs = [[int(na[x]), int(nb[y]), round(float(d[x, y]), 2)]
+                         for x, y in zip(i, j, strict=True)]  # fmt: skip
+            how = "no hydrogens: N and O pairs within 3.5 A"
+        if chains:
+            chain = np.asarray(s.residues["chain"])[np.asarray(s.atoms["residue"])]
+            pairs = [p for p in pairs if chain[p[0]] != chain[p[1]]]
+        return {"pairs": pairs, "method": how}
+
     def undo(self) -> dict:
         if not getattr(self, "_undo", None):
             raise ValueError("nothing to undo")
         with self._lock:
             self._redo = getattr(self, "_redo", [])
-            self._redo.append((self.system, getattr(self, "topo_version", 0)))
-            self.system, topo = self._undo.pop()
-            self.topo_version = topo
+            self._redo.append((self.system, getattr(self, "topo_version", 0), self.ids,
+                               self.radii))  # fmt: skip
+            self.system, self.topo_version, self.ids, self.radii = self._undo.pop()
             return self._changed(topology=True)
 
     def redo(self) -> dict:
         if not getattr(self, "_redo", None):
             raise ValueError("nothing to redo")
         with self._lock:
-            self._undo.append((self.system, getattr(self, "topo_version", 0)))
-            self.system, topo = self._redo.pop()
-            self.topo_version = topo
+            self._undo.append((self.system, getattr(self, "topo_version", 0), self.ids,
+                               self.radii))  # fmt: skip
+            self.system, self.topo_version, self.ids, self.radii = self._redo.pop()
             return self._changed(topology=True)
 
     def _geometry_edit(self, change) -> dict:
@@ -806,7 +1011,12 @@ class Session:
             ids = s.select(f"same residue as ({self.ligand or LIGAND})").ids
             if not len(ids):
                 raise ValueError("no ligand: choose one (Ligand | Choose Ligand)")
-            lig = [int(ids[0])]
+            # the largest of them (a heme, not the phosphate beside it)
+            heavy = ids[np.asarray(s.atoms["anum"])[ids] > 1]
+            ids = heavy if len(heavy) else ids
+            res = np.asarray(s.atoms["residue"])[ids]
+            biggest = np.bincount(res).argmax()
+            lig = [int(ids[res == biggest][0])]
         mol_atoms = np.flatnonzero(np.isin(frag, frag[lig]))
         polymer = set(s.select("protein or nucleic").ids.tolist())
         if polymer & set(mol_atoms.tolist()):  # bonded to the protein (heme, a covalent

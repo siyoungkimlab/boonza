@@ -836,3 +836,180 @@ def test_memory_trajectory_and_frame_links():
     np.testing.assert_allclose(session.frame(1)[0], pos + 1.0, atol=1e-4)
     m = viewer.Model("site", lambda: session, frame={"model": "frames", "i": 1})
     assert m.info()["frame"] == {"model": "frames", "i": 1}
+
+
+def test_an_empty_view_builds_molecules(served):
+    get, post = served(viewer.Viewer([]))
+    assert json.loads(get("api/models")[2])["models"] == []
+    assert _parser().parse_args(["view"]).paths == []
+    status, out = post("api/build", {"smiles": "c1ccccc1O", "centre": [1, 2, 3]})
+    assert status == 200 and out["added"] == [0] and out["models"][0]["group"] == "built"
+    pos = np.frombuffer(get("api/frame?m=0&i=0")[2], "<f4").reshape(-1, 3)
+    assert np.allclose(pos.mean(0), [1, 2, 3], atol=1e-3)
+    mols = json.loads(get("api/smiles?m=0")[2])["molecules"]
+    assert [x["smiles"] for x in mols] == ["Oc1ccccc1"]
+    # a second molecule into the same model: a residue number of its own, its own SMILES
+    acid = {"smiles": "CC(=O)O", "centre": [9, 0, 0]}
+    out = post("api/edit", {"m": 0, "op": "molecule", "value": acid})[1]
+    topo = json.loads(get("api/topology?m=0")[2])
+    assert len(set(topo["residues"]["resid"])) == 2
+    mols = json.loads(get(f"api/smiles?m=0&sel={out['natoms'] - 1}")[2])["molecules"]
+    assert [x["smiles"] for x in mols] == ["CC(=O)O"]
+    assert len(json.loads(get("api/smiles?m=0")[2])["molecules"]) == 2
+    # built: every atom drawn, hydrogens too
+    assert topo["reps"] == [{"sel": "all", "style": "ballstick", "color": "element"}]
+
+
+def test_delete_from_a_trajectory_and_from_points(tmp_path):
+    s = boonza.load(DATA / "1LYZ.cif")
+    path = tmp_path / "moved.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        for shift in ([0, 0, 0], [3, 0, 0]):
+            w.write(s.positions + shift)
+    session = viewer.Session(s, boonza.open_trajectory(path, s), whole=False)
+    gone = s.select("resid 20").ids
+    out = session.edit("delete", gone.tolist())
+    keep = np.setdiff1d(np.arange(s.natoms), gone)
+    assert out["natoms"] == len(keep) and set(out["picked"]) == {-1}
+    pos, _ = session.frame(1)
+    assert np.allclose(pos, s.positions[keep] + [3, 0, 0], atol=1e-3)  # the file is untouched
+    session.undo()
+    assert session.system.natoms == s.natoms and session.frame(1)[0].shape == (s.natoms, 3)
+    with pytest.raises(ValueError, match="every atom"):
+        session.edit("delete", list(range(s.natoms)))
+
+    points = viewer.outputs.sphere_session(np.eye(3) * 4, np.array([1.0, 2.0, 3.0]), [], "red")
+    points.edit("delete", [1])
+    assert points.system.natoms == 2 and points.radii.tolist() == [1.0, 3.0]
+
+
+def test_hydrogens_get_names_of_their_own():
+    from boonza.viewer import edit
+
+    assert edit._free_h_name({"H1"}, "") == "H2"
+    assert edit._free_h_name({"HD11", "HD12"}, "D11") not in {"HD11", "HD12"}
+    # a backbone N left without its peptide bond wants two hydrogens: both named apart
+    s = boonza.load(DATA / "1LYZ.cif")
+    n = int(s.select("resid 21 and name N").ids[0])
+    index = edit.delete(s, s.select("resid 20").ids)
+    n = int(index[n])
+    edit.adjust_hydrogens(s, [n])
+    hs = [b for b, _ in edit.neighbors(s, n) if s.atoms["anum"][b] == 1]
+    names = [str(x) for x in s.atoms["name"][s.residue_atoms(int(s.atoms["residue"][n]))]]
+    assert len(hs) == 2 and len(names) == len(set(names))
+    # a structure without hydrogens gets none from an edit
+    s = boonza.load(DATA / "1LYZ.cif")
+    session = viewer.Session(s)
+    session.edit("delete", s.select("resid 20").ids.tolist(), hydrogens=True)
+    assert not (np.asarray(session.system.atoms["anum"]) == 1).any()
+
+
+def test_clean_up_relaxes_a_molecule():
+    s = boonza.from_smiles("CCO")
+    pos = np.array(s.positions)
+    pos[1] += [0.8, 0, 0]  # a C-C bond stretched
+    s.positions = pos
+    session = viewer.Session(s)
+    out = session.edit("cleanup", [])
+    assert out["molecules"] == 1 and out["forcefield"] == "MMFF94"
+    p = session.system.positions
+    assert abs(np.linalg.norm(p[0] - p[1]) - 1.51) < 0.05
+
+
+@pytest.mark.parametrize("path", ["1LYZ.pdb", "2TRX.pdb", "1FNA.pdb"])
+def test_hydrogens_from_the_templates_parameterize(path):
+    """A crystal structure (no hydrogens, alternate locations, distorted geometry,
+    unresolved side chains) takes ff19SB after Add Hydrogens."""
+    from boonza.viewer import edit
+
+    s = boonza.load(DATA / path)
+    out = edit.protonate(s)
+    assert out["hydrogens"] > 600 and not out["incomplete"]
+    names = [str(x) for x in s.atoms["name"]]
+    first = s.residue_atoms(0)
+    assert {"H1", "H2", "H3"} <= {names[a] for a in first}  # NH3+
+    assert int(np.asarray(s.atoms["formal_charge"]).sum()) == round(
+        float(
+            np.sum(
+                edit.parameterize(
+                    s.clone(s.select("protein or water").ids), log=lambda *a: None
+                ).atoms["charge"]
+            )
+        )  # fmt: skip
+    )
+    res = np.asarray(s.atoms["residue"])
+    assert (np.diff(res) >= 0).all()  # each residue in one piece
+    if path == "1FNA.pdb":
+        assert out["rebuilt"] == ["ARG6", "ASP7"]
+    if path == "2TRX.pdb":
+        assert out["alternates"] == 44
+
+
+def test_add_hydrogens_then_minimize_a_crystal_structure():
+    session = viewer.Session(boonza.load(DATA / "1LYZ.pdb"))
+    out = session.edit("protonate")
+    assert out["hydrogens"] == 1161 and out["topology"]
+    heavy = session.system.select("not hydrogen").ids.tolist()
+    report = session.minimize(fixed=[], tethered=heavy, restraint=10)
+    assert report["energy_after"] < 0 < report["energy_before"]
+    assert session.atom_info(0, assign=True)["type"] == "N3"
+    session.undo()
+    session.undo()
+    assert session.system.natoms == 1102
+
+
+def test_a_placeholder_cell_is_no_cell(tmp_path):
+    """Cryo-EM and NMR entries carry a 1 x 1 x 1 A cell: no box, so secondary
+    structure and distances are those of the structure itself."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    ss = viewer.Session(s).topology()["ss"]
+    text = (DATA / "1LYZ.pdb").read_text().splitlines()
+    text = [ln for ln in text if not ln.startswith("CRYST1")]
+    text.insert(0, "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1")
+    path = tmp_path / "em.pdb"
+    path.write_text("\n".join(text) + "\n")
+    em = boonza.load(path)  # the cell is read as msys reads it: 1 A
+    assert viewer.Session(em).topology()["ss"] == ss and "H" in ss
+    # a crystal's cell is kept, but distances do not wrap in it for one structure
+    assert s.cell.any()
+    near = viewer.Session(s).select("within 3 of resid 1")
+    assert len(near) == len(s.select("within 3 of resid 1"))
+
+
+def test_download_upload_copy_into_and_hbonds(served):
+    v = viewer.Viewer([])
+    get, post = served(v)
+    post("api/build", {"smiles": "CC(=O)Nc1ccc(O)cc1", "centre": [0, 0, 0]})
+    post("api/edit", {"m": 0, "op": "molecule", "value": {"smiles": "CCO", "centre": [8, 0, 0]}})
+    # SDF: one entry per molecule, and a file name to keep
+    status, _ = post("api/download", {"m": 0, "fmt": "xyz"})
+    assert status == 400
+    session = v.session(0)
+    data, name = session.export("sdf")
+    assert data.decode().count("$$$$") == 2 and name.endswith("_molecules.sdf")
+    data, name = session.export("pdb", [0, 1, 2])
+    lines = data.decode().splitlines()
+    assert (
+        name.endswith("_selection.pdb") and sum(ln[:6] in ("ATOM  ", "HETATM") for ln in lines) == 3
+    )
+    with pytest.raises(ValueError, match="download as"):
+        session.export("xyz")
+    # a file from the browser: opened, saved by default where boonza view runs
+    added = v.upload("lyz.pdb", (DATA / "1LYZ.pdb").read_bytes())
+    lyz = v.session(added[0])
+    assert lyz.system.natoms == 1102 and lyz.path.name == "lyz.pdb"
+    # the ligand into the protein, and back out with Undo
+    out = v.copy_into(0, added[0])
+    assert out["added"] == session.system.natoms and lyz.system.natoms == 1102 + out["added"]
+    lyz.undo()
+    assert lyz.system.natoms == 1102
+    # hydrogen bonds: without hydrogens by N and O distance; with them by geometry
+    plain = lyz.hbonds("resid 1 to 20", "resid 21 to 129")
+    assert plain["method"].startswith("no hydrogens") and len(plain["pairs"]) > 10
+    lyz.edit("protonate")
+    placed = lyz.hbonds("resid 1 to 20", "resid 21 to 129")
+    assert placed["method"].startswith("D-A") and placed["pairs"]
+    hho = viewer.Session(boonza.load(DATA / "1HHO.pdb"))
+    chains = np.asarray(hho.system.residues["chain"])[np.asarray(hho.system.atoms["residue"])]
+    pairs = hho.hbonds("@chains")["pairs"]
+    assert pairs and all(chains[i] != chains[j] for i, j, _ in pairs)
