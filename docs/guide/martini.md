@@ -253,6 +253,13 @@ program and the Martini contact-map server write
 ([doi:10.5281/zenodo.3817447](https://doi.org/10.5281/zenodo.3817447)), so it
 can be read, kept, or handed back with `--go-map`.
 
+A residue is named by its chain, its number **and its insertion code**, since
+a number alone does not pick one out — an antibody's loop or a chymotrypsin
+numbers several residues 100A, 100B, 100C. A map boonza keeps in hand carries
+the code; the 18-column format has no column for one, so a map written for
+such a structure is a record of it and not a map to give back to `--go-map`,
+which says so when it is written and refuses the ambiguity when it is read.
+
 `go=` also takes a map from somewhere else — that server, the RCSU program,
 martinize2's `-go-write-file`, or one boonza wrote earlier. The residue
 numbers in it are the structure's own, so it has to be the map computed for

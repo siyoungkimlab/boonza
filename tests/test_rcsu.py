@@ -90,10 +90,19 @@ def test_the_map_is_martinize2s(name, tmp_path):
 
 @pytest.mark.parametrize("name", CASES)
 def test_the_contacts_are_martinize2s(name, tmp_path):
-    """And so the contacts a Go model would put a well on are the same ones."""
+    """And so the contacts a Go model would put a well on are the same ones.
+
+    boonza's own map names each residue by its insertion code as well, which
+    the file format has no column for, so the two are compared by what the
+    format can say.
+    """
+    from boonza.martini.go import _residue_keys
+
     text, path = _reference(name, tmp_path)
     mine = contact_map(_input(name, tmp_path))
-    assert set(mine.kept()) == set(read_contact_map(path))
+    ours = {tuple(k[:2] for k in _residue_keys(c)) for c in mine.kept()}
+    theirs = {tuple(k[:2] for k in _residue_keys(c)) for c in read_contact_map(path)}
+    assert ours == theirs
     assert len(mine.kept()) == len(read_contact_map(path))
 
 
@@ -243,8 +252,64 @@ def test_an_atom_the_tables_do_not_hold_still_takes_up_room(tmp_path):
 
     before, after = counts(bare), counts(shaded)
     assert len([k for k in set(before) & set(after) if after[k] < before[k]]) == 161
-    lost = set(bare.kept()) - set(shaded.kept())
-    assert len(lost) == 9
+    assert len(set(bare.kept()) - set(shaded.kept())) == 9
+
+
+def test_a_residue_is_named_by_its_insertion_code_too(tmp_path):
+    """A residue number alone does not pick one out: an antibody's loop or a
+    chymotrypsin numbers several residues 100A, 100B, 100C, and a Go model that
+    reads the number alone holds the wrong residues together.
+
+    Given 1TEN's 820-824 as 819A-819E, the model has to come out the same, bead
+    for bead, as it does with the ordinary numbering -- the beads and their
+    positions have not moved, only their labels.
+    """
+    from boonza.martini import martinize
+
+    plain = Path(DATA / "1TEN.pdb").read_text().splitlines(keepends=True)
+    out = []
+    for line in plain:
+        if line.startswith("ATOM") and 820 <= int(line[22:26]) <= 824:
+            line = line[:22] + f"{819:4d}" + "ABCDE"[int(line[22:26]) - 820] + line[27:]
+        out.append(line)
+    coded = tmp_path / "coded.pdb"
+    coded.write_text("".join(out))
+
+    before = martinize(boonza.load(DATA / "1TEN.pdb"), "protein", go=True)
+    after = martinize(boonza.load(coded), "protein", go=True)
+    assert {(p.i, p.j) for p in after.go.pairs} == {(p.i, p.j) for p in before.go.pairs}
+    assert len(after.go.pairs) == 185
+    # keyed on the number alone, five residues collapse onto one bead: 31 of
+    # those wells are lost and three are invented between residues that do not
+    # touch at all
+    assert len(contact_map(boonza.load(coded)).kept()) == 701
+
+
+def test_a_map_written_to_a_file_cannot_carry_an_insertion_code(tmp_path):
+    """The format writes I(PDB) as a plain number, so the file is a record of
+    such a structure's map and not a map to give back."""
+    from boonza.martini import martinize
+
+    plain = Path(DATA / "1TEN.pdb").read_text().splitlines(keepends=True)
+    out = []
+    for line in plain:
+        if line.startswith("ATOM") and 820 <= int(line[22:26]) <= 824:
+            line = line[:22] + f"{819:4d}" + "ABCDE"[int(line[22:26]) - 820] + line[27:]
+        out.append(line)
+    coded = tmp_path / "coded.pdb"
+    coded.write_text("".join(out))
+
+    with pytest.warns(UserWarning, match="no column for"):
+        text = contact_map(boonza.load(coded)).text()
+    written = tmp_path / "written.out"
+    written.write_text(text)
+    # and reading it back is refused rather than guessed at
+    with pytest.raises(ValueError, match="this structure has 6 of them"):
+        martinize(boonza.load(coded), "protein", go=written)
+    # a structure without codes round-trips as before
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        contact_map(boonza.load(DATA / "1TEN.pdb")).text()
 
 
 def test_nothing_to_read_a_map_over():

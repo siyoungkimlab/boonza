@@ -198,9 +198,11 @@ class Contact:
     resid_a: int
     chain_a: str
     resname_a: str
+    insertion_a: str
     resid_b: int
     chain_b: str
     resname_b: str
+    insertion_b: str
     dca: float  # between the alpha carbons, A, nan if either is missing
     overlap: int  # 1 when any pair of their atoms overlaps
     count: int  # surface points their atoms share
@@ -224,10 +226,16 @@ class ContactMap:
 
     contacts: list  # list[Contact], both ways round, in residue order
 
-    def kept(self) -> list[tuple[int, str, int, str]]:
-        """``(resid, chain, resid, chain)`` for the contacts, as
-        :func:`boonza.martini.go.read_contact_map` returns them."""
-        return [(c.resid_a, c.chain_a, c.resid_b, c.chain_b) for c in self.contacts if c.kept]
+    def kept(self) -> list[tuple]:
+        """``(resid, chain, insertion, resid, chain, insertion)`` per contact.
+
+        The insertion code is the one thing a map read back from a file cannot
+        carry, the format having no column for it, so a map kept in hand says
+        more than one written down.  :func:`boonza.martini.go.go_pairs` takes
+        either.
+        """
+        return [(c.resid_a, c.chain_a, c.insertion_a,
+                 c.resid_b, c.chain_b, c.insertion_b) for c in self.contacts if c.kept]  # fmt: skip
 
     def text(self, version: str = "") -> str:
         """The map as the 18-column file the RCSU program writes.
@@ -256,17 +264,31 @@ class ContactMap:
             "    rCSU   Count  Model\n",
             "=" * 93 + "\n",
         ]
+        coded = {(c.chain_a, c.resid_a, c.insertion_a) for c in self.contacts
+                 if c.insertion_a} | {(c.chain_b, c.resid_b, c.insertion_b)
+                                      for c in self.contacts if c.insertion_b}  # fmt: skip
+        if coded:
+            # the 18-column format writes I(PDB) as a plain number, so a code
+            # has nowhere to go and the rows it names stop picking out one
+            # residue.  The map is still right; what is written down is not.
+            warnings.warn(
+                f"{len(coded)} residues carry an insertion code, which this format has no "
+                f"column for: the map itself holds them apart and so does any model built "
+                f"from it, but a reader of this file could not, so it is a record and not a "
+                f"map to give back to --go-map",
+                stacklevel=2,
+            )
         serial = {}
         for c in self.contacts:
-            serial.setdefault((c.chain_a, c.resid_a), len(serial) + 1)
-            serial.setdefault((c.chain_b, c.resid_b), len(serial) + 1)
+            serial.setdefault((c.chain_a, c.resid_a, c.insertion_a), len(serial) + 1)
+            serial.setdefault((c.chain_b, c.resid_b, c.insertion_b), len(serial) + 1)
         rows = []
         for n, c in enumerate(self.contacts, start=1):
             rcsu = 1 if c.rcsu else 0
             rows.append(
-                f"R {n:6d} {serial[c.chain_a, c.resid_a]:5d}  {c.resname_a:3s} "
+                f"R {n:6d} {serial[c.chain_a, c.resid_a, c.insertion_a]:5d}  {c.resname_a:3s} "
                 f"{c.chain_a:1s} {c.resid_a:4d}    "
-                f"{serial[c.chain_b, c.resid_b]:5d}  {c.resname_b:3s} "
+                f"{serial[c.chain_b, c.resid_b, c.insertion_b]:5d}  {c.resname_b:3s} "
                 f"{c.chain_b:1s} {c.resid_b:4d}    "
                 f"{c.dca:9.4f}     {c.overlap:1d} {1 if c.count else 0} "
                 f"{1 if c.stabilising else 0} {rcsu}"
@@ -307,6 +329,8 @@ def contact_map(system, atoms: str = "protein") -> ContactMap:
     used, residue_of = np.unique(residue, return_inverse=True)
     nres = len(used)
     resids = np.asarray(system.residues["resid"])[used]
+    codes = ([str(x or "").strip() for x in np.asarray(system.residues["insertion"])[used]]
+             if "insertion" in system.residues._t._data else [""] * nres)  # fmt: skip
     names_of_chain = np.asarray(system.chains["name"])
     chains = [str(names_of_chain[c]).strip()
               for c in np.asarray(system.residues["chain"])[used]]  # fmt: skip
@@ -346,7 +370,9 @@ def contact_map(system, atoms: str = "protein") -> ContactMap:
             continue
         out.append(Contact(
             resid_a=int(resids[i]), chain_a=chains[i], resname_a=residue_name[i],
+            insertion_a=codes[i],
             resid_b=int(resids[j]), chain_b=chains[j], resname_b=residue_name[j],
+            insertion_b=codes[j],
             dca=float(np.linalg.norm(ca[i] - ca[j])), overlap=int(overlap[i, j]),
             count=int(count[i, j]), stabilising=int(stab[i, j]),
             destabilising=int(destab[i, j]),
