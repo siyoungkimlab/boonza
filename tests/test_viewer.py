@@ -1013,3 +1013,26 @@ def test_download_upload_copy_into_and_hbonds(served):
     chains = np.asarray(hho.system.residues["chain"])[np.asarray(hho.system.atoms["residue"])]
     pairs = hho.hbonds("@chains")["pairs"]
     assert pairs and all(chains[i] != chains[j] for i, j, _ in pairs)
+
+
+def test_view_takes_a_pdb_id(monkeypatch, tmp_path):
+    """boonza view 1HHO: an ID that is not a file here is fetched; a file wins."""
+    assert viewer.is_pdb_id("1hho")
+    assert not viewer.is_pdb_id("hho1") and not viewer.is_pdb_id("1HHO.pdb")
+    fetched, served = [], []
+
+    def fetch(code, folder=None):
+        fetched.append(code)
+        return DATA / "1HHO.cif"
+
+    monkeypatch.setattr(viewer, "fetch_pdb", fetch)
+    monkeypatch.setattr(viewer, "serve", lambda what, **kw: served.append(what))
+    monkeypatch.chdir(tmp_path)
+    args = _parser().parse_args(["view", "1hho", "--no-browser"])
+    assert args.run(args) == 0
+    assert fetched == ["1hho"] and served[0].system.natoms > 0
+    (tmp_path / "2TRX").write_text("")  # a file named like an ID is read as a file
+    args = _parser().parse_args(["view", "2TRX", "--no-browser"])
+    with pytest.raises(ValueError):
+        args.run(args)
+    assert fetched == ["1hho"]

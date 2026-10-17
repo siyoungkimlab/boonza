@@ -12,7 +12,7 @@ session.py is one model, outputs.py many (and the folders boonza's commands
 write), server.py what the page asks for.
 """
 
-from .outputs import Model, Viewer, from_folder, from_manifest, from_paths
+from .outputs import Model, Viewer, fetch_pdb, from_folder, from_manifest, from_paths, is_pdb_id
 from .server import make_server, serve
 from .session import (
     CG_RADIUS,
@@ -25,6 +25,5 @@ from .session import (
 )
 
 __all__ = ["CG_RADIUS", "LIGAND", "MemoryTrajectory", "Model", "Session", "Viewer", "bead_radii",
-           "default_reps",
-           "from_folder", "from_manifest", "from_paths", "is_coarse_grained", "make_server",
-           "serve"]  # fmt: skip
+           "default_reps", "fetch_pdb", "from_folder", "from_manifest", "from_paths",
+           "is_coarse_grained", "is_pdb_id", "make_server", "serve"]  # fmt: skip
