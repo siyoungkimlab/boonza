@@ -194,20 +194,7 @@ class Viewer:
     def fetch(self, code: str, folder=None) -> list[int]:
         """Download a PDB entry (mmCIF, from RCSB) into ``folder`` (default the one
         boonza view was started in) and open it."""
-        import urllib.request
-
-        code = code.strip().upper()
-        if not re.fullmatch(r"[0-9][A-Z0-9]{3}", code):
-            raise ValueError(f"{code!r} is not a PDB ID (four characters, e.g. 1IRK)")
-        path = Path(folder or Path.cwd()) / f"{code}.cif"
-        if not path.exists():
-            url = f"https://files.rcsb.org/download/{code}.cif"
-            try:
-                with urllib.request.urlopen(url, timeout=30) as r:
-                    path.write_bytes(r.read())
-            except Exception as e:
-                raise ValueError(f"could not download {code}: {e}") from e
-        return self.open(path)
+        return self.open(fetch_pdb(code, folder))
 
     def build(self, smiles: str, centre=(0.0, 0.0, 0.0), name: str = "") -> list[int]:
         """A new model of one molecule from SMILES (3D, hydrogens added), centred at
@@ -269,6 +256,30 @@ class Viewer:
 
 
 # --- reading -------------------------------------------------------------------
+
+
+def is_pdb_id(text: str) -> bool:
+    """Four characters, a digit first (1IRK): what RCSB names an entry."""
+    return re.fullmatch(r"[0-9][A-Za-z0-9]{3}", text.strip()) is not None
+
+
+def fetch_pdb(code: str, folder=None) -> Path:
+    """A PDB entry's mmCIF in ``folder`` (default the current one), downloaded from
+    RCSB unless it is there already."""
+    import urllib.request
+
+    code = code.strip().upper()
+    if not is_pdb_id(code):
+        raise ValueError(f"{code!r} is not a PDB ID (four characters, e.g. 1IRK)")
+    path = Path(folder or Path.cwd()) / f"{code}.cif"
+    if not path.exists():
+        url = f"https://files.rcsb.org/download/{code}.cif"
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                path.write_bytes(r.read())
+        except Exception as e:
+            raise ValueError(f"could not download {code}: {e}") from e
+    return path
 
 
 def _session(path, trajectory=None, coordinates=None, **kwargs) -> Session:

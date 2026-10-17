@@ -1762,7 +1762,9 @@ def _view(args) -> int:
     from boonza import viewer
     from boonza.trajectory import is_trajectory
 
-    paths = args.paths
+    # a PDB ID that is not a file here: its mmCIF, downloaded into this folder
+    paths = [str(viewer.fetch_pdb(p)) if not os.path.exists(p) and viewer.is_pdb_id(p) else p
+             for p in args.paths]  # fmt: skip
     if not paths:  # an empty view: build molecules, or open and fetch structures from it
         if args.coordinates or args.selection or args.center or args.fit:
             raise ValueError("-c, -s, --center and --fit go with a structure")
@@ -1808,9 +1810,10 @@ def _parser() -> argparse.ArgumentParser:
     q = sub.add_parser("view", help="look at a structure or trajectory in the browser, "
                        "all-atom or coarse-grained")  # fmt: skip
     q.add_argument("paths", nargs="*", help="none (an empty view, to build molecules or "
-                   "open files in), a structure (a topology with -c) and "
-                   "optionally its trajectory (DCD, XTC, TRR, NetCDF, DTR/STK); or several "
-                   "structures; or the output folder of boonza modes, triage or sitemap, "
+                   "open files in), a structure (a topology with -c) or a PDB ID "
+                   "(downloaded from RCSB into this folder) and optionally its trajectory "
+                   "(DCD, XTC, TRR, NetCDF, DTR/STK); or several structures; or the output "
+                   "folder of boonza modes, triage or sitemap, "
                    "or any folder with a view.json")  # fmt: skip
     q.add_argument("-c", "--coordinates", help="coordinates for a topology (.top, .psf, "
                    "prmtop), e.g. a .gro; a Martini .top gives bead sizes")  # fmt: skip
