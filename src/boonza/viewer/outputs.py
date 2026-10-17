@@ -43,9 +43,10 @@ ALIGN = "(protein and name CA) or name BB GC"
 #: ligand carbons of each mode in turn, as boonza modes' sessions colour them
 MODE_COLOURS = ("yellow", "magenta", "green", "orange", "cyan", "salmon", "purple", "lime",
                 "slate", "wheat", "pink", "teal")  # fmt: skip
-#: the first ten pockets each a colour of their own, the rest gray
-POCKET_COLOURS = ("red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta",
-                  "pink", "wheat")  # fmt: skip
+#: the first ten pockets each a colour of their own, the rest gray: not red or
+#: yellow (a cartoon's helices and strands), white (its coil) or pink (the selection)
+POCKET_COLOURS = ("cyan", "green", "blue", "orange", "purple", "magenta", "lime", "teal",
+                  "slate", "wheat")  # fmt: skip
 #: sitemap's pharmacophore codes: donor sky blue, acceptor salmon, cation blue,
 #: anion red, aromatic orange, hydrophobe green
 PHARM_COLOURS = {"DON": "#87ceeb", "ACC": "#fa8072", "CAT": "#3f6fff", "ANI": "#ff3030",

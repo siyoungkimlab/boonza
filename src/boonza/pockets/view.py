@@ -17,10 +17,10 @@ from pathlib import Path
 
 import numpy as np
 
-#: pocket colours by rank, the top 10 each its own (none of them a pharmacophore family's, the
-#: holo structure's or ligand's blue, or the probes' white); the others are grey
-RANK_COLORS = ("red", "orange", "yellow", "green", "cyan",
-               "magenta", "purple", "pink", "limon", "teal")  # fmt: skip
+#: pocket colours by rank, the top 10 each its own (not red or yellow, a cartoon's helices
+#: and strands, the holo structure's or ligand's blue, or the probes' white); the others grey
+RANK_COLORS = ("cyan", "green", "orange", "purple", "magenta",
+               "limon", "teal", "slate", "pink", "wheat")  # fmt: skip
 #: a trajectory's view draws the consensus pockets in the top this-many of any ranking
 VIEW_TOP = 5
 

@@ -66,7 +66,8 @@ export function setupUI(app) {
   }
   window.addEventListener("pointerdown", e => {
     if (!e.target.closest(".menu") && !e.target.closest(".menutitle") && !e.target.closest(".rbtn.sub")
-        && !e.target.closest("#theme-button") && !e.target.closest("#f-atoms") && !e.target.closest("#f-ribbon")) closeMenus();
+        && !e.target.closest("#theme-button") && !e.target.closest("#f-atoms") && !e.target.closest("#f-ribbon")
+        && !e.target.closest("#f-surface") && !e.target.closest(".mrow .pick")) closeMenus();
   });
 
   // --- what render commands act on ----------------------------------------------------
@@ -741,7 +742,7 @@ export function setupUI(app) {
     ],
     Help: () => [
       { label: "Mouse…", run: mousePanel },
-      { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset view · F12: full screen · Esc: close menus, put a message away") },
+      { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset view · F12: full screen · Esc: close menus, put a message away, else deselect") },
     ],
   };
   const constrainItems = () => [
@@ -1213,7 +1214,12 @@ export function setupUI(app) {
 
   window.addEventListener("keydown", e => {
     const typing = e.target.tagName === "INPUT" && !["range", "checkbox"].includes(e.target.type) || ["SELECT", "TEXTAREA"].includes(e.target.tagName);
-    if (e.key === "Escape") { closeMenus(); if (!$("cli").hidden) closeCLI(); if (app.toolActive()) app.dropTool(); app.message(""); return; }
+    if (e.key === "Escape") {  // what is open closes; with nothing open, the selection clears
+      const open = openMenus.some(Boolean) || !$("cli").hidden || app.toolActive();
+      closeMenus(); if (!$("cli").hidden) closeCLI(); if (app.toolActive()) app.dropTool(); app.message("");
+      if (!open && !typing && app.selection().length) { app.clearSelection(); app.rebuild(); app.onSelection(); }
+      return;
+    }
     if (typing) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === "c" && !String(window.getSelection())) { e.preventDefault(); copySmiles(); return; }
@@ -1825,6 +1831,20 @@ export function setupUI(app) {
     app.rebuild();
   }
 
+  // a choice on a model's row: a button and a menu, so that choosing what it
+  // already says does it again (a <select> only acts on a change)
+  function picker(title, options, current, pick) {
+    const label = () => options.find(([v]) => v === current())?.[1] ?? current();
+    const b = el("button", { className: "pick", title }, label());
+    b.onclick = () => {
+      const r = b.getBoundingClientRect();
+      menu(options.map(([v, l]) => ({ label: l, checked: () => current() === v,
+                                      run: async () => { await pick(v); b.textContent = label(); } })),
+           r.left, r.bottom);
+    };
+    return b;
+  }
+
   function swatchColor(spec) {
     if (spec === "default" || !spec) return "linear-gradient(135deg,#e53935 50%,#ffd54f 50%)";
     if (spec === "chain") return "linear-gradient(135deg,#5c5 33%,#3bd 33% 66%,#e5c 66%)";
@@ -1857,13 +1877,11 @@ export function setupUI(app) {
       sw.style.background = swatchColor(m.color);
       const name = el("span", { className: "name", title: `${m.name}: click to show it alone and look at it` }, m.name);
       name.onclick = () => app.solo(m);
-      const color = el("select", { title: "colour" });
-      for (const [v, l] of MODEL_COLORS) color.add(new Option(l, v, false, (m.color || "default") === v));
-      if (m.color && !MODEL_COLORS.some(([v]) => v === m.color)) color.add(new Option("its own", m.color, false, true));
-      color.onchange = async () => { await app.load(m); colorModel(m, color.value); sw.style.background = swatchColor(color.value); };
-      const rep = el("select", { title: "representation" });
-      for (const [v, l] of PRESETS) rep.add(new Option(l, v, false, (m.preset || "site") === v));
-      rep.onchange = () => preset(m, rep.value);
+      const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
+      const color = picker("colour", colors, () => m.color || "default", async v => {
+        await app.load(m); colorModel(m, v); sw.style.background = swatchColor(v);
+      });
+      const rep = picker("representation", PRESETS, () => m.preset || "site", v => preset(m, v));
       const x = el("button", { className: "x", title: "close this model" }, "✕");
       x.onclick = () => closeModel(m);
       row.append(el("div", { className: "top" }, box, sw, name, color, rep, x));

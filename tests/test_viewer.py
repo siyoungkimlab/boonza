@@ -267,7 +267,7 @@ def test_sitemap_folder(tmp_path):
     s = v.session(1)
     topo = s.topology()
     assert topo["natoms"] == 4 and topo["atoms"]["radius"] == [0.5] * 4
-    assert topo["reps"] == [{"sel": "all", "style": "spheres", "color": "red"}]
+    assert topo["reps"] == [{"sel": "all", "style": "spheres", "color": "cyan"}]
     hot = v.session(3).topology()
     assert hot["atoms"]["radius"] == [1.75] and hot["reps"][0]["sel"] == "resname ACC"
     assert not v.models[3].shown
