@@ -1070,6 +1070,7 @@ def test_open_takes_a_pdb_id(monkeypatch, tmp_path):
     from boonza.viewer import outputs
 
     fetched = []
+
     def fetch(code, folder=None):
         fetched.append(code)
         return DATA / "1HHO.cif"
