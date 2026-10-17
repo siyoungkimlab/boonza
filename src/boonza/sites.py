@@ -1046,7 +1046,12 @@ def sites(system, runs=None, reference=None, ligand: str = DEFAULT_LIGAND,
                           spread=float(np.sqrt(((xyz - centre) ** 2).sum(1).mean()))))  # fmt: skip
     # the pocket each site sits in: enriched, continuous, against the protein and
     # enclosed by it, which an enriched blob in bulk is not
-    pocket_atoms = _ids(reference, pocket_protein) if pocket_protein else np.empty(0, np.int64)
+    # a virtual site sits on the bead it stands for, so counting it here would
+    # put a second copy of that bead in the cloud the pocket is measured against
+    from .pockets.prepare import site_ids
+
+    pocket_atoms = (np.setdiff1d(_ids(reference, pocket_protein), site_ids(reference))
+                    if pocket_protein else np.empty(0, np.int64))  # fmt: skip
     if len(pocket_atoms) >= 4:
         cells, labels, centres, volumes, burials = shape.pockets(
             enrichment,

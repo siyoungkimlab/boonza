@@ -527,6 +527,31 @@ def test_a_coincident_site_is_excluded_after_a_file_round_trip(built, tmp_path):
         assert exceptions[min(site, bead), max(site, bead)] == (0.0, 0.0)
 
 
+def test_a_go_run_is_searched_in_its_beads(built, tmp_path):
+    """A Go run read back for a pocket search: the beads, without the sites.
+
+    Every residue carries a site of type ``molecule_0_N``, which Martini 3's
+    pair table has no row for, so a search that took the sites for beads died
+    looking their radius up -- `KeyError: 'molecule_0_1'`.  They are left out
+    of the protein instead, and what is searched is the beads alone.
+    """
+    from boonza.pockets.prepare import protein_ids, site_ids
+    from boonza.sitemap.beads import from_system
+
+    boonza.save(built.system(), tmp_path / "cg.dms")
+    s = boonza.load(tmp_path / "cg.dms")
+    sites = site_ids(s)
+    assert len(sites) == len(s.tables["virtual_lc1"])  # one a residue, and only those
+    assert not s.select("protein").ids.size  # the keyword finds no beads at all
+    ids = protein_ids(s)
+    assert not np.intersect1d(ids, sites).size
+    assert len(ids) == s.natoms - len(sites)
+    rings = np.asarray(s.tables["virtual_lc4"].atoms[:, 0])  # Martini's own, and beads
+    assert len(rings) and np.isin(rings, ids).all()
+    beads = from_system(s, "martini3", ids)  # the radii, which a Go site has none of
+    assert len(beads.radius) == len(ids)
+
+
 def test_the_energy_is_gromacs(built, tmp_path):
     """GROMACS 2024.6 on boonza's own Go topology and coordinates, a 0-step md
     run under Martini's reaction field and shifted Lennard-Jones: bond 680.492,

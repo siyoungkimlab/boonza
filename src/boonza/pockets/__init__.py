@@ -41,7 +41,7 @@ from .overlap import (
     spheres_within,
     volume_overlap,
 )
-from .prepare import coarse_grain, probe_ids, protein_ids, searchable
+from .prepare import coarse_grain, probe_ids, protein_ids, searchable, site_ids
 from .run import (
     Pocket,
     PocketError,
@@ -86,6 +86,7 @@ __all__ = [
     "run_mdpocket",
     "searchable",
     "sirah_charges",
+    "site_ids",
     "sirah_polar",
     "sphere_pocket",
     "spheres_within",
