@@ -1063,3 +1063,21 @@ def test_amber_charges_for_a_structure_without_them():
     out = session.surface_charges()
     assert out["assigned"] == int(has.sum())
     assert np.allclose(np.array(out["q"])[has], q[has], atol=1e-4)
+
+
+def test_open_takes_a_pdb_id(monkeypatch, tmp_path):
+    """File | Open, the command line's open: a PDB ID that is no file here is fetched."""
+    from boonza.viewer import outputs
+
+    fetched = []
+
+    def fetch(code, folder=None):
+        fetched.append(code)
+        return DATA / "1HHO.cif"
+
+    monkeypatch.setattr(outputs, "fetch_pdb", fetch)
+    monkeypatch.chdir(tmp_path)
+    v = viewer.Viewer([])
+    assert v.open("1hho") == [0] and fetched == ["1hho"]
+    with pytest.raises(FileNotFoundError):
+        v.open("no_such_file.pdb")
