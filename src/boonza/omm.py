@@ -357,7 +357,7 @@ def _coincident_sites(s):
     return out
 
 
-def _exclude_coincident_sites(s, excl, pairs, eps, charge, nb):
+def _exclude_coincident_sites(s, excl, pairs, eps, charge, nb, ptype):
     """Exclude every pair of a virtual site and the parent it sits on.
 
     GROMACS's kernels step around the singularity and neither Martini's
@@ -375,7 +375,7 @@ def _exclude_coincident_sites(s, excl, pairs, eps, charge, nb):
             continue
         epsilon = math.sqrt(max(eps[site], 0.0) * max(eps[parent], 0.0))
         if nb is not None and len(nb.overrides):
-            over = nb.overrides.get(int(nb.param_ids[site]), int(nb.param_ids[parent]))
+            over = nb.overrides.get(int(ptype[site]), int(ptype[parent]))
             if over is not None:
                 epsilon = over["epsilon"]
         a, b, q = pairs.get(pair, (0.0, 0.0, 0.0))
@@ -447,7 +447,7 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
         sig = sigma[i] * NM if sigma[i] > 0 else NM
         f.addParticle(charge[i], sig, 0.0 if custom else eps[i] * KCAL)
     excl, pairs = _pair_terms(s)
-    _exclude_coincident_sites(s, excl, pairs, eps, charge, nb)
+    _exclude_coincident_sites(s, excl, pairs, eps, charge, nb, ptype)
     extra = []
     for i, j in sorted(excl):
         a, b, q = pairs.pop((i, j), (0.0, 0.0, 0.0))
