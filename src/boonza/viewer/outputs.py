@@ -177,8 +177,11 @@ class Viewer:
         return str(path)
 
     def open(self, path) -> list[int]:
-        """Add the models of a file or folder (as from_paths reads it); their indices."""
+        """Add the models of a file or folder (as from_paths reads it); their indices.
+        A PDB ID that is not a file here is fetched (:meth:`fetch`)."""
         path = Path(path).expanduser()
+        if not path.exists() and is_pdb_id(str(path)):
+            return self.fetch(str(path))
         if not path.exists():
             raise FileNotFoundError(path)
         opened = from_paths([path])
