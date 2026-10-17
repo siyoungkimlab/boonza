@@ -498,6 +498,35 @@ def test_a_coincident_site_is_excluded_from_its_bead(built):
         assert exceptions[min(site, bead), max(site, bead)] == (0.0, 0.0)
 
 
+def test_a_coincident_site_is_excluded_after_a_file_round_trip(built, tmp_path):
+    """The same pair, once a file has been read back and the residues gathered.
+
+    A site is numbered by the residue it stands for and written after every
+    bead, so a file keeps those residues in pieces, and ``boonza md`` gathers
+    each residue's atoms before anything else.  That renumbers the atoms
+    without reordering the nonbonded table's rows, so a site's parameters have
+    to be read through the table's own atoms: taking a row to be its atom looks
+    the pair up under some other bead's type, where Martini 3's matrix has an
+    override, and a topology GROMACS runs is refused here instead.
+    """
+    mm = pytest.importorskip("openmm")
+    from boonza.martini import OPENMM_OPTIONS
+
+    boonza.save(built.system(), tmp_path / "cg.dms")
+    s = boonza.load(tmp_path / "cg.dms")
+    sites = np.array(s.tables["virtual_lc1"].atoms[:, 0])
+    s.reorder_atoms(np.argsort(np.asarray(s.atoms["residue"]), kind="stable"))
+    assert not np.array_equal(np.array(s.tables["virtual_lc1"].atoms[:, 0]), sites)
+    _, system, _ = boonza.to_openmm(s, **OPENMM_OPTIONS)
+    force = next(f for f in system.getForces() if isinstance(f, mm.NonbondedForce))
+    exceptions = {}
+    for k in range(force.getNumExceptions()):
+        i, j, q, _, epsilon = force.getExceptionParameters(k)
+        exceptions[min(i, j), max(i, j)] = (q._value, epsilon._value)
+    for site, bead in s.tables["virtual_lc1"].atoms.tolist():
+        assert exceptions[min(site, bead), max(site, bead)] == (0.0, 0.0)
+
+
 def test_the_energy_is_gromacs(built, tmp_path):
     """GROMACS 2024.6 on boonza's own Go topology and coordinates, a 0-step md
     run under Martini's reaction field and shifted Lennard-Jones: bond 680.492,
