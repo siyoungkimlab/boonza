@@ -5,7 +5,8 @@ bead model is mapped onto that model's beads first, by boonza's own mappers
 (:func:`boonza.martinize`, :func:`boonza.sirah.map_structure`); a coarse-grained
 one is taken as it is.  Either way, the probes a swim puts in chain ``LIG`` --
 ligand copies, often amino acids themselves -- are left out, since the protein
-keyword and the residue names would both take them.
+keyword and the residue names would both take them, and so are the virtual
+sites a structure bias builds, which stand for beads rather than being any.
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ from .beads import AMINO_ACIDS, FORCEFIELDS, MODELS, guess_model
 #: a selection of everything but the probes
 NOT_PROBES = f'not chain "{PROBE_CHAIN}"'
 
-__all__ = ["NOT_PROBES", "coarse_grain", "probe_ids", "protein_ids", "searchable"]
+__all__ = ["NOT_PROBES", "coarse_grain", "probe_ids", "protein_ids", "searchable",
+           "site_ids"]  # fmt: skip
 
 
 def probe_ids(system) -> np.ndarray:
@@ -31,12 +33,36 @@ def probe_ids(system) -> np.ndarray:
     return np.flatnonzero(names[chain_of] == PROBE_CHAIN) if len(names) else np.array([], int)
 
 
+def site_ids(system) -> np.ndarray:
+    """The virtual sites that stand for a bead rather than being one.
+
+    A Go model gives every residue a site sitting on the bead it stands for: a
+    point of the topology and not a piece of the protein, with no mass, no
+    charge and a type -- ``molecule_0_7`` -- that no force field's table holds,
+    so anything taking it for a bead looks its radius up and fails.  The
+    ``protein`` keyword leaves them out; the residue names a coarse-grained
+    system is taken by do not, since a site belongs to the residue it stands
+    for.
+
+    A site a model builds somewhere of its own stays, since it is a bead like
+    any other: Martini 3 makes a ring bead the weighted average of its
+    neighbours (TC5 in a tryptophan), with a type the force field has and a
+    place no other bead holds.  What is left out is only a site at r = 0 from
+    its parent, which is the pair OpenMM has to exclude as well.
+    """
+    from ..omm import _coincident_sites  # a site on its parent, read from the weights
+
+    out = [site for site, _ in _coincident_sites(system)]
+    return np.unique(np.asarray(out, np.int64)) if out else np.zeros(0, np.int64)
+
+
 def protein_ids(system, selection: str | None = None) -> np.ndarray:
-    """The protein's atoms or beads, or those of ``selection``, never the probes.
+    """The protein's atoms or beads, or those of ``selection``, never the probes
+    and never a virtual site.
 
     A coarse-grained system the ``protein`` keyword finds nothing in is taken by
     its residue names (the twenty amino acids, their protonation variants and
-    SIRAH's names).
+    SIRAH's names), which a site of that residue would pass for.
     """
     if selection:
         ids = system.select(selection).ids
@@ -46,7 +72,7 @@ def protein_ids(system, selection: str | None = None) -> np.ndarray:
             res = np.asarray(system.atoms["residue"])
             names = np.asarray(system.residues["name"])
             ids = np.flatnonzero(np.isin(names[res], list(AMINO_ACIDS)))
-    return np.setdiff1d(ids, probe_ids(system))
+    return np.setdiff1d(ids, np.union1d(probe_ids(system), site_ids(system)))
 
 
 def searchable(system, model: str, selection: str | None = None):
