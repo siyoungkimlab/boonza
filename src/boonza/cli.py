@@ -1660,6 +1660,7 @@ def _martinize(args) -> int:
                          elastic_upper=args.elastic_upper, elastic_decay=args.elastic_decay,
                          elastic_power=args.elastic_power, elastic_min_fc=args.elastic_min_fc,
                          res_min_dist=args.res_min_dist, cys=cys,
+                         trust_connectivity=args.trust_connectivity,
                          neutral_termini=args.neutral_termini, scfix=not args.no_scfix,
                          extdih=args.extdih, forcefield=FORCEFIELD_FOR[version],
                          cofactors=args.cofactors, go=args.go_map or args.go or None,
@@ -1997,6 +1998,11 @@ def _parser() -> argparse.ArgumentParser:
                    help=f"residues apart along the chain a pair has to be "
                         f"(-go-res-dist, default {GO_RES_DIST})")  # fmt: skip
     q.add_argument("--cys", default="auto", help="auto, none, or an S-S distance in A")
+    q.add_argument("--trust-connectivity", dest="trust_connectivity", action="store_true",
+                   help="the structure's bonds are authored and complete (a .mae or .dms from "
+                        "a predictor or a builder): do not read a close contact between two "
+                        "chains as a bond.  Not for a file whose bonds were guessed, such as "
+                        "a PDB")  # fmt: skip
     q.add_argument("--neutral-termini", action="store_true")
     q.add_argument("--no-scfix", action="store_true", help="no side-chain corrections")
     q.add_argument("--extdih", action="store_true", help="dihedrals for extended regions (-ed)")

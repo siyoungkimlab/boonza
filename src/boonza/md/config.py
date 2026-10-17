@@ -117,7 +117,7 @@ ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "pa
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
-MARTINI_ONLY = ("elastic_selection",
+MARTINI_ONLY = ("elastic_selection", "trust_connectivity",
                 "structure_bias", "go_map", "go_eps", "go_low", "go_up", "go_res_dist",
                 "upper", "lower", "area_per_lipid",
                 "size_nm", "water_nm",
@@ -212,6 +212,7 @@ DEFAULTS: dict = {
     "confirmation_checks": 2,
     "elastic": False,
     "elastic_selection": None,
+    "trust_connectivity": False,
     "upper": None,
     "lower": None,
     "area_per_lipid": 60.0,
@@ -270,7 +271,8 @@ _NUMBERS = {
 }
 _INTEGERS = {"seed", "confirmation_checks"}
 _BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs", "cofactors",
-             "cofactor_anchors", "cofactor_side_chains", "strict_mapping"}  # fmt: skip
+             "cofactor_anchors", "cofactor_side_chains", "strict_mapping",
+             "trust_connectivity"}  # fmt: skip
 _CHOICES = {
     "model": MODELS,
     "termini": ("Charged", "Neutral", "None"),
@@ -486,6 +488,11 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     cg.add_argument("--elastic-selection", dest="elastic_selection", metavar="SEL",
                     help="hold only these residues with the network, e.g. 'chain A' to leave a "
                          "bound peptide free (default: every molecule)")  # fmt: skip
+    cg.add_argument("--trust-connectivity", dest="trust_connectivity", action="store_true",
+                    help="the structure's bonds are authored and complete, as a .mae or .dms "
+                         "from a predictor or a builder is: do not read a close contact between "
+                         "two chains as a bond (a disulfide is still found).  Not for a file "
+                         "whose bonds were guessed, a PDB among them")  # fmt: skip
     cg.add_argument("--termini", choices=("Charged", "Neutral", "None"),
                     help="SIRAH: the chain ends (default: Charged)")  # fmt: skip
     cg.add_argument("--strict-mapping", dest="strict_mapping", action="store_true",

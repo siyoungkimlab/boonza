@@ -600,6 +600,7 @@ class _Residue:
 
 
 def martinize(system, atoms: str = "protein", *, ss: str | None = None,
+              trust_connectivity: bool = False,
               elastic: bool = False, elastic_selection: str | None = None,
               elastic_fc: float = 700.0, elastic_lower: float = 0.0,
               elastic_upper: float = 9.0, elastic_decay: float = 0.0, elastic_power: float = 0.0,
@@ -728,7 +729,7 @@ def martinize(system, atoms: str = "protein", *, ss: str | None = None,
                          f"out of atoms={atoms!r}, give them parameters of their own, or "
                          "cofactors=True to hold them as inert beads")  # fmt: skip
     known = _system_bonds(system, local, residues)
-    bonds = _inter_residue_bonds(residues, cys, known)
+    bonds = _inter_residue_bonds(residues, cys, known, trust_connectivity=trust_connectivity)
     _check_links_across_chains(residues, bonds, known)
     if cofactors:
         # what holds a cofactor has to be a bond before the molecules are split,
@@ -850,10 +851,19 @@ def _system_bonds(system, local, residues) -> set:
     return out
 
 
-def _inter_residue_bonds(residues, cys, known=frozenset()):
+def _inter_residue_bonds(residues, cys, known=frozenset(), trust_connectivity=False):
     """Heavy-atom bonds between residues: the system's (``known``) and those
     vermouth's distance rule finds; with ``cys`` "none" no S-S bonds, with a
-    number (Å) S-S bonds up to it."""
+    number (Å) S-S bonds up to it.
+
+    ``trust_connectivity`` says the structure's own bonds are authored and
+    complete, as a .mae or .dms from a predictor or a builder is: the rule then
+    does not invent a bond between two chains, since a link the file does not
+    list is not there, and two chains that close are in tight contact rather
+    than bonded.  A disulfide is still found by distance, and a file whose
+    bonds were themselves guessed -- boonza guesses a PDB's -- must not be
+    trusted this way, which is why this is asked for rather than detected.
+    """
     atom_res, atom_idx, xyz, elem = [], [], [], []
     for r, res in enumerate(residues):
         for i, e in enumerate(res.elements):
@@ -868,6 +878,7 @@ def _inter_residue_bonds(residues, cys, known=frozenset()):
             residues[a].resname, residues[b].resname} <= {"CYS", "CYX", "CYM"}  # fmt: skip
 
     found = {bond for bond in known if not (cys == "none" and is_ss(*bond))}
+    across = []
     if not xyz:
         return sorted(found)
     from ..spatial import pairs_within
@@ -887,8 +898,25 @@ def _inter_residue_bonds(residues, cys, known=frozenset()):
         else:
             ok = dd <= 0.5 * (_RADIUS[elem[a]] + _RADIUS[elem[b]]) * _BOND_FUDGE
         if ok:
+            if trust_connectivity and not ss_bond and residues[ra].chain != residues[rb].chain:
+                across.append((ra, atom_idx[a], rb, atom_idx[b], dd * 10))
+                continue
             bond = (ra, atom_idx[a], rb, atom_idx[b])
             found.add(bond if ra < rb else (rb, atom_idx[b], ra, atom_idx[a]))
+    if across:
+        closest = sorted(across, key=lambda t: t[4])
+        shown = "; ".join(
+            f"{residues[a].chain}/{residues[a].resname}{residues[a].resid} {residues[a].names[i]}"
+            f" - {residues[b].chain}/{residues[b].resname}{residues[b].resid} "
+            f"{residues[b].names[j]} ({d:.2f} A)" for a, i, b, j, d in closest[:3]
+        )  # fmt: skip
+        more = f" and {len(across) - 3} more" if len(across) > 3 else ""
+        warnings.warn(
+            f"{len(across)} contact(s) between chains closer than a bond, kept as contacts "
+            f"because the structure's connectivity is taken as complete: {shown}{more}.  "
+            "Each chain keeps its own molecule and its own network",
+            stacklevel=2,
+        )  # fmt: skip
     return sorted(found)
 
 
