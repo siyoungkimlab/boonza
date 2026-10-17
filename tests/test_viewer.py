@@ -1045,3 +1045,21 @@ def test_view_takes_a_pdb_id(monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         args.run(args)
     assert fetched == ["1hho"]
+
+
+def test_amber_charges_for_a_structure_without_them():
+    """A PDB entry: hydrogens on a copy, ff19SB charges folded onto the heavy atoms."""
+    from boonza.viewer.edit import amber_charges
+
+    s = boonza.load(DATA / "1FNA.pdb")
+    q, has = amber_charges(s)
+    assert has.all()  # its own hydrogens too, and the side chains rebuilt
+    assert abs(q[has].sum() - round(q[has].sum())) < 1e-3  # whole charges
+    names = [str(x) for x in s.atoms["name"]]
+    nh3 = [a for a in s.residue_atoms(0) if names[a] in ("N", "H1", "H2", "H3")]
+    assert abs(q[nh3].sum() - 0.8) < 0.15  # NH3+ (with CA and HA: +1)
+    session = viewer.Session(s)
+    assert session.topology()["q_source"] == "template"
+    out = session.surface_charges()
+    assert out["assigned"] == int(has.sum())
+    assert np.allclose(np.array(out["q"])[has], q[has], atol=1e-4)

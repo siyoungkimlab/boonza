@@ -13,7 +13,8 @@
 // Potential: Coulomb with a distance-dependent dielectric (eps = 4r), read 1.4 A
 // out from the surface along its normal, as ChimeraX colours it: from -10 (red)
 // through 0 (white) to +10 kcal/(mol e) (blue).  Every charge counts, unless
-// that would be slow (a large system): then those within 15 A.
+// that would be slow (a large system): then those within 15 A.  It is worked
+// out on a 1 A grid where the surface reads it, and interpolated.
 // Hydrophobicity: the atoms' signs (properties.py) averaged with Gaussian
 // weights (sigma 1.5 A) at each point; dark cyan (hydrophilic), white, goldenrod
 // (hydrophobic), as ChimeraX colours it.
@@ -25,7 +26,8 @@ const COULOMB = 332.06;   // kcal A / (mol e^2)
 const OFFSET = 1.4;       // A, off the surface, where the potential is read
 const SCALE = 10;         // kcal/(mol e) at full colour
 const REACH = 15;         // A, the potential's, for a large system
-const ALL_PAIRS = 3e8;    // vertices x charges above which REACH applies
+const ALL_PAIRS = 3e8;    // points x charges above which REACH applies
+const PHI_GRID = 1.0;     // A, the potential's grid, interpolated to the vertices
 const SIGMA = 1.5;        // A, hydrophobicity's smoothing
 
 const RED = [0.84, 0.19, 0.15], WHITE = [1, 1, 1], BLUE = [0.19, 0.38, 0.86];
@@ -184,10 +186,39 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
   const normal = new Float32Array(3 * nv), color = new Float32Array(3 * nv);
   const q = topo.atoms.q, lipo = topo.atoms.lipo;
   const near = neighbours(pos, ids, 3 * SIGMA);
-  let charges = null, inReach = null;
+  // the potential: on a grid of its own (it varies slowly), made where it is read
+  let potential = null;
   if (kind === "electrostatic" && q) {
-    charges = ids.filter(a => q[a]);
-    if (nv * charges.length > ALL_PAIRS) inReach = neighbours(pos, charges, REACH);
+    const charges = ids.filter(a => q[a]);
+    const inReach = nv / 8 * charges.length > ALL_PAIRS ? neighbours(pos, charges, REACH) : null;
+    const g = PHI_GRID, plo = lo.map(x => x - OFFSET - g);
+    const mx = Math.ceil((hi[0] - lo[0] + 2 * OFFSET + 2 * g) / g) + 1;
+    const my = Math.ceil((hi[1] - lo[1] + 2 * OFFSET + 2 * g) / g) + 1;
+    const mz = Math.ceil((hi[2] - lo[2] + 2 * OFFSET + 2 * g) / g) + 1;
+    const phi = new Float32Array(mx * my * mz).fill(NaN);
+    const node = (i, j, k) => {
+      const p = i + mx * (j + my * k);
+      if (!Number.isNaN(phi[p])) return phi[p];
+      const x = plo[0] + i * g, y = plo[1] + j * g, z = plo[2] + k * g;
+      let sum = 0;
+      const add = a => {
+        const dx = x - pos[3 * a], dy = y - pos[3 * a + 1], dz = z - pos[3 * a + 2];
+        const r2 = dx * dx + dy * dy + dz * dz;
+        if (!inReach || r2 < REACH * REACH) sum += COULOMB * q[a] / (4 * Math.max(r2, 1));
+      };
+      if (inReach) inReach(x, y, z, add); else for (const a of charges) add(a);
+      return (phi[p] = sum);
+    };
+    potential = (x, y, z) => {  // trilinear
+      const u = (x - plo[0]) / g, v = (y - plo[1]) / g, w = (z - plo[2]) / g;
+      const i = Math.floor(u), j = Math.floor(v), k = Math.floor(w), fu = u - i, fv = v - j, fw = w - k;
+      let sum = 0;
+      for (let c = 0; c < 8; c++) {
+        const a = c & 1, b = (c >> 1) & 1, d = (c >> 2) & 1;
+        sum += node(i + a, j + b, k + d) * (a ? fu : 1 - fu) * (b ? fv : 1 - fv) * (d ? fw : 1 - fw);
+      }
+      return sum;
+    };
   }
   for (let v = 0; v < nv; v++) {
     let nx_ = normals[3 * v], ny_ = normals[3 * v + 1], nz_ = normals[3 * v + 2];
@@ -196,15 +227,8 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
     normal[3 * v] = nx_; normal[3 * v + 1] = ny_; normal[3 * v + 2] = nz_;
     const x = position[3 * v], y = position[3 * v + 1], z = position[3 * v + 2];
     let c = PLAIN;
-    if (charges) {
-      const ox = x + OFFSET * nx_, oy = y + OFFSET * ny_, oz = z + OFFSET * nz_;
-      let phi = 0;
-      const add = a => {
-        const dx = ox - pos[3 * a], dy = oy - pos[3 * a + 1], dz = oz - pos[3 * a + 2];
-        const r2 = dx * dx + dy * dy + dz * dz;
-        if (!inReach || r2 < REACH * REACH) phi += COULOMB * q[a] / (4 * Math.max(r2, 1));
-      };
-      if (inReach) inReach(ox, oy, oz, add); else for (const a of charges) add(a);
+    if (potential) {
+      const phi = potential(x + OFFSET * nx_, y + OFFSET * ny_, z + OFFSET * nz_);
       const t = Math.max(-1, Math.min(1, phi / SCALE));
       c = t < 0 ? mix(WHITE, RED, -t) : mix(WHITE, BLUE, t);
     } else if (kind === "electrostatic") {

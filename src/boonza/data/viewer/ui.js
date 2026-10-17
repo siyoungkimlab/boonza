@@ -349,6 +349,26 @@ export function setupUI(app) {
       if (!atoms.length) atoms = all.filter(a => A.class[a] !== 2);
     }
     m.surfaceSpec = { kind, ids: atoms, version: ++surfaceVersion };
+    if (kind === "electrostatic") forceFieldCharges(m);
+  }
+  // an electrostatic surface's charges: the force field's (Amber ff19SB, hydrogens
+  // added on a copy), once per topology, for a structure that has none of its own
+  async function forceFieldCharges(m) {
+    const t = m.topo;
+    if (app.STATIC || t.cg || t.q_source !== "template" || t.qAssigned) return;
+    t.qAssigned = true;
+    try {
+      const out = await app.busy("assigning Amber ff19SB charges for the surface",
+                                 () => app.post("api/surface_charges", { m: m.index }));
+      if (m.topo !== t) return;  // the model changed meanwhile
+      t.atoms.q = out.q;
+      if (m.surfaceSpec) m.surfaceSpec = { ...m.surfaceSpec, version: ++surfaceVersion };
+      app.rebuild();
+      app.message(`electrostatic surface: Amber ff19SB charges on ${out.assigned} of ${out.natoms} atoms`
+        + `${out.assigned < out.natoms ? " (the rest by residue)" : ""}; red −10 to blue +10 kcal/(mol·e)`);
+    } catch (e) {
+      app.message(`${e.message}\nthe surface's charges are by residue`, true);
+    }
   }
   function setSurface(kind) {
     const sel = app.selection();
