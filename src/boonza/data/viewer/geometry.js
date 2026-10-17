@@ -1,6 +1,7 @@
 // A model's render state -> a scene of typed arrays for gl.js.
 // Every atom has its own state: shown or not, a style, a colour; every
-// residue its ribbon.  Selected atoms are drawn pink, with a ball.
+// residue its ribbon.  Selected atoms are drawn pink, with a ball (hidden ones
+// too), and a selected residue's ribbon pink.
 
 export const STYLES = ["line", "stick", "ballline", "ballstick", "space"];
 export const STYLE_NAMES = ["Line", "Stick", "Ball and Line", "Ball and Stick", "Space Filling"];
@@ -104,10 +105,16 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
       }
     }
   }
+  // the traced atom of each residue whose ribbon is on
+  const R = topo.residues;
+  const traced = new Uint8Array(n);
+  for (let r = 0; r < R.trace.length; r++) if (R.trace[r] >= 0 && state.ribbon[r]) traced[R.trace[r]] = 1;
   // atoms: joints of sticks, balls, spheres; lone atoms of lines as small crosses
   for (let a = 0; a < n; a++) {
     if (!show[a]) {
-      continue;  // hidden atoms stay hidden, selected or not
+      // a hidden atom shows only when selected: a pink ball, or its ribbon turns pink
+      if (sel[a] && !traced[a]) { s.center.push(...P(a)); s.radius.push(size.picked); s.color.push(...PINK); }
+      continue;
     }
     const st = style[a];
     let r = 0;
@@ -128,17 +135,14 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
       }
     }
   }
-  // ribbons: the traced atom of each residue whose ribbon is on, in the residue's colour
-  const R = topo.residues;
-  const traced = new Uint8Array(n);
+  // ribbons in the residue's colour, pink where the traced atom is selected
   const color = new Float32Array(n * 3);
   let any = false;
   for (let r = 0; r < R.trace.length; r++) {
     const t = R.trace[r];
-    if (t < 0 || !state.ribbon[r]) continue;
-    traced[t] = 1;
+    if (t < 0 || !traced[t]) continue;
     any = true;
-    for (let d = 0; d < 3; d++) color[3 * t + d] = state.ribbonRGB[3 * r + d];
+    for (let d = 0; d < 3; d++) color[3 * t + d] = sel[t] ? PINK[d] : state.ribbonRGB[3 * r + d];
   }
   if (any) {
     const shape = topo.cg ? CG_SHAPE : state.ribbonStyle === "tube" ? TUBE : SHAPE;
