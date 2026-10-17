@@ -46,8 +46,10 @@ button, input, select { font: inherit; color: var(--text); }
 .mrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer; font-weight: 600; }
 .mrow:not(.on) .name { color: var(--muted); font-weight: 400; }
-.mrow select { background: var(--field); border: 1px solid var(--line); font-size: 11px; padding: 0 2px;
-  max-width: 92px; }
+.mrow .pick { background: var(--field); border: 1px solid var(--line); font-size: 11px; padding: 0 14px 0 3px;
+  max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  position: relative; border-radius: 2px; }
+.mrow .pick::after { content: "▾"; position: absolute; right: 3px; color: var(--muted); }
 .mrow .swatch { width: 14px; height: 14px; border-radius: 2px; border: 1px solid var(--line); flex: none; }
 .mrow .x { border: none; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; }
 .mrow .x:hover { color: var(--red); }
