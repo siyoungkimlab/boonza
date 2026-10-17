@@ -2086,7 +2086,7 @@ export function setupUI(app) {
     panel("mouse", "Mouse", body => {
       const rows = [
         ["Left click", "select an atom (a bond: its two atoms; a ribbon: its residue)"],
-        ["Shift / Ctrl click", "toggle / the whole residue"], ["Double click", "the molecule"],
+        ["Shift / Ctrl click", "toggle / the whole residue"], ["Double click", "the residue; again: the molecule"],
         ["Left drag", "select a box (Shift adds, Ctrl takes residues)"], ["Click away", "clear the selection"],
         ["Middle drag", "rotate (in the perimeter: about z)"], ["Shift + middle", "pan"], ["Ctrl + middle", "zoom"],
         ["Middle click", "centre of rotation (away from atoms: reset)"], ["Wheel", "zoom"],

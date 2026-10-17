@@ -1,7 +1,8 @@
 // The mouse in the rendering area (Help | Mouse), and right-drag to zoom:
 //
 //   left    click: select an atom (or a bond, or a ribbon's residue); Shift toggles;
-//           Ctrl (or Cmd) takes the residue; double-click: the molecule (of its class);
+//           Ctrl (or Cmd) takes the residue; double-click: the residue, and
+//           again: the molecule (of its class);
 //           drag: select a box (Shift adds, Ctrl takes residues); click away: clear
 //   middle  drag: rotate; in the perimeter: about z; Shift: pan; Ctrl: zoom;
 //           click an atom: the centre of rotation (away from atoms: back to the view's)
@@ -201,15 +202,24 @@ export function setupMouse(app) {
       + `  (order ${m.topo.bonds.order[m.topo.bonds.i.findIndex((i, k) => (i === hit.atoms[0] && m.topo.bonds.j[k] === hit.atoms[1]) || (i === hit.atoms[1] && m.topo.bonds.j[k] === hit.atoms[0]))] ?? 1})`);
   }
 
-  // double-click: the atom's molecule, as far as it is of the atom's class
+  // double-click (an atom, a bond or a ribbon): its residue; again on that residue:
+  // its molecule, as far as it is of the atom's class; again: the residue
+  let lastDouble = null;
   canvas.addEventListener("dblclick", e => {
     if (app.toolActive?.()) return;
     const [x, y] = local(e);
     const hit = app.pick(x, y);
-    if (!hit || hit.atom === undefined) return;
+    if (!hit) return;
     const m = hit.model, A = m.topo.atoms;
-    const f = A.fragment[hit.atom], c = A.class[hit.atom];
-    const ids = app.range(m.topo.natoms).filter(a => A.fragment[a] === f && A.class[a] === c);
+    const seed = hit.atom ?? hit.atoms?.[0] ?? m.topo.residueAtoms[hit.residue][0];
+    const r = A.residue[seed];
+    const whole = lastDouble?.model === m && lastDouble.residue === r && lastDouble.level === "residue";
+    let ids = m.topo.residueAtoms[r];
+    if (whole) {
+      const f = A.fragment[seed], c = A.class[seed];
+      ids = app.range(m.topo.natoms).filter(a => A.fragment[a] === f && A.class[a] === c);
+    }
+    lastDouble = { model: m, residue: r, level: whole ? "molecule" : "residue" };
     app.select(m, ids, e.shiftKey ? "add" : "set");
   });
 
