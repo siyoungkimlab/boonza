@@ -25,6 +25,7 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/download        {"m": M, "fmt": pdb|cif|sdf|mae|dms|gro, "atoms": [...]} -> a file
     POST /api/python          {"code": ..., "m": current, "sel": [...]} -> output, actions
                               (only on 127.0.0.1; every POST carries the page's token)
+    POST /api/surface_charges {"m": M} -> the force field's charges for the surface
     POST /api/fetch           {"id": PDB ID} -> downloads it (mmCIF) and opens it
     POST /api/align           {"m": mobile, "ref": reference, "method": matchmaker...}
     POST /api/dihedral        {"m": M, "atoms": [a, b, c, d]} -> angle, atoms that turn
@@ -207,6 +208,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(session.undo())
         elif url.path == "/api/redo":
             self._json(session.redo())
+        elif url.path == "/api/surface_charges":
+            self._json(session.surface_charges())
         elif url.path == "/api/assign_ff":
             s = session
             s._parameterized()

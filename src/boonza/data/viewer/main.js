@@ -28,6 +28,7 @@ const state = {
   masks: [true, true, true, true],  // pickable: receptor, ligand, solvent, ribbons
   hydrogens: "polar",               // shown: all, polar, none
   contacts: false, meters: [], labelMode: "name", busy: 0,
+  surfaceGrid: +(localStorage.getItem("boonza.surfaceGrid") || 0.5),  // A, Render | Surface | Resolution
 };
 
 // --- server ----------------------------------------------------------------
@@ -398,15 +399,16 @@ function cellLines(box) {
   return out;
 }
 
-// a model's surface (Render | Surface): made again when its atoms move or its kind changes
+// a model's surface (Render | Surface): made again when its atoms move, or its kind
+// or the resolution changes
 function surfaceOf(m) {
   const want = m.surfaceSpec;
   if (!want) return null;
-  const s = m.surfaceMesh;
-  if (s && s.pos === m.pos && s.kind === want.kind && s.version === want.version) return s.mesh;
+  const s = m.surfaceMesh, grid = state.surfaceGrid;
+  if (s && s.pos === m.pos && s.kind === want.kind && s.version === want.version && s.grid === grid) return s.mesh;
   const t0 = performance.now();
-  const mesh = surface(m, want.ids, want.kind);
-  m.surfaceMesh = { pos: m.pos, kind: want.kind, version: want.version, mesh };
+  const mesh = surface(m, want.ids, want.kind, grid);
+  m.surfaceMesh = { pos: m.pos, kind: want.kind, version: want.version, grid, mesh };
   if (performance.now() - t0 > 2000) message(`surface: ${mesh.index.length / 3} triangles in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   return mesh;
 }

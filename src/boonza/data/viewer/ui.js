@@ -5,6 +5,7 @@
 
 import { colorAtoms, colorResidues, isColor, named } from "./colors.js";
 import { STYLE_NAMES, STYLES } from "./geometry.js";
+import { GRIDS } from "./surface.js";
 
 const $ = id => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => {
@@ -322,13 +323,21 @@ export function setupUI(app) {
     { label: "Full Screen", run: () => document.documentElement.requestFullscreen?.(), key: "F12" },
   ];
   // Render | Surface: of the selected atoms, else of the current model's receptor
-  const SURFACES = [["plain", "Molecular"], ["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"]];
+  const SURFACES = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"], ["plain", "One Colour"]];
   const surfaceItems = () => [
     ...SURFACES.map(([kind, label]) => ({ label, run: () => setSurface(kind),
       checked: () => app.currentModel()?.surfaceSpec?.kind === kind })),
+    { label: "Resolution", sub: () => GRIDS.map(([h, label]) => ({ label, run: () => surfaceGrid(h),
+      checked: () => state.surfaceGrid === h })) },
     "-",
     { label: "Off", run: () => setSurface(null) },
   ];
+  // the surface's grid spacing (A; beads twice it): finer is smoother and slower
+  function surfaceGrid(h) {
+    state.surfaceGrid = h;
+    localStorage.setItem("boonza.surfaceGrid", String(h));
+    app.rebuild();
+  }
   let surfaceVersion = 0;
   // a model's surface: of these atoms, else of its receptor (else of all but solvent)
   function surfaceOf(m, kind, ids = null) {
@@ -340,6 +349,26 @@ export function setupUI(app) {
       if (!atoms.length) atoms = all.filter(a => A.class[a] !== 2);
     }
     m.surfaceSpec = { kind, ids: atoms, version: ++surfaceVersion };
+    if (kind === "electrostatic") forceFieldCharges(m);
+  }
+  // an electrostatic surface's charges: the force field's (Amber ff19SB, hydrogens
+  // added on a copy), once per topology, for a structure that has none of its own
+  async function forceFieldCharges(m) {
+    const t = m.topo;
+    if (app.STATIC || t.cg || t.q_source !== "template" || t.qAssigned) return;
+    t.qAssigned = true;
+    try {
+      const out = await app.busy("assigning Amber ff19SB charges for the surface",
+                                 () => app.post("api/surface_charges", { m: m.index }));
+      if (m.topo !== t) return;  // the model changed meanwhile
+      t.atoms.q = out.q;
+      if (m.surfaceSpec) m.surfaceSpec = { ...m.surfaceSpec, version: ++surfaceVersion };
+      app.rebuild();
+      app.message(`electrostatic surface: Amber ff19SB charges on ${out.assigned} of ${out.natoms} atoms`
+        + `${out.assigned < out.natoms ? " (the rest by residue)" : ""}; red −10 to blue +10 kcal/(mol·e)`);
+    } catch (e) {
+      app.message(`${e.message}\nthe surface's charges are by residue`, true);
+    }
   }
   function setSurface(kind) {
     const sel = app.selection();
@@ -348,7 +377,7 @@ export function setupUI(app) {
       if (!m?.topo) continue;
       surfaceOf(m, kind, ids);
     }
-    if (kind) app.message(`${kind === "plain" ? "molecular" : kind} surface${kind === "electrostatic" ? ": red −5 to blue +5 kT/e (Coulomb, ε = 4r)" : kind === "hydrophobic" ? ": dark cyan hydrophilic, goldenrod hydrophobic" : ""}`);
+    if (kind) app.message(`${kind === "plain" ? "molecular" : kind} surface${kind === "electrostatic" ? ": red −10 to blue +10 kcal/(mol·e) (Coulomb, ε = 4r, 1.4 Å off the surface)" : kind === "hydrophobic" ? ": dark cyan hydrophilic, goldenrod hydrophobic" : ""}`);
     app.rebuild();
   }
 
@@ -1061,7 +1090,7 @@ export function setupUI(app) {
         app.message("a selection selects atoms (boonza's language, e.g. resname LIG or within 5 of resname LIG)\n"
           + "commands: select SEL · show SEL · hide SEL · center [SEL] · style line|stick|ballline|ballstick|space [SEL] · "
           + "color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · minimize · undo · redo · "
-          + "open PATH · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|off] · reset");
+          + "open PATH · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset");
         return;
       case "select": await selectServer(() => arg); return;
       case "show": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 1; }); return;
@@ -1093,7 +1122,13 @@ export function setupUI(app) {
       case "save": await savePath(arg); return;
       case "siteview": await siteView(); return;
       case "wholeview": wholeView(); return;
-      case "surface": setSurface(arg === "off" ? null : ["electrostatic", "hydrophobic"].includes(arg) ? arg : "plain"); return;
+      case "surface": {  // surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine]
+        const grids = { coarse: 1.0, standard: 0.5, fine: 0.3 };
+        for (const w of rest) if (w in grids) surfaceGrid(grids[w]);
+        const kind = rest.find(w => ["electrostatic", "hydrophobic", "plain", "off"].includes(w));
+        if (kind || !app.currentModel()?.surfaceSpec) setSurface(kind === "off" ? null : kind || "electrostatic");
+        return;
+      }
       case "reset": app.resetView(); return;
       default: await selectServer(() => text);  // a selection
     }
@@ -1747,7 +1782,7 @@ export function setupUI(app) {
     await app.load(m);
     const st = m.state, n = m.topo.natoms, R = m.topo.residues;
     m.preset = kind;
-    surfaceOf(m, kind === "surface" ? "plain" : null);
+    surfaceOf(m, kind === "surface" ? "electrostatic" : null);
     if (kind === "site") {  // the defaults: cartoon, pocket, ligand
       const reps = await Promise.all(m.topo.reps.map(async r => ({ ...r, ids: await serverSelect(m, r.sel) })));
       st.show.fill(0); st.ribbon.fill(0);
