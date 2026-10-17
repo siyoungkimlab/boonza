@@ -530,6 +530,80 @@ def parameterize(s, forcefields=None, log=print):
             ) from e
 
 
+#: atomic numbers of the metals a protein force field has no bonds to
+METALS = (12, 20, 25, 26, 27, 28, 29, 30)
+
+
+def amber_charges(s, forcefields=None) -> tuple[np.ndarray, np.ndarray]:
+    """Partial charges from the force fields ``boonza md`` uses, for a structure
+    without them (a PDB entry): on a copy, hydrogens are added from the
+    templates (bonds to metals cut first, so a heme's histidine is a histidine)
+    and the residues the force fields have templates for are parameterized; an
+    added atom's charge goes to the original atom of its name in its residue (a
+    hydrogen replaced, a side chain rebuilt), else to the nearest original atom
+    it is bonded to.
+    Returns the charges and which atoms have one (residues without a template,
+    a heme or a ligand, have none: no GAFF2 here, it is slow)."""
+    import warnings
+
+    from .. import gaff, viparr
+    from ..md.config import DEFAULT_FORCEFIELDS
+
+    n = s.natoms
+    work = s.copy()
+    work.atoms["view_index"] = np.arange(1, n + 1, dtype=np.int64)  # 0: added atoms
+    metal = np.isin(np.asarray(work.atoms["anum"]), METALS)
+    i, j = np.asarray(work.bonds["i"]), np.asarray(work.bonds["j"])
+    if (cut := np.flatnonzero(metal[i] | metal[j])).size:
+        work.delete_bonds(cut)
+    protonate(work)
+    ffs = []
+    for base, *patches in forcefields or DEFAULT_FORCEFIELDS:
+        ff = viparr.load_forcefield(base)
+        for p in patches:
+            ff = viparr.merge_forcefields(ff, viparr.load_forcefield(p))
+        ffs.append(ff)
+    known = {tp.name for ff in ffs for tp in ff.templates}
+    rnames = [str(x) for x in work.residues["name"]]
+    unmatched = [r for group in gaff.find_unmatched(work, ffs) for r in group]
+    left_out = {r for r in unmatched if rnames[r] not in known}
+    keep = np.flatnonzero(~np.isin(np.asarray(work.atoms["residue"]), list(left_out)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", viparr.ViparrWarning)
+        p = viparr.parameterize(work.clone(atoms=keep), ffs)
+    orig = np.asarray(p.atoms["view_index"]) - 1
+    charge = np.asarray(p.atoms["charge"], float)
+    nbrs = [[] for _ in range(p.natoms)]
+    bi, bj = np.asarray(p.bonds["i"]).tolist(), np.asarray(p.bonds["j"]).tolist()
+    for a, b in zip(bi, bj, strict=True):
+        nbrs[a].append(b)
+        nbrs[b].append(a)
+    # an added atom that stands for an original one (a hydrogen replaced, a side
+    # chain rebuilt): the original atom of its name in its residue
+    s_res = np.asarray(s.atoms["residue"])
+    by_name = {(int(s_res[a]), str(s.atoms["name"][a])): a for a in range(n)}
+    p_res, p_names = np.asarray(p.atoms["residue"]), [str(x) for x in p.atoms["name"]]
+    home = {}
+    for k in np.flatnonzero(orig >= 0).tolist():
+        home.setdefault(int(p_res[k]), int(s_res[orig[k]]))
+    for k in np.flatnonzero(orig < 0).tolist():
+        r = home.get(int(p_res[k]))
+        if r is not None and (r, p_names[k]) in by_name:
+            orig[k] = by_name[(r, p_names[k])]
+    q, has = np.zeros(n), np.zeros(n, bool)
+    for k in range(p.natoms):
+        seen, todo = {k}, [k]
+        while todo and orig[todo[0]] < 0:  # breadth first to an original atom
+            for b in nbrs[todo.pop(0)]:
+                if b not in seen:
+                    seen.add(b)
+                    todo.append(b)
+        if todo:
+            q[orig[todo[0]]] += charge[k]
+            has[orig[todo[0]]] = True
+    return q, has
+
+
 def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: float = 10.0,
              max_iterations: int = 0, parameterized=None, log=print, fixed=None,
              tethered=None) -> dict:  # fmt: skip

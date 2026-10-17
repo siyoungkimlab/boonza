@@ -433,8 +433,12 @@ class Session:
             q = charges(s, self.cg)
         else:
             q = np.zeros(s.natoms)
+        has_charges = bool(np.any(np.asarray(s.atoms["charge"]) != 0))
         return {
             "title": self.title,
+            # the surface's charges (atoms.q): the file's own partial charges, or
+            # by residue (the page then asks for the force field's: surface_charges)
+            "q_source": "file" if has_charges else "template",
             "path": str(self.path) if getattr(self, "path", None) else "",
             "editable": self.trajectory is None and self.radii is None,
             "guessed_orders": self.guessed_orders,
@@ -938,6 +942,29 @@ class Session:
 
         save(self.system, path)
         return str(path)
+
+    def surface_charges(self) -> dict:
+        """The charges an electrostatic surface is coloured by: the force field's
+        (edit.amber_charges) where it has templates, the residue charges elsewhere;
+        made once per topology."""
+        from .edit import amber_charges
+        from .properties import charges
+
+        key = getattr(self, "topo_version", 0)
+        cached = getattr(self, "_surface_q", None)
+        if cached is None or cached[0] != key:
+            q = charges(self.system, self.cg)
+            own = np.any(np.asarray(self.system.atoms["charge"]) != 0)
+            if self.cg or self.radii is not None or own:  # beads, points, or its own
+                out = {"q": q, "assigned": 0}
+            else:
+                amber, has = amber_charges(self.system)
+                q[has] = amber[has]
+                out = {"q": q, "assigned": int(has.sum())}
+            self._surface_q = (key, out)
+        out = self._surface_q[1]
+        return {"q": np.round(out["q"], 4).tolist(), "assigned": out["assigned"],
+                "natoms": self.system.natoms, "force_field": "Amber ff19SB"}  # fmt: skip
 
     def _parameterized(self, log=print):
         """The force-field copy for energies, kept until the topology changes."""

@@ -825,6 +825,15 @@ def test_surface_charges_and_hydrophobicity():
     leu = [a for a in range(s.natoms) if rnames[a] == "LEU" and names[a] in ("CD1", "CD2")]
     assert leu and np.all(h[leu] == 1)
     assert np.all(h[asp] == -1)
+    # beads without a topology: the charged side-chain bead (Martini 2 and 3 alike)
+    s = boonza.load(DATA / "martini" / "2TRX" / "cg.pdb.gz")
+    q = charges(s, cg=True)
+    names = [str(x) for x in s.atoms["name"]]
+    rnames = [str(s.residues["name"][r]) for r in s.atoms["residue"]]
+    for res, bead, charge in (("ASP", "SC1", -1), ("GLU", "SC1", -1), ("LYS", "SC2", 1)):
+        here = [a for a in range(s.natoms) if rnames[a] == res and names[a] == bead]
+        assert here and np.all(q[here] == charge)
+    assert np.count_nonzero(q) == sum(r in ("ASP", "GLU", "LYS", "ARG") for r in s.residues["name"])
 
 
 def test_memory_trajectory_and_frame_links():
@@ -1036,3 +1045,21 @@ def test_view_takes_a_pdb_id(monkeypatch, tmp_path):
     with pytest.raises(ValueError):
         args.run(args)
     assert fetched == ["1hho"]
+
+
+def test_amber_charges_for_a_structure_without_them():
+    """A PDB entry: hydrogens on a copy, ff19SB charges folded onto the heavy atoms."""
+    from boonza.viewer.edit import amber_charges
+
+    s = boonza.load(DATA / "1FNA.pdb")
+    q, has = amber_charges(s)
+    assert has.all()  # its own hydrogens too, and the side chains rebuilt
+    assert abs(q[has].sum() - round(q[has].sum())) < 1e-3  # whole charges
+    names = [str(x) for x in s.atoms["name"]]
+    nh3 = [a for a in s.residue_atoms(0) if names[a] in ("N", "H1", "H2", "H3")]
+    assert abs(q[nh3].sum() - 0.8) < 0.15  # NH3+ (with CA and HA: +1)
+    session = viewer.Session(s)
+    assert session.topology()["q_source"] == "template"
+    out = session.surface_charges()
+    assert out["assigned"] == int(has.sum())
+    assert np.allclose(np.array(out["q"])[has], q[has], atol=1e-4)
