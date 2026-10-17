@@ -1091,7 +1091,7 @@ export function setupUI(app) {
         app.message("a selection selects atoms (boonza's language, e.g. resname LIG or within 5 of resname LIG)\n"
           + "commands: select SEL · show SEL · hide SEL · center [SEL] · style line|stick|ballline|ballstick|space [SEL] · "
           + "color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · minimize · undo · redo · "
-          + "open PATH · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset");
+          + "open PATH|PDB-ID · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset");
         return;
       case "select": await selectServer(() => arg); return;
       case "show": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 1; }); return;
@@ -2220,12 +2220,13 @@ export function setupUI(app) {
   // open and save: paths on the server (where the files are)
   function pathPanel(id, title, value, run) {
     return panel(id, title, body => {
-      const input = el("input", { value, style: "width:360px", spellcheck: false });
+      const input = el("input", { value, style: "width:360px", spellcheck: false,
+                                  placeholder: id === "open" ? "a path, or a PDB ID (e.g. 1IRK)" : "" });
       const go = button(title.split(" ")[0], () => run(input.value.trim()), "blue");
       input.onkeydown = e => { if (e.key === "Enter") go.click(); };
       body.append(row(input, go));
       body.append(el("p", { className: "help" }, "A path on the machine boonza view runs on: a structure, a saved session (.bview), "
-        + "or a folder of boonza modes, triage or sitemap."));
+        + "or a folder of boonza modes, triage or sitemap; or a PDB ID (e.g. 1IRK), downloaded from RCSB."));
       setTimeout(() => input.focus(), 0);
     }, [innerWidth / 2 - 220, 80]);
   }
@@ -2252,7 +2253,10 @@ export function setupUI(app) {
   }
   async function openPath(path) {
     try {
-      const out = await app.post("api/open", { path });
+      const id = /^[0-9][A-Za-z0-9]{3}$/.test(path);  // a PDB ID, unless a file is named so
+      const out = id ? await app.busy(`opening ${path.toUpperCase()} (from RCSB unless it is a file here)`,
+                                      () => app.post("api/open", { path }))
+                     : await app.post("api/open", { path });
       await addModels(out);
       if (path.endsWith(".bview") && out.page) await app.restorePage(out.page);
       app.message(`opened ${path}: ${out.added.length} model(s)`);
