@@ -330,19 +330,23 @@ export function setupUI(app) {
     { label: "Off", run: () => setSurface(null) },
   ];
   let surfaceVersion = 0;
+  // a model's surface: of these atoms, else of its receptor (else of all but solvent)
+  function surfaceOf(m, kind, ids = null) {
+    if (!kind) { m.surfaceSpec = null; m.surfaceMesh = null; return; }
+    let atoms = ids;
+    if (!atoms) {
+      const A = m.topo.atoms, all = app.range(m.topo.natoms);
+      atoms = all.filter(a => A.class[a] === 0);
+      if (!atoms.length) atoms = all.filter(a => A.class[a] !== 2);
+    }
+    m.surfaceSpec = { kind, ids: atoms, version: ++surfaceVersion };
+  }
   function setSurface(kind) {
     const sel = app.selection();
     const targets = sel.length ? sel : [[app.currentModel(), null]];
     for (const [m, ids] of targets) {
       if (!m?.topo) continue;
-      if (!kind) { m.surfaceSpec = null; m.surfaceMesh = null; continue; }
-      let atoms = ids;
-      if (!atoms) {
-        const A = m.topo.atoms, all = app.range(m.topo.natoms);
-        atoms = all.filter(a => A.class[a] === 0);
-        if (!atoms.length) atoms = all.filter(a => A.class[a] !== 2);
-      }
-      m.surfaceSpec = { kind, ids: atoms, version: ++surfaceVersion };
+      surfaceOf(m, kind, ids);
     }
     if (kind) app.message(`${kind === "plain" ? "molecular" : kind} surface${kind === "electrostatic" ? ": red −5 to blue +5 kT/e (Coulomb, ε = 4r)" : kind === "hydrophobic" ? ": dark cyan hydrophilic, goldenrod hydrophobic" : ""}`);
     app.rebuild();
@@ -708,7 +712,7 @@ export function setupUI(app) {
     ],
     Help: () => [
       { label: "Mouse…", run: mousePanel },
-      { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset view · F12: full screen") },
+      { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset view · F12: full screen · Esc: close menus, put a message away") },
     ],
   };
   const constrainItems = () => [
@@ -871,6 +875,7 @@ export function setupUI(app) {
       "-",
     ] : [])(clicked(hit)),
     ...renderItems().slice(0, 9),
+    { label: "Surface", sub: surfaceItems },
     "-",
     { label: "Select", sub: selectItems },
     { label: "Extend", sub: extendItems },
@@ -884,6 +889,7 @@ export function setupUI(app) {
 
   $("f-atoms").onclick = () => { const r = $("f-atoms").getBoundingClientRect(); const m = menu(atomItems, r.left, 0); m.style.top = `${r.top - m.getBoundingClientRect().height}px`; };
   $("f-ribbon").onclick = () => { const r = $("f-ribbon").getBoundingClientRect(); const m = menu(ribbonItems, r.left, 0); m.style.top = `${r.top - m.getBoundingClientRect().height}px`; };
+  $("f-surface").onclick = () => { const r = $("f-surface").getBoundingClientRect(); const m = menu(surfaceItems, r.left, 0); m.style.top = `${r.top - m.getBoundingClientRect().height}px`; };
   $("f-contacts").onclick = toggleContacts;
   $("f-fog").onclick = fogPanel;
   $("f-zclip").onclick = zclipPanel;
@@ -1172,7 +1178,7 @@ export function setupUI(app) {
 
   window.addEventListener("keydown", e => {
     const typing = e.target.tagName === "INPUT" && !["range", "checkbox"].includes(e.target.type) || ["SELECT", "TEXTAREA"].includes(e.target.tagName);
-    if (e.key === "Escape") { closeMenus(); if (!$("cli").hidden) closeCLI(); if (app.toolActive()) app.dropTool(); return; }
+    if (e.key === "Escape") { closeMenus(); if (!$("cli").hidden) closeCLI(); if (app.toolActive()) app.dropTool(); app.message(""); return; }
     if (typing) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === "c" && !String(window.getSelection())) { e.preventDefault(); copySmiles(); return; }
@@ -1731,9 +1737,9 @@ export function setupUI(app) {
   // --- the models, docked on the right: on/off, colour, representation, the table's data --
 
   const PRESETS = [["site", "SiteView"], ["ribbon", "Ribbon"], ["ribbonlig", "Ribbon + ligand"],
-                   ["ribbonlines", "Ribbon + lines"], ["line", "Lines"], ["stick", "Sticks"],
-                   ["ballstick", "Ball and Stick"], ["space", "Space filling"],
-                   ["ribbonspace", "Ribbon + Space Filling"]];
+                   ["ribbonpocket", "Ribbon + pocket"], ["ribbonlines", "Ribbon + lines"],
+                   ["ribbonspace", "Ribbon + Space Filling"], ["line", "Lines"], ["stick", "Sticks"],
+                   ["ballstick", "Ball and Stick"], ["space", "Space filling"], ["surface", "Surface + ligand"]];
   const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...["green", "cyan", "magenta", "yellow",
     "orange", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
 
@@ -1741,6 +1747,7 @@ export function setupUI(app) {
     await app.load(m);
     const st = m.state, n = m.topo.natoms, R = m.topo.residues;
     m.preset = kind;
+    surfaceOf(m, kind === "surface" ? "plain" : null);
     if (kind === "site") {  // the defaults: cartoon, pocket, ligand
       const reps = await Promise.all(m.topo.reps.map(async r => ({ ...r, ids: await serverSelect(m, r.sel) })));
       st.show.fill(0); st.ribbon.fill(0);
@@ -1748,12 +1755,17 @@ export function setupUI(app) {
     } else {
       const ribbon = kind.startsWith("ribbon");
       for (let r = 0; r < st.ribbon.length; r++) st.ribbon[r] = ribbon && R.trace[r] >= 0 ? 1 : 0;
-      const style = { line: 0, stick: 1, ballstick: 3, space: 4, ribbonlines: 0, ribbonlig: 1, ribbonspace: 4 }[kind];
+      const style = { line: 0, stick: 1, ballstick: 3, space: 4, ribbonlines: 0, ribbonlig: 1, ribbonpocket: 1,
+                      ribbonspace: 4, surface: 1 }[kind];
       st.show.fill(0);
       let ids = app.range(n);
-      if (kind === "ribbonlig" || kind === "ribbonspace") ids = await serverSelect(m, `same residue as (${m.topo.ligand})`);
+      if (["ribbonlig", "ribbonpocket", "ribbonspace", "surface"].includes(kind)) {
+        ids = await serverSelect(m, `same residue as (${m.topo.ligand})`);
+      }
       if (kind === "ribbonlines") ids = ids.filter(a => m.topo.atoms.class[a] !== 2);
       if (kind !== "ribbon") for (const a of ids) { st.show[a] = 1; st.style[a] = style; }
+      // the pocket's residues in lines around the ligand's sticks
+      if (kind === "ribbonpocket") for (const a of await serverSelect(m, pocketSelection(m))) { st.show[a] = 1; st.style[a] = 0; }
     }
     app.rebuild();
   }

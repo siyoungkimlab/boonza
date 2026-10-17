@@ -47,6 +47,7 @@ export function setupMouse(app) {
     const [x, y] = local(e);
     drag = { role: role(e.button), x0: x, y0: y, x, y, moved: false, shift: e.shiftKey,
              ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, perimeter: inPerimeter(x, y) };
+    if (drag.role === "left") app.message("");  // a click in the view puts a message away
     canvas.setPointerCapture(e.pointerId);
     if (drag.role === "left" && drag.alt) startDihedral();
     e.preventDefault();
