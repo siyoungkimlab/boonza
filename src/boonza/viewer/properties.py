@@ -7,7 +7,8 @@ Charges, from the first of these a structure has:
    same element sitting on the same atom and nothing else (a carboxylate's two
    oxygens, an arginine's NH1 and NH2), as resonance shares them;
 3. charged residues at pH 7 by name (Asp, Glu -1; Lys, Arg +1; HIP +1; chain
-   ends +1 and -1), ions by element.
+   ends +1 and -1), ions by element; beads (a Martini structure without its
+   topology) on the charged side-chain bead (Asp, Glu SC1; Lys, Arg SC2).
 
 Hydrophobicity is a sign per atom, no scale fitted: +1 for carbon and sulfur
 with no N or O on them and for Cl, Br and I; -1 for N and O and for anything
@@ -24,6 +25,9 @@ import numpy as np
 TEMPLATE = {"ASP": (("OD1", "OD2"), -1), "GLU": (("OE1", "OE2"), -1), "LYS": (("NZ",), 1),
             "ARG": (("NH1", "NH2", "NE"), 1), "HIP": (("ND1", "NE2"), 1),
             "HSP": (("ND1", "NE2"), 1)}  # fmt: skip
+#: the same on Martini's beads (2 and 3 alike)
+CG_TEMPLATE = {"ASP": (("SC1",), -1), "GLU": (("SC1",), -1), "LYS": (("SC2",), 1),
+               "ARG": (("SC2",), 1)}  # fmt: skip
 #: ions by atomic number
 IONS = {3: 1, 11: 1, 19: 1, 37: 1, 55: 1, 12: 2, 20: 2, 30: 2, 25: 2, 26: 2, 27: 2, 29: 2,
         9: -1, 17: -1, 35: -1, 53: -1}  # fmt: skip
@@ -77,10 +81,11 @@ def charges(system, cg: bool = False) -> np.ndarray:
     for a in range(system.natoms):
         if anum[a] in IONS and not nbrs[a]:
             q[a] = IONS[int(anum[a])]
+    template = CG_TEMPLATE if cg else TEMPLATE
     for r in range(system.nresidues):
-        if rnames[r] not in TEMPLATE:
+        if rnames[r] not in template:
             continue
-        atoms, total = TEMPLATE[rnames[r]]
+        atoms, total = template[rnames[r]]
         here = [a for a in system.residue_atoms(r) if names[a] in atoms]
         if here:
             q[here] += total / len(here)

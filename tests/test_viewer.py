@@ -825,6 +825,15 @@ def test_surface_charges_and_hydrophobicity():
     leu = [a for a in range(s.natoms) if rnames[a] == "LEU" and names[a] in ("CD1", "CD2")]
     assert leu and np.all(h[leu] == 1)
     assert np.all(h[asp] == -1)
+    # beads without a topology: the charged side-chain bead (Martini 2 and 3 alike)
+    s = boonza.load(DATA / "martini" / "2TRX" / "cg.pdb.gz")
+    q = charges(s, cg=True)
+    names = [str(x) for x in s.atoms["name"]]
+    rnames = [str(s.residues["name"][r]) for r in s.atoms["residue"]]
+    for res, bead, charge in (("ASP", "SC1", -1), ("GLU", "SC1", -1), ("LYS", "SC2", 1)):
+        here = [a for a in range(s.natoms) if rnames[a] == res and names[a] == bead]
+        assert here and np.all(q[here] == charge)
+    assert np.count_nonzero(q) == sum(r in ("ASP", "GLU", "LYS", "ARG") for r in s.residues["name"])
 
 
 def test_memory_trajectory_and_frame_links():

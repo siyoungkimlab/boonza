@@ -1,88 +1,159 @@
-// Molecular surfaces: a smooth (Gaussian) surface around atoms, coloured plain,
-// by electrostatic potential or by hydrophobicity.
+// Molecular surfaces: the solvent-excluded surface (SES) around atoms, coloured
+// by electrostatic potential, by hydrophobicity, or one colour.
 //
-// The surface is where a sum of blobs, one per atom, equals 1:
-//     rho(x) = sum_i exp(-B (|x - x_i|^2 / r_i^2 - 1)),
-// so an atom alone is a sphere of its radius r_i (van der Waals, or the bead's)
-// and neighbours blend into one skin that bridges gaps narrower than a water.
-// B sets how much they blend; it is triangulated by marching tetrahedra.
+// The SES is what a probe sphere (a water, 1.4 A) rolling over the atoms
+// leaves: the solvent-accessible surface (each atom's sphere grown by the
+// probe) pulled back in by the probe's radius.  On a grid: the solvent points
+// next to the molecule, moved onto the grown spheres, are where the probe's
+// centre can be; a point is inside the molecule if it is farther than the
+// probe from all of them, and the surface, triangulated by marching
+// tetrahedra, is where that distance equals the probe's.  The grid's spacing
+// is the resolution (0.5 A standard).
 //
-// Potential: Coulomb with a distance-dependent dielectric (eps = 4r), summed
-// within 15 A; shown from -5 (red) through 0 (white) to +5 kT/e (blue).
+// Potential: Coulomb with a distance-dependent dielectric (eps = 4r), read 1.4 A
+// out from the surface along its normal, as ChimeraX colours it: from -10 (red)
+// through 0 (white) to +10 kcal/(mol e) (blue).  Every charge counts, unless
+// that would be slow (a large system): then those within 15 A.
 // Hydrophobicity: the atoms' signs (properties.py) averaged with Gaussian
 // weights (sigma 1.5 A) at each point; dark cyan (hydrophilic), white, goldenrod
 // (hydrophobic), as ChimeraX colours it.
 
-const B = 2.0;            // blending
-const SPACING = { atoms: 0.75, beads: 1.2 };  // grid (A)
-const KT = 0.596;         // kcal/mol at 300 K
+export const GRIDS = [[1.0, "Coarse (1.0 Å)"], [0.5, "Standard (0.5 Å)"], [0.3, "Fine (0.3 Å)"]];
+const PROBE = 1.4;        // A, a water
+const BEAD_GRID = 2;      // beads: a grid this much coarser
 const COULOMB = 332.06;   // kcal A / (mol e^2)
-const REACH = 15;         // A, the potential's
-const SCALE = 5;          // kT/e at full colour
+const OFFSET = 1.4;       // A, off the surface, where the potential is read
+const SCALE = 10;         // kcal/(mol e) at full colour
+const REACH = 15;         // A, the potential's, for a large system
+const ALL_PAIRS = 3e8;    // vertices x charges above which REACH applies
 const SIGMA = 1.5;        // A, hydrophobicity's smoothing
 
 const RED = [0.84, 0.19, 0.15], WHITE = [1, 1, 1], BLUE = [0.19, 0.38, 0.86];
-const CYAN = [0, 0.55, 0.55], GOLD = [0.85, 0.65, 0.13];
+const CYAN = [0, 0.55, 0.55], GOLD = [0.85, 0.65, 0.13], PLAIN = [0.86, 0.86, 0.88];
 
 // the six tetrahedra of a cube, by its corners (x + 2y + 4z)
 const TETS = [[0, 5, 1, 7], [0, 1, 3, 7], [0, 3, 2, 7], [0, 2, 6, 7], [0, 6, 4, 7], [0, 4, 5, 7]];
 
-export function surface(model, ids, kind = "plain") {
+export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
   const { topo, pos } = model;
   const R = topo.atoms.radius;
-  const h = topo.cg ? SPACING.beads : SPACING.atoms;
-  // the grid: the atoms' box, padded by twice the largest radius
+  const h = topo.cg ? grid * BEAD_GRID : grid;
+  // the grid: the atoms' box, padded by the largest grown radius
   let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], rmax = 0;
   for (const a of ids) {
     for (let d = 0; d < 3; d++) { lo[d] = Math.min(lo[d], pos[3 * a + d]); hi[d] = Math.max(hi[d], pos[3 * a + d]); }
     rmax = Math.max(rmax, R[a]);
   }
-  lo = lo.map(x => x - 2 * rmax - h); hi = hi.map(x => x + 2 * rmax + h);
+  const pad = rmax + PROBE + 2 * h;
+  lo = lo.map(x => x - pad); hi = hi.map(x => x + pad);
   const nx = Math.ceil((hi[0] - lo[0]) / h) + 1, ny = Math.ceil((hi[1] - lo[1]) / h) + 1, nz = Math.ceil((hi[2] - lo[2]) / h) + 1;
-  const rho = new Float32Array(nx * ny * nz);
+  const N = nx * ny * nz;
   const at = (i, j, k) => i + nx * (j + ny * k);
+
+  // e: how far each point is outside the nearest grown sphere (negative inside;
+  // left large where no sphere comes near)
+  const INF = 1e20, band = h;
+  const e = new Float32Array(N).fill(INF);
   for (const a of ids) {
-    const r = R[a], reach = 2 * r, x = pos[3 * a], y = pos[3 * a + 1], z = pos[3 * a + 2];
-    const i0 = Math.max(0, Math.floor((x - reach - lo[0]) / h)), i1 = Math.min(nx - 1, Math.ceil((x + reach - lo[0]) / h));
-    const j0 = Math.max(0, Math.floor((y - reach - lo[1]) / h)), j1 = Math.min(ny - 1, Math.ceil((y + reach - lo[1]) / h));
-    const k0 = Math.max(0, Math.floor((z - reach - lo[2]) / h)), k1 = Math.min(nz - 1, Math.ceil((z + reach - lo[2]) / h));
-    const inv = 1 / (r * r);
+    const r = R[a] + PROBE, reach = r + band, x = pos[3 * a], y = pos[3 * a + 1], z = pos[3 * a + 2];
+    const i0 = Math.max(0, Math.ceil((x - reach - lo[0]) / h)), i1 = Math.min(nx - 1, Math.floor((x + reach - lo[0]) / h));
+    const j0 = Math.max(0, Math.ceil((y - reach - lo[1]) / h)), j1 = Math.min(ny - 1, Math.floor((y + reach - lo[1]) / h));
+    const k0 = Math.max(0, Math.ceil((z - reach - lo[2]) / h)), k1 = Math.min(nz - 1, Math.floor((z + reach - lo[2]) / h));
     for (let k = k0; k <= k1; k++) {
       const dz = lo[2] + k * h - z;
       for (let j = j0; j <= j1; j++) {
         const dy = lo[1] + j * h - y, dyz = dy * dy + dz * dz;
         for (let i = i0; i <= i1; i++) {
-          const dx = lo[0] + i * h - x, d2 = dx * dx + dyz;
-          if (d2 < reach * reach) rho[at(i, j, k)] += Math.exp(-B * (d2 * inv - 1));
+          const dx = lo[0] + i * h - x, p = at(i, j, k);
+          const d = Math.sqrt(dx * dx + dyz) - r;
+          if (d < e[p]) e[p] = d;
         }
       }
     }
   }
+  // probe centres: the solvent points next to the molecule, each moved onto the
+  // grown sphere nearest it (unless that lands inside another)
+  const grown = neighbours(pos, ids, rmax + PROBE + band);
+  const centres = [];
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const p = at(i, j, k);
+    if (e[p] < 0 || e[p] >= band) continue;
+    const x = lo[0] + i * h, y = lo[1] + j * h, z = lo[2] + k * h;
+    let best = Infinity, b = -1;
+    grown(x, y, z, a => {
+      const d = Math.hypot(x - pos[3 * a], y - pos[3 * a + 1], z - pos[3 * a + 2]) - R[a] - PROBE;
+      if (d < best) { best = d; b = a; }
+    });
+    if (b < 0) continue;
+    const dx = x - pos[3 * b], dy = y - pos[3 * b + 1], dz = z - pos[3 * b + 2];
+    const f = (R[b] + PROBE) / (Math.hypot(dx, dy, dz) || 1);
+    const c = [pos[3 * b] + dx * f, pos[3 * b + 1] + dy * f, pos[3 * b + 2] + dz * f];
+    let clash = false;
+    grown(c[0], c[1], c[2], a => {
+      if (a !== b && Math.hypot(c[0] - pos[3 * a], c[1] - pos[3 * a + 1], c[2] - pos[3 * a + 2]) < R[a] + PROBE - 1e-3) clash = true;
+    });
+    if (!clash) centres.push(c[0], c[1], c[2]);
+  }
+  // rho: a point's distance to the nearest probe centre over the probe's radius
+  // (0 in the solvent, large deep inside); the molecule is where it is at least 1
+  const rho = e;
+  for (let p = 0; p < N; p++) rho[p] = rho[p] < 0 ? INF : 0;
+  const reach = PROBE + 1.5 * h;
+  for (let c = 0; c < centres.length; c += 3) {
+    const x = centres[c], y = centres[c + 1], z = centres[c + 2];
+    const i0 = Math.max(0, Math.ceil((x - reach - lo[0]) / h)), i1 = Math.min(nx - 1, Math.floor((x + reach - lo[0]) / h));
+    const j0 = Math.max(0, Math.ceil((y - reach - lo[1]) / h)), j1 = Math.min(ny - 1, Math.floor((y + reach - lo[1]) / h));
+    const k0 = Math.max(0, Math.ceil((z - reach - lo[2]) / h)), k1 = Math.min(nz - 1, Math.floor((z + reach - lo[2]) / h));
+    for (let k = k0; k <= k1; k++) {
+      const dz = lo[2] + k * h - z;
+      for (let j = j0; j <= j1; j++) {
+        const dy = lo[1] + j * h - y, dyz = dy * dy + dz * dz;
+        for (let i = i0; i <= i1; i++) {
+          const p = at(i, j, k);
+          if (rho[p] === 0) continue;
+          const dx = lo[0] + i * h - x, d = Math.sqrt(dx * dx + dyz) / PROBE;
+          if (d < rho[p]) rho[p] = d;
+        }
+      }
+    }
+  }
+  for (let p = 0; p < N; p++) if (rho[p] > 2) rho[p] = 2;
 
-  // marching tetrahedra; a vertex per crossed grid edge, shared by its triangles
-  const position = [], index = [], edges = new Map();
-  const corner = c => [c & 1, (c >> 1) & 1, (c >> 2) & 1];
+  // marching tetrahedra; a vertex per crossed grid edge, shared by its triangles,
+  // its normal the field's gradient (rho grows inward)
+  const position = [], normals = [], index = [], edges = new Map();
+  const OFF = [0, 1, nx, nx + 1, nx * ny, nx * ny + 1, nx * ny + nx, nx * ny + nx + 1];
+  const gridPoint = p => {
+    const i = p % nx, j = Math.floor(p / nx) % ny, k = Math.floor(p / (nx * ny));
+    return [i, j, k];
+  };
+  const gradient = p => {
+    const [i, j, k] = gridPoint(p);
+    const g = (q, m) => rho[q] - rho[m];
+    return [g(at(Math.min(i + 1, nx - 1), j, k), at(Math.max(i - 1, 0), j, k)),
+            g(at(i, Math.min(j + 1, ny - 1), k), at(i, Math.max(j - 1, 0), k)),
+            g(at(i, j, Math.min(k + 1, nz - 1)), at(i, j, Math.max(k - 1, 0)))];  // fmt: skip
+  };
   const vertex = (p, q) => {
-    const key = p < q ? p * rho.length + q : q * rho.length + p;
+    const key = p < q ? p * N + q : q * N + p;
     let v = edges.get(key);
     if (v !== undefined) return v;
     const t = (1 - rho[p]) / (rho[q] - rho[p]);
-    const P = grid(p), Q = grid(q);
+    const P = gridPoint(p), Q = gridPoint(q), gp = gradient(p), gq = gradient(q);
     v = position.length / 3;
-    position.push(P[0] + t * (Q[0] - P[0]), P[1] + t * (Q[1] - P[1]), P[2] + t * (Q[2] - P[2]));
+    for (let d = 0; d < 3; d++) {
+      position.push(lo[d] + h * (P[d] + t * (Q[d] - P[d])));
+      normals.push(-(gp[d] + t * (gq[d] - gp[d])));
+    }
     edges.set(key, v);
     return v;
   };
-  const grid = p => {
-    const i = p % nx, j = Math.floor(p / nx) % ny, k = Math.floor(p / (nx * ny));
-    return [lo[0] + i * h, lo[1] + j * h, lo[2] + k * h];
-  };
   const cube = new Int32Array(8);
   for (let k = 0; k < nz - 1; k++) for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    const base = at(i, j, k);
     let inside = 0;
     for (let c = 0; c < 8; c++) {
-      const [a, b, d] = corner(c);
-      cube[c] = at(i + a, j + b, k + d);
+      cube[c] = base + OFF[c];
       if (rho[cube[c]] >= 1) inside++;
     }
     if (inside === 0 || inside === 8) continue;
@@ -92,64 +163,61 @@ export function surface(model, ids, kind = "plain") {
       if (ins.length === 0 || ins.length === 4) continue;
       if (ins.length === 1 || ins.length === 3) {
         const [one, rest] = ins.length === 1 ? [ins[0], out] : [out[0], ins];
-        const tri = rest.map(p => vertex(one, p));
-        orient(tri, ins.length === 1 ? one : null, ins.length === 3 ? one : null);
+        orient(rest.map(p => vertex(one, p)));
       } else {
         const [a, b] = ins, [c, d] = out;
         const q = [vertex(a, c), vertex(a, d), vertex(b, d), vertex(b, c)];
-        orient([q[0], q[1], q[2]], a, null);
-        orient([q[0], q[2], q[3]], a, null);
+        orient([q[0], q[1], q[2]]);
+        orient([q[0], q[2], q[3]]);
       }
     }
   }
-  // triangles wound so their normal points out (away from an inside corner)
-  function orient(tri, inside, outside) {
+  // triangles wound so their normal agrees with the vertices' (outward)
+  function orient(tri) {
     const [a, b, c] = tri.map(v => position.slice(3 * v, 3 * v + 3));
     const n = cross(sub(b, a), sub(c, a));
-    const ref = grid(inside ?? outside);
-    const s = dot(n, sub(a, ref)) * (inside !== null ? 1 : -1);
-    if (s >= 0) index.push(tri[0], tri[1], tri[2]); else index.push(tri[0], tri[2], tri[1]);
+    const m = normals.slice(3 * tri[0], 3 * tri[0] + 3);
+    if (dot(n, m) >= 0) index.push(tri[0], tri[1], tri[2]); else index.push(tri[0], tri[2], tri[1]);
   }
 
   const nv = position.length / 3;
   const normal = new Float32Array(3 * nv), color = new Float32Array(3 * nv);
-  const q = topo.atoms.q, lipo = topo.atoms.lipo, rgb = model.state.rgb;
-  // the atoms near a point (its normal, its colour), and the charged ones in reach
-  const near = neighbours(pos, ids, Math.max(2 * rmax, 3 * SIGMA));
-  const charged = kind === "electrostatic" && q ? neighbours(pos, ids.filter(a => q[a]), REACH) : null;
+  const q = topo.atoms.q, lipo = topo.atoms.lipo;
+  const near = neighbours(pos, ids, 3 * SIGMA);
+  let charges = null, inReach = null;
+  if (kind === "electrostatic" && q) {
+    charges = ids.filter(a => q[a]);
+    if (nv * charges.length > ALL_PAIRS) inReach = neighbours(pos, charges, REACH);
+  }
   for (let v = 0; v < nv; v++) {
+    let nx_ = normals[3 * v], ny_ = normals[3 * v + 1], nz_ = normals[3 * v + 2];
+    const len = Math.hypot(nx_, ny_, nz_) || 1;
+    nx_ /= len; ny_ /= len; nz_ /= len;
+    normal[3 * v] = nx_; normal[3 * v + 1] = ny_; normal[3 * v + 2] = nz_;
     const x = position[3 * v], y = position[3 * v + 1], z = position[3 * v + 2];
-    // the normal: the density's gradient
-    let gx = 0, gy = 0, gz = 0, phi = 0, wsum = 0, lsum = 0, best = Infinity, nearest = -1;
-    near(x, y, z, a => {
-      const dx = x - pos[3 * a], dy = y - pos[3 * a + 1], dz = z - pos[3 * a + 2];
-      const d2 = dx * dx + dy * dy + dz * dz, r = R[a];
-      if (d2 < 4 * r * r) {
-        const g = Math.exp(-B * (d2 / (r * r) - 1)) * 2 * B / (r * r);
-        gx += g * dx; gy += g * dy; gz += g * dz;
-      }
-      if (d2 - r * r < best) { best = d2 - r * r; nearest = a; }
-      if (kind === "hydrophobic" && lipo && d2 < 9 * SIGMA * SIGMA) {
-        const w = Math.exp(-d2 / (2 * SIGMA * SIGMA));
-        wsum += w; lsum += w * lipo[a];
-      }
-    });
-    if (charged) charged(x, y, z, a => {
-      const dx = x - pos[3 * a], dy = y - pos[3 * a + 1], dz = z - pos[3 * a + 2];
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 < REACH * REACH) phi += COULOMB * q[a] / (4 * Math.max(d2, 1));
-    });
-    const len = Math.hypot(gx, gy, gz) || 1;
-    normal[3 * v] = gx / len; normal[3 * v + 1] = gy / len; normal[3 * v + 2] = gz / len;
-    let c;
-    if (kind === "electrostatic") {
-      const t = Math.max(-1, Math.min(1, phi / KT / SCALE));
+    let c = PLAIN;
+    if (charges) {
+      const ox = x + OFFSET * nx_, oy = y + OFFSET * ny_, oz = z + OFFSET * nz_;
+      let phi = 0;
+      const add = a => {
+        const dx = ox - pos[3 * a], dy = oy - pos[3 * a + 1], dz = oz - pos[3 * a + 2];
+        const r2 = dx * dx + dy * dy + dz * dz;
+        if (!inReach || r2 < REACH * REACH) phi += COULOMB * q[a] / (4 * Math.max(r2, 1));
+      };
+      if (inReach) inReach(ox, oy, oz, add); else for (const a of charges) add(a);
+      const t = Math.max(-1, Math.min(1, phi / SCALE));
       c = t < 0 ? mix(WHITE, RED, -t) : mix(WHITE, BLUE, t);
-    } else if (kind === "hydrophobic") {
+    } else if (kind === "electrostatic") {
+      c = WHITE;
+    } else if (kind === "hydrophobic" && lipo) {
+      let wsum = 0, lsum = 0;
+      near(x, y, z, a => {
+        const dx = x - pos[3 * a], dy = y - pos[3 * a + 1], dz = z - pos[3 * a + 2];
+        const r2 = dx * dx + dy * dy + dz * dz;
+        if (r2 < 9 * SIGMA * SIGMA) { const w = Math.exp(-r2 / (2 * SIGMA * SIGMA)); wsum += w; lsum += w * lipo[a]; }
+      });
       const t = wsum ? Math.max(-1, Math.min(1, lsum / wsum)) : 0;
       c = t < 0 ? mix(WHITE, CYAN, -t) : mix(WHITE, GOLD, t);
-    } else {
-      c = nearest >= 0 ? [rgb[3 * nearest], rgb[3 * nearest + 1], rgb[3 * nearest + 2]] : WHITE;
     }
     color[3 * v] = c[0]; color[3 * v + 1] = c[1]; color[3 * v + 2] = c[2];
   }
