@@ -815,6 +815,63 @@ def test_a_clash_between_chains_is_not_taken_for_a_bond():
     _check_links_across_chains(two, [(0, 0, 1, 0)], known={(0, 0, 1, 0)})  # the file says so
 
 
+def test_authored_connectivity_keeps_a_clash_a_contact():
+    """A predictor writes its own bonds, so a close contact it does not list as
+    a bond is not one.
+
+    Boltz packs an interface tight -- a receptor and its peptide can come 1.3 A
+    apart -- while writing complete connectivity (1.03 bonds a heavy atom) with
+    no bond between the chains.  The distance rule would invent one and the
+    build would refuse, though at Martini resolution a contact that close is
+    still a contact: side chains become beads and equilibration relieves the
+    rest.  Asked to trust the file, the build keeps the chains apart.
+    """
+    from boonza.martini import martinize
+
+    clashing = _receptor_and_peptide("extended", touching=0.9)
+    with pytest.raises(ValueError, match="come close enough to look bonded"):
+        martinize(clashing, "protein", elastic=True)  # the default: refuse
+
+    with pytest.warns(UserWarning, match="kept as contacts"):
+        m = martinize(clashing, "protein", elastic=True, trust_connectivity=True)
+    assert len(m.molecules) == 2  # and nothing bonds them
+
+
+def test_a_disulfide_between_chains_survives_trusted_connectivity():
+    """Trusting the file is not trusting it about disulfides: an S-S between
+    two chains is ordinary -- insulin, an antibody -- and is still found by
+    distance, so the two chains are one molecule as they should be."""
+    from boonza.martini.build import _inter_residue_bonds, _Residue
+
+    def residue(chain, atoms, xyz):
+        return _Residue("CYS", 1, "", chain, list(atoms), ["C", "S"], np.asarray(xyz))
+
+    # the two SG 2.05 A apart, each CA well away from the other chain
+    two = [residue("A", ["CA", "SG"], [[0, 0, 0], [0.15, 0, 0]]),
+           residue("B", ["CA", "SG"], [[0.5, 0, 0], [0.355, 0, 0]])]  # fmt: skip
+    for trust in (False, True):
+        bonds = _inter_residue_bonds(two, 2.5, trust_connectivity=trust)
+        assert (0, 1, 1, 1) in bonds, trust  # SG-SG, whether or not the file is trusted
+
+
+def test_trusted_connectivity_is_asked_for_not_detected():
+    """A guessed connectivity cannot vouch for itself.
+
+    boonza guesses a PDB's bonds from geometry, so "the file lists no bond
+    between these chains" says nothing there -- it is the same distance rule
+    speaking.  The flag is therefore off by default, and a clash in a structure
+    read from a PDB is still refused.
+    """
+    from boonza.martini.build import _inter_residue_bonds, _Residue
+
+    def residue(chain, atoms, xyz):
+        return _Residue("ALA", 1, "", chain, list(atoms), ["C"] * len(atoms), np.asarray(xyz))
+
+    two = [residue("A", ["CA"], [[0, 0, 0]]), residue("B", ["CA"], [[0.14, 0, 0]])]
+    assert (0, 0, 1, 0) in _inter_residue_bonds(two, "none")  # invented, as before
+    assert not _inter_residue_bonds(two, "none", trust_connectivity=True)  # only when asked
+
+
 def test_a_ligand_is_not_quietly_left_behind(tmp_path):
     """Martini maps proteins and has nothing for a ligand beside one, so a
     complex would come out as the protein alone: a run of something other than

@@ -708,6 +708,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
             return _run_as_built(aa, args, path, workdir, f"Martini {version}", log, check)
         _check_nothing_is_dropped(aa, args, path, log)
         protein = mt.martinize(aa, args.cg_selection, elastic=bool(args.elastic),
+                               trust_connectivity=bool(args.trust_connectivity),
                                elastic_selection=args.elastic_selection,
                                elastic_fc=float(args.elastic_kJ),
                                elastic_upper=10.0 * float(args.elastic_nm),  # nm to A
