@@ -1,8 +1,8 @@
 // The mouse in the rendering area (Help | Mouse), and right-drag to zoom:
 //
 //   left    click: select an atom (or a bond, or a ribbon's residue); Shift toggles;
-//           Ctrl (or Cmd) takes the residue; double-click: the residue, and
-//           again: the molecule (of its class);
+//           Ctrl (or Cmd) takes the residue; double-click: the residue;
+//           triple-click (or double-click it again): the molecule (of its class);
 //           drag: select a box (Shift adds, Ctrl takes residues); click away: clear
 //   middle  drag: rotate; in the perimeter: about z; Shift: pan; Ctrl: zoom;
 //           click an atom: the centre of rotation (away from atoms: back to the view's)
@@ -202,10 +202,11 @@ export function setupMouse(app) {
       + `  (order ${m.topo.bonds.order[m.topo.bonds.i.findIndex((i, k) => (i === hit.atoms[0] && m.topo.bonds.j[k] === hit.atoms[1]) || (i === hit.atoms[1] && m.topo.bonds.j[k] === hit.atoms[0]))] ?? 1})`);
   }
 
-  // double-click (an atom, a bond or a ribbon): its residue; again on that residue:
-  // its molecule, as far as it is of the atom's class; again: the residue
+  // double-click (an atom, a bond or a ribbon): its residue; a triple click, or a
+  // double-click again on that residue: its molecule, as far as it is of the
+  // atom's class; again: the residue
   let lastDouble = null;
-  canvas.addEventListener("dblclick", e => {
+  function residueOrMolecule(e, molecule) {
     if (app.toolActive?.()) return;
     const [x, y] = local(e);
     const hit = app.pick(x, y);
@@ -213,7 +214,7 @@ export function setupMouse(app) {
     const m = hit.model, A = m.topo.atoms;
     const seed = hit.atom ?? hit.atoms?.[0] ?? m.topo.residueAtoms[hit.residue][0];
     const r = A.residue[seed];
-    const whole = lastDouble?.model === m && lastDouble.residue === r && lastDouble.level === "residue";
+    const whole = molecule || (lastDouble?.model === m && lastDouble.residue === r && lastDouble.level === "residue");
     let ids = m.topo.residueAtoms[r];
     if (whole) {
       const f = A.fragment[seed], c = A.class[seed];
@@ -221,7 +222,9 @@ export function setupMouse(app) {
     }
     lastDouble = { model: m, residue: r, level: whole ? "molecule" : "residue" };
     app.select(m, ids, e.shiftKey ? "add" : "set");
-  });
+  }
+  canvas.addEventListener("dblclick", e => residueOrMolecule(e, false));
+  canvas.addEventListener("click", e => { if (e.detail === 3 && e.button === 0) residueOrMolecule(e, true); });
 
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
