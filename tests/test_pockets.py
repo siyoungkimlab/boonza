@@ -126,6 +126,47 @@ def test_probes_in_chain_lig_are_not_protein():
     assert prepare.protein_ids(s, "all").tolist() == [0, 1, 2, 3, 4]
 
 
+def test_virtual_sites_are_not_protein():
+    """A structure bias puts a site on the bead it stands for; it is not a bead.
+
+    A site belongs to the residue it stands for, so the residue names a
+    coarse-grained system is taken by -- the ``protein`` keyword finds nothing
+    in one -- would take it along with the beads.  Its type is in no force
+    field's table, so the search would fail looking its radius up.
+    """
+    s = boonza.System("sites")
+    r = s.add_residue(s.add_chain(name="A"), name="ALA", resid=1)
+    for k, name in enumerate(("N", "CA", "C", "O", "CB")):
+        r.add_atom(name=name, anum={"N": 7, "O": 8}.get(name, 6), pos=(k, 0.0, 0.0))
+    site = r.add_atom(name="CA", anum=0, mass=0.0, pos=(1.0, 0.0, 0.0))
+    s.add_table_from_schema("virtual_lc1").add_term([site.id, 1])  # it sits on the CA
+    assert prepare.site_ids(s).tolist() == [site.id]
+    assert prepare.protein_ids(s, "all").tolist() == [0, 1, 2, 3, 4]
+
+
+def test_a_virtual_bead_of_its_own_is_protein():
+    """A site a model builds somewhere no bead is, is a bead: Martini 3's ring
+    beads are weighted averages of their neighbours, with types the force field
+    has, and the search is wrong without them."""
+    s = boonza.System("ring")
+    r = s.add_residue(s.add_chain(name="A"), name="TRP", resid=1)
+    for k, name in enumerate(("BB", "SC1", "SC2")):
+        r.add_atom(name=name, anum=6, pos=(k, 0.0, 0.0))
+    r.add_atom(name="SC3", anum=0, mass=0.0, pos=(0.5, 0.0, 0.0))  # between SC1 and SC2
+    t = s.add_table_from_schema("virtual_lc2")
+    t.add_term([3, 1, 2], t.params.add_param(c1=0.5))  # half of each: on neither
+    assert prepare.site_ids(s).tolist() == []
+    assert prepare.protein_ids(s, "all").tolist() == [0, 1, 2, 3]
+
+
+def test_a_system_without_sites_has_none():
+    """A structure that carries no virtual site at all says so."""
+    s = boonza.System("plain")
+    r = s.add_residue(s.add_chain(name="A"), name="ALA", resid=1)
+    r.add_atom(name="CA", anum=6, pos=(0.0, 0.0, 0.0))
+    assert prepare.site_ids(s).tolist() == []
+
+
 @pytest.mark.parametrize(
     ("path", "fmt"),
     [("apo.mae", "mae"), ("apo.maegz", "mae"), ("apo.mae.gz", "mae"), ("apo.dms", "mae"),
