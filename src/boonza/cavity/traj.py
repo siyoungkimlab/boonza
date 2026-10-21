@@ -21,7 +21,7 @@ and representation found the ligand's site in the top 10 in 0.80-0.875 of cases,
 against 0.70-0.725 by consensus and the best site (PPc; MxMD + SiteMap's sites,
 scored the same way, 0.925): the residue consensus let a site merge with a
 persistent neighbouring pocket, whose best site then lay off the ligand
-(docs/guide/sitemap_grouping.md).
+(docs/guide/cavity_grouping.md).
 
 consensus: pockets are not places but named by the residues that line them.  A
 site's lining residues are those with a bead within that bead's radius + LINING of a
@@ -60,6 +60,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 LINING = 3.0  # A beyond a bead's radius
+
+#: A^3: a frame's site larger than this is dropped before grouping.  A site that
+#: balloons for a frame (a cleft opening onto a neighbour, the grid filling a
+#: groove) would otherwise set its pocket's p_max alone; without it the pocket keeps
+#: its ordinary frames.  None or 0 keeps every site.
+MAX_VOLUME = 2000.0
 #: ways to rank pockets, each a key of Pocket.summary (higher first):
 #: p_q90_open the 90th percentile over the frames it is open in (boonza pockets' quality),
 #: p_max the best frame, p_mean_open the mean while open, p_mean_all the mean over every
@@ -71,7 +77,7 @@ RANKINGS = ("p_q90_open", "p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p
 #: the default, p_max: with volume200 a pocket's largest site.  On the Schrodinger set's 43
 #: final apo runs (probes, every frame) it found the ligand's site in the top 10 in 0.86 /
 #: 0.91 / 0.74 of cases (Martini 2 / 3 / SIRAH), p_q90_open 0.77 / 0.88 / 0.72; p_q90_open
-#: puts it first more often (Martini 3: 0.535 against 0.512) (docs/guide/sitemap_volume200.md)
+#: puts it first more often (Martini 3: 0.535 against 0.512) (docs/guide/cavity_volume200.md)
 RANK = "p_max"
 GROUPINGS = ("centroid", "consensus")
 GROUPING = "centroid"
@@ -295,8 +301,11 @@ def centroid_groups(sites: list[FrameSite], cutoff: float = CUTOFF) -> list[Pock
 
 def group(sites: list[FrameSite], grouping: str = GROUPING, cutoff: float = CUTOFF,
           similarity: float = SIMILARITY, cooccur: float = COOCCUR,
-          absorb: bool = True) -> list[Pocket]:  # fmt: skip
-    """The pockets of the frame sites under ``grouping`` (module docstring)."""
+          absorb: bool = True, max_volume: float | None = MAX_VOLUME) -> list[Pocket]:  # fmt: skip
+    """The pockets of the frame sites under ``grouping`` (module docstring), the sites
+    over ``max_volume`` A^3 left out (MAX_VOLUME)."""
+    if max_volume:
+        sites = [s for s in sites if s.props["n"] <= max_volume]
     if grouping == "centroid":
         return centroid_groups(sites, cutoff)
     if grouping == "consensus":

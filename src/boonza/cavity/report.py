@@ -59,6 +59,33 @@ CODES = {"Donor": "DON", "Acceptor": "ACC", "Aromatic": "ARO", "Hydrophobe": "HY
 MAX_SERIAL = 99999  # PDB atom serials: a pocket's frames beyond it are drawn without lines
 
 
+def ligand_residues(system, sel: str) -> tuple[str, str]:
+    """The residues ``sel`` picks in ``system`` by chain, number and name, as a boonza
+    and a PyMOL selection: these still hold once the structure is written out and read
+    again, where atom indices do not."""
+    res = system.residues
+    picked = sorted(set(np.asarray(system.atoms["residue"])[system.select(sel).ids].tolist()))
+    ours, pymol = [], []
+    for r in picked:
+        chain = str(system.chains["name"][res["chain"][r]]).strip()
+        name, resid = str(res["name"][r]).strip(), int(res["resid"][r])
+        ours.append(" and ".join([*([f"chain {chain}"] if chain else []), f"resid {resid}",
+                                  f"resname {name}"]))  # fmt: skip
+        pymol.append(" and ".join([*([f"chain {chain}"] if chain else []), f"resi {resid}",
+                                   f"resn {name}"]))  # fmt: skip
+    if not picked:
+        raise ValueError(f"the ligand selection {sel!r} picks no atoms")
+    return " or ".join(f"({x})" for x in ours), " or ".join(f"({x})" for x in pymol)
+
+
+def write_ligand(out: Path, file: str, sel: str) -> None:
+    """ligand.json: which residues of which written structure are the ligand, for
+    boonza view (viewer.outputs.from_cavity)."""
+    import json
+
+    (out / "ligand.json").write_text(json.dumps({"file": file, "selection": sel}) + "\n")
+
+
 def _residue_names(system, residues) -> str:
     res = system.residues
     out = []
@@ -119,7 +146,8 @@ def _pharm_pdb(path: Path, spots) -> None:
 def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coords,
           pids=None, pcoords=None, apo=None, top: int | None = None,
           rank: str = "p_max", spots=None, view_system=None, holo=None,
-          holo_ligand: str | None = None, ligand=None) -> Path:  # fmt: skip
+          holo_ligand: str | None = None, ligand=None, apo_format: str = "pdb",
+          holo_format: str = "pdb") -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 
     ``coords``/``pcoords``: protein/probe positions of the analysed frames (frame k is MD
@@ -131,7 +159,9 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     ``holo``, ``holo_ligand``, ``ligand``: a holo structure superposed on the run, its
     ligand's selection and that ligand's heavy atoms there: every pocket is measured
     against it -- PPc at its centre, MOc, LVC and PVN of its medoid site -- and by the
-    share of its frames whose site is PPc-right (frames_PPc).
+    share of its frames whose site is PPc-right (frames_PPc).  ``apo_format``,
+    ``holo_format``: what apo and holo (with its ligand) are written as, their inputs'
+    own (pockets.cli.structure_format), so an MAE keeps its bond orders.
 
     A pocket is shown and measured by its medoid (traj.Pocket.medoid) in the medoid's
     frame, and located by its centre (traj.Pocket.centre)."""
@@ -146,7 +176,8 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     out.mkdir(parents=True, exist_ok=True)
     for old in [*out.glob("frame_*.*"), *out.glob("frames_*.*"), *out.glob("sites_*.*"),
                 *out.glob("probes_*.*"),
-                *out.glob("pharm_*.*"), *out.glob("frames.pqr")]:  # fmt: skip
+                *out.glob("pharm_*.*"), *out.glob("frames.pqr"), *out.glob("apo.*"),
+                *out.glob("holo.*"), *out.glob("ligand.*")]:  # fmt: skip
         old.unlink()  # from an earlier writing
     summaries = {id(p): p.summary(n_frames) for p in pockets}
     pockets = sorted(pockets, key=lambda p: (-summaries[id(p)][rank], -p.best.score))
@@ -231,11 +262,12 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
         warnings.simplefilter("ignore")
         save(beads, out / f"beads.{fmt}")
         if apo is not None:
-            save(apo.select("protein").clone(), out / "apo.pdb")
-        if holo is not None:
-            save(holo.select(f"protein and not ({holo_ligand})").clone(), out / "holo.pdb")
-            save(holo.select(holo_ligand).clone(), out / "ligand.pdb")
-    lines = [f"# boonza sitemap: pockets of a {model} run ({n_frames} frames, every {every}th MD "
+            save(apo.select("protein").clone(), out / f"apo.{apo_format}")
+        if holo is not None:  # the holo structure as given, superposed on the run
+            save(holo, out / f"holo.{holo_format}")
+            lig_sel, lig_pymol = ligand_residues(holo, holo_ligand)
+            write_ligand(out, f"holo.{holo_format}", lig_sel)
+    lines = [f"# boonza cavity: pockets of a {model} run ({n_frames} frames, every {every}th MD "
              f"frame, {len(pockets)} pockets ranked by {rank}, the best {len(drawn)} drawn)",
              "# each pocket is a group, pocket_<rank>: site_<rank> (its medoid site, the",
              "# top 10 each its own colour), sites_<rank> (every frame's site points),",
@@ -245,9 +277,9 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
              "# donor sky blue, acceptor salmon, cation blue, anion red, aromatic orange,",
              "# hydrophobe green)", *BV.PREAMBLE]  # fmt: skip
     if apo is not None:
-        lines += ["load apo.pdb, apo"]
+        lines += [f"load apo.{apo_format}, apo"]
     if holo is not None:
-        lines += ["load holo.pdb, holo", "load ligand.pdb, ligand"]
+        lines += [f"load holo.{holo_format}, holo", f"create ligand, holo and ({lig_pymol})"]
     lines += [f"load beads.{fmt}, beads", "set connect_mode, 1", "load sites.pqr, sites_all",
               "set connect_mode, 0", "hide everything", "bg_color black",
               "set ray_opaque_background, 0"]  # fmt: skip

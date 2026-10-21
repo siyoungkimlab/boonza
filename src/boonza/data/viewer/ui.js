@@ -2353,7 +2353,7 @@ export function setupUI(app) {
       input.onkeydown = e => { if (e.key === "Enter") go.click(); };
       body.append(row(input, go));
       body.append(el("p", { className: "help" }, "A path on the machine boonza view runs on: a structure, a saved session (.bview), "
-        + "or a folder of boonza modes, triage or sitemap; or a PDB ID (e.g. 1IRK), downloaded from RCSB."));
+        + "or a folder of boonza modes, triage or cavity; or a PDB ID (e.g. 1IRK), downloaded from RCSB."));
       setTimeout(() => input.focus(), 0);
     }, [innerWidth / 2 - 220, 80]);
   }

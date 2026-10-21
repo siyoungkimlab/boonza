@@ -535,8 +535,8 @@ def test_a_go_run_is_searched_in_its_beads(built, tmp_path):
     looking their radius up -- `KeyError: 'molecule_0_1'`.  They are left out
     of the protein instead, and what is searched is the beads alone.
     """
+    from boonza.cavity.beads import from_system
     from boonza.pockets.prepare import protein_ids, site_ids
-    from boonza.sitemap.beads import from_system
 
     boonza.save(built.system(), tmp_path / "cg.dms")
     s = boonza.load(tmp_path / "cg.dms")

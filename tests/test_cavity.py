@@ -1,6 +1,7 @@
 """SiteMap-style sites of coarse-grained proteins: pair tables, beads, the grid and the CLI."""
 
 import csv
+import json
 import warnings
 from pathlib import Path
 
@@ -8,10 +9,10 @@ import numpy as np
 import pytest
 
 import boonza
-from boonza.sitemap import beads as B
-from boonza.sitemap import grid as G
-from boonza.sitemap.cli import main
-from boonza.sitemap.forcefield import pair_table
+from boonza.cavity import beads as B
+from boonza.cavity import grid as G
+from boonza.cavity.cli import main
+from boonza.cavity.forcefield import pair_table
 
 DATA = Path(__file__).parent / "data"
 
@@ -111,6 +112,7 @@ def test_structure_cli(tmp_path):
     assert p == sorted(p, reverse=True)  # best first
     view = (out / "view.pml").read_text()
     assert "load structure.pdb, structure" in view and "pocket_1" in view
+    assert not (out / "ligand.json").exists() and "create ligand" not in view
     assert "scene overview, store" in view
 
 
@@ -119,7 +121,7 @@ def test_named_presets(tmp_path):
     command line."""
     import json
 
-    from boonza.sitemap import presets as P
+    from boonza.cavity import presets as P
 
     assert {"static200", "dynamic200"} <= set(P.names())
     static = P.presets("static200")
@@ -151,7 +153,14 @@ def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     assert {"PPc", "MOc", "LVC", "PVN"} <= set(rows[0])
     first = next(int(r["rank"]) for r in rows if r["PPc"] == "True")
     assert first <= 3
-    assert (out / "ligand.pdb").exists()
+    # the heme stays in the structure, which ligand.json points at
+    assert json.loads((out / "ligand.json").read_text()) == {
+        "file": "structure.pdb",
+        "selection": "(chain A and resid 155 and resname HEM)",
+    }
+    view = (out / "view.pml").read_text()
+    assert "create ligand, structure and ((chain A and resi 155 and resn HEM))" in view
+    assert not (out / "ligand.pdb").exists()
 
 
 def _run(tmp_path, pdb, selection="protein"):
@@ -177,7 +186,7 @@ def test_traj_cli(tmp_path):
     """Myoglobin's beads through three frames: sites grouped into pockets, then regrouped
     from the saved sites."""
     run = _run(tmp_path, "1MBN.pdb")
-    out = tmp_path / "sitemap"
+    out = tmp_path / "cavity"
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip
     rows = list(csv.DictReader(open(out / "pockets.csv")))
@@ -194,7 +203,7 @@ def test_traj_cli(tmp_path):
 
 
 def _frame_site(frame, centre, score, residues=(1, 2, 3)):
-    from boonza.sitemap.traj import FrameSite
+    from boonza.cavity.traj import FrameSite
 
     xyz = np.asarray(centre, float) + np.array([[0, 0, 0], [2, 0, 0], [0, 2, 0]], float)
     return FrameSite(frame, 1, score, {"n": 24.0}, xyz.astype(np.float32), frozenset(residues))
@@ -203,7 +212,7 @@ def _frame_site(frame, centre, score, residues=(1, 2, 3)):
 def test_centroid_groups():
     """Sites gather by their centres: two places 20 A apart are two pockets, whatever residues
     line them; a pocket's centre is its frames' mean and its medoid the frame site nearest it."""
-    from boonza.sitemap import traj as T
+    from boonza.cavity import traj as T
 
     sites = [_frame_site(k, (0.5 * k, 0, 0), 1.0 - 0.01 * k) for k in range(5)]
     sites += [_frame_site(k, (20, 0, 0), 2.0, residues=(1, 2, 3)) for k in range(3)]
@@ -222,7 +231,7 @@ def test_traj_cli_without_sites(tmp_path):
     """A protein with no site in any frame (1TEN's first 28 residues) gives an empty
     table, not an error."""
     run = _run(tmp_path, "1TEN.pdb", "protein and resid < 830")
-    out = tmp_path / "sitemap"
+    out = tmp_path / "cavity"
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip
     assert list(csv.DictReader(open(out / "pockets.csv"))) == []
@@ -232,7 +241,7 @@ def test_traj_cli_with_holo(tmp_path):
     """--holo carries a holo ligand onto the run; every pocket is measured against it, and the
     heme pocket of myoglobin is among the right ones."""
     run = _run(tmp_path, "1MBN.pdb")
-    out = tmp_path / "sitemap"
+    out = tmp_path / "cavity"
     holo = ["--holo", str(DATA / "1MBN.pdb"), "--holo-ligand", "resname HEM"]
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1", *holo]) == 0  # fmt: skip
@@ -240,12 +249,14 @@ def test_traj_cli_with_holo(tmp_path):
     assert {"PPc", "MOc", "LVC", "PVN", "frames_PPc"} <= set(rows[0])
     assert any(r["PPc"] == "True" for r in rows)
     view = (out / "view.pml").read_text()
-    assert "load holo.pdb, holo" in view and (out / "ligand.pdb").exists()
+    assert "load holo.pdb, holo" in view and "create ligand, holo and (" in view
+    assert json.loads((out / "ligand.json").read_text())["file"] == "holo.pdb"
+    assert not (out / "ligand.pdb").exists()
 
 
 def test_grid_keeps_its_ray_step(tmp_path):
     """A grid saves and loads its ray step; enclosure at 10 A reads hits in that step."""
-    from boonza.sitemap import sites as S
+    from boonza.cavity import sites as S
 
     rng = np.random.default_rng(2)
     beads = B.from_arrays(
@@ -263,7 +274,7 @@ def test_grid_keeps_its_ray_step(tmp_path):
 
 def test_volume200_ranks_by_volume():
     """volume200: rays every 2 A, enclosure over the site points, a score ordering by size."""
-    from boonza.sitemap import presets as P
+    from boonza.cavity import presets as P
 
     for model in ("martini2", "martini3", "sirah"):
         p = P.preset(model, "volume200")
@@ -272,3 +283,33 @@ def test_volume200_ranks_by_volume():
         small = {"n": 40.0, "enclosure": 0.9, "enclosure_site": 0.9, "philic": 1.0}
         big = {"n": 400.0, "enclosure": 0.1, "enclosure_site": 0.1, "philic": 0.0}
         assert P.score(big, p) > P.score(small, p)
+
+
+def test_a_ballooned_site_is_left_out_of_grouping():
+    """A frame whose site balloons past MAX_VOLUME does not join, or set, its pocket."""
+    from boonza.cavity import traj as T
+
+    xyz = np.zeros((4, 3), np.float32)
+    sites = [T.FrameSite(f, 1, 0.5, {"n": 300.0}, xyz, frozenset({1})) for f in range(4)]
+    sites.append(T.FrameSite(4, 1, 3.0, {"n": 5000.0}, xyz, frozenset({1})))
+    (pocket,) = T.group(sites, "centroid")
+    assert len(pocket.sites) == 4 and pocket.best.score == 0.5
+    (pocket,) = T.group(sites, "centroid", max_volume=0)  # 0 keeps every site
+    assert len(pocket.sites) == 5 and pocket.best.score == 3.0
+
+
+def test_the_old_name_still_loads():
+    """boonza sitemap was renamed boonza cavity: sites.pkl caches pickled under the old
+    module name load, and the old command runs."""
+    import pickle
+
+    from boonza.cavity.traj import FrameSite
+
+    s = FrameSite(0, 1, 0.5, {"n": 10.0}, np.zeros((1, 3), np.float32), frozenset({1}))
+    old = pickle.dumps(s, protocol=0).replace(b"boonza.cavity.traj", b"boonza.sitemap.traj")
+    assert type(pickle.loads(old)) is FrameSite
+    from boonza.cli import main as boonza_main
+
+    with pytest.raises(SystemExit) as e:
+        boonza_main(["sitemap", "--help"])
+    assert e.value.code == 0

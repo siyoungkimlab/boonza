@@ -3,7 +3,7 @@
     boonza view a.mae b.mae              # one model each
     boonza view MODES_OUT                # boonza modes: a pose per mode, biggest first
     boonza view TRIAGE_OUT               # boonza triage: a pose per run, fitted on the first
-    boonza view SITEMAP_OUT              # boonza sitemap: the protein and its pockets
+    boonza view CAVITY_OUT              # boonza cavity: the protein and its pockets
 
 A folder with a ``view.json`` is read from it (see :func:`from_manifest`), and
 any pipeline can write one::
@@ -47,7 +47,7 @@ MODE_COLOURS = ("yellow", "magenta", "green", "orange", "cyan", "salmon", "purpl
 #: yellow (a cartoon's helices and strands), white (its coil) or pink (the selection)
 POCKET_COLOURS = ("cyan", "green", "blue", "orange", "purple", "magenta", "lime", "teal",
                   "slate", "wheat")  # fmt: skip
-#: sitemap's pharmacophore codes: donor sky blue, acceptor salmon, cation blue,
+#: boonza cavity's pharmacophore codes: donor sky blue, acceptor salmon, cation blue,
 #: anion red, aromatic orange, hydrophobe green
 PHARM_COLOURS = {"DON": "#87ceeb", "ACC": "#fa8072", "CAT": "#3f6fff", "ANI": "#ff3030",
                  "ARO": "#ffa500", "HYD": "#4caf50"}  # fmt: skip
@@ -401,7 +401,7 @@ def from_paths(paths, **kwargs) -> Viewer:
 
 
 def from_folder(d) -> Viewer:
-    """What a folder holds: a view.json, or the output of modes, triage or sitemap."""
+    """What a folder holds: a view.json, or the output of modes, triage or cavity."""
     d = Path(d)
     if (d / "view.json").is_file():
         return from_manifest(d / "view.json")
@@ -410,9 +410,9 @@ def from_folder(d) -> Viewer:
     if (d / "summary.csv").is_file() and (d / "structures").is_dir():
         return from_triage(d)
     if (d / "pockets.csv").is_file() and (d / "sites.pqr").is_file():
-        return from_sitemap(d)
+        return from_cavity(d)
     raise ValueError(f"{d}: not a folder boonza view knows (a view.json, or the output of "
-                     "boonza modes, triage or sitemap)")  # fmt: skip
+                     "boonza modes, triage or cavity)")  # fmt: skip
 
 
 def _rows(path, key: str) -> dict:
@@ -540,7 +540,8 @@ def _pharm_radii(d, k: int) -> dict[int, float]:
 
 
 def _with_ligand(structure, ligand) -> Session:
-    """A structure with its ligand from another file appended, as one model."""
+    """A structure with its ligand from another file appended, as one model (a folder
+    written before ligand.json)."""
     import boonza
 
     s = boonza.load(structure)
@@ -548,9 +549,13 @@ def _with_ligand(structure, ligand) -> Session:
     return Session(s, title=Path(structure).name, ligand=f"index {ids[0]} to {ids[-1]}")
 
 
-def from_sitemap(d) -> Viewer:
-    """boonza sitemap: the protein (or apo structure), its ligand, and each pocket's
-    medoid site; pharmacophore hotspots and the holo structure are listed, off."""
+def from_cavity(d) -> Viewer:
+    """boonza cavity: the protein (or apo structure), its ligand, and each pocket's
+    medoid site; pharmacophore hotspots and the holo structure are listed, off.  The
+    ligand is in the file ligand.json names: in the structure, it is part of that
+    model; in holo, it is a model of its own over the apo protein, and holo is off."""
+    import json
+
     d = Path(d)
     rows = _rows(d / "pockets.csv", "rank")
     models = []
@@ -558,20 +563,30 @@ def from_sitemap(d) -> Viewer:
     def structure(name, f, shown, **kw):
         models.append(Model(name, lambda: _session(f, **kw), group="structure", shown=shown))
 
-    main = next((d / n for n in ("apo.pdb", "structure.pdb") if (d / n).is_file()), None)
+    def first(stem):
+        return next((f for f in sorted(d.glob(f"{stem}.*")) if f.suffix != ".json"), None)
+
+    main, holo = first("apo") or first("structure"), first("holo")
     beads = sorted(d.glob("beads.*"))
-    ligand = d / "ligand.pdb"
-    if main is not None and ligand.is_file():
-        # one model, so the pocket around the ligand is drawn as in any other
-        models.append(Model(main.stem, lambda: _with_ligand(main, ligand), group="structure"))
-    elif main is not None:
-        structure(main.stem, main, True)
+    lig_file = lig_sel = None
+    if (d / "ligand.json").is_file():
+        info = json.loads((d / "ligand.json").read_text())
+        lig_file, lig_sel = d / info["file"], info["selection"]
+    old = first("ligand") if lig_file is None else None  # written before ligand.json
+    if old is not None and holo is None and main is not None:  # the structure's own ligand
+        models.append(Model(main.stem, lambda f=main, g=old: _with_ligand(f, g), group="structure"))
+        main = None
+    elif old is not None:
+        lig_file, lig_sel = old, "all"
+    with_main = lig_file is not None and lig_file == main
+    if main is not None:
+        structure(main.stem, main, True, **({"ligand": lig_sel} if with_main else {}))
     if beads:
-        structure("beads", beads[0], main is None)
-    if (d / "holo.pdb").is_file():
-        structure("holo", d / "holo.pdb", False)
-    if ligand.is_file() and main is None:
-        structure("ligand", ligand, True, ligand="all")
+        structure("beads", beads[0], not models)
+    if lig_file is not None and not with_main:
+        structure("ligand", lig_file, True, atoms=lig_sel, ligand="all")
+    if holo is not None:
+        structure("holo", holo, False, **({"ligand": lig_sel} if lig_file == holo else {}))
 
     pharmacophores = []
     ranks = sorted({int(line[22:26]) for line in (d / "sites.pqr").read_text().splitlines()

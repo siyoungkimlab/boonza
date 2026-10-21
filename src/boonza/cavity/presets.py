@@ -1,13 +1,13 @@
 """Each model's tuned site finding: parameters, probe and SiteScore weights.
 
-data/sitemap/presets.json holds, per model, the best trial of the search on
+data/cavity/presets.json holds, per model, the best trial of the search on
 the static training set (the cgsitemap benchmark: 200 prepared holo complexes of
 train263, less every protein of the validation sets and the complexes whose site
 the file leaves incomplete; its export_presets.py writes this file): the
 site-finding parameters, the contact probe by name, and the SiteScore terms
 (sqrt n, enclosure, philic) with their coefficients fitted on all 200.
 
-data/sitemap/presets/<name>.json keeps earlier presets under a name, frozen, so
+data/cavity/presets/<name>.json keeps earlier presets under a name, frozen, so
 that runs can use them again and compare them with the current ones
 (``--preset NAME``); ``name`` can also be the path of a presets file of one's
 own (a tuning candidate, say).  Named so far:
@@ -15,22 +15,22 @@ own (a tuning candidate, say).  Named so far:
   static200   valine's side-chain bead in every model (Martini 2 AC2, Martini 3
               SC3, SIRAH Y4Cv), tuned on the 200 static holo complexes alone
               (2026-10-10), before any fine-tuning on MD frames
-              (docs/guide/sitemap_static200.md: data, search, validation)
+              (docs/guide/cavity_static200.md: data, search, validation)
   dynamic200  static200 fine-tuned on MD frames of the same complexes' runs, their
               ligand removed (5 frames of each of 191 100-ns runs per model;
-              docs/guide/sitemap_dynamic200.md)
+              docs/guide/cavity_dynamic200.md)
   volume200   SiteMap's thresholds with only outside and enclosure tuned (on MD frames of
               all 200 training runs), rays sampled every 2 A out to 10 A, no contact
               filter, sites ranked by volume alone (no score weights fitted)
-              (docs/guide/sitemap_volume200.md)
+              (docs/guide/cavity_volume200.md)
 
 A preset may also give ``ray_step`` (A between ray samples; 1.0 when absent, as the
 named presets were tuned) and ``enclosure_term`` (the site property its SiteScore uses for
 enclosure: ``enclosure``, over the site and its extension points, when absent, or
 ``enclosure_site``, over the site points alone).
 
-Each command has its default: ``boonza sitemap traj`` finds a run's sites under
-volume200 (TRAJ), tuned on frames like the ones it reads, and ``boonza sitemap
+Each command has its default: ``boonza cavity traj`` finds a run's sites under
+volume200 (TRAJ), tuned on frames like the ones it reads, and ``boonza cavity
 structure`` under static200 (STRUCTURE), tuned on crystal structures.
 presets.json is what :func:`find` uses when given no name.
 """
@@ -43,10 +43,10 @@ from pathlib import Path
 
 import numpy as np
 
-PRESETS = Path(__file__).resolve().parents[1] / "data" / "sitemap" / "presets.json"
+PRESETS = Path(__file__).resolve().parents[1] / "data" / "cavity" / "presets.json"
 NAMED = PRESETS.parent / "presets"
-TRAJ = "volume200"  #: boonza sitemap traj's default presets
-STRUCTURE = "static200"  #: boonza sitemap structure's default presets
+TRAJ = "volume200"  #: boonza cavity traj's default presets
+STRUCTURE = "static200"  #: boonza cavity structure's default presets
 
 
 def names() -> list[str]:
