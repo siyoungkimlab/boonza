@@ -40,6 +40,7 @@ viewer started on a cluster node shows long runs through an SSH tunnel
 
 from __future__ import annotations
 
+import errno
 import json
 import secrets
 import threading
@@ -288,14 +289,40 @@ def make_server(what, host: str = "127.0.0.1", port: int = 8765,
     return server
 
 
-def serve(what, trajectory=None, atoms=None, host: str = "127.0.0.1", port: int = 8765,
-          open_browser: bool = True, **glue) -> None:  # fmt: skip
+#: where ``serve`` looks for a port when none is given: 8765, then the next ones
+PORTS = range(8765, 8785)
+
+
+def _free_server(viewer, host: str, port: int | None) -> ThreadingHTTPServer:
+    """A server on ``port``; with none, on the first of PORTS not in use (another
+    viewer, a tunnel), else any free one."""
+    if port is not None:
+        try:
+            return make_server(viewer, host, port)
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                raise
+            why = (f"port {port} is in use (another boonza view, or a tunnel?): give "
+                   "another --port, or leave it out to take a free one")  # fmt: skip
+            raise OSError(e.errno, why) from None
+    for p in [*PORTS, 0]:
+        try:
+            return make_server(viewer, host, p)
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                raise
+    raise AssertionError("port 0 is always free")
+
+
+def serve(what, trajectory=None, atoms=None, host: str = "127.0.0.1",
+          port: int | None = None, open_browser: bool = True, **glue) -> None:  # fmt: skip
     """View a System (and ``trajectory``), a Session or a Viewer in the browser until
-    interrupted.  ``glue``: ``whole``, ``center`` and ``fit`` as for :class:`Session`."""
+    interrupted.  ``port``: default the first free one from 8765 on.  ``glue``:
+    ``whole``, ``center`` and ``fit`` as for :class:`Session`."""
     if not isinstance(what, (Viewer, Session)):
         what = Session(what, trajectory, atoms, **glue)
     viewer = _viewer(what)
-    server = make_server(viewer, host, port)
+    server = _free_server(viewer, host, port)
     port = server.server_address[1]
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}/"
     what = (f"{len(viewer)} models" if len(viewer) > 1 else

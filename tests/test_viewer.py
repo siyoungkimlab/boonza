@@ -1109,3 +1109,24 @@ def test_residue_names_numbers_and_chains(served):
     status, out = post("api/edit", {"op": "residue", "atoms": one, "value": {"name": "TOO LONG"}})
     assert status == 400
     assert post("api/undo", {})[0] == 200
+
+
+def test_a_port_in_use_moves_on():
+    import socket
+
+    from boonza.viewer.server import PORTS, _free_server
+
+    v = viewer.Viewer([])
+    first = _free_server(v, "127.0.0.1", None)
+    try:
+        second = _free_server(v, "127.0.0.1", None)  # the first one's port is taken
+        port = first.server_address[1]
+        assert second.server_address[1] != port
+        assert port in PORTS or port not in range(1024)
+        with pytest.raises(OSError, match="in use"):
+            _free_server(v, "127.0.0.1", port)  # asked for: no moving on
+        second.server_close()
+    finally:
+        first.server_close()
+    with socket.socket() as s:  # and it was let go
+        s.bind(("127.0.0.1", port))
