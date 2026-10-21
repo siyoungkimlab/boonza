@@ -705,6 +705,7 @@ export function setupUI(app) {
       "-",
       { label: "Delete", run: deleteSelected, key: "Del" },
       { label: "Copy SMILES", run: copySmiles, key: "Ctrl C" },
+      { label: "Residue and Chain…", run: relabelPanel },
       { label: "Build", sub: [
         { label: "Builder…", run: builderPanel },
         { label: "Hydrogens", sub: [
@@ -912,6 +913,7 @@ export function setupUI(app) {
     { label: "System", sub: systemItems },
     "-",
     { label: "Copy SMILES", run: copySmiles },
+    { label: "Residue and Chain…", run: relabelPanel },
     { label: "Delete", run: deleteSelected },
   ], x, y);
 
@@ -1687,6 +1689,39 @@ export function setupUI(app) {
   }
   function builderPanel() { toggleDock("builder"); }
 
+  // the selected residues' name, number and chain (Edit | Residue and Chain)
+  function relabelPanel() {
+    const t = editTarget();
+    if (!t) return;
+    const [m, atoms] = t, R = m.topo.residues;
+    const rs = [...new Set(atoms.map(a => m.topo.atoms.residue[a]))].sort((a, b) => a - b);
+    const common = f => { const v = new Set(rs.map(f)); return v.size === 1 ? [...v][0] : ""; };
+    const number = `${R.resid[rs[0]]}${R.insertion[rs[0]].trim()}`;
+    const what = rs.length === 1 ? `${R.name[rs[0]]}${number}` : `${rs.length} residues`;
+    panel("relabel", "Residue and Chain", body => {
+      const field = v => el("input", { value: v, placeholder: "keep", style: "width:70px" });
+      const name = field(common(r => R.name[r])), resid = field(number);
+      const chain = field(common(r => m.topo.chains.name[R.chain[r]]));
+      body.append(el("p", { className: "help" }, `${what} of ${m.name}. A blank field stays as it is; `
+        + "more than one residue are numbered on from the number. A chain name no other chain has "
+        + "renames the chains the residues fill; otherwise the residues move to that chain."));
+      body.append(row(el("span", { className: "what" }, "Residue name"), name));
+      body.append(row(el("span", { className: "what" }, "Residue number"), resid));
+      body.append(row(el("span", { className: "what" }, "Chain"), chain));
+      const apply = async () => {
+        // the number as it was is not sent: it would renumber the residues after the first
+        const value = { name: name.value, resid: resid.value === number ? "" : resid.value, chain: chain.value };
+        const out = await serverEdit(m, "api/edit", { op: "residue", atoms, value, hydrogens: false });
+        if (out) app.message(`${what}: relabelled`);
+      };
+      for (const f of [name, resid, chain]) {
+        f.onkeydown = e => { if (e.key === "Enter") apply(); };
+        f.disabled = !m.topo.editable;
+      }
+      body.append(row(button("Apply", apply, "blue")));
+    });
+  }
+
   function minimizePanel() {
     panel("minimize", "Energy Minimize", body => {
       const m = app.currentModel();
@@ -2065,6 +2100,7 @@ export function setupUI(app) {
     menu([
       { label: `Mutate ${what} to`, sub: () => AMINO.map(aa => ({ label: `${aa} (${ONE[aa]})`, run: () => mutate(aa) })),
         off: () => !m.topo.editable },
+      { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
       { label: "Center", run: () => app.centerView() },
       { label: "Show Side Chains", run: () => { for (const a of ids) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; } app.rebuild(); } },
@@ -2118,8 +2154,12 @@ export function setupUI(app) {
       const two = el("input", { type: "checkbox", checked: state.twoButton });
       two.onchange = () => { state.twoButton = two.checked; localStorage.setItem("boonza.twoButton", two.checked ? "1" : "0"); };
       body.append(row(el("label", {}, two, " two-button mouse: the right button is the middle one; Alt alone opens the popup")));
+      const pad = el("input", { type: "checkbox", checked: state.trackpad });
+      pad.onchange = () => { state.trackpad = pad.checked; localStorage.setItem("boonza.trackpad", pad.checked ? "1" : "0"); };
+      body.append(row(el("label", {}, pad, " trackpad: a two-finger swipe rotates (in the perimeter: about z), "
+        + "Shift + swipe pans, a pinch zooms")));
       body.append(el("p", { className: "help" }, "On a Mac, Ctrl is Cmd and Alt is Option. Without a middle button, "
-        + "use the two-button setting or the trackball in the corner."));
+        + "use the trackpad or two-button setting, or the trackball in the corner."));
     });
   }
 

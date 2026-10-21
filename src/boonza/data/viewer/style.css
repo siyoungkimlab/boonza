@@ -115,7 +115,8 @@ button, input, select { font: inherit; color: var(--text); }
 .menu .sep { height: 1px; background: var(--line); margin: 3px 0; }
 
 /* --- rendering area ---------------------------------------------------------------- */
-#stage { grid-area: stage; position: relative; background: var(--canvas); overflow: hidden; }
+#stage { grid-area: stage; position: relative; background: var(--canvas); overflow: hidden;
+  user-select: none; -webkit-user-select: none; }
 #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .label { position: absolute; transform: translate(-50%, -50%); font: 11px Arial, sans-serif;
