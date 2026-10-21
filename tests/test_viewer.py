@@ -1081,3 +1081,31 @@ def test_open_takes_a_pdb_id(monkeypatch, tmp_path):
     assert v.open("1hho") == [0] and fetched == ["1hho"]
     with pytest.raises(FileNotFoundError):
         v.open("no_such_file.pdb")
+
+
+def test_residue_names_numbers_and_chains(served):
+    p = _peptide()
+    session = viewer.Session(p)
+    get, post = served(session)
+    one = [int(a) for a in p.residue_atoms(1)]
+    value = {"name": "LIG", "resid": "52a", "chain": ""}
+    status, out = post("api/edit", {"op": "residue", "atoms": one, "value": value})
+    s = session.system
+    assert status == 200 and out["topology"] and out["picked"] == one
+    assert (str(s.residues["name"][1]), int(s.residues["resid"][1])) == ("LIG", 52)
+    assert str(s.residues["insertion"][1]) == "A"
+    every = list(range(s.natoms))
+    post("api/edit", {"op": "residue", "atoms": every, "value": {"resid": "10", "chain": "B"}})
+    s = session.system
+    assert s.residues["resid"].tolist() == [10, 11, 12] and s.chains["name"].tolist() == ["B"]
+    # part of a chain, to a new one; then back, and the empty chain goes
+    post("api/edit", {"op": "residue", "atoms": [int(a) for a in s.residue_atoms(2)],
+                      "value": {"chain": "C"}})  # fmt: skip
+    s = session.system
+    assert s.chains["name"].tolist() == ["B", "C"] and s.residues["chain"].tolist() == [0, 0, 1]
+    post("api/edit", {"op": "residue", "atoms": [int(a) for a in s.residue_atoms(2)],
+                      "value": {"chain": "B"}})  # fmt: skip
+    assert session.system.chains["name"].tolist() == ["B"]
+    status, out = post("api/edit", {"op": "residue", "atoms": one, "value": {"name": "TOO LONG"}})
+    assert status == 400
+    assert post("api/undo", {})[0] == 200

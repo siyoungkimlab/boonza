@@ -11,7 +11,9 @@
 //   right   the popup menu;  wheel: zoom;  Shift over an atom: what it is
 //
 // A two-button mouse (Help | Mouse) uses the right button as the middle one and
-// opens the popup when Alt is pressed and released alone.
+// opens the popup when Alt is pressed and released alone.  A trackpad (Help | Mouse)
+// rotates with a two-finger swipe (in the perimeter: about z), pans with Shift and
+// zooms with a pinch.
 
 const PERIMETER = 0.07;  // the band at the edges where dragging turns about z
 
@@ -21,6 +23,7 @@ export function setupMouse(app) {
   const rubber = document.getElementById("rubber");
   const bubble = document.getElementById("bubble");
   state.twoButton = localStorage.getItem("boonza.twoButton") === "1";
+  state.trackpad = localStorage.getItem("boonza.trackpad") === "1";
 
   let drag = null;
   const local = e => {
@@ -76,6 +79,7 @@ export function setupMouse(app) {
 
   canvas.addEventListener("pointermove", e => {
     const [x, y] = local(e);
+    if (drag && !e.buttons) { cancel(); return; }  // the button went up where we did not hear it
     if (!drag) { hover(e, x, y); return; }
     const dx = x - drag.x, dy = y - drag.y;
     if (!dx && !dy) return;
@@ -180,6 +184,18 @@ export function setupMouse(app) {
     if (d.role === "right" && !d.moved) app.popup(e.clientX, e.clientY, app.pick(x, y));
   });
 
+  // a drag the browser takes away (a trackpad gesture, a window switch): it ends
+  // there, with nothing selected and no box left on the screen
+  function cancel() {
+    if (drag?.moving === "yes") app.endMove();
+    drag = null;
+    rubber.hidden = true;
+  }
+  canvas.addEventListener("pointercancel", cancel);
+  canvas.addEventListener("lostpointercapture", () => { if (drag) cancel(); });
+  window.addEventListener("blur", () => { if (drag) cancel(); });
+  window.addEventListener("keydown", e => { if (e.key === "Escape" && drag) cancel(); });
+
   function residuesOf(m, ids) {
     const out = new Set();
     for (const a of ids) for (const b of m.topo.residueAtoms[m.topo.atoms.residue[a]]) out.add(b);
@@ -229,7 +245,22 @@ export function setupMouse(app) {
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
     app.stopFlight();
-    camera.zoom(Math.exp(e.deltaY * 0.0015));
+    if (state.trackpad && e.ctrlKey) {  // a pinch
+      camera.zoom(Math.exp(e.deltaY * 0.01));
+    } else if (state.trackpad) {  // a two-finger swipe
+      const dx = -e.deltaX, dy = -e.deltaY;
+      const [x, y] = local(e);
+      if (e.shiftKey) {
+        const scale = 2 * camera.distance * Math.tan(camera.fov / 2) / canvas.clientHeight;
+        camera.pan(dx * scale, -dy * scale);
+      } else if (inPerimeter(x, y)) {
+        camera.rotate(0, 0, 1, zTurn(x + dx, y + dy, dx, dy));
+      } else if (dx || dy) {
+        camera.rotate(dy, dx, 0, Math.hypot(dx, dy) * 0.008);
+      }
+    } else {
+      camera.zoom(Math.exp(e.deltaY * 0.0015));
+    }
     app.draw();
   }, { passive: false });
 
