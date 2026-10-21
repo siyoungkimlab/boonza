@@ -2,7 +2,7 @@
 
     boonza view complex.mae run.xtc                  # serves http://127.0.0.1:8765
     boonza view solvated.dms run.dcd -s "not water" --fit "protein and name CA"
-    boonza view MODES_OUT                            # boonza modes, triage, sitemap
+    boonza view MODES_OUT                            # boonza modes, triage, cavity
     boonza view a.mae b.mae c.mae                    # several models
 
     from boonza import viewer
