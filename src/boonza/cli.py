@@ -1824,7 +1824,8 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--fit", help="superpose every frame onto the first on these atoms")
     q.add_argument("--no-whole", action="store_true", help="leave molecules split across "
                    "the box")  # fmt: skip
-    q.add_argument("--port", type=int, default=8765, help="0 picks a free port")
+    q.add_argument("--port", type=int, help="default: 8765, or the next free one if it is in "
+                   "use; 0 picks any free port")  # fmt: skip
     q.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to serve other machines")
     q.add_argument("--no-browser", action="store_true", help="do not open a browser (on a "
                    "cluster, tunnel the port instead)")  # fmt: skip
