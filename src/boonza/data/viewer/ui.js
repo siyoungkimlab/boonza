@@ -177,9 +177,9 @@ export function setupUI(app) {
     }
     app.rebuild(); app.onSelection();
   }
-  async function selectServer(make) {
+  async function selectServer(make, models = app.shownModels()) {
     app.clearSelection();
-    for (const m of app.shownModels()) {
+    for (const m of models) {
       const ids = await serverSelect(m, make(m));
       if (ids.length) app.select(m, ids, "add");
     }
@@ -1111,13 +1111,39 @@ export function setupUI(app) {
     if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); command($("cli-input").value.trim()); }
   };
 
+  // models by number (as Window | Models lists them), by name, or all: "2", "1,3", "1FNA"
+  function modelsNamed(spec) {
+    const open = state.models.filter(m => !m.closed);
+    if (spec === "all") return open;
+    const out = [];
+    for (const w of spec.split(",").filter(Boolean)) {
+      const m = /^\d+$/.test(w) ? state.models[+w - 1] : open.find(m => m.name === w)
+        ?? open.find(m => m.name.toLowerCase().includes(w.toLowerCase()));
+      if (!m || m.closed) throw new Error(`no model ${w}: Window | Models numbers them`);
+      if (!out.includes(m)) out.push(m);
+    }
+    return out;
+  }
+
   async function command(text) {
     if (!text) return;
+    // "... in 2": the command acts on those models (shown first if hidden), not on every shown one
+    let models = null;
+    const at = text.match(/^(.*?)\s+in\s+(\S+)$/);
+    if (at && !text.startsWith("model")) {
+      try { models = modelsNamed(at[2]); } catch (e) { app.message(e.message, true); return; }
+      text = at[1];
+      const hidden = models.filter(m => !m.shown || !m.topo);
+      if (hidden.length) await app.show(hidden);
+      app.clearSelection();
+      state.current = models[0].index;
+      app.onSelection();
+    }
     const [word, ...rest] = text.split(/\s+/);
     const arg = rest.join(" ");
-    const on = async (sel, fn) => {  // a selection in each shown model, or the targets
-      if (!sel) { forTargets(fn); return; }
-      for (const m of app.shownModels()) fn(m, await serverSelect(m, sel));
+    const on = async (sel, fn) => {  // a selection in each model, or the targets
+      if (!sel && !models) { forTargets(fn); return; }
+      for (const m of models || app.shownModels()) fn(m, sel ? await serverSelect(m, sel) : app.range(m.topo.natoms));
       app.rebuild();
     };
     switch (word) {
@@ -1125,12 +1151,24 @@ export function setupUI(app) {
         app.message("a selection selects atoms (boonza's language, e.g. resname LIG or within 5 of resname LIG)\n"
           + "commands: select SEL · show SEL · hide SEL · center [SEL] · style line|stick|ballline|ballstick|space [SEL] · "
           + "color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · minimize · undo · redo · "
-          + "open PATH|PDB-ID · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset");
+          + "open PATH|PDB-ID · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset\n"
+          + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
         return;
-      case "select": await selectServer(() => arg); return;
+      case "model": {  // show these models alone
+        let these;
+        try { these = modelsNamed(arg || "all"); } catch (e) { app.message(e.message, true); return; }
+        const others = state.models.filter(m => m.shown && !these.includes(m));
+        if (others.length) await app.show(others, false);
+        await app.show(these);
+        state.current = these[0].index;
+        app.onSelection();
+        app.message(`showing ${these.map(m => `${m.index + 1} ${m.name}`).join(", ")}`);
+        return;
+      }
+      case "select": await selectServer(() => arg, models || undefined); return;
       case "show": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 1; }); return;
       case "hide": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 0; }); return;
-      case "center": if (arg) await selectServer(() => arg); app.centerView(); return;
+      case "center": if (arg) await selectServer(() => arg, models || undefined); app.centerView(); return;
       case "style": {
         const [s, ...sel] = rest;
         const k = STYLES.indexOf(s);
@@ -1165,7 +1203,7 @@ export function setupUI(app) {
         return;
       }
       case "reset": app.resetView(); return;
-      default: await selectServer(() => text);  // a selection
+      default: await selectServer(() => text, models || undefined);  // a selection
     }
   }
 
@@ -1942,7 +1980,8 @@ export function setupUI(app) {
       box.onchange = () => { state.current = m.index; app.show([m], box.checked); };
       const sw = el("span", { className: "swatch" });
       sw.style.background = swatchColor(m.color);
-      const name = el("span", { className: "name", title: `${m.name}: click to show it alone and look at it` }, m.name);
+      const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
+        + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
       name.onclick = () => app.solo(m);
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
       const color = picker("colour", colors, () => m.color || "default", async v => {
