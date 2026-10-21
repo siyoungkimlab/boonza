@@ -983,6 +983,12 @@ export function setupUI(app) {
         `${m.name}: ${m.topo.natoms} atoms, ${R.name.length} residues, ${m.topo.chains.name.length} chains`));
       return;
     }
+    // one residue, whole (a ribbon clicked, a double-click): its name, number and chain
+    const res = sel.length === 1 ? [...new Set(sel[0][1].map(a => m.topo.atoms.residue[a]))] : [];
+    if (n > 1 && res.length === 1 && n === m.topo.residueAtoms[res[0]].length) {
+      residueFields(box, m, sel[0][1]);
+      return;
+    }
     if (sel.length > 1 || n > 4) { box.append(el("span", { className: "what" }, `${n} atoms selected`)); return; }
     const atoms = orderChain(m, sel[0][1]);
     const { value } = n > 1 ? app.measure(m, atoms) : { value: 0 };
@@ -1000,8 +1006,9 @@ export function setupUI(app) {
       const name = el("input", { className: "name", value: m.topo.atoms.name[a] });
       name.onkeydown = e => { if (e.key === "Enter") edit("name", name.value); };
       name.disabled = !editable;
-      box.append(el("span", {}, app.atomLabel(m, a, false).split(" ")[0]), name,
+      box.append(el("span", { className: "what" }, "Atom"), name,
                  el("span", { className: "what" }, `[${m.topo.atoms.element[a]}]`));
+      residueFields(box, m, atoms);
     } else if (n === 2) {
       const bonded = m.topo.bondsOf[atoms[0]].includes(atoms[1]);
       box.append(el("span", { className: "what" }, "Distance"),
@@ -1018,6 +1025,31 @@ export function setupUI(app) {
       prof.onclick = () => profilePanel(m, atoms);
       if (editable) box.append(prof);
     }
+  }
+
+  // the footer's residue name, number and chain, for one atom or one residue: Enter applies
+  function residueFields(box, m, atoms) {
+    const R = m.topo.residues, r = m.topo.atoms.residue[atoms[0]];
+    const was = { name: R.name[r], resid: `${R.resid[r]}${R.insertion[r].trim()}`, chain: m.topo.chains.name[R.chain[r]] };
+    const fields = {
+      name: el("input", { className: "name", value: was.name, title: "residue name" }),
+      resid: el("input", { className: "short", value: was.resid, title: "residue number (52A: with an insertion code)" }),
+      chain: el("input", { className: "short", value: was.chain, title: "chain" }),
+    };
+    const apply = async () => {
+      const value = {};
+      for (const [k, f] of Object.entries(fields)) if (f.value.trim() !== was[k]) value[k] = f.value;
+      if (!Object.keys(value).length) return;
+      if (!await serverEdit(m, "api/edit", { op: "residue", atoms, value, hydrogens: false })) return;
+      app.select(m, atoms, "set");  // relabelling keeps the atoms where they were
+      app.message(`${was.name}${was.resid}: relabelled`);
+    };
+    for (const f of Object.values(fields)) {
+      f.onkeydown = e => { if (e.key === "Enter") apply(); };
+      f.disabled = !m.topo.editable;
+    }
+    box.append(el("span", { className: "what" }, "Residue"), fields.name, fields.resid,
+               el("span", { className: "what" }, "Chain"), fields.chain);
   }
 
   // two bonded atoms: the Rotate wheel turns the bond, and Profile plots its energy

@@ -178,6 +178,7 @@ body.noir .label.meter { color: #ffd34d; }
   white-space: nowrap; }
 #footer-edit input { width: 64px; background: var(--field); border: 1px solid var(--line); padding: 1px 3px; }
 #footer-edit input.name { width: 52px; }
+#footer-edit input.short { width: 40px; }
 #footer-edit button { background: var(--button); border: 1px solid var(--line); border-radius: 2px; padding: 0 6px; cursor: pointer; }
 #footer-edit .what { color: var(--muted); }
 #footer-edit input[type=range] { width: 120px; }
