@@ -201,8 +201,8 @@ def make_triage(d: Path) -> Path:
     return d
 
 
-def make_sitemap(d: Path, holo: bool = False, old: bool = False) -> Path:
-    """A boonza sitemap folder: the structure and its ligand (or apo, and holo with
+def make_cavity(d: Path, holo: bool = False, old: bool = False) -> Path:
+    """A boonza cavity folder: the structure and its ligand (or apo, and holo with
     the ligand), two pockets, hotspots; ``old``: the ligand in a file of its own, as
     written before ligand.json."""
     s = boonza.load(DATA / "1HHO.pdb")
@@ -267,8 +267,8 @@ def test_triage_folder_is_fitted(tmp_path):
 
 
 @pytest.mark.parametrize("old", [False, True])
-def test_sitemap_folder(tmp_path, old):
-    v = viewer.from_paths([make_sitemap(tmp_path / "sitemap", old=old)])
+def test_cavity_folder(tmp_path, old):
+    v = viewer.from_paths([make_cavity(tmp_path / "cavity", old=old)])
     names = [m.name for m in v.models]
     assert names == ["structure", "pocket 1", "pocket 2", "pharmacophore 1"]
     # the ligand is the structure's, so its pocket is drawn
@@ -287,9 +287,9 @@ def test_sitemap_folder(tmp_path, old):
     assert not v.models[3].shown
 
 
-def test_sitemap_folder_with_holo(tmp_path):
+def test_cavity_folder_with_holo(tmp_path):
     """apo is the protein alone; the ligand is holo's, a model of its own; holo is off."""
-    v = viewer.from_paths([make_sitemap(tmp_path / "sitemap", holo=True)])
+    v = viewer.from_paths([make_cavity(tmp_path / "cavity", holo=True)])
     assert [m.name for m in v.models][:3] == ["apo", "ligand", "holo"]
     assert [m.shown for m in v.models][:3] == [True, True, False]
     apo, lig, holo = (v.session(k).topology() for k in range(3))
@@ -718,7 +718,7 @@ def test_python_needs_localhost():
 def test_session_round_trip(served, tmp_path):
     a = tmp_path / "a.pdb"
     boonza.save(boonza.load(DATA / "1HHO.pdb"), a)
-    v = viewer.from_paths([a, make_sitemap(tmp_path / "sitemap")])
+    v = viewer.from_paths([a, make_cavity(tmp_path / "cavity")])
     get, post = served(v)
     post("api/set_positions", {"m": 0, "atoms": [0], "xyz": [1.0, 2.0, 3.0]})  # an edit, unsaved
     page = {"camera": {"distance": 42}, "models": {"0": {"shown": True}}}

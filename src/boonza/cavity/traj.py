@@ -21,7 +21,7 @@ and representation found the ligand's site in the top 10 in 0.80-0.875 of cases,
 against 0.70-0.725 by consensus and the best site (PPc; MxMD + SiteMap's sites,
 scored the same way, 0.925): the residue consensus let a site merge with a
 persistent neighbouring pocket, whose best site then lay off the ligand
-(docs/guide/sitemap_grouping.md).
+(docs/guide/cavity_grouping.md).
 
 consensus: pockets are not places but named by the residues that line them.  A
 site's lining residues are those with a bead within that bead's radius + LINING of a
@@ -77,7 +77,7 @@ RANKINGS = ("p_q90_open", "p_max", "p_mean_open", "p_mean_all", "occ_x_pmax", "p
 #: the default, p_max: with volume200 a pocket's largest site.  On the Schrodinger set's 43
 #: final apo runs (probes, every frame) it found the ligand's site in the top 10 in 0.86 /
 #: 0.91 / 0.74 of cases (Martini 2 / 3 / SIRAH), p_q90_open 0.77 / 0.88 / 0.72; p_q90_open
-#: puts it first more often (Martini 3: 0.535 against 0.512) (docs/guide/sitemap_volume200.md)
+#: puts it first more often (Martini 3: 0.535 against 0.512) (docs/guide/cavity_volume200.md)
 RANK = "p_max"
 GROUPINGS = ("centroid", "consensus")
 GROUPING = "centroid"

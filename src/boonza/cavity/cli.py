@@ -1,7 +1,7 @@
-"""boonza sitemap: SiteMap-style sites of coarse-grained proteins.
+"""boonza cavity: cavities of coarse-grained proteins, found SiteMap-style.
 
-    boonza sitemap traj --workdir RUN/md_solute --model martini3 -o OUT [--apo APO.mae]
-    boonza sitemap structure APO.pdb --model martini3 -o OUT [--holo HOLO.pdb [--holo-ligand SEL]]
+    boonza cavity traj --workdir RUN/md_solute --model martini3 -o OUT [--apo APO.mae]
+    boonza cavity structure APO.pdb --model martini3 -o OUT [--holo HOLO.pdb [--holo-ligand SEL]]
 
 traj: the sites of every frame of a coarse-grained run under the model's preset
 (volume200 unless --preset), grouped into pockets by place (traj.group)
@@ -154,7 +154,7 @@ def main(argv=None) -> int:
     )
 
     ap = argparse.ArgumentParser(
-        prog="boonza sitemap",
+        prog="boonza cavity",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -262,7 +262,7 @@ def main(argv=None) -> int:
     try:
         return {"traj": cmd_traj, "structure": cmd_structure}[args.cmd](args)
     except (ValueError, FileNotFoundError) as e:
-        print(f"boonza sitemap {args.cmd}: error: {e}", file=sys.stderr)
+        print(f"boonza cavity {args.cmd}: error: {e}", file=sys.stderr)
         return 1
 
 

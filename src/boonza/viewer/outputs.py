@@ -3,7 +3,7 @@
     boonza view a.mae b.mae              # one model each
     boonza view MODES_OUT                # boonza modes: a pose per mode, biggest first
     boonza view TRIAGE_OUT               # boonza triage: a pose per run, fitted on the first
-    boonza view SITEMAP_OUT              # boonza sitemap: the protein and its pockets
+    boonza view CAVITY_OUT              # boonza cavity: the protein and its pockets
 
 A folder with a ``view.json`` is read from it (see :func:`from_manifest`), and
 any pipeline can write one::
@@ -47,7 +47,7 @@ MODE_COLOURS = ("yellow", "magenta", "green", "orange", "cyan", "salmon", "purpl
 #: yellow (a cartoon's helices and strands), white (its coil) or pink (the selection)
 POCKET_COLOURS = ("cyan", "green", "blue", "orange", "purple", "magenta", "lime", "teal",
                   "slate", "wheat")  # fmt: skip
-#: sitemap's pharmacophore codes: donor sky blue, acceptor salmon, cation blue,
+#: boonza cavity's pharmacophore codes: donor sky blue, acceptor salmon, cation blue,
 #: anion red, aromatic orange, hydrophobe green
 PHARM_COLOURS = {"DON": "#87ceeb", "ACC": "#fa8072", "CAT": "#3f6fff", "ANI": "#ff3030",
                  "ARO": "#ffa500", "HYD": "#4caf50"}  # fmt: skip
@@ -401,7 +401,7 @@ def from_paths(paths, **kwargs) -> Viewer:
 
 
 def from_folder(d) -> Viewer:
-    """What a folder holds: a view.json, or the output of modes, triage or sitemap."""
+    """What a folder holds: a view.json, or the output of modes, triage or cavity."""
     d = Path(d)
     if (d / "view.json").is_file():
         return from_manifest(d / "view.json")
@@ -410,9 +410,9 @@ def from_folder(d) -> Viewer:
     if (d / "summary.csv").is_file() and (d / "structures").is_dir():
         return from_triage(d)
     if (d / "pockets.csv").is_file() and (d / "sites.pqr").is_file():
-        return from_sitemap(d)
+        return from_cavity(d)
     raise ValueError(f"{d}: not a folder boonza view knows (a view.json, or the output of "
-                     "boonza modes, triage or sitemap)")  # fmt: skip
+                     "boonza modes, triage or cavity)")  # fmt: skip
 
 
 def _rows(path, key: str) -> dict:
@@ -549,8 +549,8 @@ def _with_ligand(structure, ligand) -> Session:
     return Session(s, title=Path(structure).name, ligand=f"index {ids[0]} to {ids[-1]}")
 
 
-def from_sitemap(d) -> Viewer:
-    """boonza sitemap: the protein (or apo structure), its ligand, and each pocket's
+def from_cavity(d) -> Viewer:
+    """boonza cavity: the protein (or apo structure), its ligand, and each pocket's
     medoid site; pharmacophore hotspots and the holo structure are listed, off.  The
     ligand is in the file ligand.json names: in the structure, it is part of that
     model; in holo, it is a model of its own over the apo protein, and holo is off."""

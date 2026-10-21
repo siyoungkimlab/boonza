@@ -14,7 +14,7 @@
     boonza poses system.dms --traj md.dcd [--cutoff 1.5] [-o poses/]   (representative frames)
     boonza sites system.dms --traj a.dcd b.dcd [-o sites/]   (where a ligand goes, pooled)
     boonza pockets traj --workdir run/md --model martini3 -o pockets/   (fpocket, every frame)
-    boonza sitemap traj --workdir run/md --model martini3 -o sitemap/   (SiteMap-style sites)
+    boonza cavity traj --workdir run/md --model martini3 -o cavity/   (SiteMap-style sites)
     boonza build --smiles 'CC(=O)Oc1ccccc1C(=O)O' -o aspirin.sdf
     boonza summarize complex.pdb [--focus 'resname LIG'] [--json]
     boonza build --sequence ACDEFGHIK --conformation helix -o peptide.pdb
@@ -1805,8 +1805,8 @@ def _parser() -> argparse.ArgumentParser:
                    "(boonza swim --help)")  # fmt: skip
     sub.add_parser("pockets", help="fpocket on coarse-grained proteins, one structure or a "
                    "trajectory (boonza pockets --help)")  # fmt: skip
-    sub.add_parser("sitemap", help="SiteMap-style sites of coarse-grained proteins, one "
-                   "structure or a trajectory (boonza sitemap --help)")  # fmt: skip
+    sub.add_parser("cavity", help="cavities on coarse-grained proteins (a SiteMap-style "
+                   "grid), one structure or a trajectory (boonza cavity --help)")  # fmt: skip
 
     q = sub.add_parser("view", help="look at a structure or trajectory in the browser, "
                        "all-atom or coarse-grained")  # fmt: skip
@@ -1814,7 +1814,7 @@ def _parser() -> argparse.ArgumentParser:
                    "open files in), a structure (a topology with -c) or a PDB ID "
                    "(downloaded from RCSB into this folder) and optionally its trajectory "
                    "(DCD, XTC, TRR, NetCDF, DTR/STK); or several structures; or the output "
-                   "folder of boonza modes, triage or sitemap, "
+                   "folder of boonza modes, triage or cavity, "
                    "or any folder with a view.json")  # fmt: skip
     q.add_argument("-c", "--coordinates", help="coordinates for a topology (.top, .psf, "
                    "prmtop), e.g. a .gro; a Martini .top gives bead sizes")  # fmt: skip
@@ -2315,10 +2315,13 @@ def main(argv=None) -> int:
         from .pockets.cli import main as pockets_main
 
         return pockets_main(argv[1:])
-    if argv and argv[0] == "sitemap":  # its own parser: traj, structure
-        from .sitemap.cli import main as sitemap_main
+    if argv and argv[0] in ("cavity", "sitemap"):  # its own parser: traj, structure
+        from .cavity.cli import main as cavity_main
 
-        return sitemap_main(argv[1:])
+        if argv[0] == "sitemap":  # the old name, kept for scripts and jobs
+            print("boonza sitemap is now boonza cavity; the old name still works for now",
+                  file=sys.stderr)  # fmt: skip
+        return cavity_main(argv[1:])
     args = _parser().parse_args(argv)
     try:
         return args.run(args)

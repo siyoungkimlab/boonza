@@ -1,10 +1,10 @@
 # How the dynamic200 presets were made
 
-`dynamic200` (`boonza/data/sitemap/presets/dynamic200.json`) is
-[static200](sitemap_static200.md) fine-tuned on frames of coarse-grained MD
+`dynamic200` (`boonza/data/cavity/presets/dynamic200.json`) is
+[static200](cavity_static200.md) fine-tuned on frames of coarse-grained MD
 runs of the same 200 training complexes, simulated without their ligand. It
-is `boonza sitemap traj`'s default, because its frames are what `traj` reads.
-`boonza sitemap structure` keeps static200, which does better on crystal
+is `boonza cavity traj`'s default, because its frames are what `traj` reads.
+`boonza cavity structure` keeps static200, which does better on crystal
 structures (below). Like static200, it is kept unchanged so that later
 presets can be compared with it.
 
@@ -44,7 +44,7 @@ The most telling changes:
   which static200 had switched off.
 - **SIRAH** needs at least 6 points for a site instead of 3. That removes the
   tiny buried voids between SIRAH's beads that made static200's enclosure
-  weight negative ([static200](sitemap_static200.md), "Why enclosure differs
+  weight negative ([static200](cavity_static200.md), "Why enclosure differs
   between models"). Enclosure's weight is now close to zero (-2.04 to -0.52).
 
 Martini 3's `contact` (23.98) is static200's and lies above the top of the
@@ -53,7 +53,7 @@ range drawn on MD frames (19.30), so its contact filter is off.
 ## Training data: MD frames of the 200 complexes
 
 **The runs.** `boonza swim` and `boonza md` were run on each prepared holo
-complex (`fpocketSet_263/holo/<pdb>.mae`; see [static200](sitemap_static200.md))
+complex (`fpocketSet_263/holo/<pdb>.mae`; see [static200](cavity_static200.md))
 in each model:
 
 - the ligand left out (`--cg-selection "not resname LIG"`);
@@ -88,10 +88,10 @@ the last of each fifth (MD frames 199, 399, 599, 799 and 999, so 20 to
 100 ns). That makes 955 frames per model.
 
 - **Protein:** each frame made whole and fitted on the backbone, as
-  `boonza sitemap traj` does. The probes are not part of the protein.
+  `boonza cavity traj` does. The probes are not part of the protein.
 - **Grids:** computed as for static200, at 2.0 A, with the residue probes.
 - **Truth:** the ligand's heavy atoms, carried onto each frame on its own by
-  superposing the whole holo protein (`boonza sitemap traj --holo`'s fit).
+  superposing the whole holo protein (`boonza cavity traj --holo`'s fit).
   Median fit RMSD is about 1.2 A, and at most 1.43 A.
 
 The ligand is absent from the run, so its site can narrow or close. On these
@@ -101,8 +101,8 @@ frames, static200's sites include one within 4 A of the ligand in only
 ## How the search ran
 
 The trial scoring and the local moves are static200's ([how a trial is
-judged](sitemap_static200.md), [how the search
-ran](sitemap_static200.md)). The 5-fold cross-validation holds a complex's 5
+judged](cavity_static200.md), [how the search
+ran](cavity_static200.md)). The 5-fold cross-validation holds a complex's 5
 frames out together, so no protein is in both the fitting and the scoring
 folds. Per model (benchmark `md_finetune.sh`, `tune.py --set
 md_train200_<model> --probe <Val> --spacing 2.0 --tag _ft --local 100`):
@@ -167,9 +167,9 @@ hence one preset per command.
 
 Per-frame site finding cannot recover a site that is closed in a frame. In
 MD, Top-1 is well below the crystal structures' for both presets. Grouping
-sites across frames into pockets (`boonza sitemap traj`'s grouping) is where
+sites across frames into pockets (`boonza cavity traj`'s grouping) is where
 a run's open frames can count; how it was chosen is in
-[How traj's grouping was chosen](sitemap_grouping.md).
+[How traj's grouping was chosen](cavity_grouping.md).
 
 ## Reproducing
 

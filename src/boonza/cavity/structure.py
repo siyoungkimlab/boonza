@@ -150,7 +150,7 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
             (lig_sel, lig_pymol), where = ligand_residues(moved, holo_ligand), "holo"
             write_ligand(out, theirs, lig_sel)
     BV.write_pqr(out / "sites.pqr", [(k, found[k - 1][1].xyz, spacing / 2) for k, *_ in drawn])
-    lines = [f"# boonza sitemap: sites of {Path(path).name} as {model} beads ({len(found)} "
+    lines = [f"# boonza cavity: sites of {Path(path).name} as {model} beads ({len(found)} "
              f"sites, the best {len(drawn)} drawn)", *BV.PREAMBLE]  # fmt: skip
     lines += [f"load {mine}, structure"] if all_atom else []
     lines += [f"load {theirs}, holo"] if moved is not None else []

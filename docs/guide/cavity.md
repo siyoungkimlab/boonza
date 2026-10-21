@@ -1,6 +1,9 @@
-# SiteMap-style sites of coarse-grained proteins (`boonza sitemap`)
+# Cavities of coarse-grained proteins, SiteMap-style (`boonza cavity`)
 
-`boonza sitemap` finds binding sites the way Schrödinger's SiteMap does
+`boonza cavity` was called `boonza sitemap` until it was renamed, since it is not
+Schrödinger's SiteMap but finds sites the way it does; the old name still runs.
+
+`boonza cavity` finds binding sites the way Schrödinger's SiteMap does
 (Halgren 2007, 2009), on proteins as Martini 2, Martini 3 or SIRAH beads: on
 one structure, or on every frame of a coarse-grained run, where the sites are
 grouped into pockets that move and change shape with the protein. Like
@@ -8,8 +11,8 @@ grouped into pockets that move and change shape with the protein. Like
 when given, is only measured against.
 
 ```bash
-boonza sitemap structure apo.pdb --model martini3 -o sitemap/ --holo holo.pdb
-boonza sitemap traj --workdir swim/sim_000/md_solute --model martini3 -o sitemap/ \
+boonza cavity structure apo.pdb --model martini3 -o cavity/ --holo holo.pdb
+boonza cavity traj --workdir swim/sim_000/md_solute --model martini3 -o cavity/ \
     --apo apo.mae --every 5
 ```
 
@@ -37,7 +40,7 @@ then only compared and grouped, which is what makes tuning them affordable.
 ## Presets
 
 Each model has a preset: the grid spacing, the probe, the site-finding
-thresholds and SiteScore's weights (`boonza/data/sitemap/presets.json`). The
+thresholds and SiteScore's weights (`boonza/data/cavity/presets.json`). The
 probe is the same residue in every model, valine's side-chain bead (Martini 2
 AC2, Martini 3 SC3, SIRAH Y4Cv), so a site means the same thing whichever model
 found it; leucine's and methionine's beads did as well in training.
@@ -63,14 +66,14 @@ Top-3 / Top-10, crystal apo structures):
 There are two sets of presets, kept by name, and each command uses the one
 tuned on what it reads:
 
-- **static200** (`boonza sitemap structure`'s default), tuned on the 200
-  crystal structures above ([how they were made](sitemap_static200.md));
+- **static200** (`boonza cavity structure`'s default), tuned on the 200
+  crystal structures above ([how they were made](cavity_static200.md));
 - **dynamic200** (`--preset dynamic200`): static200 fine-tuned on
   MD frames of the same complexes' runs, their ligand removed
-  ([how they were made](sitemap_dynamic200.md)).
-- **volume200** (`boonza sitemap traj`'s default): SiteMap's thresholds with only `outside` and
+  ([how they were made](cavity_dynamic200.md)).
+- **volume200** (`boonza cavity traj`'s default): SiteMap's thresholds with only `outside` and
   `enclosure` tuned, sites ranked by volume alone
-  ([what it is and how it compares](sitemap_volume200.md)).
+  ([what it is and how it compares](cavity_volume200.md)).
 
 On MD frames of the Schrödinger set's apo runs (40 cases, 10 frames each),
 dynamic200 finds the ligand's site more often (Top-1 / Top-3 / Top-10):
@@ -88,9 +91,9 @@ own.
 ## One structure
 
 ```bash
-boonza sitemap structure protein.pdb --model sirah -o out/
-boonza sitemap structure apo.pdb --model martini3 -o out/ --holo holo.pdb --holo-ligand "resname THA"
-boonza sitemap structure holo.pdb --model martini2 -o out/ --ligand "resname I4B"
+boonza cavity structure protein.pdb --model sirah -o out/
+boonza cavity structure apo.pdb --model martini3 -o out/ --holo holo.pdb --holo-ligand "resname THA"
+boonza cavity structure holo.pdb --model martini2 -o out/ --ligand "resname I4B"
 ```
 
 An all-atom structure is mapped to beads as `boonza pockets` maps it; a
@@ -109,8 +112,8 @@ the structure, the beads (off) and each site as `pocket_<rank>`.
 ## A trajectory
 
 ```bash
-boonza sitemap traj --workdir run/md_solute --model martini3 -o sitemap/ --apo apo.mae --every 5
-boonza sitemap traj --workdir run/md_solute --model martini3 -o sitemap/ --every 5 \
+boonza cavity traj --workdir run/md_solute --model martini3 -o cavity/ --apo apo.mae --every 5
+boonza cavity traj --workdir run/md_solute --model martini3 -o cavity/ --every 5 \
     --holo holo.mae --holo-ligand "resname LIG"
 ```
 
@@ -141,7 +144,7 @@ sites are reassigned until none moves; two pockets that are rarely open
 together (`--cooccur`) are merged; and a pocket open in few frames or very
 small joins its nearest neighbour (`--no-absorb` keeps them apart). On cryptic
 sites it let the ligand's site merge with a persistent neighbouring pocket
-([how the grouping was chosen](sitemap_grouping.md)).
+([how the grouping was chosen](cavity_grouping.md)).
 
 Pockets are ordered by `--rank`: the best frame's p (`p_max`, the default; with
 volume200, the pocket's largest site), the 90th percentile of p over the frames a
@@ -168,7 +171,7 @@ family, enrichment and probe count (`show labels, pharm_<rank>`). Scene buttons
 return to the opening view (`overview`) or show one pocket alone; the commands
 `overview` and `only <rank>` do the same.
 
-Every frame's sites are kept in `sitemap/sites.pkl`, so regrouping or
+Every frame's sites are kept in `cavity/sites.pkl`, so regrouping or
 reranking (`--grouping`, `--cutoff`, `--similarity`, `--cooccur`, `--rank`,
 `--top`) takes seconds; they
 are found again when the frames or the presets change. A frame takes about a

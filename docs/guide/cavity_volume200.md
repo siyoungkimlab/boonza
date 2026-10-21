@@ -1,11 +1,11 @@
 # The volume200 presets
 
-`volume200` (`boonza/data/sitemap/presets/volume200.json`, `--preset volume200`) is a
-simpler alternative to [dynamic200](sitemap_dynamic200.md): SiteMap's own thresholds, with
+`volume200` (`boonza/data/cavity/presets/volume200.json`, `--preset volume200`) is a
+simpler alternative to [dynamic200](cavity_dynamic200.md): SiteMap's own thresholds, with
 only the two that depend on the beads tuned, and sites ranked by their volume.
 
 ```bash
-boonza sitemap traj --workdir run/md_solute --model martini3 -o sitemap/ --preset volume200
+boonza cavity traj --workdir run/md_solute --model martini3 -o cavity/ --preset volume200
 ```
 
 ## What it is
@@ -61,7 +61,7 @@ a pair or two at Top-10.
 
 ## The default: volume200, pockets ranked by p_max
 
-`boonza sitemap traj` uses volume200 and ranks pockets by `p_max` unless told otherwise
+`boonza cavity traj` uses volume200 and ranks pockets by `p_max` unless told otherwise
 (`--preset`, `--rank`). With volume200, `p_max` is the pocket's largest site over the
 frames it is open in. On the Schrödinger set's 43 final apo runs (EN 700 kJ/mol/nm^2 at
 0.9 nm, every frame; both 5UXA ligands included), PPc Top-1 / 3 / 5 / 10:

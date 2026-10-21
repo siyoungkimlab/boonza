@@ -80,7 +80,7 @@ def ligand_residues(system, sel: str) -> tuple[str, str]:
 
 def write_ligand(out: Path, file: str, sel: str) -> None:
     """ligand.json: which residues of which written structure are the ligand, for
-    boonza view (viewer.outputs.from_sitemap)."""
+    boonza view (viewer.outputs.from_cavity)."""
     import json
 
     (out / "ligand.json").write_text(json.dumps({"file": file, "selection": sel}) + "\n")
@@ -267,7 +267,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
             save(holo, out / f"holo.{holo_format}")
             lig_sel, lig_pymol = ligand_residues(holo, holo_ligand)
             write_ligand(out, f"holo.{holo_format}", lig_sel)
-    lines = [f"# boonza sitemap: pockets of a {model} run ({n_frames} frames, every {every}th MD "
+    lines = [f"# boonza cavity: pockets of a {model} run ({n_frames} frames, every {every}th MD "
              f"frame, {len(pockets)} pockets ranked by {rank}, the best {len(drawn)} drawn)",
              "# each pocket is a group, pocket_<rank>: site_<rank> (its medoid site, the",
              "# top 10 each its own colour), sites_<rank> (every frame's site points),",

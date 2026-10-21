@@ -1,7 +1,7 @@
 # How the static200 presets were made
 
-`static200` (`boonza/data/sitemap/presets/static200.json`, `--preset
-static200`) is the set of `boonza sitemap` presets tuned on 200 static
+`static200` (`boonza/data/cavity/presets/static200.json`, `--preset
+static200`) is the set of `boonza cavity` presets tuned on 200 static
 protein-ligand crystal structures alone, before any fine-tuning on MD frames.
 It is kept unchanged so that later presets can be compared with it. This page
 records the training data, what was tuned, how the search ran and how the
@@ -9,7 +9,7 @@ result did on the validation sets.
 
 The search code is not part of boonza: it is the cgsitemap benchmark
 (`~/sitemap/benchmark`: `prepare_mae.py`, `tune.py`, `validate.py`), which
-runs boonza's own site finding (`boonza.sitemap`) on precomputed grids. Its
+runs boonza's own site finding (`boonza.cavity`) on precomputed grids. Its
 trial logs are named below.
 
 ## The presets
@@ -64,7 +64,7 @@ Chem. Inf. Model.* 49, 377):
 The commonly quoted Dscore classes are below 0.83 undruggable, 0.83-0.98
 difficult and above 0.98 druggable.
 
-`boonza sitemap` keeps SiteScore's three terms but fits their weights per
+`boonza cavity` keeps SiteScore's three terms but fits their weights per
 model, as a logistic regression (right site against the rest), so they are
 not directly comparable:
 
@@ -152,7 +152,7 @@ For each complex (`prepare_mae.py --name holo200b --ligand "resname LIG"
   the parameterized system would be). The ligand, ions and metals are not part
   of the wall.
 - **Grids.** Every grid point's numbers are computed once at 2.0 and 1.5 A
-  (`boonza.sitemap.grid`): how far outside the beads it is, 110 rays' first
+  (`boonza.cavity.grid`): how far outside the beads it is, 110 rays' first
   hits, and the Lennard-Jones energy of each probe (full and capped) from the
   force field's pair table (Martini 2.2, Martini 3.0.0, SIRAH 2.2). Only the
   three residue-defined probes were computed: Val, Leu/Ile and Met side-chain
@@ -400,7 +400,7 @@ for mp in martini2:AC2 martini3:SC3 sirah:Y4Cv; do
                    runs/tune/holo200_halfNone_${m}_fixed$p.jsonl \
         --also-preset --local 250 -j 3
 done
-P=$(python -c "from boonza.sitemap import presets; print(presets.path('static200'))")
+P=$(python -c "from boonza.cavity import presets; print(presets.path('static200'))")
 python validate.py pp48 --kind apo --presets $P \
     --cases ~/Dropbox/PocketFinding/fpocketSet/LigSite48/pairs.txt
 python validate.py schrodinger --kind apo --presets $P
