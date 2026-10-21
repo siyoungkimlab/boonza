@@ -27,6 +27,8 @@ whatever they have no template for).
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from ..elements import MSYS_MASSES, atomic_number, symbol
@@ -489,6 +491,57 @@ def delete(s, atoms) -> np.ndarray:
 
 
 # --- minimization ------------------------------------------------------------------
+
+
+def relabel(s, atoms, name: str = "", resid: str = "", chain: str = "") -> None:
+    """The residues of ``atoms``: a new residue name, residue number and chain, each
+    left as it is when blank.  More than one residue are numbered on from ``resid``
+    in file order; a number may carry an insertion code (``52A``).  A chain name that
+    no other chain has renames the chains the residues fill whole; otherwise the
+    residues move to the chain of that name (a new one when none has it)."""
+    residues = sorted({int(r) for r in np.asarray(s.atoms["residue"])[list(atoms)]})
+    if not residues:
+        raise ValueError("pick atoms first")
+    name, resid, chain = str(name).strip(), str(resid).strip(), str(chain).strip()
+    if not (name or resid or chain):
+        raise ValueError("give a residue name, a residue number or a chain")
+    if name:
+        if " " in name or len(name) > 4:
+            raise ValueError("a residue name is up to 4 characters, without spaces")
+        names = np.asarray(s.residues["name"]).astype(object)
+        names[residues] = name
+        s.residues["name"] = names.astype(str)
+    if resid:
+        m = re.fullmatch(r"(-?\d+)([A-Za-z]?)", resid)
+        if not m:
+            raise ValueError(f"{resid!r} is not a residue number (e.g. 52 or 52A)")
+        first, code = int(m.group(1)), m.group(2).upper()
+        numbers = np.asarray(s.residues["resid"]).copy()
+        codes = np.asarray(s.residues["insertion"]).astype(object)
+        numbers[residues] = first + np.arange(len(residues))
+        codes[residues] = code if len(residues) == 1 else ""
+        s.residues["resid"] = numbers
+        s.residues["insertion"] = codes.astype(str)
+    if chain:
+        if " " in chain or len(chain) > 4:
+            raise ValueError("a chain name is up to 4 characters, without spaces")
+        rchain = np.asarray(s.residues["chain"])
+        mine = sorted({int(rchain[r]) for r in residues})
+        whole = all(set(np.flatnonzero(rchain == c).tolist()) <= set(residues) for c in mine)
+        cnames = np.asarray(s.chains["name"]).astype(object)
+        others = [c for c in range(s.nchains) if cnames[c] == chain and c not in mine]
+        if whole and not others:
+            cnames[mine] = chain
+            s.chains["name"] = cnames.astype(str)
+        else:
+            named = [c for c in range(s.nchains) if cnames[c] == chain]
+            to = others[0] if others else named[0] if named else None
+            if to is None:
+                ct, segid = int(s.chains["ct"][mine[0]]), str(s.chains["segid"][mine[0]])
+                to = int(s.add_chain(ct=ct, name=chain, segid=segid).id)
+            for r in residues:
+                s.residue(r).chain = to
+            s.delete_atoms([])  # the chains left empty
 
 
 def pocket_selection(ligand: str, cutoff: float = 5.0) -> str:

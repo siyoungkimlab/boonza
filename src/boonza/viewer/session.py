@@ -607,6 +607,10 @@ class Session:
                         for end in {"N": "N", "C": "C", "both": "NC"}[str(value)]:
                             edit.cap(s, c, end)
                     hydrogens = False
+                elif op == "residue":  # name, number, chain of the atoms' residues
+                    fields = ("name", "resid", "chain")
+                    edit.relabel(s, atoms, **{k: value.get(k, "") for k in fields})
+                    hydrogens = False
                 elif op == "name":
                     if len(atoms) != 1 or not str(value).strip():
                         raise ValueError("pick one atom and give it a name")

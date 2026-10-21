@@ -40,6 +40,8 @@ button, input, select { font: inherit; color: var(--text); }
 #rdock-list { overflow-y: auto; flex: 1; padding: 2px 0; }
 .mgroup { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 6px 8px 2px; }
+label.mgroup { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+label.mgroup input { margin: 0; }
 .mrow { padding: 3px 6px 4px 6px; border-left: 3px solid transparent; }
 .mrow.current { background: var(--button-hover); border-left-color: var(--accent); }
 .mrow .top { display: flex; align-items: center; gap: 4px; }
@@ -115,7 +117,8 @@ button, input, select { font: inherit; color: var(--text); }
 .menu .sep { height: 1px; background: var(--line); margin: 3px 0; }
 
 /* --- rendering area ---------------------------------------------------------------- */
-#stage { grid-area: stage; position: relative; background: var(--canvas); overflow: hidden; }
+#stage { grid-area: stage; position: relative; background: var(--canvas); overflow: hidden;
+  user-select: none; -webkit-user-select: none; }
 #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .label { position: absolute; transform: translate(-50%, -50%); font: 11px Arial, sans-serif;
@@ -177,6 +180,7 @@ body.noir .label.meter { color: #ffd34d; }
   white-space: nowrap; }
 #footer-edit input { width: 64px; background: var(--field); border: 1px solid var(--line); padding: 1px 3px; }
 #footer-edit input.name { width: 52px; }
+#footer-edit input.short { width: 40px; }
 #footer-edit button { background: var(--button); border: 1px solid var(--line); border-radius: 2px; padding: 0 6px; cursor: pointer; }
 #footer-edit .what { color: var(--muted); }
 #footer-edit input[type=range] { width: 120px; }
@@ -278,3 +282,4 @@ html.static #btn-py, html.static #btn-cancel, html.static #ff-button, html.stati
 #stage.dropping::after { content: "drop to open"; position: absolute; inset: 8px; display: flex; align-items: center;
   justify-content: center; border: 2px dashed var(--accent); color: var(--accent); font: 600 18px Arial, sans-serif;
   background: color-mix(in srgb, var(--canvas) 70%, transparent); pointer-events: none; z-index: 30; }
+.mrow .name .num { color: var(--muted); margin-right: 5px; font-variant-numeric: tabular-nums; }

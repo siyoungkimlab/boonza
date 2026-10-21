@@ -177,9 +177,9 @@ export function setupUI(app) {
     }
     app.rebuild(); app.onSelection();
   }
-  async function selectServer(make) {
+  async function selectServer(make, models = app.shownModels()) {
     app.clearSelection();
-    for (const m of app.shownModels()) {
+    for (const m of models) {
       const ids = await serverSelect(m, make(m));
       if (ids.length) app.select(m, ids, "add");
     }
@@ -705,6 +705,7 @@ export function setupUI(app) {
       "-",
       { label: "Delete", run: deleteSelected, key: "Del" },
       { label: "Copy SMILES", run: copySmiles, key: "Ctrl C" },
+      { label: "Residue and Chain…", run: relabelPanel },
       { label: "Build", sub: [
         { label: "Builder…", run: builderPanel },
         { label: "Hydrogens", sub: [
@@ -912,6 +913,7 @@ export function setupUI(app) {
     { label: "System", sub: systemItems },
     "-",
     { label: "Copy SMILES", run: copySmiles },
+    { label: "Residue and Chain…", run: relabelPanel },
     { label: "Delete", run: deleteSelected },
   ], x, y);
 
@@ -981,6 +983,12 @@ export function setupUI(app) {
         `${m.name}: ${m.topo.natoms} atoms, ${R.name.length} residues, ${m.topo.chains.name.length} chains`));
       return;
     }
+    // one residue, whole (a ribbon clicked, a double-click): its name, number and chain
+    const res = sel.length === 1 ? [...new Set(sel[0][1].map(a => m.topo.atoms.residue[a]))] : [];
+    if (n > 1 && res.length === 1 && n === m.topo.residueAtoms[res[0]].length) {
+      residueFields(box, m, sel[0][1]);
+      return;
+    }
     if (sel.length > 1 || n > 4) { box.append(el("span", { className: "what" }, `${n} atoms selected`)); return; }
     const atoms = orderChain(m, sel[0][1]);
     const { value } = n > 1 ? app.measure(m, atoms) : { value: 0 };
@@ -998,8 +1006,9 @@ export function setupUI(app) {
       const name = el("input", { className: "name", value: m.topo.atoms.name[a] });
       name.onkeydown = e => { if (e.key === "Enter") edit("name", name.value); };
       name.disabled = !editable;
-      box.append(el("span", {}, app.atomLabel(m, a, false).split(" ")[0]), name,
+      box.append(el("span", { className: "what" }, "Atom"), name,
                  el("span", { className: "what" }, `[${m.topo.atoms.element[a]}]`));
+      residueFields(box, m, atoms);
     } else if (n === 2) {
       const bonded = m.topo.bondsOf[atoms[0]].includes(atoms[1]);
       box.append(el("span", { className: "what" }, "Distance"),
@@ -1016,6 +1025,31 @@ export function setupUI(app) {
       prof.onclick = () => profilePanel(m, atoms);
       if (editable) box.append(prof);
     }
+  }
+
+  // the footer's residue name, number and chain, for one atom or one residue: Enter applies
+  function residueFields(box, m, atoms) {
+    const R = m.topo.residues, r = m.topo.atoms.residue[atoms[0]];
+    const was = { name: R.name[r], resid: `${R.resid[r]}${R.insertion[r].trim()}`, chain: m.topo.chains.name[R.chain[r]] };
+    const fields = {
+      name: el("input", { className: "name", value: was.name, title: "residue name" }),
+      resid: el("input", { className: "short", value: was.resid, title: "residue number (52A: with an insertion code)" }),
+      chain: el("input", { className: "short", value: was.chain, title: "chain" }),
+    };
+    const apply = async () => {
+      const value = {};
+      for (const [k, f] of Object.entries(fields)) if (f.value.trim() !== was[k]) value[k] = f.value;
+      if (!Object.keys(value).length) return;
+      if (!await serverEdit(m, "api/edit", { op: "residue", atoms, value, hydrogens: false })) return;
+      app.select(m, atoms, "set");  // relabelling keeps the atoms where they were
+      app.message(`${was.name}${was.resid}: relabelled`);
+    };
+    for (const f of Object.values(fields)) {
+      f.onkeydown = e => { if (e.key === "Enter") apply(); };
+      f.disabled = !m.topo.editable;
+    }
+    box.append(el("span", { className: "what" }, "Residue"), fields.name, fields.resid,
+               el("span", { className: "what" }, "Chain"), fields.chain);
   }
 
   // two bonded atoms: the Rotate wheel turns the bond, and Profile plots its energy
@@ -1077,13 +1111,39 @@ export function setupUI(app) {
     if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); command($("cli-input").value.trim()); }
   };
 
+  // models by number (as Window | Models lists them), by name, or all: "2", "1,3", "1FNA"
+  function modelsNamed(spec) {
+    const open = state.models.filter(m => !m.closed);
+    if (spec === "all") return open;
+    const out = [];
+    for (const w of spec.split(",").filter(Boolean)) {
+      const m = /^\d+$/.test(w) ? state.models[+w - 1] : open.find(m => m.name === w)
+        ?? open.find(m => m.name.toLowerCase().includes(w.toLowerCase()));
+      if (!m || m.closed) throw new Error(`no model ${w}: Window | Models numbers them`);
+      if (!out.includes(m)) out.push(m);
+    }
+    return out;
+  }
+
   async function command(text) {
     if (!text) return;
+    // "... in 2": the command acts on those models (shown first if hidden), not on every shown one
+    let models = null;
+    const at = text.match(/^(.*?)\s+in\s+(\S+)$/);
+    if (at && !text.startsWith("model")) {
+      try { models = modelsNamed(at[2]); } catch (e) { app.message(e.message, true); return; }
+      text = at[1];
+      const hidden = models.filter(m => !m.shown || !m.topo);
+      if (hidden.length) await app.show(hidden);
+      app.clearSelection();
+      state.current = models[0].index;
+      app.onSelection();
+    }
     const [word, ...rest] = text.split(/\s+/);
     const arg = rest.join(" ");
-    const on = async (sel, fn) => {  // a selection in each shown model, or the targets
-      if (!sel) { forTargets(fn); return; }
-      for (const m of app.shownModels()) fn(m, await serverSelect(m, sel));
+    const on = async (sel, fn) => {  // a selection in each model, or the targets
+      if (!sel && !models) { forTargets(fn); return; }
+      for (const m of models || app.shownModels()) fn(m, sel ? await serverSelect(m, sel) : app.range(m.topo.natoms));
       app.rebuild();
     };
     switch (word) {
@@ -1091,12 +1151,24 @@ export function setupUI(app) {
         app.message("a selection selects atoms (boonza's language, e.g. resname LIG or within 5 of resname LIG)\n"
           + "commands: select SEL · show SEL · hide SEL · center [SEL] · style line|stick|ballline|ballstick|space [SEL] · "
           + "color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · minimize · undo · redo · "
-          + "open PATH|PDB-ID · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset");
+          + "open PATH|PDB-ID · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset\n"
+          + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
         return;
-      case "select": await selectServer(() => arg); return;
+      case "model": {  // show these models alone
+        let these;
+        try { these = modelsNamed(arg || "all"); } catch (e) { app.message(e.message, true); return; }
+        const others = state.models.filter(m => m.shown && !these.includes(m));
+        if (others.length) await app.show(others, false);
+        await app.show(these);
+        state.current = these[0].index;
+        app.onSelection();
+        app.message(`showing ${these.map(m => `${m.index + 1} ${m.name}`).join(", ")}`);
+        return;
+      }
+      case "select": await selectServer(() => arg, models || undefined); return;
       case "show": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 1; }); return;
       case "hide": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 0; }); return;
-      case "center": if (arg) await selectServer(() => arg); app.centerView(); return;
+      case "center": if (arg) await selectServer(() => arg, models || undefined); app.centerView(); return;
       case "style": {
         const [s, ...sel] = rest;
         const k = STYLES.indexOf(s);
@@ -1131,7 +1203,7 @@ export function setupUI(app) {
         return;
       }
       case "reset": app.resetView(); return;
-      default: await selectServer(() => text);  // a selection
+      default: await selectServer(() => text, models || undefined);  // a selection
     }
   }
 
@@ -1687,6 +1759,39 @@ export function setupUI(app) {
   }
   function builderPanel() { toggleDock("builder"); }
 
+  // the selected residues' name, number and chain (Edit | Residue and Chain)
+  function relabelPanel() {
+    const t = editTarget();
+    if (!t) return;
+    const [m, atoms] = t, R = m.topo.residues;
+    const rs = [...new Set(atoms.map(a => m.topo.atoms.residue[a]))].sort((a, b) => a - b);
+    const common = f => { const v = new Set(rs.map(f)); return v.size === 1 ? [...v][0] : ""; };
+    const number = `${R.resid[rs[0]]}${R.insertion[rs[0]].trim()}`;
+    const what = rs.length === 1 ? `${R.name[rs[0]]}${number}` : `${rs.length} residues`;
+    panel("relabel", "Residue and Chain", body => {
+      const field = v => el("input", { value: v, placeholder: "keep", style: "width:70px" });
+      const name = field(common(r => R.name[r])), resid = field(number);
+      const chain = field(common(r => m.topo.chains.name[R.chain[r]]));
+      body.append(el("p", { className: "help" }, `${what} of ${m.name}. A blank field stays as it is; `
+        + "more than one residue are numbered on from the number. A chain name no other chain has "
+        + "renames the chains the residues fill; otherwise the residues move to that chain."));
+      body.append(row(el("span", { className: "what" }, "Residue name"), name));
+      body.append(row(el("span", { className: "what" }, "Residue number"), resid));
+      body.append(row(el("span", { className: "what" }, "Chain"), chain));
+      const apply = async () => {
+        // the number as it was is not sent: it would renumber the residues after the first
+        const value = { name: name.value, resid: resid.value === number ? "" : resid.value, chain: chain.value };
+        const out = await serverEdit(m, "api/edit", { op: "residue", atoms, value, hydrogens: false });
+        if (out) app.message(`${what}: relabelled`);
+      };
+      for (const f of [name, resid, chain]) {
+        f.onkeydown = e => { if (e.key === "Enter") apply(); };
+        f.disabled = !m.topo.editable;
+      }
+      body.append(row(button("Apply", apply, "blue")));
+    });
+  }
+
   function minimizePanel() {
     panel("minimize", "Energy Minimize", body => {
       const m = app.currentModel();
@@ -1868,14 +1973,15 @@ export function setupUI(app) {
     for (const m of sortedModels()) {
       if (m.group !== group && !state.sort?.column) {
         group = m.group;
-        if (group) list.append(el("div", { className: "mgroup" }, group));
+        if (group) list.append(groupHeader(group));
       }
       const row = el("div", { className: `mrow${m.shown ? " on" : ""}${m.index === state.current ? " current" : ""}` });
       const box = el("input", { type: "checkbox", checked: m.shown, title: "show" });
       box.onchange = () => { state.current = m.index; app.show([m], box.checked); };
       const sw = el("span", { className: "swatch" });
       sw.style.background = swatchColor(m.color);
-      const name = el("span", { className: "name", title: `${m.name}: click to show it alone and look at it` }, m.name);
+      const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
+        + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
       name.onclick = () => app.solo(m);
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
       const color = picker("colour", colors, () => m.color || "default", async v => {
@@ -1915,6 +2021,22 @@ export function setupUI(app) {
   $("rdock-all").onclick = () => app.show(app.live(), true);
   $("rdock-none").onclick = () => app.show(app.live().filter(m => m.index !== state.current), false);
   app.onModels = modelsDock;
+  // a group's header: its box shows or hides every model in it (all the pockets, say)
+  function groupHeader(group) {
+    const members = state.models.filter(m => m.group === group && !m.closed);
+    const on = members.filter(m => m.shown).length;
+    const box = el("input", { type: "checkbox", checked: on === members.length, title: `show or hide every ${group} model` });
+    box.indeterminate = on > 0 && on < members.length;
+    box.onchange = async () => {
+      if (box.checked && members.length > 50 && !confirm(`Show all ${members.length} ${group} models? Each one loads.`)) {
+        box.checked = false;
+        return;
+      }
+      await app.show(members, box.checked);
+    };
+    return el("label", { className: "mgroup" }, box, ` ${group} (${members.length})`);
+  }
+
   function modelsPanel() { $("window").classList.toggle("nomodels"); app.draw(); }
 
   const cell = v => typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")) : v ?? "";
@@ -2065,6 +2187,7 @@ export function setupUI(app) {
     menu([
       { label: `Mutate ${what} to`, sub: () => AMINO.map(aa => ({ label: `${aa} (${ONE[aa]})`, run: () => mutate(aa) })),
         off: () => !m.topo.editable },
+      { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
       { label: "Center", run: () => app.centerView() },
       { label: "Show Side Chains", run: () => { for (const a of ids) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; } app.rebuild(); } },
@@ -2118,8 +2241,12 @@ export function setupUI(app) {
       const two = el("input", { type: "checkbox", checked: state.twoButton });
       two.onchange = () => { state.twoButton = two.checked; localStorage.setItem("boonza.twoButton", two.checked ? "1" : "0"); };
       body.append(row(el("label", {}, two, " two-button mouse: the right button is the middle one; Alt alone opens the popup")));
+      const pad = el("input", { type: "checkbox", checked: state.trackpad });
+      pad.onchange = () => { state.trackpad = pad.checked; localStorage.setItem("boonza.trackpad", pad.checked ? "1" : "0"); };
+      body.append(row(el("label", {}, pad, " trackpad: a two-finger swipe rotates (in the perimeter: about z), "
+        + "Shift + swipe pans, a pinch zooms")));
       body.append(el("p", { className: "help" }, "On a Mac, Ctrl is Cmd and Alt is Option. Without a middle button, "
-        + "use the two-button setting or the trackball in the corner."));
+        + "use the trackpad or two-button setting, or the trackball in the corner."));
     });
   }
 
