@@ -62,8 +62,12 @@ def cmd_traj(args) -> int:
             pickle.dump({"key": key, "sites": sites, "fit_rmsd": rmsd}, fh)
         cache.with_suffix(".partial").replace(cache)
         print(f"{len(sites)} sites in {len(coords)} frames ({time.time() - t0:.0f} s)", flush=True)
+    big = sum(1 for s in sites if args.max_volume and s.props["n"] > args.max_volume)
+    if big:
+        print(f"{big} of {len(sites)} frame sites over {args.max_volume:.0f} A^3 left out of "
+              "the grouping (--max-volume)", flush=True)  # fmt: skip
     pockets = T.group(sites, args.grouping, args.cutoff, args.similarity, args.cooccur,
-                      absorb=args.absorb)  # fmt: skip
+                      absorb=args.absorb, max_volume=args.max_volume)  # fmt: skip
     from .pharm import hotspots
 
     spots, all_frames = [], pcoords
@@ -108,9 +112,13 @@ def cmd_traj(args) -> int:
         ligand, info, holo = _holo_on(args.holo, reference, args.holo_ligand, args.holo_top,
                                       args.holo_fit)  # fmt: skip
         ligand, holo_ligand = np.asarray(ligand, float), info["ligand"]
+    from ..pockets.cli import structure_format
+
     view = report.write(out, args.model, pockets, len(coords), every, system, ids, coords,
                         pids, pcoords, apo, args.top, args.rank, spots, view_system,
-                        holo, holo_ligand, ligand)  # fmt: skip
+                        holo, holo_ligand, ligand,
+                        apo_format=structure_format(args.apo or ""),
+                        holo_format=structure_format(args.holo or ""))  # fmt: skip
     print(f"{len(pockets)} pockets, ranked by {args.rank} -> {out / 'pockets.csv'}, {view}")
     import csv
 
@@ -134,7 +142,16 @@ def cmd_structure(args) -> int:
 
 def main(argv=None) -> int:
     from .presets import STRUCTURE, TRAJ
-    from .traj import COOCCUR, CUTOFF, GROUPING, GROUPINGS, RANK, RANKINGS, SIMILARITY
+    from .traj import (
+        COOCCUR,
+        CUTOFF,
+        GROUPING,
+        GROUPINGS,
+        MAX_VOLUME,
+        RANK,
+        RANKINGS,
+        SIMILARITY,
+    )
 
     ap = argparse.ArgumentParser(
         prog="boonza sitemap",
@@ -182,6 +199,10 @@ def main(argv=None) -> int:
         default=COOCCUR,
         help="consensus grouping: pockets open together in at most this share of frames may merge",
     )
+    t.add_argument("--max-volume", type=float, default=MAX_VOLUME, metavar="A3",
+                   help=f"leave out frame sites larger than this before grouping, so one "
+                        f"ballooned frame cannot set a pocket's p_max (default {MAX_VOLUME:.0f}; "
+                        "0 keeps all). Regroups from sites.pkl without recomputing")  # fmt: skip
     t.add_argument(
         "--no-absorb",
         dest="absorb",

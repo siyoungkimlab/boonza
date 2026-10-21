@@ -60,6 +60,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 LINING = 3.0  # A beyond a bead's radius
+
+#: A^3: a frame's site larger than this is dropped before grouping.  A site that
+#: balloons for a frame (a cleft opening onto a neighbour, the grid filling a
+#: groove) would otherwise set its pocket's p_max alone; without it the pocket keeps
+#: its ordinary frames.  None or 0 keeps every site.
+MAX_VOLUME = 2000.0
 #: ways to rank pockets, each a key of Pocket.summary (higher first):
 #: p_q90_open the 90th percentile over the frames it is open in (boonza pockets' quality),
 #: p_max the best frame, p_mean_open the mean while open, p_mean_all the mean over every
@@ -295,8 +301,11 @@ def centroid_groups(sites: list[FrameSite], cutoff: float = CUTOFF) -> list[Pock
 
 def group(sites: list[FrameSite], grouping: str = GROUPING, cutoff: float = CUTOFF,
           similarity: float = SIMILARITY, cooccur: float = COOCCUR,
-          absorb: bool = True) -> list[Pocket]:  # fmt: skip
-    """The pockets of the frame sites under ``grouping`` (module docstring)."""
+          absorb: bool = True, max_volume: float | None = MAX_VOLUME) -> list[Pocket]:  # fmt: skip
+    """The pockets of the frame sites under ``grouping`` (module docstring), the sites
+    over ``max_volume`` A^3 left out (MAX_VOLUME)."""
+    if max_volume:
+        sites = [s for s in sites if s.props["n"] <= max_volume]
     if grouping == "centroid":
         return centroid_groups(sites, cutoff)
     if grouping == "consensus":

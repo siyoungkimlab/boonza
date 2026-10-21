@@ -540,7 +540,8 @@ def _pharm_radii(d, k: int) -> dict[int, float]:
 
 
 def _with_ligand(structure, ligand) -> Session:
-    """A structure with its ligand from another file appended, as one model."""
+    """A structure with its ligand from another file appended, as one model (a folder
+    written before ligand.json)."""
     import boonza
 
     s = boonza.load(structure)
@@ -550,7 +551,11 @@ def _with_ligand(structure, ligand) -> Session:
 
 def from_sitemap(d) -> Viewer:
     """boonza sitemap: the protein (or apo structure), its ligand, and each pocket's
-    medoid site; pharmacophore hotspots and the holo structure are listed, off."""
+    medoid site; pharmacophore hotspots and the holo structure are listed, off.  The
+    ligand is in the file ligand.json names: in the structure, it is part of that
+    model; in holo, it is a model of its own over the apo protein, and holo is off."""
+    import json
+
     d = Path(d)
     rows = _rows(d / "pockets.csv", "rank")
     models = []
@@ -558,20 +563,30 @@ def from_sitemap(d) -> Viewer:
     def structure(name, f, shown, **kw):
         models.append(Model(name, lambda: _session(f, **kw), group="structure", shown=shown))
 
-    main = next((d / n for n in ("apo.pdb", "structure.pdb") if (d / n).is_file()), None)
+    def first(stem):
+        return next((f for f in sorted(d.glob(f"{stem}.*")) if f.suffix != ".json"), None)
+
+    main, holo = first("apo") or first("structure"), first("holo")
     beads = sorted(d.glob("beads.*"))
-    ligand = d / "ligand.pdb"
-    if main is not None and ligand.is_file():
-        # one model, so the pocket around the ligand is drawn as in any other
-        models.append(Model(main.stem, lambda: _with_ligand(main, ligand), group="structure"))
-    elif main is not None:
-        structure(main.stem, main, True)
+    lig_file = lig_sel = None
+    if (d / "ligand.json").is_file():
+        info = json.loads((d / "ligand.json").read_text())
+        lig_file, lig_sel = d / info["file"], info["selection"]
+    old = first("ligand") if lig_file is None else None  # written before ligand.json
+    if old is not None and holo is None and main is not None:  # the structure's own ligand
+        models.append(Model(main.stem, lambda f=main, g=old: _with_ligand(f, g), group="structure"))
+        main = None
+    elif old is not None:
+        lig_file, lig_sel = old, "all"
+    with_main = lig_file is not None and lig_file == main
+    if main is not None:
+        structure(main.stem, main, True, **({"ligand": lig_sel} if with_main else {}))
     if beads:
-        structure("beads", beads[0], main is None)
-    if (d / "holo.pdb").is_file():
-        structure("holo", d / "holo.pdb", False)
-    if ligand.is_file() and main is None:
-        structure("ligand", ligand, True, ligand="all")
+        structure("beads", beads[0], not models)
+    if lig_file is not None and not with_main:
+        structure("ligand", lig_file, True, atoms=lig_sel, ligand="all")
+    if holo is not None:
+        structure("holo", holo, False, **({"ligand": lig_sel} if lig_file == holo else {}))
 
     pharmacophores = []
     ranks = sorted({int(line[22:26]) for line in (d / "sites.pqr").read_text().splitlines()

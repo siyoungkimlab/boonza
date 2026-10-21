@@ -1,6 +1,7 @@
 """SiteMap-style sites of coarse-grained proteins: pair tables, beads, the grid and the CLI."""
 
 import csv
+import json
 import warnings
 from pathlib import Path
 
@@ -111,6 +112,7 @@ def test_structure_cli(tmp_path):
     assert p == sorted(p, reverse=True)  # best first
     view = (out / "view.pml").read_text()
     assert "load structure.pdb, structure" in view and "pocket_1" in view
+    assert not (out / "ligand.json").exists() and "create ligand" not in view
     assert "scene overview, store" in view
 
 
@@ -151,7 +153,14 @@ def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     assert {"PPc", "MOc", "LVC", "PVN"} <= set(rows[0])
     first = next(int(r["rank"]) for r in rows if r["PPc"] == "True")
     assert first <= 3
-    assert (out / "ligand.pdb").exists()
+    # the heme stays in the structure, which ligand.json points at
+    assert json.loads((out / "ligand.json").read_text()) == {
+        "file": "structure.pdb",
+        "selection": "(chain A and resid 155 and resname HEM)",
+    }
+    view = (out / "view.pml").read_text()
+    assert "create ligand, structure and ((chain A and resi 155 and resn HEM))" in view
+    assert not (out / "ligand.pdb").exists()
 
 
 def _run(tmp_path, pdb, selection="protein"):
@@ -240,7 +249,9 @@ def test_traj_cli_with_holo(tmp_path):
     assert {"PPc", "MOc", "LVC", "PVN", "frames_PPc"} <= set(rows[0])
     assert any(r["PPc"] == "True" for r in rows)
     view = (out / "view.pml").read_text()
-    assert "load holo.pdb, holo" in view and (out / "ligand.pdb").exists()
+    assert "load holo.pdb, holo" in view and "create ligand, holo and (" in view
+    assert json.loads((out / "ligand.json").read_text())["file"] == "holo.pdb"
+    assert not (out / "ligand.pdb").exists()
 
 
 def test_grid_keeps_its_ray_step(tmp_path):
@@ -272,3 +283,16 @@ def test_volume200_ranks_by_volume():
         small = {"n": 40.0, "enclosure": 0.9, "enclosure_site": 0.9, "philic": 1.0}
         big = {"n": 400.0, "enclosure": 0.1, "enclosure_site": 0.1, "philic": 0.0}
         assert P.score(big, p) > P.score(small, p)
+
+
+def test_a_ballooned_site_is_left_out_of_grouping():
+    """A frame whose site balloons past MAX_VOLUME does not join, or set, its pocket."""
+    from boonza.sitemap import traj as T
+
+    xyz = np.zeros((4, 3), np.float32)
+    sites = [T.FrameSite(f, 1, 0.5, {"n": 300.0}, xyz, frozenset({1})) for f in range(4)]
+    sites.append(T.FrameSite(4, 1, 3.0, {"n": 5000.0}, xyz, frozenset({1})))
+    (pocket,) = T.group(sites, "centroid")
+    assert len(pocket.sites) == 4 and pocket.best.score == 0.5
+    (pocket,) = T.group(sites, "centroid", max_volume=0)  # 0 keeps every site
+    assert len(pocket.sites) == 5 and pocket.best.score == 3.0

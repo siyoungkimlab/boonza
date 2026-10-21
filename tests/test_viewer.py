@@ -201,12 +201,23 @@ def make_triage(d: Path) -> Path:
     return d
 
 
-def make_sitemap(d: Path) -> Path:
-    """A boonza sitemap structure folder: protein, ligand, two pockets, hotspots."""
+def make_sitemap(d: Path, holo: bool = False, old: bool = False) -> Path:
+    """A boonza sitemap folder: the structure and its ligand (or apo, and holo with
+    the ligand), two pockets, hotspots; ``old``: the ligand in a file of its own, as
+    written before ligand.json."""
     s = boonza.load(DATA / "1HHO.pdb")
     d.mkdir(parents=True)
-    boonza.save(s.select("protein").clone(), d / "structure.pdb")
-    boonza.save(s.select("resname HEM and chain A").clone(), d / "ligand.pdb")
+    lig = "chain A and resid 143 and resname HEM"
+    if old:
+        boonza.save(s.select("protein").clone(), d / "structure.pdb")
+        boonza.save(s.select(lig).clone(), d / "ligand.pdb")
+    elif holo:
+        boonza.save(s.select("protein").clone(), d / "apo.pdb")
+        boonza.save(s, d / "holo.pdb")
+        (d / "ligand.json").write_text(json.dumps({"file": "holo.pdb", "selection": lig}))
+    else:
+        boonza.save(s, d / "structure.pdb")
+        (d / "ligand.json").write_text(json.dumps({"file": "structure.pdb", "selection": lig}))
     heme = s.select("resname HEM and chain A").ids
     lines = []
     for k, centre in ((1, s.positions[heme].mean(0)), (2, s.positions[:50].mean(0))):
@@ -255,13 +266,16 @@ def test_triage_folder_is_fitted(tmp_path):
     assert np.sqrt(((first.positions[ca] - last.positions[ca]) ** 2).sum(1).mean()) < 1e-3
 
 
-def test_sitemap_folder(tmp_path):
-    v = viewer.from_paths([make_sitemap(tmp_path / "sitemap")])
+@pytest.mark.parametrize("old", [False, True])
+def test_sitemap_folder(tmp_path, old):
+    v = viewer.from_paths([make_sitemap(tmp_path / "sitemap", old=old)])
     names = [m.name for m in v.models]
     assert names == ["structure", "pocket 1", "pocket 2", "pharmacophore 1"]
-    # the ligand joins the structure, so its pocket is drawn
+    # the ligand is the structure's, so its pocket is drawn
     reps = v.session(0).topology()["reps"]
     assert [r["style"] for r in reps[:3]] == ["cartoon", "sticks", "sticks"]
+    if old:
+        return
     pocket = v.models[1]
     assert pocket.label == "1" and pocket.row["p"] == 0.91 and pocket.group == "pockets"
     s = v.session(1)
@@ -271,6 +285,17 @@ def test_sitemap_folder(tmp_path):
     hot = v.session(3).topology()
     assert hot["atoms"]["radius"] == [1.75] and hot["reps"][0]["sel"] == "resname ACC"
     assert not v.models[3].shown
+
+
+def test_sitemap_folder_with_holo(tmp_path):
+    """apo is the protein alone; the ligand is holo's, a model of its own; holo is off."""
+    v = viewer.from_paths([make_sitemap(tmp_path / "sitemap", holo=True)])
+    assert [m.name for m in v.models][:3] == ["apo", "ligand", "holo"]
+    assert [m.shown for m in v.models][:3] == [True, True, False]
+    apo, lig, holo = (v.session(k).topology() for k in range(3))
+    assert "HEM" not in apo["residues"]["name"]
+    assert lig["natoms"] == 43 and set(lig["residues"]["name"]) == {"HEM"}
+    assert holo["natoms"] > apo["natoms"] and "HEM" in holo["residues"]["name"]
 
 
 def test_default_reps_and_contacts():

@@ -62,20 +62,21 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
     structures)."""
     from ..io import load, save
     from ..pockets import view as BV
+    from ..pockets.cli import structure_format
     from ..pockets.prepare import NOT_PROBES, protein_ids
     from ..spatial import min_dist2
     from . import beads as B
     from .presets import find
     from .presets import preset as preset_of
-    from .report import _residue_names
+    from .report import _residue_names, ligand_residues, write_ligand
     from .traj import LINING
 
     if ligand and holo:
         raise ValueError("give the ligand either in the structure (--ligand) or in --holo")
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    for old in ("holo.pdb", "ligand.pdb"):
-        (out / old).unlink(missing_ok=True)  # from an earlier writing
+    for old in [*out.glob("structure.*"), *out.glob("holo.*"), *out.glob("ligand.*")]:
+        old.unlink()  # from an earlier writing
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         system = load(str(path))
@@ -134,21 +135,27 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         save(cg, out / f"beads.{fmt}")
+        # the structures as given, in their own formats (an MAE keeps its bond orders);
+        # the ligand is the residues ligand.json names in one of them
+        lig_pymol, where = None, None
         if all_atom:
-            shown = f"({keep})" + (f" or ({ligand})" if ligand else "")
-            save(system.select(shown).clone(), out / "structure.pdb")
+            mine = f"structure.{structure_format(path)}"
+            save(system, out / mine)
             if ligand:
-                save(system.select(ligand).clone(), out / "ligand.pdb")
+                (lig_sel, lig_pymol), where = ligand_residues(system, ligand), "structure"
+                write_ligand(out, mine, lig_sel)
         if moved is not None:
-            save(moved.select(f"protein and not ({holo_ligand})").clone(), out / "holo.pdb")
-            save(moved.select(holo_ligand).clone(), out / "ligand.pdb")
+            theirs = f"holo.{structure_format(holo)}"
+            save(moved, out / theirs)  # superposed on the structure
+            (lig_sel, lig_pymol), where = ligand_residues(moved, holo_ligand), "holo"
+            write_ligand(out, theirs, lig_sel)
     BV.write_pqr(out / "sites.pqr", [(k, found[k - 1][1].xyz, spacing / 2) for k, *_ in drawn])
     lines = [f"# boonza sitemap: sites of {Path(path).name} as {model} beads ({len(found)} "
              f"sites, the best {len(drawn)} drawn)", *BV.PREAMBLE]  # fmt: skip
-    lines += ["load structure.pdb, structure"] if all_atom else []
-    has_ligand = (out / "ligand.pdb").exists()
-    lines += ["load ligand.pdb, ligand"] if has_ligand else []
-    lines += ["load holo.pdb, holo"] if moved is not None else []
+    lines += [f"load {mine}, structure"] if all_atom else []
+    lines += [f"load {theirs}, holo"] if moved is not None else []
+    has_ligand = lig_pymol is not None
+    lines += [f"create ligand, {where} and ({lig_pymol})"] if has_ligand else []
     lines += [f"load beads.{fmt}, beads", "set connect_mode, 1", "load sites.pqr, sites_all",
               "set connect_mode, 0", "hide everything", "bg_color black",
               "set ray_opaque_background, 0"]  # fmt: skip
