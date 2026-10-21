@@ -1973,7 +1973,7 @@ export function setupUI(app) {
     for (const m of sortedModels()) {
       if (m.group !== group && !state.sort?.column) {
         group = m.group;
-        if (group) list.append(el("div", { className: "mgroup" }, group));
+        if (group) list.append(groupHeader(group));
       }
       const row = el("div", { className: `mrow${m.shown ? " on" : ""}${m.index === state.current ? " current" : ""}` });
       const box = el("input", { type: "checkbox", checked: m.shown, title: "show" });
@@ -2021,6 +2021,22 @@ export function setupUI(app) {
   $("rdock-all").onclick = () => app.show(app.live(), true);
   $("rdock-none").onclick = () => app.show(app.live().filter(m => m.index !== state.current), false);
   app.onModels = modelsDock;
+  // a group's header: its box shows or hides every model in it (all the pockets, say)
+  function groupHeader(group) {
+    const members = state.models.filter(m => m.group === group && !m.closed);
+    const on = members.filter(m => m.shown).length;
+    const box = el("input", { type: "checkbox", checked: on === members.length, title: `show or hide every ${group} model` });
+    box.indeterminate = on > 0 && on < members.length;
+    box.onchange = async () => {
+      if (box.checked && members.length > 50 && !confirm(`Show all ${members.length} ${group} models? Each one loads.`)) {
+        box.checked = false;
+        return;
+      }
+      await app.show(members, box.checked);
+    };
+    return el("label", { className: "mgroup" }, box, ` ${group} (${members.length})`);
+  }
+
   function modelsPanel() { $("window").classList.toggle("nomodels"); app.draw(); }
 
   const cell = v => typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")) : v ?? "";
