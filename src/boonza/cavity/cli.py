@@ -22,6 +22,20 @@ from pathlib import Path
 MODELS = ("martini2", "martini3", "sirah")
 
 
+def _same_atoms(view, system) -> bool:
+    """``view`` is ``system`` atom for atom: the same names in the same residues, in
+    the same order.  A Go run's view.dms copied before the run gathered it like its
+    system has the virtual sites after the protein instead, and frames drawn from it
+    would put the wrong beads at the right places."""
+    import numpy as np
+
+    if view.natoms != system.natoms:
+        return False
+    names = [[str(n) for n in s.atoms["name"]] for s in (view, system)]
+    res = [np.asarray(s.atoms["residue"]) for s in (view, system)]
+    return names[0] == names[1] and bool(np.array_equal(*res))
+
+
 def cmd_traj(args) -> int:
     import numpy as np
 
@@ -103,7 +117,7 @@ def cmd_traj(args) -> int:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             view_system = load(str(view_dms))
-        if view_system.natoms != system.natoms:
+        if not _same_atoms(view_system, system):
             view_system = None
     holo = holo_ligand = ligand = None
     if args.holo:

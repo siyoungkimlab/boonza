@@ -1946,3 +1946,34 @@ def _bands_to_the_protein(built, resname):
     return sum(1 for k in range(bonds.nterms)
                for a in [[int(x) for x in bonds.term(k).atoms]]
                if 0 < sum(1 for x in a if x in ids) < len(a))  # fmt: skip
+
+
+def test_a_view_copied_into_a_run_is_gathered_like_its_system(tmp_path):
+    """A run reads a built system with each residue's atoms put together (a Go
+    model's virtual sites come after the protein), so the view copied beside it is
+    put together the same way and lines up with the trajectory atom for atom."""
+    from boonza.martini import martinize
+    from boonza.md.prepare import _gather_residues, _views_beside
+
+    whole = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein")).system()
+    split = whole.clone()
+    order = np.r_[np.arange(1, split.natoms), 0]  # residue 0's first bead last
+    split.reorder_atoms(order)
+    built = tmp_path / "built"
+    built.mkdir()
+    boonza.save(split, built / "view.dms")
+    run = tmp_path / "run"
+    run.mkdir()
+    assert _views_beside(built / "cg.dms", run, log=lambda *a: None, gather=True) == 1
+    view = boonza.load(run / "view.dms")
+    ran = split.clone()
+    _gather_residues(ran, "cg.dms")  # what the run does to the system it reads
+    names = [str(n) for n in ran.atoms["name"]]
+    assert [str(n) for n in view.atoms["name"]] == names
+    res = np.asarray(view.atoms["residue"])
+    assert (np.diff(res) >= 0).all()  # each residue in one piece
+    # not gathered: copied as it is (a topology the run reads as the file has it)
+    assert _views_beside(built / "cg.dms", run, log=lambda *a: None) == 1
+    assert [str(n) for n in boonza.load(run / "view.dms").atoms["name"]] == [
+        str(n) for n in split.atoms["name"]
+    ]

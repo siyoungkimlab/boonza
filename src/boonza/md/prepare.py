@@ -476,13 +476,18 @@ def _write_built(m, directory: Path, system: System, gromacs: bool, log=print,
     return directory / "cg.dms"
 
 
-def _views_beside(where: Path, workdir: Path, log=print) -> int:
+def _views_beside(where: Path, workdir: Path, log=print, gather: bool = False) -> int:
     """Copy the view files written beside a built system into the run.
 
     ``boonza swim`` writes ``view.dms`` and ``view.mae`` where it builds each
     simulation -- the beads to look at, the backbone named CA and no elastic
     network -- and what the run reads, a ``cg.dms`` or a topology, carries no
     such thing.  A system built somewhere else has none, and none is written.
+
+    ``gather``: the run read the system with each residue's atoms put together
+    (:func:`_gather_residues`) -- a Go model's virtual sites, written after the
+    protein, move beside their residues -- so the views are gathered the same
+    way, or they no longer line up with the trajectory atom for atom.
     """
     import shutil
 
@@ -490,7 +495,14 @@ def _views_beside(where: Path, workdir: Path, log=print) -> int:
     for suffix in (".dms", ".mae"):
         here = where.parent / f"view{suffix}"
         if here.is_file() and here.resolve() != where.resolve():
-            shutil.copyfile(here, workdir / f"view{suffix}")
+            if gather:
+                view = load(str(here))
+                _gather_residues(view, here)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")  # what a .mae cannot carry, as before
+                    save(view, workdir / f"view{suffix}")
+            else:
+                shutil.copyfile(here, workdir / f"view{suffix}")
             copied.append(here.name)
     if copied:
         log(f"Copied {' and '.join(copied)} from beside {where.name}")
@@ -659,7 +671,7 @@ def _run_as_built(s: System, args, path: Path, workdir: Path, model: str, log, c
         raise ValueError(f"{path.name} is a coarse-grained system that is already built; "
                          "it runs with solvate = 'none'")  # fmt: skip
     log(f"{model}: {path.name}, as built ({s.natoms} beads with their parameters)")
-    _views_beside(path, workdir, log)
+    _views_beside(path, workdir, log, gather=True)  # s came through load_input
     info = components(s, [])
     if getattr(args, "monitor_selection", None) is not None:
         info["selection"] = select_atoms(s, args.monitor_selection)
