@@ -298,6 +298,29 @@ def test_a_ballooned_site_is_left_out_of_grouping():
     assert len(pocket.sites) == 5 and pocket.best.score == 3.0
 
 
+def test_a_pocket_huge_in_every_frame_is_ranked_last():
+    """A pocket whose median site is over MAX_MEDIAN_VOLUME goes after the rest under
+    every ranking, however high its value; 0 ranks by value alone."""
+    from boonza.cavity import traj as T
+
+    def pocket(volumes, score, x):
+        p = T.Pocket()
+        for f, n in enumerate(volumes):
+            p.add(T.FrameSite(f, 1, score, {"n": n}, np.full((2, 3), x, np.float32),
+                              frozenset({x})))  # fmt: skip
+        return p
+
+    groove = pocket([1600.0, 1800.0, 1400.0], 5.0, 0.0)  # huge in every frame, best p_max
+    small = pocket([200.0, 300.0], 1.0, 30.0)
+    balloon = pocket([150.0, 150.0, 1900.0], 2.0, 60.0)  # one big frame, median small
+    pockets = [groove, small, balloon]
+    summaries = {id(p): p.summary(3) for p in pockets}
+    for by in T.RANKINGS:
+        assert T.ranked(pockets, summaries, by)[-1] is groove
+    assert T.ranked(pockets, summaries, "p_max") == [balloon, small, groove]
+    assert T.ranked(pockets, summaries, "p_max", 0) == [groove, balloon, small]
+
+
 def test_the_old_name_still_loads():
     """boonza sitemap was renamed boonza cavity: sites.pkl caches pickled under the old
     module name load, and the old command runs."""
