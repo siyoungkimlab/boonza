@@ -128,6 +128,9 @@ return to the opening view (`overview`) or show one pocket alone; the commands
 Every frame's sites are kept in `cavity/sites.pkl`, so regrouping or
 reranking (`--grouping`, `--cutoff`, `--similarity`, `--cooccur`, `--rank`,
 `--top`) takes seconds; they
-are found again when the frames or the presets change. A frame takes about a
-second for a few hundred beads; `--every` analyses fewer frames, and
-`-j` sets the workers (every core but two by default).
+are found again when the frames or the presets change. A frame takes about half a
+second for a few hundred beads and a few seconds for several thousand; `--every` analyses fewer frames, and
+`-j` sets the workers (every core but two by default). `cavity/timing.txt` (and `timing.json`)
+says where a run's time went: loading and fitting, site finding (split into building
+each frame's grid and finding its sites), grouping, ranking, measuring against a holo
+ligand and writing the report.

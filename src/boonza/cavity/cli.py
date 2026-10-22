@@ -6,7 +6,8 @@
 traj: the sites of every frame of a coarse-grained run under the model's preset
 (volume200 unless --preset), grouped into pockets by place (traj.group)
 (traj.consensus), written as OUT/pockets.csv and OUT/view.pml (report.py), with
-every frame's sites in OUT/sites.pkl so the grouping can be redone without them.
+every frame's sites in OUT/sites.pkl so the grouping can be redone without them, and
+where the time went in OUT/timing.json and OUT/timing.txt.
 """
 
 from __future__ import annotations
@@ -33,6 +34,32 @@ def _finding(p: dict) -> dict:
             "score": score}  # fmt: skip
 
 
+def _write_timing(out: Path, timing: dict, frames: dict, n_frames: int, n_beads: int) -> None:
+    """OUT/timing.json and OUT/timing.txt: wall seconds per stage, and how a frame's site
+    finding splits between building its grid and finding its sites (worker seconds, summed
+    over frames)."""
+    import json
+
+    total = sum(timing.values())
+    doc = {"stages_s": {k: round(v, 3) for k, v in timing.items()}, "total_s": round(total, 3),
+           "frames": n_frames, "protein_beads": n_beads,
+           "site_finding": {k: round(v, 3) if isinstance(v, float) else v
+                            for k, v in frames.items()}}  # fmt: skip
+    (out / "timing.json").write_text(json.dumps(doc, indent=1) + "\n")
+    lines = [f"{k:16s} {v:9.2f} s {100 * v / total:5.1f}%" for k, v in timing.items()]
+    lines.append(f"{'total':16s} {total:9.2f} s")
+    if frames.get("from_cache"):
+        lines.append(f"site finding read from sites.pkl ({n_frames} frames, {n_beads} beads)")
+    elif "wall" in frames:
+        cpu = {k: frames[f"{k}_cpu"] for k in ("grid", "sites", "lining")}
+        lines.append(f"site finding: {n_frames} frames of {n_beads} beads on {frames['workers']} "
+                     f"workers, {frames['wall'] / max(n_frames, 1):.3f} s/frame wall, "
+                     f"{frames['grid_points_per_frame']:.0f} grid points/frame")  # fmt: skip
+        lines += [f"  {k:14s} {v:9.2f} s worker {100 * v / max(sum(cpu.values()), 1e-9):5.1f}%"
+                  for k, v in cpu.items()]  # fmt: skip
+    (out / "timing.txt").write_text("\n".join(lines) + "\n")
+
+
 def _same_atoms(view, system) -> bool:
     """``view`` is ``system`` atom for atom: the same names in the same residues, in
     the same order.  A Go run's view.dms copied before the run gathered it like its
@@ -54,11 +81,18 @@ def cmd_traj(args) -> int:
     from . import traj as T
 
     t0 = time.time()
+    clock, timing = [t0], {}
+
+    def lap(stage):  # the seconds since the last lap, under ``stage``
+        clock.append(time.time())
+        timing[stage] = clock[-1] - clock[-2]
+
     frames = slice(args.first, args.last, args.every)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         system, ids, coords, rmsd, pids, pcoords = T.load_run(args.workdir, frames=frames,
                                                                probes=True)  # fmt: skip
+    lap("load_and_fit")
     every = args.every
     print(f"{len(coords)} frames (every {every}th) of {len(ids)} protein beads, made whole and "
           f"fitted on the backbone; backbone RMSD to the first frame up to {rmsd.max():.2f} A; "
@@ -81,19 +115,22 @@ def cmd_traj(args) -> int:
         if {**old, "preset": _finding(old.get("preset") or {})} == key:
             sites = saved["sites"]
             print(f"sites of every frame from {cache}", flush=True)
+    frames_timing = {"from_cache": sites is not None}
     if sites is None:
         sites = T.frame_sites(system, ids, coords, args.model, jobs=args.jobs,
-                              preset=args.preset)  # fmt: skip
+                              preset=args.preset, timing=frames_timing)  # fmt: skip
         with open(cache.with_suffix(".partial"), "wb") as fh:
             pickle.dump({"key": key, "sites": sites, "fit_rmsd": rmsd}, fh)
         cache.with_suffix(".partial").replace(cache)
         print(f"{len(sites)} sites in {len(coords)} frames ({time.time() - t0:.0f} s)", flush=True)
+    lap("site_finding")
     big = sum(1 for s in sites if args.max_volume and s.props["n"] > args.max_volume)
     if big:
         print(f"{big} of {len(sites)} frame sites over {args.max_volume:.0f} A^3 left out of "
               "the grouping (--max-volume)", flush=True)  # fmt: skip
     pockets = T.group(sites, args.grouping, args.cutoff, args.similarity, args.cooccur,
                       absorb=args.absorb, max_volume=args.max_volume)  # fmt: skip
+    lap("grouping")
     from .pharm import hotspots
 
     spots, all_frames = [], pcoords
@@ -107,6 +144,7 @@ def cmd_traj(args) -> int:
     print(f"{len(spots)} pharmacophore hotspots of at least {args.min_probes} distinct probe "
           f"molecules over {len(all_frames)} frames (boonza.pharmacophore.hotspots)",
           flush=True)  # fmt: skip
+    lap("hotspots")
     reference = system.clone(ids)  # the first fitted frame, which every frame is fitted on
     reference.positions = np.asarray(coords[0], float)
     apo = None
@@ -131,6 +169,7 @@ def cmd_traj(args) -> int:
             view_system = load(str(view_dms))
         if not _same_atoms(view_system, system):
             view_system = None
+    lap("apo_and_view")
     holo = holo_ligand = ligand = None
     if args.holo:
         from ..pockets.cli import _holo_on
@@ -138,14 +177,20 @@ def cmd_traj(args) -> int:
         ligand, info, holo = _holo_on(args.holo, reference, args.holo_ligand, args.holo_top,
                                       args.holo_fit)  # fmt: skip
         ligand, holo_ligand = np.asarray(ligand, float), info["ligand"]
+    lap("holo_placement")
     from ..pockets.cli import structure_format
 
+    inside = {}
     view = report.write(out, args.model, pockets, len(coords), every, system, ids, coords,
                         pids, pcoords, apo, args.top, args.rank, spots, view_system,
                         holo, holo_ligand, ligand,
                         apo_format=structure_format(args.apo or ""),
                         holo_format=structure_format(args.holo or ""),
-                        max_median_volume=args.max_median_volume)  # fmt: skip
+                        max_median_volume=args.max_median_volume, timing=inside)  # fmt: skip
+    lap("report")
+    timing["report"] -= inside["ranking"] + inside["ligand"]
+    timing.update(ranking=inside["ranking"], ligand_scoring=inside["ligand"])
+    _write_timing(out, timing, frames_timing, len(coords), len(ids))
     print(f"{len(pockets)} pockets, ranked by {args.rank} -> {out / 'pockets.csv'}, {view}")
     huge = sum(1 for p in pockets if args.max_median_volume
                and p.summary(len(coords))["median_volume"] > args.max_median_volume)  # fmt: skip

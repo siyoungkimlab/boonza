@@ -60,15 +60,22 @@ def score(props: dict, p: dict) -> float:
     return float(w["intercept"] + w["sqrt_n"] * np.sqrt(props["n"]))
 
 
-def find(beads, model: str | None = None, name: str | None = None):
+def find(beads, model: str | None = None, name: str | None = None, times: dict | None = None):
     """The sites of ``beads`` under the preset of their model (of presets ``name``), best
     first, as ``[(score, Site)]``, and the grid; only the grid points the preset can use
-    are computed."""
+    are computed.  ``times``: gets the seconds of the grid and of site finding, and the
+    grid's points."""
+    from time import perf_counter
+
     from .grid import compute
     from .sites import find_sites
 
     p = preset(model or beads.model, name)
+    t0 = perf_counter()
     g = compute(beads, p["spacing"], outside=p["params"]["outside"],
                 ray_step=p.get("ray_step", 1.0))  # fmt: skip
+    t1 = perf_counter()
     found = [(score(s.props, p), s) for s in find_sites(g, p["params"])]
+    if times is not None:
+        times.update(grid=t1 - t0, sites=perf_counter() - t1, points=len(g.ijk))
     return sorted(found, key=lambda x: -x[0]), g

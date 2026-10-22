@@ -168,6 +168,13 @@ def test_traj_cli(tmp_path):
     assert rows and 0 < float(rows[0]["occupancy"]) <= 1
     assert (out / "sites.pkl").exists() and (out / "view.pml").exists()
     assert {"md_frame", "best_md_frame", "centre_x", "centre_y", "centre_z"} <= set(rows[0])
+    timing = json.loads((out / "timing.json").read_text())
+    assert {"load_and_fit", "site_finding", "grouping", "ranking", "report"} <= set(
+        timing["stages_s"]
+    )
+    assert timing["frames"] == 3 and not timing["site_finding"]["from_cache"]
+    assert timing["site_finding"]["grid_cpu"] > 0 and timing["site_finding"]["workers"] == 1
+    assert "site_finding" in (out / "timing.txt").read_text()
     # ranked by each pocket's best frame (p_max: with volume200, its largest site)
     assert [r["rank_p_max"] for r in rows] == [str(k) for k in range(1, len(rows) + 1)]
     assert all(float(r["p_q90_open"]) <= float(r["p_max"]) for r in rows)
@@ -175,6 +182,7 @@ def test_traj_cli(tmp_path):
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1", "--top", "3", "--grouping", "consensus"]) == 0  # fmt: skip
     assert list(csv.DictReader(open(out / "pockets.csv")))
+    assert json.loads((out / "timing.json").read_text())["site_finding"]["from_cache"]
 
 
 def _frame_site(frame, centre, score, residues=(1, 2, 3)):
