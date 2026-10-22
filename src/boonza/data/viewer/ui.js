@@ -1884,7 +1884,8 @@ export function setupUI(app) {
 
   const PRESETS = [["site", "SiteView"], ["ribbon", "Ribbon"], ["ribbonlig", "Ribbon + ligand"],
                    ["ribbonpocket", "Ribbon + pocket"], ["ribbonlines", "Ribbon + lines"],
-                   ["ribbonspace", "Ribbon + Space Filling"], ["line", "Lines"], ["stick", "Sticks"],
+                   ["ribbonspace", "Ribbon + Space Filling"], ["lig", "Ligand"],
+                   ["ligspace", "Ligand, Space Filling"], ["line", "Lines"], ["stick", "Sticks"],
                    ["ballstick", "Ball and Stick"], ["space", "Space filling"], ["surface", "Surface + ligand"]];
   const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...["green", "cyan", "magenta", "yellow",
     "orange", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
@@ -1902,10 +1903,11 @@ export function setupUI(app) {
       const ribbon = kind.startsWith("ribbon");
       for (let r = 0; r < st.ribbon.length; r++) st.ribbon[r] = ribbon && R.trace[r] >= 0 ? 1 : 0;
       const style = { line: 0, stick: 1, ballstick: 3, space: 4, ribbonlines: 0, ribbonlig: 1, ribbonpocket: 1,
-                      ribbonspace: 4, surface: 1 }[kind];
+                      ribbonspace: 4, lig: 1, ligspace: 4, surface: 1 }[kind];
       st.show.fill(0);
       let ids = app.range(n);
-      if (["ribbonlig", "ribbonpocket", "ribbonspace", "surface"].includes(kind)) {
+      // the ligand alone (lig, ligspace): its sticks or spheres, no ribbon
+      if (["ribbonlig", "ribbonpocket", "ribbonspace", "lig", "ligspace", "surface"].includes(kind)) {
         ids = await serverSelect(m, `same residue as (${m.topo.ligand})`);
       }
       if (kind === "ribbonlines") ids = ids.filter(a => m.topo.atoms.class[a] !== 2);
