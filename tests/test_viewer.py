@@ -1155,3 +1155,17 @@ def test_a_port_in_use_moves_on():
         first.server_close()
     with socket.socket() as s:  # and it was let go
         s.bind(("127.0.0.1", port))
+
+
+def test_the_ligand_alone_is_a_representation():
+    """Besides the ribbon with its ligand, a model can show its ligand alone, in sticks or
+    space filling, with no ribbon: a pocket's points, or a holo ligand over another model."""
+    import re
+
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    presets = dict(re.findall(r'\["(\w+)", "([^"]+)"\]', ui[ui.index("const PRESETS") :]))
+    assert presets["lig"] == "Ligand" and presets["ligspace"] == "Ligand, Space Filling"
+    body = ui[ui.index("async function preset") : ui.index("function colorModel")]
+    assert "lig: 1, ligspace: 4" in body  # sticks, spheres
+    assert '"lig", "ligspace"' in body  # the ligand's atoms only
+    assert not "lig".startswith("ribbon")  # no ribbon
