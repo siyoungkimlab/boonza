@@ -1,15 +1,11 @@
 {
  "martini2": {
   "spacing": 2.0,
-  "probe": "AC2",
   "ray_step": 2.0,
-  "enclosure_term": "enclosure_site",
   "params": {
    "outside": 1.75,
    "ray_length": 10.0,
    "enclosure": 0.7,
-   "contact_form": "full",
-   "contact": 1000000000.0,
    "neighbour_radius": 1.76,
    "neighbours": 3,
    "min_points": 3,
@@ -19,26 +15,20 @@
   },
   "score": {
    "intercept": 0.0,
-   "sqrt_n": 0.1,
-   "enclosure": 0.0,
-   "philic": 0.0
+   "sqrt_n": 0.1
   },
   "trained": {
    "set": "md_train200r2_martini2 (5 frames, 20-100 ns, of each of the 200 training complexes' 100-ns runs, ligand removed; rays sampled every 2 A)",
-   "tuned": "outside and enclosure only, on 1/2 (1/2 (Top-3 + Top-7) + fill); sites ranked by volume (no score weights fitted); every other threshold SiteMap's, no contact filter"
+   "tuned": "outside and enclosure only, on 1/2 (1/2 (Top-3 + Top-7) + fill); sites ranked by volume (no score weights fitted); every other threshold SiteMap's"
   }
  },
  "martini3": {
   "spacing": 2.0,
-  "probe": "SC3",
   "ray_step": 2.0,
-  "enclosure_term": "enclosure_site",
   "params": {
    "outside": 2.75,
    "ray_length": 10.0,
    "enclosure": 0.6,
-   "contact_form": "full",
-   "contact": 1000000000.0,
    "neighbour_radius": 1.76,
    "neighbours": 3,
    "min_points": 3,
@@ -48,26 +38,20 @@
   },
   "score": {
    "intercept": 0.0,
-   "sqrt_n": 0.1,
-   "enclosure": 0.0,
-   "philic": 0.0
+   "sqrt_n": 0.1
   },
   "trained": {
    "set": "md_train200r2_martini3 (5 frames, 20-100 ns, of each of the 200 training complexes' 100-ns runs, ligand removed; rays sampled every 2 A)",
-   "tuned": "outside and enclosure only, on 1/2 (1/2 (Top-3 + Top-7) + fill); sites ranked by volume (no score weights fitted); every other threshold SiteMap's, no contact filter"
+   "tuned": "outside and enclosure only, on 1/2 (1/2 (Top-3 + Top-7) + fill); sites ranked by volume (no score weights fitted); every other threshold SiteMap's"
   }
  },
  "sirah": {
   "spacing": 2.0,
-  "probe": "Y4Cv",
   "ray_step": 2.0,
-  "enclosure_term": "enclosure_site",
   "params": {
    "outside": 3.0,
    "ray_length": 10.0,
    "enclosure": 0.6,
-   "contact_form": "full",
-   "contact": 1000000000.0,
    "neighbour_radius": 1.76,
    "neighbours": 3,
    "min_points": 3,
@@ -77,13 +61,11 @@
   },
   "score": {
    "intercept": 0.0,
-   "sqrt_n": 0.1,
-   "enclosure": 0.0,
-   "philic": 0.0
+   "sqrt_n": 0.1
   },
   "trained": {
    "set": "md_train200r2_sirah (5 frames, 20-100 ns, of each of the 200 training complexes' 100-ns runs, ligand removed; rays sampled every 2 A)",
-   "tuned": "outside and enclosure only, on 1/2 (1/2 (Top-3 + Top-7) + fill); sites ranked by volume (no score weights fitted); every other threshold SiteMap's, no contact filter"
+   "tuned": "outside and enclosure only, on 1/2 (1/2 (Top-3 + Top-7) + fill); sites ranked by volume (no score weights fitted); every other threshold SiteMap's"
   }
  }
 }

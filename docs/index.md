@@ -163,8 +163,6 @@ guide/md
 guide/swim
 guide/pockets
 guide/cavity
-guide/cavity_static200
-guide/cavity_dynamic200
 guide/cavity_volume200
 guide/cavity_grouping
 guide/martini

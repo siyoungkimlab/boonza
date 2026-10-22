@@ -22,6 +22,17 @@ from pathlib import Path
 MODELS = ("martini2", "martini3", "sirah")
 
 
+def _finding(p: dict) -> dict:
+    """What of a preset decides its sites, so that a sites.pkl from before the contact
+    energies were dropped (its volume200 still named a probe and a contact test switched
+    off, and score weights of 0) is reused."""
+    gone = {"probe", "contact", "contact_form"}
+    params = {k: v for k, v in p.get("params", {}).items() if k not in gone}
+    score = {k: v for k, v in p.get("score", {}).items() if k in ("intercept", "sqrt_n")}
+    return {"spacing": p.get("spacing"), "ray_step": p.get("ray_step", 1.0), "params": params,
+            "score": score}  # fmt: skip
+
+
 def _same_atoms(view, system) -> bool:
     """``view`` is ``system`` atom for atom: the same names in the same residues, in
     the same order.  A Go run's view.dms copied before the run gathered it like its
@@ -61,12 +72,13 @@ def cmd_traj(args) -> int:
         "workdir": str(Path(args.workdir).resolve()),
         "model": args.model,
         "frames": (args.first, args.last, every),
-        "preset": preset(args.model, args.preset),
+        "preset": _finding(preset(args.model, args.preset)),
     }  # sites made under other presets are not reused
     sites = None
     if cache.exists() and not args.recompute:
         saved = pickle.load(open(cache, "rb"))
-        if saved.get("key") == key:
+        old = saved.get("key") or {}
+        if {**old, "preset": _finding(old.get("preset") or {})} == key:
             sites = saved["sites"]
             print(f"sites of every frame from {cache}", flush=True)
     if sites is None:
@@ -161,7 +173,7 @@ def cmd_structure(args) -> int:
 
 
 def main(argv=None) -> int:
-    from .presets import STRUCTURE, TRAJ
+    from .presets import DEFAULT
     from .traj import (
         COOCCUR,
         CUTOFF,
@@ -257,10 +269,9 @@ def main(argv=None) -> int:
         help="worker processes (default: every core but two)",
     )
     t.add_argument("--recompute", action="store_true", help="ignore OUT/sites.pkl")
-    t.add_argument("--preset", metavar="NAME|FILE", default=TRAJ,
+    t.add_argument("--preset", metavar="NAME|FILE", default=DEFAULT,
                    help="presets to use: a named set kept in boonza or a presets file "
-                        f"(default: {TRAJ}, tuned on MD frames; {STRUCTURE}: on crystal "
-                        "structures)")  # fmt: skip
+                        f"(default: {DEFAULT})")  # fmt: skip
     s = sub.add_parser("structure", help="sites of one structure")
     s.add_argument("input", help="an all-atom structure (mapped to beads), or a coarse-grained "
                    "one that carries its bead types")  # fmt: skip
@@ -280,10 +291,9 @@ def main(argv=None) -> int:
                    help="how the holo ligand is carried onto the structure: superposing the "
                         "whole holo protein (default) or the chain the ligand sits in")  # fmt: skip
     s.add_argument("--top", type=int, default=10, help="sites drawn in the view")
-    s.add_argument("--preset", metavar="NAME|FILE", default=STRUCTURE,
+    s.add_argument("--preset", metavar="NAME|FILE", default=DEFAULT,
                    help="presets to use: a named set kept in boonza or a presets file "
-                        f"(default: {STRUCTURE}, tuned on crystal structures; {TRAJ}: on MD "
-                        "frames)")  # fmt: skip
+                        f"(default: {DEFAULT})")  # fmt: skip
     args = ap.parse_args(argv)
     try:
         return {"traj": cmd_traj, "structure": cmd_structure}[args.cmd](args)

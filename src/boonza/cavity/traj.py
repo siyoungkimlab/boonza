@@ -16,7 +16,7 @@ nearest pocket centre within CUTOFF until none moves.  A pocket is then a place.
 A pocket is located by its centre -- the mean of the centres of its per-frame best
 sites -- and shown by its medoid, the per-frame best site nearest that centre, rather
 than by its single best-scoring site, which in a run can sit beside the pocket's usual
-place.  On the 40 Schrodinger apo trajectories (dynamic200, every frame) this grouping
+place.  On the 40 Schrodinger apo trajectories (every frame, under an earlier preset) this grouping
 and representation found the ligand's site in the top 10 in 0.80-0.875 of cases,
 against 0.70-0.725 by consensus and the best site (PPc; MxMD + SiteMap's sites,
 scored the same way, 0.925): the residue consensus let a site merge with a
@@ -401,11 +401,11 @@ def _frame(job):
 def frame_sites(system, ids, coords, model: str, jobs: int = 4, progress: bool = True,
                 preset: str | None = None) -> list[FrameSite]:  # fmt: skip
     """The sites of every frame under ``model``'s preset (of presets ``preset``, by default
-    presets.TRAJ's, tuned on MD frames: see presets.path), with their lining residues;
-    ``progress`` reports frames done, the rate and the time left about every 10%."""
-    from .presets import TRAJ
+    presets.DEFAULT's: see presets.path), with their lining residues; ``progress`` reports
+    frames done, the rate and the time left about every 10%."""
+    from .presets import DEFAULT
 
-    preset = preset or TRAJ
+    preset = preset or DEFAULT
     import sys
     import time
 
