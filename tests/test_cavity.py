@@ -336,3 +336,18 @@ def test_the_old_name_still_loads():
     with pytest.raises(SystemExit) as e:
         boonza_main(["sitemap", "--help"])
     assert e.value.code == 0
+
+
+def test_frames_are_drawn_from_a_view_only_atom_for_atom():
+    """cavity traj draws its frames with the run's view.dms only when that is the
+    system atom for atom; one in another order (a Go run's, copied before the run
+    gathered it) is left out, and the frames are the system's own."""
+    from boonza.cavity.cli import _same_atoms
+    from boonza.martini import martinize
+
+    s = martinize(boonza.load(DATA / "1TEN.pdb").clone("protein")).system()
+    assert _same_atoms(s.clone(), s)
+    other = s.clone()
+    other.reorder_atoms(np.r_[np.arange(1, s.natoms), 0])
+    assert not _same_atoms(other, s)
+    assert not _same_atoms(s.clone(np.arange(s.natoms - 1)), s)
