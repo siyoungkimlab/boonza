@@ -118,8 +118,14 @@ def cmd_traj(args) -> int:
                         pids, pcoords, apo, args.top, args.rank, spots, view_system,
                         holo, holo_ligand, ligand,
                         apo_format=structure_format(args.apo or ""),
-                        holo_format=structure_format(args.holo or ""))  # fmt: skip
+                        holo_format=structure_format(args.holo or ""),
+                        max_median_volume=args.max_median_volume)  # fmt: skip
     print(f"{len(pockets)} pockets, ranked by {args.rank} -> {out / 'pockets.csv'}, {view}")
+    huge = sum(1 for p in pockets if args.max_median_volume
+               and p.summary(len(coords))["median_volume"] > args.max_median_volume)  # fmt: skip
+    if huge:
+        print(f"{huge} pockets of median volume over {args.max_median_volume:.0f} A^3 ranked "
+              "after the rest (--max-median-volume)")  # fmt: skip
     import csv
 
     rows = list(csv.DictReader(open(out / "pockets.csv")))
@@ -147,6 +153,7 @@ def main(argv=None) -> int:
         CUTOFF,
         GROUPING,
         GROUPINGS,
+        MAX_MEDIAN_VOLUME,
         MAX_VOLUME,
         RANK,
         RANKINGS,
@@ -203,6 +210,11 @@ def main(argv=None) -> int:
                    help=f"leave out frame sites larger than this before grouping, so one "
                         f"ballooned frame cannot set a pocket's p_max (default {MAX_VOLUME:.0f}; "
                         "0 keeps all). Regroups from sites.pkl without recomputing")  # fmt: skip
+    t.add_argument("--max-median-volume", type=float, default=MAX_MEDIAN_VOLUME, metavar="A3",
+                   help=f"rank pockets whose median site is larger than this after all the "
+                        f"rest, under every ranking, so a groove that is huge in every frame "
+                        f"does not come first (default {MAX_MEDIAN_VOLUME:.0f}; 0 ranks by "
+                        "value alone). Reorders from sites.pkl without recomputing")  # fmt: skip
     t.add_argument(
         "--no-absorb",
         dest="absorb",

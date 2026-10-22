@@ -66,6 +66,11 @@ LINING = 3.0  # A beyond a bead's radius
 #: groove) would otherwise set its pocket's p_max alone; without it the pocket keeps
 #: its ordinary frames.  None or 0 keeps every site.
 MAX_VOLUME = 2000.0
+#: A^3: a pocket whose median site is larger than this goes after every other pocket,
+#: under every ranking.  MAX_VOLUME cannot catch a pocket this large in every frame (a
+#: groove or the gap between domains, lined by hundreds of residues), and p_max puts
+#: such a pocket first.  It is kept, only ranked last.  None or 0 ranks by value alone.
+MAX_MEDIAN_VOLUME = 1000.0
 #: ways to rank pockets, each a key of Pocket.summary (higher first):
 #: p_q90_open the 90th percentile over the frames it is open in (boonza pockets' quality),
 #: p_max the best frame, p_mean_open the mean while open, p_mean_all the mean over every
@@ -297,6 +302,20 @@ def centroid_groups(sites: list[FrameSite], cutoff: float = CUTOFF) -> list[Pock
             break
         label = moved
     return _pockets([[order[i] for i in np.flatnonzero(label == k)] for k in np.unique(label)])
+
+
+def ranked(pockets: list[Pocket], summaries: dict, by: str,
+           max_median_volume: float | None = MAX_MEDIAN_VOLUME) -> list[Pocket]:  # fmt: skip
+    """``pockets`` by the summary value ``by`` (higher first, ties to the better best
+    site), those of median volume over ``max_median_volume`` A^3 after all the rest
+    (MAX_MEDIAN_VOLUME).  ``summaries``: Pocket.summary of each, by id."""
+
+    def key(p):
+        s = summaries[id(p)]
+        return (bool(max_median_volume) and s["median_volume"] > max_median_volume,
+                -s[by], -p.best.score)  # fmt: skip
+
+    return sorted(pockets, key=key)
 
 
 def group(sites: list[FrameSite], grouping: str = GROUPING, cutoff: float = CUTOFF,

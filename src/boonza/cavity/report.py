@@ -147,7 +147,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
           pids=None, pcoords=None, apo=None, top: int | None = None,
           rank: str = "p_max", spots=None, view_system=None, holo=None,
           holo_ligand: str | None = None, ligand=None, apo_format: str = "pdb",
-          holo_format: str = "pdb") -> Path:  # fmt: skip
+          holo_format: str = "pdb", max_median_volume: float | None = None) -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 
     ``coords``/``pcoords``: protein/probe positions of the analysed frames (frame k is MD
@@ -162,6 +162,8 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     share of its frames whose site is PPc-right (frames_PPc).  ``apo_format``,
     ``holo_format``: what apo and holo (with its ligand) are written as, their inputs'
     own (pockets.cli.structure_format), so an MAE keeps its bond orders.
+    ``max_median_volume``: pockets of median volume over this many A^3 go last under
+    every ranking (traj.ranked; None: traj.MAX_MEDIAN_VOLUME, 0: by value alone).
 
     A pocket is shown and measured by its medoid (traj.Pocket.medoid) in the medoid's
     frame, and located by its centre (traj.Pocket.centre)."""
@@ -170,8 +172,10 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     from .pharm import assign
     from .presets import preset
     from .structure import _against
-    from .traj import RANKINGS
+    from .traj import MAX_MEDIAN_VOLUME, RANKINGS, ranked
 
+    if max_median_volume is None:
+        max_median_volume = MAX_MEDIAN_VOLUME
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for old in [*out.glob("frame_*.*"), *out.glob("frames_*.*"), *out.glob("sites_*.*"),
@@ -180,10 +184,10 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
                 *out.glob("holo.*"), *out.glob("ligand.*")]:  # fmt: skip
         old.unlink()  # from an earlier writing
     summaries = {id(p): p.summary(n_frames) for p in pockets}
-    pockets = sorted(pockets, key=lambda p: (-summaries[id(p)][rank], -p.best.score))
+    pockets = ranked(pockets, summaries, rank, max_median_volume)
     places = {}
     for name in RANKINGS:
-        order = sorted(pockets, key=lambda p: (-summaries[id(p)][name], -p.best.score))
+        order = ranked(pockets, summaries, name, max_median_volume)
         places[name] = {id(p): k for k, p in enumerate(order, 1)}
     spacing = preset(model)["spacing"]
     fmt = "mae" if system.nbonds else "pdb"
