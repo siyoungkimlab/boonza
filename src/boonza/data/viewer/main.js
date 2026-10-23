@@ -200,6 +200,9 @@ async function load(model) {
         applyReps(model, await Promise.all(topo.reps.map(async r => ({ ...r, ids: r.ids || await selectIds(model, r.sel) }))));
         tintReceptor(model);
       }
+      // a numbered model (a pocket, a site) is labelled at its ligand -- the site's points
+      // -- when it has one, not at the middle of the protein drawn with it
+      if (model.label) model.labelIds = await selectIds(model, `same residue as (${topo.ligand})`).catch(() => null);
       model.keep = null;
       return model;
     })().catch(e => { model.loading = null; throw e; });
@@ -491,7 +494,7 @@ function makeLabels() {
   $("labels").innerHTML = "";
   let count = 0;
   for (const m of shownModels()) {
-    if (m.label) addLabel(bounds(m, range(m.topo.natoms))[0], m.label, "pocket");
+    if (m.label) addLabel(bounds(m, m.labelIds?.length ? m.labelIds : range(m.topo.natoms))[0], m.label, "pocket");
     const lab = m.state.labels;
     for (let a = 0; a < lab.length && count < 600; a++) {
       if (lab[a] && m.drawn[a]) { addLabel(xyz(m, a), labelText(m, a)); count++; }
