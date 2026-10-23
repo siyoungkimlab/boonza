@@ -13,7 +13,8 @@ the whole holo protein superposed by sequence, or with ``holo_fit="chain"``
 the chain the ligand sits in).
 
 ``pockets.csv``: rank, SiteScore and p (its probability of being a ligand site,
-1 / (1 + exp(-score))), volume, enclosure, exposure, the residues lining it
+1 / (1 + exp(-score))), volume, enclosure (share of its points' rays that meet
+the protein within 10 A), the residues lining it
 (a bead within its radius + traj.LINING of a site point) and, if a ligand is
 given, how the site matches it, by boonza.pockets.overlap's measures, the same
 ``boonza pockets`` judges its pockets by: PPc (centre within 4 A of a ligand
@@ -56,10 +57,9 @@ def _against(site, spacing: float, lig: np.ndarray) -> dict:
 
 def run(path, model: str, out, selection: str | None = None, ligand: str | None = None,
         top: int = 10, holo=None, holo_ligand: str | None = None, holo_top=None,
-        holo_fit: str = "whole", preset: str | None = "static200") -> Path:  # fmt: skip
+        holo_fit: str = "whole", preset: str | None = None) -> Path:  # fmt: skip
     """Find and write the sites of the structure at ``path`` (see the module docstring),
-    under presets ``preset`` (presets.path; by default presets.STRUCTURE's, tuned on crystal
-    structures)."""
+    under presets ``preset`` (presets.path; by default presets.DEFAULT's)."""
     from ..io import load, save
     from ..pockets import view as BV
     from ..pockets.cli import structure_format
@@ -115,8 +115,8 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
         lining = set(np.unique(residue[d2 <= reach**2]).tolist())
         p = 1 / (1 + np.exp(-score))
         row = {"rank": k, "score": round(score, 3), "p": round(float(p), 3),
-               "volume": s.props["n"], "enclosure": round(s.props["enclosure"], 3),
-               "exposure": round(s.props["exposure"], 3), "points": len(s.points),
+               "volume": s.props["n"], "enclosure": round(s.props["enclosure_site"], 3),
+               "points": len(s.points),
                "residues": _residue_names(cg, lining)}  # fmt: skip
         label = f"{k} p {p:.2f} {s.props['n']:.0f} A3"
         if lig is not None:

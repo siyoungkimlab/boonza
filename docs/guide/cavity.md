@@ -20,73 +20,27 @@ boonza cavity traj --workdir swim/sim_000/md_solute --model martini3 -o cavity/ 
 
 SiteMap puts a grid around the protein and keeps the points that are outside
 it, enclosed by it and in good contact with a probe; neighbouring points are
-grouped, and groups merged across short exposed gaps. A site is ranked by
-SiteScore, which grows with its size and enclosure and falls with its
-hydrophilicity. Here the same on beads:
+grouped, and groups merged across short exposed gaps. Here the same on beads,
+without the contact test, and sites ranked by their volume:
 
 - **outside**: at least `outside` bead radii (squared) from every bead centre,
-  each bead with its force field's own size;
+  each bead with its force field's own size (half the Lennard-Jones sigma of its
+  type with itself);
 - **enclosed**: at least `enclosure` of 110 rays enter a bead within
   `ray_length`;
-- **contact**: the Lennard-Jones energy of a probe bead at the point, from the
-  force field's own pair table (Martini's per-pair terms, SIRAH's combining rule
-  and overrides), within a cutoff, full or with each pair capped at zero;
 - grouping and merging as SiteMap's, with sizes in A^3 so that they do not
   depend on the grid spacing.
 
-Each point's numbers are computed once per structure; a set of thresholds is
-then only compared and grouped, which is what makes tuning them affordable.
+Each point's numbers are computed once per frame; a set of thresholds is then
+only compared and grouped, which is what makes tuning them affordable.
 
 ## Presets
 
-Each model has a preset: the grid spacing, the probe, the site-finding
-thresholds and SiteScore's weights (`boonza/data/cavity/presets.json`). The
-probe is the same residue in every model, valine's side-chain bead (Martini 2
-AC2, Martini 3 SC3, SIRAH Y4Cv), so a site means the same thing whichever model
-found it; leucine's and methionine's beads did as well in training.
-
-The presets were tuned the way fpocket's and the `boonza pockets` presets
-were, on prepared holo complexes from fpocket's training set, the score
-refitted for every trial and each trial judged by the cross-validated mean of
-Top-1 and Top-3 (the site's centre within 4 A of the ligand) and how much of
-the ligand the top site holds. The training set is fpocket's 263 complexes
-less every protein that is also in a validation set and those whose site the
-file leaves incomplete (a partner chain or symmetry copy the file lacks): 200
-complexes.
-
-On the validation sets, which share no protein with the training set (Top-1 /
-Top-3 / Top-10, crystal apo structures):
-
-| model | 40 apo/holo pairs from fpocket's pp48 (easy) | Schrödinger's 41 apo (hard) |
-|---|---|---|
-| Martini 2 | 0.68 / 0.85 / 0.88 | 0.49 / 0.56 / 0.66 |
-| Martini 3 | 0.78 / 0.90 / 0.90 | 0.49 / 0.61 / 0.63 |
-| SIRAH | 0.70 / 0.82 / 0.88 | 0.54 / 0.59 / 0.61 |
-
-There are two sets of presets, kept by name, and each command uses the one
-tuned on what it reads:
-
-- **static200** (`boonza cavity structure`'s default), tuned on the 200
-  crystal structures above ([how they were made](cavity_static200.md));
-- **dynamic200** (`--preset dynamic200`): static200 fine-tuned on
-  MD frames of the same complexes' runs, their ligand removed
-  ([how they were made](cavity_dynamic200.md)).
-- **volume200** (`boonza cavity traj`'s default): SiteMap's thresholds with only `outside` and
-  `enclosure` tuned, sites ranked by volume alone
-  ([what it is and how it compares](cavity_volume200.md)).
-
-On MD frames of the Schrödinger set's apo runs (40 cases, 10 frames each),
-dynamic200 finds the ligand's site more often (Top-1 / Top-3 / Top-10):
-
-| model | static200 | dynamic200 |
-|---|---|---|
-| Martini 2 | 0.32 / 0.46 / 0.54 | 0.36 / 0.51 / 0.56 |
-| Martini 3 | 0.48 / 0.58 / 0.65 | 0.49 / 0.61 / 0.69 |
-| SIRAH | 0.31 / 0.44 / 0.59 | 0.39 / 0.47 / 0.59 |
-
-On crystal structures, static200 does better (the table above). `--preset`
-(in `traj` and `structure`) chooses either, or takes a presets file of one's
-own.
+Each model has a preset, `volume200` (`boonza/data/cavity/presets/volume200.json`),
+the default of both commands: SiteMap's thresholds with only `outside` and
+`enclosure` tuned on MD frames, and sites ranked by volume alone
+([what it is and how it compares](cavity_volume200.md)). `--preset` (in `traj`
+and `structure`) takes a presets file of one's own instead.
 
 ## One structure
 
@@ -104,9 +58,9 @@ is. `--holo` carries a holo structure's ligand onto the structure exactly as
 protein. Either way each site is measured against it: PPc, MOc, the share of
 the ligand's volume in the site (LVC) and the share of the site at it (PVN).
 
-`out/pockets.csv` has a row per site, best first: rank, SiteScore and p (the
-score as the probability its logistic fit gives that the site is a ligand's),
-volume, enclosure, exposure and the residues lining it. `out/view.pml` shows
+`out/pockets.csv` has a row per site, best first: rank, score and p
+(1 / (1 + exp(-score))), volume, enclosure (the share of its points' rays that meet
+the protein within 10 A) and the residues lining it. `out/view.pml` shows
 the structure, the beads (off) and each site as `pocket_<rank>`.
 
 ## A trajectory
@@ -128,7 +82,7 @@ Every analysed frame is made whole and fitted on the backbone (the probe chain
 `LIG` is never part of the protein), and its sites are found under the preset,
 each with the residues lining it. The sites of every frame are then grouped
 into pockets by place, as `boonza pockets` groups fpocket's (`--grouping
-centroid`, the default): best SiteScore first, each site joins the pocket whose
+centroid`, the default): largest first, each site joins the pocket whose
 mean centre is within `--cutoff` (8 A) of its own, or starts one, and sites are
 reassigned to the nearest centre until none moves.
 
@@ -174,6 +128,9 @@ return to the opening view (`overview`) or show one pocket alone; the commands
 Every frame's sites are kept in `cavity/sites.pkl`, so regrouping or
 reranking (`--grouping`, `--cutoff`, `--similarity`, `--cooccur`, `--rank`,
 `--top`) takes seconds; they
-are found again when the frames or the presets change. A frame takes about a
-second for a few hundred beads; `--every` analyses fewer frames, and
-`-j` sets the workers (every core but two by default).
+are found again when the frames or the presets change. A frame takes about half a
+second for a few hundred beads and a few seconds for several thousand; `--every` analyses fewer frames, and
+`-j` sets the workers (every core but two by default). `cavity/timing.txt` (and `timing.json`)
+says where a run's time went: loading and fitting, site finding (split into building
+each frame's grid and finding its sites), grouping, ranking, measuring against a holo
+ligand and writing the report.

@@ -1,38 +1,18 @@
-"""Each model's tuned site finding: parameters, probe and SiteScore weights.
+"""Each model's tuned site finding: grid spacing, ray step, thresholds and score.
 
-data/cavity/presets.json holds, per model, the best trial of the search on
-the static training set (the cgsitemap benchmark: 200 prepared holo complexes of
-train263, less every protein of the validation sets and the complexes whose site
-the file leaves incomplete; its export_presets.py writes this file): the
-site-finding parameters, the contact probe by name, and the SiteScore terms
-(sqrt n, enclosure, philic) with their coefficients fitted on all 200.
+data/cavity/presets/<name>.json keeps presets under a name, frozen, so that runs
+can use them again (``--preset NAME``); ``name`` can also be the path of a presets
+file of one's own (a tuning candidate, say).  There is one so far:
 
-data/cavity/presets/<name>.json keeps earlier presets under a name, frozen, so
-that runs can use them again and compare them with the current ones
-(``--preset NAME``); ``name`` can also be the path of a presets file of one's
-own (a tuning candidate, say).  Named so far:
-
-  static200   valine's side-chain bead in every model (Martini 2 AC2, Martini 3
-              SC3, SIRAH Y4Cv), tuned on the 200 static holo complexes alone
-              (2026-10-10), before any fine-tuning on MD frames
-              (docs/guide/cavity_static200.md: data, search, validation)
-  dynamic200  static200 fine-tuned on MD frames of the same complexes' runs, their
-              ligand removed (5 frames of each of 191 100-ns runs per model;
-              docs/guide/cavity_dynamic200.md)
   volume200   SiteMap's thresholds with only outside and enclosure tuned (on MD frames of
-              all 200 training runs), rays sampled every 2 A out to 10 A, no contact
-              filter, sites ranked by volume alone (no score weights fitted)
+              all 200 training runs), rays sampled every 2 A out to 10 A, sites ranked by
+              volume alone (score = intercept + sqrt_n sqrt(V), no weights fitted)
               (docs/guide/cavity_volume200.md)
 
-A preset may also give ``ray_step`` (A between ray samples; 1.0 when absent, as the
-named presets were tuned) and ``enclosure_term`` (the site property its SiteScore uses for
-enclosure: ``enclosure``, over the site and its extension points, when absent, or
-``enclosure_site``, over the site points alone).
-
-Each command has its default: ``boonza cavity traj`` finds a run's sites under
-volume200 (TRAJ), tuned on frames like the ones it reads, and ``boonza cavity
-structure`` under static200 (STRUCTURE), tuned on crystal structures.
-presets.json is what :func:`find` uses when given no name.
+A preset gives ``spacing`` (A), ``ray_step`` (A between ray samples; 1.0 when absent),
+the site-finding ``params`` (sites.DEFAULTS for the rest) and ``score``.  Both
+``boonza cavity traj`` and ``boonza cavity structure`` use DEFAULT unless told
+otherwise, as does :func:`find` given no name.
 """
 
 from __future__ import annotations
@@ -43,21 +23,18 @@ from pathlib import Path
 
 import numpy as np
 
-PRESETS = Path(__file__).resolve().parents[1] / "data" / "cavity" / "presets.json"
-NAMED = PRESETS.parent / "presets"
-TRAJ = "volume200"  #: boonza cavity traj's default presets
-STRUCTURE = "static200"  #: boonza cavity structure's default presets
+NAMED = Path(__file__).resolve().parents[1] / "data" / "cavity" / "presets"
+DEFAULT = "volume200"  #: the presets boonza cavity uses unless told otherwise
 
 
 def names() -> list[str]:
-    """The named presets kept beside the current ones."""
+    """The named presets."""
     return sorted(p.stem for p in NAMED.glob("*.json"))
 
 
 def path(name: str | None = None) -> Path:
-    """The file of presets ``name``: the current ones (None), a named set or a path."""
-    if name is None:
-        return PRESETS
+    """The file of presets ``name``: DEFAULT's (None), a named set or a path."""
+    name = name or DEFAULT
     if (NAMED / f"{name}.json").exists():
         return NAMED / f"{name}.json"
     if Path(name).expanduser().is_file():
@@ -78,27 +55,27 @@ def preset(model: str, name: str | None = None) -> dict:
 
 
 def score(props: dict, p: dict) -> float:
-    """The preset's SiteScore of a site's properties (sites.properties)."""
+    """The preset's score of a site's properties (sites.properties): by volume alone."""
     w = p["score"]
-    return float(w["intercept"] + w["sqrt_n"] * np.sqrt(props["n"])
-                 + w["enclosure"] * props[p.get("enclosure_term", "enclosure")]
-                 + w["philic"] * props["philic"])  # fmt: skip
+    return float(w["intercept"] + w["sqrt_n"] * np.sqrt(props["n"]))
 
 
-def find(beads, model: str | None = None, name: str | None = None):
+def find(beads, model: str | None = None, name: str | None = None, times: dict | None = None):
     """The sites of ``beads`` under the preset of their model (of presets ``name``), best
-    first, as ``[(score, Site)]``; only the grid points the preset can use are computed."""
+    first, as ``[(score, Site)]``, and the grid; only the grid points the preset can use
+    are computed.  ``times``: gets the seconds of the grid and of site finding, and the
+    grid's points."""
+    from time import perf_counter
+
     from .grid import compute
     from .sites import find_sites
 
     p = preset(model or beads.model, name)
-    params = {**p["params"], "probe": 0}
-    g = compute(
-        beads,
-        p["spacing"],
-        (p["probe"],),
-        outside=params["outside"],
-        ray_step=p.get("ray_step", 1.0),
-    )
-    found = [(score(s.props, p), s) for s in find_sites(g, params)]
+    t0 = perf_counter()
+    g = compute(beads, p["spacing"], outside=p["params"]["outside"],
+                ray_step=p.get("ray_step", 1.0))  # fmt: skip
+    t1 = perf_counter()
+    found = [(score(s.props, p), s) for s in find_sites(g, p["params"])]
+    if times is not None:
+        times.update(grid=t1 - t0, sites=perf_counter() - t1, points=len(g.ijk))
     return sorted(found, key=lambda x: -x[0]), g

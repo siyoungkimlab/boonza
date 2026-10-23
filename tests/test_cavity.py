@@ -29,20 +29,18 @@ def _system(model):
 
 @pytest.mark.parametrize("model", ["martini2", "martini3", "sirah"])
 def test_pairs_match_boonza(model):
-    """Every pair of types in a parameterized protein has the sigma and epsilon boonza gave it."""
+    """Every pair of types in a parameterized protein has the sigma boonza gave it."""
     cg = _system(model)
     nb = cg.table("nonbonded")
     ptype = list(nb.values("type"))  # per atom
     pid = np.asarray(nb.param_ids)
-    sig, eps = nb.values("sigma"), nb.values("epsilon")
-    own = {int(p): (float(s), float(e)) for p, s, e in zip(pid, sig, eps, strict=True)}
+    sig = nb.values("sigma")
+    own = {int(p): float(s) for p, s in zip(pid, sig, strict=True)}
     name = {int(p): str(t) for p, t in zip(pid, ptype, strict=True)}
     table = pair_table(model)
     checked = 0
     for (a, b), p in nb.overrides.items():
-        s, e = table.pair(name[int(a)], name[int(b)])
-        assert s == pytest.approx(float(p["sigma"]), abs=1e-3)
-        assert e == pytest.approx(float(p["epsilon"]), abs=1e-4)
+        assert table.pair(name[int(a)], name[int(b)]) == pytest.approx(float(p["sigma"]), abs=1e-3)
         checked += 1
     if model == "sirah":  # pairs without an override follow the combining rule
         over = {tuple(sorted((int(a), int(b)))) for (a, b), _ in nb.overrides.items()}
@@ -51,9 +49,8 @@ def test_pairs_match_boonza(model):
             for j in ids:
                 if tuple(sorted((i, j))) in over:
                     continue
-                s, e = table.pair(name[i], name[j])
-                assert s == pytest.approx((own[i][0] + own[j][0]) / 2, abs=1e-3)
-                assert e == pytest.approx(np.sqrt(own[i][1] * own[j][1]), abs=1e-4)
+                mean = (own[i] + own[j]) / 2
+                assert table.pair(name[i], name[j]) == pytest.approx(mean, abs=1e-3)
                 checked += 1
     assert checked > 40
 
@@ -64,27 +61,8 @@ def test_beads_typed_like_boonza(model):
     beads = B.coarse_grain(s, model)
     assert len(beads) > 150 and np.isfinite(beads.radius).all()
     assert 1.5 < np.median(beads.radius) < 3.0
-    assert 0.1 < beads.polar.mean() < 0.9
     if model == "sirah":  # the N-terminal backbone bead takes sirahize's own type
         assert beads.types[0] == "GNz"
-
-
-@pytest.mark.parametrize("model", ["martini3", "sirah"])
-def test_add_probes(model, tmp_path):
-    """Probes added to a saved grid match the same probes computed with it."""
-    rng = np.random.default_rng(0)
-    types = {"martini3": ["SC3", "P2", "TC5"], "sirah": ["GC", "GN", "Y2Ca"]}[model]
-    beads = B.from_arrays(model, rng.uniform(0, 12, (30, 3)), rng.choice(types, 30),
-                          rng.random(30) < 0.5)  # fmt: skip
-    probes = G.PROBES[model]
-    whole = G.compute(beads, 2.0, probes)
-    path = tmp_path / "g.npz"
-    G.compute(beads, 2.0, probes[:2]).save(path)
-    grown = G.add_probes(G.Grid.load(path), beads, probes)
-    assert grown.probes == whole.probes
-    for name in ("e_polar", "e_apolar", "c_polar", "c_apolar"):
-        np.testing.assert_allclose(getattr(grown, name), getattr(whole, name), rtol=1e-5)
-    assert not list(tmp_path.glob("*.partial.npz"))
 
 
 @pytest.mark.parametrize("model", ["martini2", "sirah"])
@@ -94,7 +72,7 @@ def test_rays_match_direct_search(model):
     types = {"martini2": ["P5", "SC4", "Qa"], "sirah": ["GC", "GN", "Y2Ca", "A5D"]}[model]
     xyz = rng.uniform(0, 14, (80, 3))
     xyz[40:] = xyz[:40] + rng.normal(0, 1.5, (40, 3))  # pairs that overlap
-    beads = B.from_arrays(model, xyz, rng.choice(types, 80), rng.random(80) < 0.5)
+    beads = B.from_arrays(model, xyz, rng.choice(types, 80))
     groups = G._by_radius(beads)
     pts = rng.uniform(-4, 18, (600, 3))
     np.testing.assert_array_equal(G._rays(pts, groups), G._rays_direct(pts, groups))
@@ -117,26 +95,23 @@ def test_structure_cli(tmp_path):
 
 
 def test_named_presets(tmp_path):
-    """static200 is kept by name; a presets file is used by its path, and its preset by the
-    command line."""
+    """volume200 is the one preset and every command's default; a presets file is used by its
+    path, and its preset by the command line."""
     import json
 
     from boonza.cavity import presets as P
 
-    assert {"static200", "dynamic200"} <= set(P.names())
-    static = P.presets("static200")
-    assert {static[m]["probe"] for m in static} == {"AC2", "SC3", "Y4Cv"}
-    dynamic = P.presets("dynamic200")  # fine-tuned from static200: the same probes
-    assert {m: dynamic[m]["probe"] for m in dynamic} == {m: static[m]["probe"] for m in static}
-    assert (P.TRAJ, P.STRUCTURE) == ("volume200", "static200")
-    mine = {**static, "martini3": {**static["martini3"], "spacing": 3.0}}
+    assert P.names() == ["volume200"] and P.DEFAULT == "volume200"
+    assert P.presets() == P.presets("volume200")
+    v = P.presets("volume200")
+    mine = {**v, "martini3": {**v["martini3"], "spacing": 3.0}}
     (tmp_path / "mine.json").write_text(json.dumps(mine))
     assert P.preset("martini3", str(tmp_path / "mine.json"))["spacing"] == 3.0
     with pytest.raises(ValueError, match="no presets"):
         P.presets("no-such-presets")
     out = tmp_path / "sites"
     assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
-                 "--preset", "static200"]) == 0  # fmt: skip
+                 "--preset", str(tmp_path / "mine.json")]) == 0  # fmt: skip
     assert list(csv.DictReader(open(out / "pockets.csv")))
     assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
                  "--preset", "no-such-presets"]) == 1  # fmt: skip
@@ -193,6 +168,13 @@ def test_traj_cli(tmp_path):
     assert rows and 0 < float(rows[0]["occupancy"]) <= 1
     assert (out / "sites.pkl").exists() and (out / "view.pml").exists()
     assert {"md_frame", "best_md_frame", "centre_x", "centre_y", "centre_z"} <= set(rows[0])
+    timing = json.loads((out / "timing.json").read_text())
+    assert {"load_and_fit", "site_finding", "grouping", "ranking", "report"} <= set(
+        timing["stages_s"]
+    )
+    assert timing["frames"] == 3 and not timing["site_finding"]["from_cache"]
+    assert timing["site_finding"]["grid_cpu"] > 0 and timing["site_finding"]["workers"] == 1
+    assert "site_finding" in (out / "timing.txt").read_text()
     # ranked by each pocket's best frame (p_max: with volume200, its largest site)
     assert [r["rank_p_max"] for r in rows] == [str(k) for k in range(1, len(rows) + 1)]
     assert all(float(r["p_q90_open"]) <= float(r["p_max"]) for r in rows)
@@ -200,6 +182,7 @@ def test_traj_cli(tmp_path):
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1", "--top", "3", "--grouping", "consensus"]) == 0  # fmt: skip
     assert list(csv.DictReader(open(out / "pockets.csv")))
+    assert json.loads((out / "timing.json").read_text())["site_finding"]["from_cache"]
 
 
 def _frame_site(frame, centre, score, residues=(1, 2, 3)):
@@ -259,11 +242,9 @@ def test_grid_keeps_its_ray_step(tmp_path):
     from boonza.cavity import sites as S
 
     rng = np.random.default_rng(2)
-    beads = B.from_arrays(
-        "martini3", rng.uniform(0, 20, (150, 3)), ["P2"] * 150, np.zeros(150, bool)
-    )
-    g1 = G.compute(beads, 2.0, ("SC3",))
-    g2 = G.compute(beads, 2.0, ("SC3",), ray_step=2.0)
+    beads = B.from_arrays("martini3", rng.uniform(0, 20, (150, 3)), ["P2"] * 150)
+    g1 = G.compute(beads, 2.0)
+    g2 = G.compute(beads, 2.0, ray_step=2.0)
     assert g1.ray_step == 1.0 and g2.ray_step == 2.0
     assert g2.hit[g2.hit != G.NO_HIT].max() <= 5  # 2, 4, 6, 8, 10 A
     g2.save(tmp_path / "g.npz")
@@ -273,16 +254,39 @@ def test_grid_keeps_its_ray_step(tmp_path):
 
 
 def test_volume200_ranks_by_volume():
-    """volume200: rays every 2 A, enclosure over the site points, a score ordering by size."""
+    """volume200: rays every 2 A out to 10 A, no contact test, a score ordering by size."""
     from boonza.cavity import presets as P
 
     for model in ("martini2", "martini3", "sirah"):
         p = P.preset(model, "volume200")
-        assert p["ray_step"] == 2.0 and p["enclosure_term"] == "enclosure_site"
-        assert p["params"]["ray_length"] == 10.0 and p["params"]["contact"] > 1e6
-        small = {"n": 40.0, "enclosure": 0.9, "enclosure_site": 0.9, "philic": 1.0}
-        big = {"n": 400.0, "enclosure": 0.1, "enclosure_site": 0.1, "philic": 0.0}
-        assert P.score(big, p) > P.score(small, p)
+        assert p["ray_step"] == 2.0 and p["params"]["ray_length"] == 10.0
+        assert set(p["score"]) == {"intercept", "sqrt_n"} and "probe" not in p
+        assert P.score({"n": 400.0}, p) > P.score({"n": 40.0}, p)
+
+
+def test_sites_carry_only_what_finding_computes():
+    """A site's properties are its volume and its own points' enclosure, nothing more."""
+    from boonza.cavity import sites as S
+
+    rng = np.random.default_rng(3)
+    beads = B.from_arrays("martini3", rng.uniform(0, 24, (220, 3)), ["P2"] * 220)
+    g = G.compute(beads, 2.0, ray_step=2.0)
+    found = S.find_sites(g, {"outside": 2.75, "ray_length": 10.0, "enclosure": 0.3})
+    assert found and all(set(s.props) == {"n", "enclosure_site"} for s in found)
+
+
+def test_an_old_grid_with_energies_loads(tmp_path):
+    """A grid saved with contact energies, before they were dropped, loads without them."""
+    rng = np.random.default_rng(4)
+    g = G.compute(B.from_arrays("martini3", rng.uniform(0, 12, (40, 3)), ["P2"] * 40), 2.0)
+    n = len(g.ijk)
+    np.savez_compressed(tmp_path / "old.npz", spacing=g.spacing, origin=g.origin, ijk=g.ijk,
+                        ratio=g.ratio, dmin=g.dmin, hit=g.hit, probes=np.array(["SC3"]),
+                        e_polar=np.zeros((1, n)), e_apolar=np.zeros((1, n)),
+                        c_polar=np.zeros((1, n)), c_apolar=np.zeros((1, n)))  # fmt: skip
+    old = G.Grid.load(tmp_path / "old.npz")
+    np.testing.assert_array_equal(old.hit, g.hit)
+    np.testing.assert_array_equal(old.ijk, g.ijk)
 
 
 def test_a_ballooned_site_is_left_out_of_grouping():

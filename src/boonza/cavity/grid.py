@@ -1,8 +1,9 @@
 """What every grid point around a protein needs, computed once.
 
 SiteMap's site finding is a chain of thresholds on per-point numbers -- how far
-outside the protein a point is, how enclosed it is, how well a probe there
-contacts the protein -- followed by grouping.  The numbers do not depend on the
+outside the protein a point is and how enclosed it is -- followed by grouping.
+(SiteMap's third number, a probe's contact energy, is not computed: no preset
+uses it.)  The numbers do not depend on the
 thresholds, so they are computed here once per structure and grid spacing, and
 a parameter trial (sites.py) only compares and groups:
 
@@ -11,12 +12,6 @@ a parameter trial (sites.py) only compares and groups:
   hit         per ray (RAYS directions), the distance at which it first enters a
               bead (within R_i of its centre), in ray_step steps; NO_HIT if not
               within RAY_MAX
-  e_polar,    Lennard-Jones energy (kcal/mol) of a probe bead at the point with
-  e_apolar    the protein's polar and apolar beads, per probe type, from the
-              force field's pair table (NBFIX for Martini), cut at LJ_CUTOFF
-  c_polar,    the same with each pair's energy capped at 0: a bead closer than
-  c_apolar    the pair's minimum counts as touching rather than clashing, which
-              matters where a ligand atom fits but a bead would not
 
 Only points outside every bead (ratio >= 1) and within KEEP of a bead centre
 are kept.
@@ -30,20 +25,12 @@ from pathlib import Path
 import numpy as np
 
 from .beads import Beads
-from .forcefield import pair_table
 
 RAYS = 110  # SiteMap: 110 evenly spaced directions
 RAY_STEP = 1.0  # A
 RAY_MAX = 10.0  # A: SiteMap's enclosure property reaches 10 A, its filter 8 A
 NO_HIT = 255
-LJ_CUTOFF = 12.0  # A: Martini's 1.1 nm, rounded up
-KEEP = 10.0  # A from a bead centre: site points and SiteMap's extension points
-#: probe bead types tried for the contact energy, per model.  New ones go at the end, so a
-#: probe's index stays the same in grids and parameter sets made before.  The last ones are
-#: each model's smallest (pair sigma ~3.65 A in Martini 3, 3.2-3.3 A in SIRAH against
-#: protein beads); Martini 2 has none smaller than C1 (4.7 A against every protein bead).
-PROBES = {"martini2": ("C1", "N0", "P1"), "martini3": ("TC3", "SC3", "C3", "N1", "TC5", "TN1"),
-          "sirah": ("Y2Ca", "Y1C", "GC", "GO", "GN")}  # fmt: skip
+KEEP = 10.0  # A from a bead centre: the grid points kept
 
 
 def directions(n: int = RAYS) -> np.ndarray:
@@ -62,23 +49,7 @@ class Grid:
     ratio: np.ndarray  #: (n,)
     dmin: np.ndarray  #: (n,)
     hit: np.ndarray  #: (n, RAYS) uint8, in ray_step units
-    probes: tuple  #: probe type names
-    e_polar: np.ndarray  #: (nprobe, n)
-    e_apolar: np.ndarray  #: (nprobe, n)
-    c_polar: np.ndarray  #: (nprobe, n), each pair capped at 0
-    c_apolar: np.ndarray  #: (nprobe, n)
     ray_step: float = RAY_STEP  #: A between the samples along a ray
-
-    def energy(self, probe: int, form: str = "full", part: str = "both") -> np.ndarray:
-        """The contact energy of probe ``probe``: ``form`` full or capped, ``part`` both,
-        polar or apolar beads."""
-        full = form == "full"
-        pol, apo = (self.e_polar, self.e_apolar) if full else (self.c_polar, self.c_apolar)
-        if part == "polar":
-            return pol[probe]
-        if part == "apolar":
-            return apo[probe]
-        return pol[probe] + apo[probe]
 
     @property
     def xyz(self) -> np.ndarray:
@@ -90,37 +61,16 @@ class Grid:
         tmp = path.with_name(path.stem + ".partial.npz")
         np.savez_compressed(tmp, spacing=self.spacing, origin=self.origin, ijk=self.ijk,
                             ratio=self.ratio, dmin=self.dmin, hit=self.hit,
-                            probes=np.array(self.probes), e_polar=self.e_polar,
-                            e_apolar=self.e_apolar, c_polar=self.c_polar,
-                            c_apolar=self.c_apolar, ray_step=self.ray_step)  # fmt: skip
+                            ray_step=self.ray_step)  # fmt: skip
         tmp.replace(path)
 
     @classmethod
     def load(cls, path) -> Grid:
+        """A saved grid; one saved with contact energies (before they were dropped) loads
+        without them."""
         z = np.load(path)
         return cls(float(z["spacing"]), z["origin"], z["ijk"], z["ratio"], z["dmin"], z["hit"],
-                   tuple(str(p) for p in z["probes"]), z["e_polar"], z["e_apolar"],
-                   z["c_polar"], z["c_apolar"],
                    float(z["ray_step"]) if "ray_step" in z else RAY_STEP)  # fmt: skip
-
-
-def add_probes(g: Grid, beads: Beads, probes) -> Grid:
-    """``g`` with the contact energies of the ``probes`` it lacks appended."""
-    new = tuple(p for p in probes if p not in g.probes)
-    if not new:
-        return g
-    energies = _contact(g.xyz, beads, new)
-    old = (g.e_polar, g.e_apolar, g.c_polar, g.c_apolar)
-    return Grid(
-        g.spacing,
-        g.origin,
-        g.ijk,
-        g.ratio,
-        g.dmin,
-        g.hit,
-        g.probes + new,
-        *(np.concatenate([a, b]) for a, b in zip(old, energies, strict=True)),
-    )
 
 
 def _by_radius(beads: Beads):
@@ -131,7 +81,6 @@ def _by_radius(beads: Beads):
 def compute(
     beads: Beads,
     spacing: float = 2.0,
-    probes=None,
     outside: float = 1.0,
     ray_step: float = RAY_STEP,
 ) -> Grid:
@@ -139,11 +88,10 @@ def compute(
 
     ``outside``: keep only points with ratio >= it.  Site finding uses no point below
     its own ``outside`` parameter, so a run with fixed parameters (a trajectory) passes
-    that and skips the rays and energies of points it would never look at.  ``ray_step``:
+    that and skips the rays of points it would never look at.  ``ray_step``:
     A between the samples along each ray, out to RAY_MAX."""
     from ..spatial import min_dist2
 
-    probes = tuple(probes or PROBES[beads.model])
     lo = beads.xyz.min(0) - KEEP
     hi = beads.xyz.max(0) + KEEP
     origin = np.floor(lo / spacing) * spacing
@@ -160,9 +108,8 @@ def compute(
     keep = (ratio >= max(outside, 1.0)) & (dmin <= KEEP)
     ijk, xyz, ratio, dmin = ijk[keep].astype(np.int32), xyz[keep], ratio[keep], dmin[keep]
     hit = _rays(xyz, groups, step=ray_step)
-    energies = _contact(xyz, beads, probes)
     return Grid(spacing, origin, ijk, ratio.astype(np.float32), dmin.astype(np.float32), hit,
-                probes, *energies, ray_step=ray_step)  # fmt: skip
+                ray_step=ray_step)  # fmt: skip
 
 
 CELL = 0.5  # A: the occupancy lattice _rays looks ray samples up in
@@ -276,27 +223,4 @@ def _rays_direct(xyz: np.ndarray, groups, chunk: int = 2000, step: float = RAY_S
         inside = inside.reshape(len(p), RAYS, len(steps))
         first = np.where(inside.any(2), inside.argmax(2) + 1, NO_HIT)
         out[a : a + chunk] = first
-    return out
-
-
-def _contact(xyz: np.ndarray, beads: Beads, probes, chunk: int = 1500):
-    """Probe-protein Lennard-Jones energies split by polar and apolar beads: full, then
-    with each pair capped at 0."""
-    table = pair_table(beads.model)
-    pk = table.index(probes)
-    sig = table.sigma[pk][:, beads.type_index]  # (nprobe, nbeads)
-    eps = table.epsilon[pk][:, beads.type_index]
-    out = [np.zeros((len(probes), len(xyz)), np.float32) for _ in range(4)]
-    polar = beads.polar
-    for a in range(0, len(xyz), chunk):
-        d2 = ((xyz[a : a + chunk, None, :] - beads.xyz[None]) ** 2).sum(-1)  # (m, nbeads)
-        far = d2 > LJ_CUTOFF**2
-        for k in range(len(probes)):
-            s6 = (sig[k] ** 2 / d2) ** 3
-            lj = 4 * eps[k] * (s6 * s6 - s6)
-            lj[far] = 0.0
-            capped = np.minimum(lj, 0.0)
-            for q, (e, m) in enumerate(((lj, polar), (lj, ~polar), (capped, polar),
-                                        (capped, ~polar))):  # fmt: skip
-                out[q][k, a : a + chunk] = e[:, m].sum(1)
     return out

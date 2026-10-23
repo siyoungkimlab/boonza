@@ -4,14 +4,14 @@
 pockets. This page is how the default grouping (`--grouping centroid`,
 `--cutoff 8`), the point that locates a pocket (its centre) and the ranking
 (`--rank p_q90_open`) were chosen, on the Schrödinger set's apo MD runs. The presets
-were not changed: every result here is [dynamic200](cavity_dynamic200.md)'s
+were not changed: every result here is dynamic200 (a preset since removed)'s
 sites, regrouped.
 
 ## The data
 
 **The runs.** The Schrödinger set's apo structures (Shi et al., JCIM 2026,
 66, 9236), run with `boonza swim` and `boonza md` as the
-[dynamic200](cavity_dynamic200.md) training runs were: 18 single-amino-acid
+dynamic200 (a preset since removed) training runs were: 18 single-amino-acid
 probe types, 100 ns, 1000 frames, in each of Martini 2, Martini 3 and SIRAH.
 40 apo/holo pairs on 38 apo runs (`SchrodingerSet/20261005_apo/<model>/<apo>/SingleAminoAcid18/sim_000/md_solute`);
 1ula/1ulb was left out, as a homologue of the training complex 1a9p. Each
@@ -157,7 +157,7 @@ grouping and the centre were chosen under.
 ## An independent check: the 200 training runs
 
 The choice was made on the Schrödinger runs, so it was checked on runs it
-never saw: the 200 [dynamic200](cavity_dynamic200.md) training complexes'
+never saw: the 200 dynamic200 (a preset since removed) training complexes'
 MD runs (every frame, the ligand carried on by superposition, as `--holo`).
 PPc Top-1 / 3 / 5 / 10:
 

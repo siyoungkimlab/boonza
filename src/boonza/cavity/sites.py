@@ -4,8 +4,6 @@ Site finding, each step a threshold on grid.py's numbers or a grouping:
 
   outside     d^2 / R_i^2 >= outside for every bead                   (SiteMap 2.5)
   enclosed    >= enclosure of the rays enter a bead within ray_length  (0.5 within 8 A)
-  contact     probe Lennard-Jones energy <= contact (kcal/mol)        (-1.1 for atoms)
-              (contact_form full, or capped: each pair at most 0)
   neighbours  >= neighbours other candidates within neighbour_radius
               grid steps                                              (3 within 1.76 A
                                                                        on a 1 A grid)
@@ -20,17 +18,17 @@ Site finding, each step a threshold on grid.py's numbers or a grouping:
 Volumes are in A^3 so that a site's size does not depend on the grid: on
 SiteMap's 1 A grid a site point is 1 A^3.
 
-Site properties, over the site points and SiteMap's extension points (outside
-points within 3 A in x, y and z of a site point that contact the protein or lie
->= 4 A from it):
+SiteMap's third test, a probe's contact energy at the point, is left out: no preset
+used it (it was switched off in volume200), and computing it took most of a frame's
+time on large proteins.
 
-  n           site volume, A^3 (SiteMap's number of site points)
-  exposure    extension / (site + extension)
-  enclosure   share of rays entering a bead within 10 A
-  enclosure_site  the same over the site points alone
-  contact     mean -E(probe)
-  philic      mean -E(probe, polar beads)
-  phobic      mean -E(probe, apolar beads) x share of rays entering a bead within 6 A
+Site properties, only from numbers site finding computed anyway:
+
+  n               site volume, A^3 (SiteMap's number of site points)
+  enclosure_site  share of the site points' rays entering a bead within 10 A
+
+(SiteMap's exposure and its enclosure over the site and its extension points, outside
+points around it, are not computed: nothing uses them.)
 """
 
 from __future__ import annotations
@@ -45,9 +43,6 @@ DEFAULTS = {
     "outside": 2.5,
     "ray_length": 8.0,
     "enclosure": 0.5,
-    "probe": 0,
-    "contact": -2.0,
-    "contact_form": "full",
     "neighbour_radius": 1.76,
     "neighbours": 3,
     "min_points": 3,
@@ -56,10 +51,7 @@ DEFAULTS = {
     "max_sites": 10,
     "min_volume": 15.0,
 }
-EXTENSION_BOX = 3.0  # A
-EXTENSION_FAR = 4.0  # A from the nearest bead centre
 PROPERTY_RAY = 10.0  # A
-PHOBIC_RAY = 6.0  # A
 
 
 @dataclass
@@ -115,10 +107,8 @@ def _shut(hit: np.ndarray, length: float, step: float) -> np.ndarray:
 
 
 def candidates(g: Grid, p: dict) -> np.ndarray:
-    """Indices of the grid points that pass the outside, enclosure, contact and neighbour tests."""
-    e = g.energy(p["probe"], p["contact_form"])
+    """Indices of the grid points that pass the outside, enclosure and neighbour tests."""
     ok = (g.ratio >= p["outside"]) & (_shut(g.hit, p["ray_length"], g.ray_step) >= p["enclosure"])
-    ok &= e <= p["contact"]
     idx = np.flatnonzero(ok)
     if not len(idx):
         return idx
@@ -201,50 +191,7 @@ def _merge(g: Grid, groups: list, p: dict) -> list:
 
 
 def properties(g: Grid, site: Site, p: dict) -> dict:
-    """SiteMap's site properties (see the module docstring)."""
+    """A site's properties (see the module docstring)."""
     pts = site.points
-    v = g.spacing**3
-    box = int(np.floor(EXTENSION_BOX / g.spacing))
-    e = g.energy(p["probe"], p["contact_form"])
-    ext = np.zeros(0, int)
-    if box >= 1:
-        r = np.arange(-box, box + 1)
-        off = np.stack(np.meshgrid(r, r, r, indexing="ij"), -1).reshape(-1, 3)
-        dims = g.ijk.max(0) + 2 * box + 3
-        keys = _keys(g.ijk + box + 1, dims)
-        order = np.argsort(keys)
-        sk = keys[order]
-        near = set()
-        base = g.ijk[pts] + box + 1
-        for o in off:
-            q = _keys(base + o, dims)
-            pos = np.searchsorted(sk, q)
-            pos[pos >= len(sk)] = 0
-            near.update(order[pos[sk[pos] == q]].tolist())
-        cand = np.array(sorted(near - set(pts.tolist())), int)
-        if len(cand):
-            ok = (g.ratio[cand] >= p["outside"]) & ((e[cand] < 0) | (g.dmin[cand] >= EXTENSION_FAR))
-            ext = cand[ok]
-    both = np.r_[pts, ext]
-    shut6 = _shut(g.hit[both], PHOBIC_RAY, g.ray_step)
-    shut = _shut(g.hit[both], PROPERTY_RAY, g.ray_step)
-    return {
-        "n": len(pts) * v,
-        "exposure": len(ext) / len(both),
-        "enclosure": float(shut.mean()),
-        "enclosure_site": float(shut[: len(pts)].mean()),
-        "contact": float(-e[both].mean()),
-        "philic": float(-g.energy(p["probe"], p["contact_form"], "polar")[both].mean()),
-        "phobic": float(
-            (-g.energy(p["probe"], p["contact_form"], "apolar")[both] * shut6).mean()
-        ),  # fmt: skip
-    }
-
-
-def sitescore(props: dict, philic_mean: float = 1.0, n_cap: float = 100.0,
-              weights=(0.0733, 0.6688, -0.20)) -> float:  # fmt: skip
-    """SiteScore (Halgren 2009, eq 3): a sqrt(min(n, cap)) + b e + c min(p, 1), with the
-    hydrophilic score p calibrated by ``philic_mean`` (SiteMap: the mean over known sites)."""
-    a, b, c = weights
-    philic = min(props["philic"] / philic_mean, 1.0)
-    return a * np.sqrt(min(props["n"], n_cap)) + b * props["enclosure"] + c * philic
+    shut = _shut(g.hit[pts], PROPERTY_RAY, g.ray_step)
+    return {"n": len(pts) * g.spacing**3, "enclosure_site": float(shut.mean())}
