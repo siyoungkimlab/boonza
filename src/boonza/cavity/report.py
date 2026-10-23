@@ -147,7 +147,8 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
           pids=None, pcoords=None, apo=None, top: int | None = None,
           rank: str = "p_max", spots=None, view_system=None, holo=None,
           holo_ligand: str | None = None, ligand=None, apo_format: str = "pdb",
-          holo_format: str = "pdb", max_median_volume: float | None = None) -> Path:  # fmt: skip
+          holo_format: str = "pdb", max_median_volume: float | None = None,
+          timing: dict | None = None) -> Path:  # fmt: skip
     """pockets.csv and view.pml for ``pockets`` (traj.consensus, any order) under ``out``.
 
     ``coords``/``pcoords``: protein/probe positions of the analysed frames (frame k is MD
@@ -164,6 +165,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
     own (pockets.cli.structure_format), so an MAE keeps its bond orders.
     ``max_median_volume``: pockets of median volume over this many A^3 go last under
     every ranking (traj.ranked; None: traj.MAX_MEDIAN_VOLUME, 0: by value alone).
+    ``timing``: gets the seconds of ranking and of measuring against the ligand.
 
     A pocket is shown and measured by its medoid (traj.Pocket.medoid) in the medoid's
     frame, and located by its centre (traj.Pocket.centre)."""
@@ -183,12 +185,17 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
                 *out.glob("pharm_*.*"), *out.glob("frames.pqr"), *out.glob("apo.*"),
                 *out.glob("holo.*"), *out.glob("ligand.*")]:  # fmt: skip
         old.unlink()  # from an earlier writing
+    from time import perf_counter
+
+    t0 = perf_counter()
     summaries = {id(p): p.summary(n_frames) for p in pockets}
     pockets = ranked(pockets, summaries, rank, max_median_volume)
     places = {}
     for name in RANKINGS:
         order = ranked(pockets, summaries, name, max_median_volume)
         places[name] = {id(p): k for k, p in enumerate(order, 1)}
+    timing = {} if timing is None else timing
+    timing.update(ranking=perf_counter() - t0, ligand=0.0)
     spacing = preset(model)["spacing"]
     fmt = "mae" if system.nbonds else "pdb"
     pids = np.zeros(0, int) if pids is None else pids
@@ -223,6 +230,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
         if ligand is not None:
             from ..pockets.overlap import ppc
 
+            t1 = perf_counter()
             m = {**_against(site, spacing, ligand), "PPc": ppc(centre[None], ligand)}
             per_frame = p.per_frame_best().values()
             rows[-1].update(
@@ -232,6 +240,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
                 }
             )
             verdict = f"{' PPc' if m['PPc'] else ''}{' MOc' if m['MOc'] else ''} LVC {m['LVC']:.2f}"
+            timing["ligand"] += perf_counter() - t1
         if top is not None and k > top:
             continue
         label = (f"{k} occ {s['occupancy']:.2f} p90 {s['p_q90_open']:.2f} p {s['p_max']:.2f} "

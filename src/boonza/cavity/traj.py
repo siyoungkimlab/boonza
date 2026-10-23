@@ -16,7 +16,7 @@ nearest pocket centre within CUTOFF until none moves.  A pocket is then a place.
 A pocket is located by its centre -- the mean of the centres of its per-frame best
 sites -- and shown by its medoid, the per-frame best site nearest that centre, rather
 than by its single best-scoring site, which in a run can sit beside the pocket's usual
-place.  On the 40 Schrodinger apo trajectories (dynamic200, every frame) this grouping
+place.  On the 40 Schrodinger apo trajectories (every frame, under an earlier preset) this grouping
 and representation found the ligand's site in the top 10 in 0.80-0.875 of cases,
 against 0.70-0.725 by consensus and the best site (PPc; MxMD + SiteMap's sites,
 scored the same way, 0.925): the residue consensus let a site merge with a
@@ -52,6 +52,7 @@ frame (a pocket split for a moment); its occupancy counts frames.
 
 from __future__ import annotations
 
+import time
 import warnings
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -386,28 +387,32 @@ def _frame(job):
 
     k, xyz = job
     beads = replace(_W["beads"], xyz=np.asarray(xyz, float))
-    out = []
+    out, times = [], {}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        found, _ = find(beads, name=_W["preset"])
+        found, _ = find(beads, name=_W["preset"], times=times)
+    t0 = time.perf_counter()
     for rank, (score, s) in enumerate(found, 1):
         reach = beads.radius + LINING
         d2 = min_dist2(beads.xyz, s.xyz, float(reach.max())).astype(float)
         lining = frozenset(np.unique(_W["residue"][d2 <= reach**2]).tolist())
         out.append(FrameSite(k, rank, score, s.props, s.xyz.astype(np.float32), lining))
-    return out
+    times["lining"] = time.perf_counter() - t0
+    return out, times
 
 
 def frame_sites(system, ids, coords, model: str, jobs: int = 4, progress: bool = True,
-                preset: str | None = None) -> list[FrameSite]:  # fmt: skip
+                preset: str | None = None,
+                timing: dict | None = None) -> list[FrameSite]:  # fmt: skip
     """The sites of every frame under ``model``'s preset (of presets ``preset``, by default
-    presets.TRAJ's, tuned on MD frames: see presets.path), with their lining residues;
-    ``progress`` reports frames done, the rate and the time left about every 10%."""
-    from .presets import TRAJ
+    presets.DEFAULT's: see presets.path), with their lining residues; ``progress`` reports
+    frames done, the rate and the time left about every 10%.  ``timing``: gets the
+    workers' seconds in each part of a frame summed over frames (grid, sites, lining), the
+    grid points per frame and the wall time."""
+    from .presets import DEFAULT
 
-    preset = preset or TRAJ
+    preset = preset or DEFAULT
     import sys
-    import time
 
     from .beads import from_system
 
@@ -415,11 +420,19 @@ def frame_sites(system, ids, coords, model: str, jobs: int = 4, progress: bool =
     residue = np.asarray(system.atoms["residue"])[ids]
     out, t0, step = [], time.time(), max(1, len(coords) // 10)
     with ProcessPoolExecutor(jobs, initializer=_init, initargs=(beads, residue, preset)) as pool:
-        for k, found in enumerate(pool.map(_frame, enumerate(coords), chunksize=4), 1):
+        summed = dict.fromkeys(("grid", "sites", "lining", "points"), 0.0)
+        for k, (found, times) in enumerate(pool.map(_frame, enumerate(coords), chunksize=4), 1):
             out.extend(found)
+            for key, v in times.items():
+                summed[key] += v
             if progress and (k % step == 0 or k == len(coords)):
                 rate = k / (time.time() - t0)
                 print(f"  {k}/{len(coords)} frames, {rate:.1f} frames/s, "
                       f"~{(len(coords) - k) / rate / 60:.1f} min left", file=sys.stderr,
                       flush=True)  # fmt: skip
+    if timing is not None:
+        n = max(len(coords), 1)
+        cpu = {f"{key}_cpu": summed[key] for key in ("grid", "sites", "lining")}
+        timing.update(workers=jobs, wall=time.time() - t0, frames=len(coords),
+                      grid_points_per_frame=summed["points"] / n, **cpu)  # fmt: skip
     return out
