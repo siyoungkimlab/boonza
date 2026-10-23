@@ -86,10 +86,13 @@ centroid`, the default): largest first, each site joins the pocket whose
 mean centre is within `--cutoff` (8 A) of its own, or starts one, and sites are
 reassigned to the nearest centre until none moves.
 
-A pocket is located by its **centre**, the mean centre of its per-frame best
-sites, and drawn and measured by its **medoid**, the per-frame best site
-nearest that centre. Its single best-scoring site is not used for either: in a
-run it can lie beside where the pocket usually is.
+A pocket is located by its **centre**, the mean centre of all its sites (a
+frame can give it two, and both count), and drawn and measured by its
+**medoid**, the site nearest that centre, of any frame. Its median volume is of
+all its sites too. Its single best-scoring site is not used for either: in a
+run it can lie beside where the pocket usually is. On the three CRUMB benchmark
+sets (1180 runs), taking all sites rather than each frame's best left
+Top-1/3/5/10 unchanged in every run and model, and fill within 0.01.
 
 `--grouping consensus` groups the sites instead by the residues lining them:
 each site joins the pocket whose core (the residues lining at least half its
