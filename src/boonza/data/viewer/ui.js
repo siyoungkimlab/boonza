@@ -280,6 +280,11 @@ export function setupUI(app) {
     "-",
     { label: "Off", run: () => labels("off") },
   ];
+  function togglePocketNumbers() {
+    state.pocketNumbers = !state.pocketNumbers;
+    app.message(`pocket numbers ${state.pocketNumbers ? "shown" : "hidden"}`);
+    app.rebuild();
+  }
   function cycleHydrogens() {
     state.hydrogens = { polar: "all", all: "none", none: "polar" }[state.hydrogens];
     app.message(`hydrogens: ${{ all: "all shown", polar: "polar ones shown", none: "hidden" }[state.hydrogens]}`);
@@ -308,6 +313,7 @@ export function setupUI(app) {
       { label: "None", run: () => { state.hydrogens = "none"; app.rebuild(); }, checked: () => state.hydrogens === "none" },
     ] },
     { label: "Contacts", run: toggleContacts, checked: () => state.contacts },
+    { label: "Pocket Numbers", run: togglePocketNumbers, checked: () => state.pocketNumbers },
     "-",
     { label: "Unit Cell", run: () => { state.cell = !state.cell; app.rebuild(); }, checked: () => !!state.cell },
     { label: "Secondary Structure of Each Frame", run: () => { state.ssEachFrame = !state.ssEachFrame; app.setFrame(state.frame); },
