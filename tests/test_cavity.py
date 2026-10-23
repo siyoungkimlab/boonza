@@ -210,6 +210,27 @@ def test_centroid_groups():
         T.group(sites, "nonsense")
 
 
+def test_pocket_counts_every_site():
+    """A frame can give a pocket two sites, and both count for its centre, its medoid and
+    its median volume; occupancy and p_max still go by frame."""
+    from boonza.cavity import traj as T
+
+    a = _frame_site(0, (0, 0, 0), 2.0)
+    b = _frame_site(1, (4, 0, 0), 1.5)
+    c = _frame_site(0, (2, 0, 0), 1.0)  # frame 0's second, smaller site
+    for s, n in ((a, 400.0), (b, 300.0), (c, 40.0)):
+        s.props["n"] = n
+    p = T.Pocket()
+    for s in (a, b, c):
+        p.add(s)
+    assert np.allclose(p.centre, np.mean([s.xyz.mean(0) for s in (a, b, c)], axis=0))
+    assert p.medoid is c  # nearest the centre, though not its frame's best
+    s = p.summary(2)
+    assert s["median_volume"] == 300.0 and s["max_volume"] == 400.0
+    assert s["frames"] == 2 and s["occupancy"] == 1.0
+    assert s["p_max"] == pytest.approx(1 / (1 + np.exp(-2.0)))
+
+
 def test_traj_cli_without_sites(tmp_path):
     """A protein with no site in any frame (1TEN's first 28 residues) gives an empty
     table, not an error."""

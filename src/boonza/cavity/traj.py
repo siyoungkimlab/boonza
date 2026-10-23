@@ -13,10 +13,11 @@ pockets.  The sites, best SiteScore first, each join the pocket whose mean centr
 within CUTOFF (8 A) of the site's centre, else start one; then each site moves to the
 nearest pocket centre within CUTOFF until none moves.  A pocket is then a place.
 
-A pocket is located by its centre -- the mean of the centres of its per-frame best
-sites -- and shown by its medoid, the per-frame best site nearest that centre, rather
-than by its single best-scoring site, which in a run can sit beside the pocket's usual
-place.  On the 40 Schrodinger apo trajectories (every frame, under an earlier preset) this grouping
+A pocket is located by its centre -- the mean of the centres of all its sites, a
+frame's second site as much as its first -- and shown by its medoid, the site nearest
+that centre, rather than by its single best-scoring site, which in a run can sit beside
+the pocket's usual place.  On the 40 Schrodinger apo trajectories (every frame, under
+an earlier preset, the centre and medoid then of each frame's best site) this grouping
 and representation found the ligand's site in the top 10 in 0.80-0.875 of cases,
 against 0.70-0.725 by consensus and the best site (PPc; MxMD + SiteMap's sites,
 scored the same way, 0.925): the residue consensus let a site merge with a
@@ -131,14 +132,15 @@ class Pocket:
 
     @property
     def centre(self) -> np.ndarray:
-        """The mean centre of its per-frame best sites: where the pocket is."""
-        return np.mean([s.xyz.mean(0) for s in self.per_frame_best().values()], axis=0)
+        """The mean centre of all its sites, whatever frame each is from: where the pocket
+        is (the centre the grouping ends on)."""
+        return np.mean([s.xyz.mean(0) for s in self.sites], axis=0)
 
     @property
     def medoid(self) -> FrameSite:
-        """Its per-frame best site nearest its centre: the pocket as it usually is."""
+        """Its site nearest its centre, of any frame: the pocket as it usually is."""
         c = self.centre
-        return min(self.per_frame_best().values(),
+        return min(self.sites,
                    key=lambda s: (float(((s.xyz.mean(0) - c) ** 2).sum()), -s.score))  # fmt: skip
 
     def per_frame_best(self) -> dict:
@@ -150,10 +152,12 @@ class Pocket:
 
     def summary(self, n_frames: int) -> dict:
         """Occupancy, scores, volumes, and the RANKINGS values (p: the SiteScore as the
-        probability it is a ligand site, 1 / (1 + exp(-score)), as its logistic fit means)."""
+        probability it is a ligand site, 1 / (1 + exp(-score)), as its logistic fit means).
+        Occupancy and the per-frame rankings take each frame's best site; the volumes are
+        of all its sites."""
         best = self.per_frame_best()
         scores = np.array([s.score for s in best.values()])
-        vols = np.array([s.props["n"] for s in best.values()])
+        vols = np.array([s.props["n"] for s in self.sites])
         p = 1 / (1 + np.exp(-scores))
         every = np.zeros(n_frames)  # p per frame, 0 where the pocket is absent
         every[: len(p)] = np.sort(p)[::-1]
