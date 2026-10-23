@@ -27,7 +27,7 @@ const state = {
   playing: false, pending: null, loading: false,
   masks: [true, true, true, true],  // pickable: receptor, ligand, solvent, ribbons
   hydrogens: "polar",               // shown: all, polar, none
-  contacts: false, meters: [], labelMode: "name", busy: 0,
+  contacts: false, meters: [], labelMode: "name", pocketNumbers: true, busy: 0,
   surfaceGrid: +(localStorage.getItem("boonza.surfaceGrid") || 0.5),  // A, Render | Surface | Resolution
 };
 
@@ -494,7 +494,7 @@ function makeLabels() {
   $("labels").innerHTML = "";
   let count = 0;
   for (const m of shownModels()) {
-    if (m.label) addLabel(bounds(m, m.labelIds?.length ? m.labelIds : range(m.topo.natoms))[0], m.label, "pocket");
+    if (m.label && state.pocketNumbers) addLabel(bounds(m, m.labelIds?.length ? m.labelIds : range(m.topo.natoms))[0], m.label, "pocket");
     const lab = m.state.labels;
     for (let a = 0; a < lab.length && count < 600; a++) {
       if (lab[a] && m.drawn[a]) { addLabel(xyz(m, a), labelText(m, a)); count++; }
