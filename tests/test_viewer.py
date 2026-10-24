@@ -872,6 +872,13 @@ def test_memory_trajectory_and_frame_links():
     assert m.info()["frame"] == {"model": "frames", "i": 1}
 
 
+def test_a_model_swatch_apart_from_its_protein():
+    s = boonza.load(DATA / "1FNA.pdb")
+    m = viewer.Model("pocket 1", lambda: viewer.Session(s), color="gray", swatch="cyan")
+    assert (m.info()["color"], m.info()["swatch"]) == ("gray", "cyan")
+    assert "swatch" not in viewer.Model("apo", lambda: viewer.Session(s)).info()
+
+
 def test_an_empty_view_builds_molecules(served):
     get, post = served(viewer.Viewer([]))
     assert json.loads(get("api/models")[2])["models"] == []
