@@ -156,15 +156,18 @@ function applyReps(model, reps) {
   }
 }
 
-// a model's own colour (from its listing): its receptor's ribbon and carbons, not
-// its ligand or a site's points, so models of a group are told apart at a glance
+// a model's own colour (from its listing): its receptor's carbons and its ribbon (beads,
+// whose protein is not told apart from a ligand by class, too), not its ligand or a
+// site's points, so models of a group are told apart at a glance
 function tintReceptor(model) {
   const c = model.color;
   if (!c || c === "default" || c === "chain") return;
   const topo = model.topo, st = model.state;
   const receptor = range(topo.natoms).filter(a => topo.atoms.class[a] === 0);
   colorAtoms(`element/${c}`, receptor, topo, model.ss, st.rgb);
-  colorResidues(c, [...new Set(receptor.map(a => topo.atoms.residue[a]))], topo, model.ss, st.ribbonRGB);
+  const residues = topo.cg ? range(topo.residues.name.length).filter(r => topo.residues.trace[r] >= 0)
+    : [...new Set(receptor.map(a => topo.atoms.residue[a]))];
+  colorResidues(c, residues, topo, model.ss, st.ribbonRGB);
 }
 
 // atoms worth knowing apart: hydrogens, and those on carbon (hidden when only polar ones show)
