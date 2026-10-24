@@ -64,6 +64,7 @@ class Model:
     row: dict = field(default_factory=dict)
     label: str = ""  # drawn at the model's centre (pocket numbers)
     color: str = ""  # its protein's colour (cartoon and carbons): a name or #rrggbb
+    swatch: str = ""  # its swatch in the list, when not its protein's colour (a site's points)
     # its own numbers for the view's corner, as Viewer.summary's, shown while it is current
     summary: list = field(default_factory=list)
     # tied to frame i of another model, by name: {"model": name, "i": i} (a site and the
@@ -77,6 +78,8 @@ class Model:
                "row": self.row, "label": self.label}  # fmt: skip
         if self.color:
             out["color"] = self.color
+        if self.swatch:
+            out["swatch"] = self.swatch
         if self.summary:
             out["summary"] = self.summary
         if self.frame:

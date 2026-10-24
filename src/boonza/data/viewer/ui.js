@@ -490,8 +490,12 @@ export function setupUI(app) {
       }, "blue");
       const copy = button("Copy", async () => {
         try {
-          const [png, pic] = await render();
-          await navigator.clipboard.write([new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) })]);
+          // the clipboard is asked for at once, the picture still to come: Safari allows it only
+          // while the click is fresh, and drawing the picture takes longer than that
+          const drawn = render();
+          const png = drawn.then(([png]) => new Blob([png], { type: "image/png" }));
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+          const [, pic] = await drawn;
           app.message(`copied a ${pic.width} × ${pic.height} picture`);
         } catch (e) { app.message(`could not copy the picture: ${e.message}`, true); }
         app.draw();
@@ -1987,13 +1991,13 @@ export function setupUI(app) {
       const box = el("input", { type: "checkbox", checked: m.shown, title: "show" });
       box.onchange = () => { state.current = m.index; app.show([m], box.checked); };
       const sw = el("span", { className: "swatch" });
-      sw.style.background = swatchColor(m.color);
+      sw.style.background = swatchColor(m.swatch || m.color);
       const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
         + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
       name.onclick = () => app.solo(m);
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
       const color = picker("colour", colors, () => m.color || "default", async v => {
-        await app.load(m); colorModel(m, v); sw.style.background = swatchColor(v);
+        await app.load(m); colorModel(m, v); sw.style.background = swatchColor(m.swatch || v);
       });
       const rep = picker("representation", PRESETS, () => m.preset || "site", v => preset(m, v));
       const x = el("button", { className: "x", title: "close this model" }, "✕");
