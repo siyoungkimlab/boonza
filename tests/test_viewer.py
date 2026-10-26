@@ -1166,13 +1166,17 @@ def test_a_port_in_use_moves_on():
 
 def test_the_ligand_alone_is_a_representation():
     """Besides the ribbon with its ligand, a model can show its ligand alone, in sticks or
-    space filling, with no ribbon: a pocket's points, or a holo ligand over another model."""
+    spheres, with no ribbon: a pocket's points, or a holo ligand over another model; and
+    keep the colour its points have."""
     import re
 
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
-    presets = dict(re.findall(r'\["(\w+)", "([^"]+)"\]', ui[ui.index("const PRESETS") :]))
-    assert presets["lig"] == "Ligand" and presets["ligspace"] == "Ligand, Space Filling"
-    body = ui[ui.index("async function preset") : ui.index("function colorModel")]
-    assert "lig: 1, ligspace: 4" in body  # sticks, spheres
-    assert '"lig", "ligspace"' in body  # the ligand's atoms only
-    assert not "lig".startswith("ribbon")  # no ribbon
+    table = ui[ui.index("const PRESETS") : ui.index("const MODEL_COLORS")]
+    rows = re.findall(r'\["(\w+)", "([^"]+)", (\[.*?\]\]|null)\]', table)
+    rep = re.compile(r'\["(\w+)", "(\w+)", "([\w/]+)"\]')  # [atoms, style, colour]
+    presets = {k: (label, rep.findall(reps)) for k, label, reps in rows}
+    assert presets["lig"] == ("Ligand", [("ligand", "sticks", "keep")])
+    assert presets["ligspace"] == ("Ligand spheres", [("ligand", "spheres", "keep")])
+    assert presets["default"] == ("Default", [])  # the model's own representations
+    styles = {s for _, reps in presets.values() for _, s, _ in reps}
+    assert styles <= {"lines", "sticks", "ballstick", "spheres", "cartoon", "tube", "surface"}

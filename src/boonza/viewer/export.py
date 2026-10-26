@@ -9,8 +9,8 @@ the page reads those files instead.  Nothing on it can change a model: editing,
 minimizing, the Python line and opening files need ``boonza view``.
 
 Selections typed on the page need the server too; the few the page makes by
-itself (each model's default representations, the ligand and its pocket for
-SiteView) are worked out here.
+itself (each model's default representations, the ligand and its binding site
+for the presets and Focus on Ligand) are worked out here.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ STATIC = Path(__file__).resolve().parent.parent / "data" / "viewer"
 
 
 def _site_selections(topo: dict) -> list[str]:
-    """The selections ui.js builds for SiteView and Select | Pocket, as it writes them."""
+    """The selections ui.js builds for its presets and Select | Binding Site, as it writes them."""
     lig = topo["ligand"]
     if topo["cg"]:
         pocket = (f"(same residue as ((same residue as name BB GC PX) and within {CG_POCKET:g} "

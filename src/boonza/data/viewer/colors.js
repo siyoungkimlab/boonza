@@ -1,5 +1,5 @@
 // Color schemes: per-atom RGB (0..1) for a representation.
-//   element, element/<name>  CPK; carbons gray, or <name>
+//   element, element/<name>  CPK; carbons gray, or <name> (element/chain: by chain)
 //                            (coarse-grained: backbone beads gray, the rest by restype)
 //   chain                    one color per chain
 //   restype                  amino acids: hydrophobic, polar, positive, negative;
@@ -84,7 +84,7 @@ export function named(text) {
 
 export function isColor(text) {
   const [scheme, carbon] = text.split("/");
-  if (scheme === "element") return carbon === undefined || named(carbon) !== null;
+  if (scheme === "element") return carbon === undefined || carbon === "chain" || named(carbon) !== null;
   return SCHEMES.includes(text) || named(text) !== null;
 }
 
@@ -105,10 +105,11 @@ export function colorAtoms(spec, ids, topo, ss, out) {
       put(out, a, CG_BACKBONE.has(A.name[a]) ? ELEMENT.C : restype(name) || byName(name));
     }
   } else if (scheme === "element") {
-    const c = carbon ? named(carbon) : null;
+    const c = carbon && carbon !== "chain" ? named(carbon) : null;
     for (const a of ids) {
       const e = A.element[a];
-      put(out, a, e === "C" && c ? c : ELEMENT[e] || OTHER);
+      if (e === "C" && carbon === "chain") put(out, a, CHAINS[R.chain[A.residue[a]] % CHAINS.length]);
+      else put(out, a, e === "C" && c ? c : ELEMENT[e] || OTHER);
     }
   } else if (scheme === "chain") {
     for (const a of ids) put(out, a, CHAINS[R.chain[A.residue[a]] % CHAINS.length]);

@@ -81,7 +81,7 @@ class _View:
         return self._do("select", atoms, model, add=add)
 
     def show(self, atoms=None, model=None, style: str | None = None):
-        """Show atoms; ``style``: line, stick, ballline, ballstick, space."""
+        """Show atoms, as a new representation; ``style``: lines, sticks, ballstick, spheres."""
         return self._do("show", atoms, model, style=style)
 
     def hide(self, atoms=None, model=None):

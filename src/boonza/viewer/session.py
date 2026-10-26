@@ -172,24 +172,24 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
     if cg:
         lig = ligand or CG_LIGAND
         reps = [
-            (CG_POLYMER, "cartoon", "chain"),
+            (CG_POLYMER, "cartoon", "chain", "polymer"),
             (f"(same residue as ({CG_POLYMER} and within {CG_POCKET:g} of ({lig}))) "
-             f"and not ({lig})", "ballstick", "restype"),
-            (f"({lig}) and not resname {CG_SOLVENT}", "ballstick", carbon),
-            (f"resname {CG_IONS}", "spheres", "resname"),
+             f"and not ({lig})", "ballstick", "restype", "binding site"),
+            (f"({lig}) and not resname {CG_SOLVENT}", "ballstick", carbon, "ligand"),
+            (f"resname {CG_IONS}", "spheres", "resname", "ions"),
         ]  # fmt: skip
     else:
         lig = ligand or LIGAND
         reps = [
-            ("protein or nucleic", "cartoon", "chain"),
+            ("protein or nucleic", "cartoon", "chain", "protein or nucleic"),
             # closed off: 'same residue as' takes everything after it
             (f"(same residue as ((protein or nucleic) and within {POCKET:g} of ({lig}))) "
-             f"and not ({lig}) and {POLAR}", "sticks", "element"),
-            (f"(same residue as ({lig})) and {POLAR}", "sticks", f"element/{carbon}"),
-            ("ions and not (" + lig + ")", "spheres", "element"),
+             f"and not ({lig}) and {POLAR}", "sticks", "element", "binding site"),
+            (f"(same residue as ({lig})) and {POLAR}", "sticks", f"element/{carbon}", "ligand"),
+            ("ions and not (" + lig + ")", "spheres", "element", "ions"),
         ]  # fmt: skip
-    out = [{"sel": sel, "style": style, "color": color}
-           for sel, style, color in reps if len(system.select(sel))]  # fmt: skip
+    out = [{"sel": sel, "style": style, "color": color, "label": label}
+           for sel, style, color, label in reps if len(system.select(sel))]  # fmt: skip
     if any(r["color"] == carbon or r["color"].endswith("/" + carbon) for r in out):
         # with a ligand, a neutral cartoon: its carbons are the colour that stands out
         out[0]["color"] = "white" if out[0]["style"] == "cartoon" else out[0]["color"]
