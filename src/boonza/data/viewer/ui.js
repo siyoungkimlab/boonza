@@ -752,6 +752,7 @@ export function setupUI(app) {
       { label: "Minimize…", run: minimizePanel },
       { label: "Minimize Ligand Only", run: () => minimize({ ligandOnly: true }) },
       { label: "Torsion Profile…", run: () => profilePanel() },
+      { label: "Ramachandran Plot…", run: () => ramaPanel() },
       "-",
       { label: "Contacts", run: toggleContacts, checked: () => state.contacts },
       { label: "Hydrogen Bonds…", run: hbondPanel, checked: () => !!state.hbonds },
@@ -946,6 +947,7 @@ export function setupUI(app) {
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {
+    ramaRefresh?.();
     footerEdit();
     footerSmiles();
     refreshSmilesBox();
@@ -1373,6 +1375,85 @@ export function setupUI(app) {
       await app.show([o]);
       app.message(`copied ${out.added} atoms of ${m.name} into ${o.name} · Edit | Undo with ${o.name} current takes them out`);
     } catch (e) { app.message(e.message, true); }
+  }
+
+  // Analyze | Ramachandran Plot: phi and psi of each residue of the current model at this
+  // frame, over the regions residues usually take; the selected residues are marked, and
+  // a click on a point selects its residue (Shift: adds or takes it away)
+  const RAMA_CLUSTERS = [  // phi, psi, spread of each, weight: where residues are found
+    [-63, -43, 15, 15, 1], [-120, 130, 25, 25, 0.8], [-65, 145, 15, 20, 0.7], [-90, 0, 20, 15, 0.3], [57, 47, 12, 12, 0.25],
+    // and the broad bands around them that are allowed, if less often taken
+    [-100, 30, 35, 55, 0.12], [-115, 160, 45, 40, 0.15], [-80, -40, 35, 30, 0.12], [65, 30, 18, 25, 0.08]];
+  const ramaDensity = (phi, psi) => {
+    const wrap = d => ((d + 540) % 360) - 180;
+    let s = 0;
+    for (const [p, q, sp, sq, w] of RAMA_CLUSTERS) s += w * Math.exp(-(wrap(phi - p) ** 2) / (2 * sp * sp) - (wrap(psi - q) ** 2) / (2 * sq * sq));
+    return s;
+  };
+  const FAVORED = 0.35, ALLOWED = 0.06;
+  // phi, psi of each residue with a backbone and bonded neighbors on both sides
+  function phiPsi(m) {
+    const T = m.topo, A = T.atoms, R = T.residues;
+    const atom = (r, name) => T.residueAtoms[r].find(a => A.name[a] === name);
+    const close = (a, b) => a !== undefined && b !== undefined && Math.hypot(...app.xyz(m, a).map((x, d) => x - app.xyz(m, b)[d])) < 2.0;
+    const out = [];
+    for (let r = 1; r < R.name.length - 1; r++) {
+      if (R.kind[r] !== 1) continue;
+      const n = atom(r, "N"), ca = atom(r, "CA"), c = atom(r, "C"), cp = atom(r - 1, "C"), nn = atom(r + 1, "N");
+      if ([n, ca, c].some(a => a === undefined) || !close(cp, n) || !close(c, nn)) continue;
+      out.push({ r, phi: app.measure(m, [cp, n, ca, c]).value, psi: app.measure(m, [n, ca, c, nn]).value });
+    }
+    return out;
+  }
+  let ramaRefresh = null;
+  app.onFrame = () => ramaRefresh?.();
+  function ramaPanel() {
+    const m = app.selection()[0]?.[0] || app.currentModel();
+    if (!m?.topo) { app.message("no model", true); return; }
+    if (m.topo.cg) { app.message("a Ramachandran plot needs an all-atom protein (N, CA and C of each residue)", true); return; }
+    const W = 330, H = 330, L = 34, B = 26, T0 = 8, R0 = 8;
+    const x = phi => L + (phi + 180) / 360 * (W - L - R0), y = psi => T0 + (180 - psi) / 360 * (H - T0 - B);
+    // the regions, drawn once as a small picture the plot stretches: favored darker than allowed
+    const N = 72, pic = el("canvas", { width: N, height: N }), g = pic.getContext("2d"), img = g.createImageData(N, N);
+    const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#f0a23b";
+    const rgb = /^#([0-9a-f]{6})$/i.test(accent) ? [0, 2, 4].map(k => parseInt(accent.slice(1 + k, 3 + k), 16)) : [240, 162, 59];
+    for (let row = 0; row < N; row++) {
+      for (let col = 0; col < N; col++) {
+        const d = ramaDensity(-180 + (col + 0.5) * 360 / N, 180 - (row + 0.5) * 360 / N), k = 4 * (row * N + col);
+        img.data.set([...rgb, d >= FAVORED ? 95 : d >= ALLOWED ? 38 : 0], k);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const cells = `<image href="${pic.toDataURL()}" x="${L}" y="${T0}" width="${W - L - R0}" height="${H - T0 - B}" preserveAspectRatio="none"/>`;
+    const ticks = [-180, -90, 0, 90, 180].map(v => `<line x1="${x(v)}" x2="${x(v)}" y1="${T0}" y2="${H - B}" class="grid"/>`
+      + `<line x1="${L}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}" class="grid"/>`
+      + `<text x="${x(v)}" y="${H - 10}" text-anchor="middle">${v}</text><text x="${L - 4}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join("");
+    panel("rama", "Ramachandran Plot", body => {
+      const head = el("div", { className: "help", style: "margin:0 0 6px" });
+      const box = el("div", { className: "plot rama" });
+      const legend = el("div", { className: "help" });
+      body.append(head, box, legend);
+      const draw = () => {
+        if (!m.topo || m.closed) return;
+        const pts = phiPsi(m), A = m.topo.atoms, Rr = m.topo.residues;
+        const picked = new Set(app.selected(m).map(a => A.residue[a]));
+        const kind = r => Rr.name[r] === "GLY" ? "gly" : Rr.name[r] === "PRO" ? "pro" : "res";
+        const dots = pts.map(p => `<circle cx="${x(p.phi).toFixed(1)}" cy="${y(p.psi).toFixed(1)}" r="${picked.has(p.r) ? 3.6 : 2.6}" class="${kind(p.r)}${picked.has(p.r) ? " on" : ""}" data-r="${p.r}"><title>${Rr.name[p.r]} ${Rr.resid[p.r]}${Rr.insertion[p.r].trim()} ${m.topo.chains.name[Rr.chain[p.r]] || ""}: φ ${p.phi.toFixed(0)}°, ψ ${p.psi.toFixed(0)}°</title></circle>`).join("");
+        box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${cells}${ticks}<text x="${(L + W) / 2}" y="${H}" text-anchor="middle">φ</text><text x="9" y="${(T0 + H - B) / 2}" text-anchor="middle">ψ</text>${dots}</svg>`;
+        for (const c of box.querySelectorAll("circle")) c.onclick = e => app.select(m, m.topo.residueAtoms[+c.dataset.r], e.shiftKey ? "toggle" : "set");
+        const general = pts.filter(p => kind(p.r) === "res");
+        const fav = general.filter(p => ramaDensity(p.phi, p.psi) >= FAVORED).length;
+        const out = general.filter(p => ramaDensity(p.phi, p.psi) < ALLOWED).length;
+        head.textContent = `${m.name}${app.nframes() > 1 ? `, frame ${state.frame + 1}` : ""}: ${pts.length} residues`
+          + (picked.size ? `, ${pts.filter(p => picked.has(p.r)).length} selected` : "")
+          + (general.length ? ` · ${Math.round(100 * fav / general.length)}% favored, ${out} outside (glycine and proline aside)` : "");
+      };
+      legend.innerHTML = '<span class="key res"></span> residue <span class="key gly"></span> glycine <span class="key pro"></span> proline · '
+        + "shaded: where residues are usually found (darker: favored), a rough guide rather than a validation. "
+        + "Click a point to select its residue, Shift to add it.";
+      draw();
+      ramaRefresh = () => { if (box.isConnected) draw(); else ramaRefresh = null; };
+    });
   }
 
   // Analyze | Hydrogen Bonds: between two selections, drawn green and dashed

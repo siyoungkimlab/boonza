@@ -992,6 +992,7 @@ async function setFrame(i) {
     await refreshContacts();
     updatePlayer();
     rebuild();
+    app.onFrame();
   } catch (e) {
     message(e.message, true);
     state.playing = false;
@@ -1149,7 +1150,7 @@ const app = {
   setFrame, play, nframes, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
   range, STYLE, pageState, restorePage, PYTHON, withPictureScene,
   REP_STYLES, MATERIALS, makeRep, colorRep, repIds, isRibbon, repStyle, repsChanged, aggregate, repAlpha,
-  onSelection: () => {}, onModels: () => {}, onEmpty: () => {}, onReps: () => {},  // ui.js fills these in
+  onSelection: () => {}, onModels: () => {}, onEmpty: () => {}, onReps: () => {}, onFrame: () => {},  // ui.js fills these in
 };
 app.STATIC = STATIC;
 window.boonzaView = app;  // for scripting the page (and testing it)

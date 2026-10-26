@@ -265,6 +265,15 @@ body.dark .label.meter { color: #ffd34d; }
 .plot svg { width: 340px; height: 190px; display: block; cursor: crosshair; }
 .plot text { font: 10px Arial, sans-serif; fill: var(--muted); }
 .mouse-table td:first-child { color: var(--muted); }
+.rama svg { display: block; width: 330px; height: 330px; cursor: default; }
+.rama .grid { stroke: var(--line); stroke-width: 0.6; }
+.rama circle { stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.5; cursor: pointer; }
+.rama circle.res, .key.res { fill: #5b8def; background: #5b8def; }
+.rama circle.gly, .key.gly { fill: #43c06a; background: #43c06a; }
+.rama circle.pro, .key.pro { fill: #e8a33c; background: #e8a33c; }
+.rama circle.on { fill: #ff73d9; stroke: var(--text); stroke-width: 1; }
+.rama circle:hover { stroke: var(--text); stroke-width: 1.2; }
+.key { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 2px 0 6px; }
 
 /* --- the Python console, along the bottom of the view ---------------------------------- */
 #pyconsole { position: absolute; left: 0; right: 0; bottom: 0; height: 34%; min-height: 120px; z-index: 8;
