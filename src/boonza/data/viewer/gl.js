@@ -1,8 +1,13 @@
 // WebGL2 renderer: impostor spheres, instanced cylinders, triangle meshes and lines.
-// A scene is {spheres, cylinders, mesh, lines}, plain typed arrays made by geometry.js.
+// A scene is {layers: [{alpha, spheres, cylinders, mesh, lines}]}, plain typed arrays
+// made by geometry.js.  Opaque layers (alpha 1) are drawn first; each see-through layer
+// then in two passes, its depth and then its color where it is nearest, so a
+// transparent surface shows its front over what is behind it and never itself.
 
 const SHADE = `
 uniform vec3 uBg;
+uniform float uAlpha;  // the layer's opacity
+uniform float uShine;  // its highlights: 0 matte, 1 plain, more glossy
 uniform vec2 uFog;  // fog from depth uFog.x to uFog.y (view-space distance)
 uniform float uFogStrength;
 vec3 shade(vec3 color, vec3 n, vec3 p) {
@@ -10,7 +15,7 @@ vec3 shade(vec3 color, vec3 n, vec3 p) {
   if (dot(n, v) < 0.0) n = -n;
   vec3 key = normalize(vec3(-0.4, 0.5, 1.0));
   float diff = max(dot(n, key), 0.0) * 0.7 + max(dot(n, v), 0.0) * 0.25;
-  float spec = pow(max(dot(n, normalize(key + v)), 0.0), 40.0) * 0.3;
+  float spec = pow(max(dot(n, normalize(key + v)), 0.0), 40.0 + 40.0 * max(uShine - 1.0, 0.0)) * 0.3 * uShine;
   vec3 c = color * (0.22 + diff) + vec3(spec);
   float fog = clamp((-p.z - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0);
   return mix(c, uBg, fog * uFogStrength);
@@ -56,7 +61,7 @@ void main() {
   }
   vec4 clip = uProj * vec4(p, 1.0);
   gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
-  frag = vec4(shade(vColor, normalize(p - vCenter), p), 1.0);
+  frag = vec4(shade(vColor, normalize(p - vCenter), p), uAlpha);
 }`;
 
 const CYLINDER_VS = `#version 300 es
@@ -95,7 +100,7 @@ precision highp float;
 in vec3 vPos, vNormal, vColor;
 out vec4 frag;
 ${SHADE}
-void main() { frag = vec4(shade(vColor, normalize(vNormal), vPos), 1.0); }`;
+void main() { frag = vec4(shade(vColor, normalize(vNormal), vPos), uAlpha); }`;
 
 const LINE_VS = `#version 300 es
 layout(location=0) in vec3 aPos;
@@ -114,11 +119,19 @@ in vec3 vPos, vColor;
 uniform vec3 uBg;
 uniform vec2 uFog;
 uniform float uFogStrength;
+uniform float uAlpha;
 out vec4 frag;
 void main() {
   float fog = clamp((-vPos.z - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0);
-  frag = vec4(mix(vColor, uBg, fog * uFogStrength), 1.0);
+  frag = vec4(mix(vColor, uBg, fog * uFogStrength), uAlpha);
 }`;
+
+// a finished picture onto the screen, as it is
+const COPY_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uColor;
+out vec4 frag;
+void main() { frag = texelFetch(uColor, ivec2(gl_FragCoord.xy), 0); }`;
 
 // the finishing pass of a picture (and of Render | Lighting | Publication):
 // silhouettes where depth jumps, and ambient occlusion from the depths around
@@ -134,7 +147,7 @@ precision highp float;
 uniform sampler2D uColor, uDepth;
 uniform vec2 uClip;        // near, far
 uniform float uOrtho;
-uniform float uPx;         // pixels per A at the scene's centre
+uniform float uPx;         // pixels per A at the scene's center
 uniform float uOutline;    // line width in pixels (0: none)
 uniform float uAO;         // occlusion strength (0: none)
 uniform float uRadius;     // how far occlusion looks, in pixels
@@ -201,20 +214,13 @@ export class Renderer {
       line: this.program(LINE_VS, LINE_FS),
       post: this.program(POST_VS, POST_FS, ["uColor", "uDepth", "uClip", "uOrtho", "uPx", "uOutline", "uAO", "uRadius", "uBack"]),
     };
+    this.programs.copy = this.program(POST_VS, COPY_FS, ["uColor"]);
     this.publication = false;  // the finishing pass on screen too
-    this.counts = { spheres: 0, cylinders: 0, mesh: 0, lines: 0 };
 
-    // spheres: a quad, plus per-instance center, radius, color
-    this.sphereVao = gl.createVertexArray();
-    gl.bindVertexArray(this.sphereVao);
-    this.attribute(0, 2, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]));
-    this.sphereBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 1, null, 1),
-                      this.attribute(3, 3, null, 1)];
-
-    // cylinders: an open tube of quads, plus per-instance ends, radius, color; a
-    // picture (detail 2) draws them rounder from the same instances
-    this.cylinderBuf = null;
-    this.cylinders = {};
+    // shared by every layer: a sphere's quad; a cylinder's tube of quads (a picture,
+    // detail 2, draws them rounder from the same instances)
+    this.quad = this.buffer(new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]));
+    this.tubes = {};
     for (const [detail, sides] of [[1, SIDES], [2, 36]]) {
       const local = [], index = [];
       for (let k = 0; k <= sides; k++) {
@@ -225,31 +231,55 @@ export class Renderer {
         const i = 2 * k;
         index.push(i, i + 2, i + 1, i + 1, i + 2, i + 3);
       }
-      const vao = gl.createVertexArray();
-      gl.bindVertexArray(vao);
-      this.attribute(0, 3, new Float32Array(local));
-      if (!this.cylinderBuf) {
-        this.cylinderBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 3, null, 1),
-                            this.attribute(3, 1, null, 1), this.attribute(4, 3, null, 1)];
-      } else {
-        [[1, 3], [2, 3], [3, 1], [4, 3]].forEach(([loc, size], k) => this.bind(this.cylinderBuf[k], loc, size, 1));
-      }
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+      const ix = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ix);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(index), gl.STATIC_DRAW);
-      this.cylinders[detail] = { vao, count: index.length };
+      this.tubes[detail] = { local: this.buffer(new Float32Array(local)), index: ix, count: index.length };
     }
     this.detail = 1;
+    this.layers = [];  // made as scenes need them, and kept
+    this.drawn = [];   // the current scene's: [{layer, alpha, counts}]
+  }
 
-    this.meshVao = gl.createVertexArray();
-    gl.bindVertexArray(this.meshVao);
-    this.meshBuf = [this.attribute(0, 3), this.attribute(1, 3), this.attribute(2, 3)];
-    this.meshIndex = gl.createBuffer();
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.meshIndex);
+  buffer(data) {
+    const gl = this.gl, b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    return b;
+  }
 
-    this.lineVao = gl.createVertexArray();
-    gl.bindVertexArray(this.lineVao);
-    this.lineBuf = [this.attribute(0, 3), this.attribute(1, 3)];
+  // one layer's buffers and vertex arrays: spheres, cylinders (at each detail), mesh, lines
+  layer() {
+    const gl = this.gl, L = {};
+    L.sphereVao = gl.createVertexArray();
+    gl.bindVertexArray(L.sphereVao);
+    this.bind(this.quad, 0, 2);
+    L.sphereBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 1, null, 1), this.attribute(3, 3, null, 1)];
+    L.cylinders = {};
+    L.cylinderBuf = null;
+    for (const [detail, tube] of Object.entries(this.tubes)) {
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      this.bind(tube.local, 0, 3);
+      if (!L.cylinderBuf) {
+        L.cylinderBuf = [this.attribute(1, 3, null, 1), this.attribute(2, 3, null, 1),
+                         this.attribute(3, 1, null, 1), this.attribute(4, 3, null, 1)];
+      } else {
+        [[1, 3], [2, 3], [3, 1], [4, 3]].forEach(([loc, size], k) => this.bind(L.cylinderBuf[k], loc, size, 1));
+      }
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, tube.index);
+      L.cylinders[detail] = { vao, count: tube.count };
+    }
+    L.meshVao = gl.createVertexArray();
+    gl.bindVertexArray(L.meshVao);
+    L.meshBuf = [this.attribute(0, 3), this.attribute(1, 3), this.attribute(2, 3)];
+    L.meshIndex = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, L.meshIndex);
+    L.lineVao = gl.createVertexArray();
+    gl.bindVertexArray(L.lineVao);
+    L.lineBuf = [this.attribute(0, 3), this.attribute(1, 3)];
     gl.bindVertexArray(null);
+    return L;
   }
 
   program(vs, fs, more = []) {
@@ -264,7 +294,7 @@ export class Renderer {
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
     const uniforms = {};
-    for (const name of ["uView", "uProj", "uBg", "uFog", "uFogStrength", "uOrtho", ...more]) uniforms[name] = gl.getUniformLocation(p, name);
+    for (const name of ["uView", "uProj", "uBg", "uFog", "uFogStrength", "uOrtho", "uAlpha", "uShine", ...more]) uniforms[name] = gl.getUniformLocation(p, name);
     return { p, uniforms };
   }
 
@@ -295,17 +325,33 @@ export class Renderer {
   }
 
   setScene(scene) {
-    const gl = this.gl, { spheres, cylinders, mesh, lines } = scene;
-    this.upload(this.sphereBuf, [spheres.center, spheres.radius, spheres.color]);
-    this.upload(this.cylinderBuf, [cylinders.a, cylinders.b, cylinders.radius, cylinders.color]);
-    this.upload(this.meshBuf, [mesh.position, mesh.normal, mesh.color]);
-    gl.bindVertexArray(this.meshVao);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.meshIndex);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.index, gl.DYNAMIC_DRAW);
-    gl.bindVertexArray(null);
-    this.upload(this.lineBuf, [lines.position, lines.color]);
-    this.counts = { spheres: spheres.radius.length, cylinders: cylinders.radius.length,
-                    mesh: mesh.index.length, lines: lines.position.length / 3 };
+    const gl = this.gl;
+    const layers = scene.layers || [{ alpha: 1, ...scene }];
+    while (this.layers.length < layers.length) this.layers.push(this.layer());
+    this.drawn = layers.map(({ alpha, shine = 1, spheres, cylinders, mesh, lines }, k) => {
+      const L = this.layers[k];
+      this.upload(L.sphereBuf, [spheres.center, spheres.radius, spheres.color]);
+      this.upload(L.cylinderBuf, [cylinders.a, cylinders.b, cylinders.radius, cylinders.color]);
+      this.upload(L.meshBuf, [mesh.position, mesh.normal, mesh.color]);
+      gl.bindVertexArray(L.meshVao);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, L.meshIndex);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.index, gl.DYNAMIC_DRAW);
+      gl.bindVertexArray(null);
+      this.upload(L.lineBuf, [lines.position, lines.color]);
+      return { layer: L, alpha, shine, counts: { spheres: spheres.radius.length, cylinders: cylinders.radius.length,
+                                          mesh: mesh.index.length, lines: lines.position.length / 3 } };
+    });
+  }
+
+  get glass() { return this.drawn.some(d => d.alpha < 1); }
+
+  // a target's depth into another of its size, for see-through layers drawn after the finish
+  copyDepth(from, to, w, h) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, from.fb);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, to.fb);
+    gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
   }
 
   resize() {
@@ -323,13 +369,31 @@ export class Renderer {
       this.drawScene(camera, w, h);
       return;
     }
+    // outlines and occlusion of what is solid; see-through layers over the finished view
     const target = this.target(w, h);
-    this.drawScene(camera, w, h, target.fb);
+    const finish = { outline: Math.max(1, Math.round(w / this.canvas.clientWidth)), ao: 0.6 };
+    this.drawScene(camera, w, h, target.fb, null, "opaque");
+    if (!this.glass) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.finish(camera, target, w, h, finish);
+      return;
+    }
+    const out = this.target(w, h, "screen-out");
+    gl.bindFramebuffer(gl.FRAMEBUFFER, out.fb);
+    this.finish(camera, target, w, h, finish);
+    this.copyDepth(target, out, w, h);
+    this.drawScene(camera, w, h, out.fb, null, "glass");
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.finish(camera, target, w, h, { outline: Math.max(1, Math.round(w / this.canvas.clientWidth)), ao: 0.6 });
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(this.programs.copy.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, out.color);
+    gl.uniform1i(this.programs.copy.uniforms.uColor, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.enable(gl.DEPTH_TEST);
   }
 
-  // a framebuffer with colour and depth textures, kept while its size holds
+  // a framebuffer with color and depth textures, kept while its size holds
   target(w, h, key = "screen") {
     const gl = this.gl;
     this.targets = this.targets || {};
@@ -356,7 +420,7 @@ export class Renderer {
   }
 
   // the finishing pass, from a target into the bound framebuffer; ``px``: pixels per A
-  // at the scene's centre (a picture's tiles pass the whole picture's)
+  // at the scene's center (a picture's tiles pass the whole picture's)
   finish(camera, t, w, h, { outline = 1, ao = 0.6, back = null, px = null, radius = null } = {}) {
     const gl = this.gl, { p, uniforms: u } = this.programs.post;
     gl.viewport(0, 0, w, h);
@@ -412,14 +476,20 @@ export class Renderer {
             P[4 * c] = sx * p0 + tx * p3; P[4 * c + 1] = sy * p1 + ty * p3; P[4 * c + 2] = p2; P[4 * c + 3] = p3;
           }
           const scene = this.target(TW, TH, "picture-scene");
-          this.drawScene(camera, TW, TH, scene.fb, P);
+          this.drawScene(camera, TW, TH, scene.fb, P, "opaque");
           const fin = this.target(TW, TH, "picture-out");
           gl.bindFramebuffer(gl.FRAMEBUFFER, fin.fb);
           this.finish(camera, scene, TW, TH, { outline: line, ao: ao ? 0.6 : 0, px, radius,
                                                 back: transparent ? [0, 0, 0, 0] : null });
+          if (this.glass) {  // see-through layers over the finished tile
+            this.copyDepth(scene, fin, TW, TH);
+            this.drawScene(camera, TW, TH, fin.fb, P, "glass");
+          }
           const pixels = new Uint8Array(TW * TH * 4);
           gl.readPixels(0, 0, TW, TH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-          // average each ss x ss block (colours weighted by coverage, for transparency)
+          // average each ss x ss block: the tile holds color times coverage (a
+          // transparent background is 0, a see-through layer over it a part), so the
+          // sums over the block divided by its coverage are the block's color
           for (let oy = 0; oy < th; oy++) {
             for (let ox = 0; ox < tw; ox++) {
               let r = 0, g = 0, b = 0, a = 0;
@@ -427,8 +497,7 @@ export class Renderer {
                 const row = TH - 1 - (pad + oy * ss + dy);  // GL rows count up from the bottom
                 let k = 4 * (row * TW + pad + ox * ss);
                 for (let dx = 0; dx < ss; dx++, k += 4) {
-                  const al = pixels[k + 3];
-                  r += pixels[k] * al; g += pixels[k + 1] * al; b += pixels[k + 2] * al; a += al;
+                  r += pixels[k] * 255; g += pixels[k + 1] * 255; b += pixels[k + 2] * 255; a += pixels[k + 3];
                 }
               }
               const o = 4 * ((y0 + oy) * w + x0 + ox);
@@ -454,20 +523,24 @@ export class Renderer {
     return canvas;
   }
 
-  drawScene(camera, width, height, fb = null, projection = null) {
+  // part: "all"; "opaque" (cleared first); or "glass", the see-through layers over
+  // what the target holds
+  drawScene(camera, width, height, fb = null, projection = null, part = "all") {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.viewport(0, 0, width, height);
-    gl.clearColor(...this.background, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (part !== "glass") {
+      gl.clearColor(...this.background, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    }
     gl.enable(gl.DEPTH_TEST);
     const view = camera.view(), proj = projection || camera.projection(width / height);
-    // fog: from `start` (a fraction of the scene's depth in front of its centre) to its back
+    // fog: from `start` (a fraction of the scene's depth in front of its center) to its back
     const f = this.fog, depth = camera.radius * 1.5;
     const fog = f.on
       ? [camera.distance - depth * (1 - 2 * f.start), camera.distance + depth]
       : [1e9, 1e9 + 1];
-    const use = ({ p, uniforms }) => {
+    const use = ({ p, uniforms }, alpha, shine = 1) => {
       gl.useProgram(p);
       gl.uniformMatrix4fv(uniforms.uView, false, view);
       gl.uniformMatrix4fv(uniforms.uProj, false, proj);
@@ -475,28 +548,49 @@ export class Renderer {
       gl.uniform2fv(uniforms.uFog, fog);
       gl.uniform1f(uniforms.uFogStrength, f.strength);
       gl.uniform1f(uniforms.uOrtho, camera.ortho ? 1 : 0);
+      gl.uniform1f(uniforms.uAlpha, alpha);
+      gl.uniform1f(uniforms.uShine, shine);
     };
-    const n = this.counts;
-    if (n.spheres) {
-      use(this.programs.sphere);
-      gl.bindVertexArray(this.sphereVao);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n.spheres);
-    }
-    if (n.cylinders) {
-      use(this.programs.cylinder);
-      const cyl = this.cylinders[this.detail] || this.cylinders[1];
-      gl.bindVertexArray(cyl.vao);
-      gl.drawElementsInstanced(gl.TRIANGLES, cyl.count, gl.UNSIGNED_SHORT, 0, n.cylinders);
-    }
-    if (n.mesh) {
-      use(this.programs.mesh);
-      gl.bindVertexArray(this.meshVao);
-      gl.drawElements(gl.TRIANGLES, n.mesh, gl.UNSIGNED_INT, 0);
-    }
-    if (n.lines) {
-      use(this.programs.line);
-      gl.bindVertexArray(this.lineVao);
-      gl.drawArrays(gl.LINES, 0, n.lines);
+    const layer = ({ layer: L, counts: n, shine }, alpha) => {
+      if (n.spheres) {
+        use(this.programs.sphere, alpha, shine);
+        gl.bindVertexArray(L.sphereVao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n.spheres);
+      }
+      if (n.cylinders) {
+        use(this.programs.cylinder, alpha, shine);
+        const cyl = L.cylinders[this.detail] || L.cylinders[1];
+        gl.bindVertexArray(cyl.vao);
+        gl.drawElementsInstanced(gl.TRIANGLES, cyl.count, gl.UNSIGNED_SHORT, 0, n.cylinders);
+      }
+      if (n.mesh) {
+        use(this.programs.mesh, alpha, shine);
+        gl.bindVertexArray(L.meshVao);
+        gl.drawElements(gl.TRIANGLES, n.mesh, gl.UNSIGNED_INT, 0);
+      }
+      if (n.lines) {
+        use(this.programs.line, alpha, shine);
+        gl.bindVertexArray(L.lineVao);
+        gl.drawArrays(gl.LINES, 0, n.lines);
+      }
+    };
+    if (part !== "glass") for (const d of this.drawn) if (d.alpha >= 1) layer(d, 1);
+    if (part !== "opaque") {
+      for (const d of this.drawn) {
+        if (d.alpha >= 1) continue;
+        // its depth alone, then its color only where it is that depth: the front of it
+        gl.colorMask(false, false, false, false);
+        layer(d, d.alpha);
+        gl.colorMask(true, true, true, true);
+        gl.depthFunc(gl.LEQUAL);
+        gl.depthMask(false);
+        gl.enable(gl.BLEND);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        layer(d, d.alpha);
+        gl.disable(gl.BLEND);
+        gl.depthMask(true);
+        gl.depthFunc(gl.LESS);
+      }
     }
     gl.bindVertexArray(null);
   }

@@ -1,10 +1,10 @@
-// The window around the rendering area: the menu bar, the right button bar,
-// the popup menu, the footer (editing area, Atoms, Ribbon, Contacts, Fog, ZClip),
-// the corner (theme, R S L, trackball, dial), the command line and the panels.
-// Render commands act on the selected atoms, or on all of them if none are.
+// The window around the view: the top bar (menus and actions), the popup menu, the
+// side bar (the models, and the representations of the current one), the status bar
+// (the selection's geometry to edit), the view's own buttons, the command line and the
+// panels.  Commands that change what is drawn act on the selected atoms, or on all of
+// them if none are.
 
 import { colorAtoms, colorResidues, isColor, named } from "./colors.js";
-import { STYLE_NAMES, STYLES } from "./geometry.js";
 import { GRIDS } from "./surface.js";
 
 const $ = id => document.getElementById(id);
@@ -43,7 +43,7 @@ export function setupUI(app) {
         closeMenus(depth + 1);
         if (sub && !off) {
           const r = row.getBoundingClientRect();
-          const m = menu(sub, r.right - 2, r.top - 3, depth + 1);
+          const m = menu(sub, r.right - 2, r.top - 5, depth + 1);
           const w = m.getBoundingClientRect().width;
           if (r.right - 2 + w > innerWidth) m.style.left = `${Math.max(0, r.left - w + 2)}px`;  // no room: to the left
         }
@@ -65,61 +65,103 @@ export function setupUI(app) {
     return div;
   }
   window.addEventListener("pointerdown", e => {
-    if (!e.target.closest(".menu") && !e.target.closest(".menutitle") && !e.target.closest(".rbtn.sub")
-        && !e.target.closest("#theme-button") && !e.target.closest("#f-atoms") && !e.target.closest("#f-ribbon")
-        && !e.target.closest("#f-surface") && !e.target.closest(".mrow .pick")) closeMenus();
+    if (!e.target.closest(".menu") && !e.target.closest(".menutitle") && !e.target.closest(".pick")
+        && !e.target.closest("#rep-presets")) closeMenus();
   });
 
-  // --- what render commands act on ----------------------------------------------------
+  // --- what is drawn: representations ------------------------------------------------
+
+  const STYLE_LABEL = Object.fromEntries(app.REP_STYLES);
+  const classIds = (m, k) => app.range(m.topo.natoms).filter(a => m.topo.atoms.class[a] === k);
+
+  // a new representation of these atoms in each model; the last one made is the current one
+  function addRep(pairs, { style = "lines", color = "element", sel = null, label = null } = {}) {
+    let last = null;
+    for (const [m, ids] of pairs) {
+      if (!m?.state || !ids.length) continue;
+      const rep = app.makeRep(m, { ids, sel, label: label || sel || describeAtoms(m, ids), style, color });
+      m.reps.push(rep);
+      m.currentRep = rep.id;
+      app.aggregate(m);
+      last = [m, rep];
+    }
+    app.rebuild();
+    if (last) { state.current = last[0].index; app.onReps(last[0]); }
+    return last?.[1] || null;
+  }
+
+  // a few words for a set of atoms: a residue, a molecule, so many atoms
+  function describeAtoms(m, ids) {
+    const A = m.topo.atoms, R = m.topo.residues;
+    if (ids.length === m.topo.natoms) return "all";
+    const res = [...new Set(ids.map(a => A.residue[a]))];
+    if (res.length === 1) return `${R.name[res[0]]}${R.resid[res[0]]}${ids.length < m.topo.residueAtoms[res[0]].length ? ` (${ids.length} atoms)` : ""}`;
+    if (res.length <= 4) return res.map(r => `${R.name[r]}${R.resid[r]}`).join(" ");
+    return `${ids.length} atoms`;
+  }
+
+  // these atoms drawn by no representation (their ribbons, surfaces and atoms alike)
+  function hideAtoms(pairs, what = null) {
+    for (const [m, ids] of pairs) {
+      if (!m?.state) continue;
+      const out = new Set(ids);
+      for (const rep of m.reps) {
+        let any = false;
+        for (const a of out) if (rep.mask[a]) { rep.mask[a] = 0; any = true; }
+        if (!any) continue;
+        rep.version++;
+        if (rep.sel && what) rep.sel = `(${rep.sel}) and not (${what})`;
+        else rep.sel = null;
+        app.colorRep(m, rep);
+      }
+      m.reps = m.reps.filter(r => r.mask.some(x => x));
+      app.aggregate(m);
+    }
+    app.rebuild();
+    app.onReps(app.currentModel());
+  }
+
+  // these atoms drawn in this style only: out of the other atom representations, into a new one
+  function showAs(pairs, style, what = null) {
+    for (const [m, ids] of pairs) {
+      if (!m?.state || app.isRibbon({ style }) || style === "surface") continue;
+      for (const rep of m.reps) {
+        if (app.isRibbon(rep) || rep.style === "surface") continue;
+        let any = false;
+        for (const a of ids) if (rep.mask[a]) { rep.mask[a] = 0; any = true; }
+        if (any) rep.sel = rep.sel && what ? `(${rep.sel}) and not (${what})` : null;
+      }
+      m.reps = m.reps.filter(r => r.mask.some(x => x));
+    }
+    return addRep(pairs, { style, sel: what });
+  }
+
+  // these atoms in this color wherever they are drawn
+  function colorIn(pairs, spec) {
+    for (const [m, ids] of pairs) {
+      if (!m?.state) continue;
+      for (const rep of m.reps) {
+        if (rep.style === "surface") continue;
+        const mine = ids.filter(a => rep.mask[a]);
+        if (!mine.length) continue;
+        if (mine.length === app.repIds(rep).length) { rep.color = spec; rep.tinted = false; app.colorRep(m, rep); continue; }
+        if (app.isRibbon(rep)) {
+          const res = [...new Set(mine.map(a => m.topo.atoms.residue[a]))].filter(r => m.topo.residues.trace[r] >= 0);
+          colorResidues(named(spec) ? spec : spec.startsWith("element/") ? spec.split("/")[1] : spec, res, m.topo, m.ss, rep.rgb);
+        } else {
+          colorAtoms(spec, mine, m.topo, m.ss, rep.rgb);
+          rep.custom = true;
+        }
+        rep.tinted = false;
+      }
+    }
+    app.rebuild();
+    app.onReps(app.currentModel());
+  }
 
   function forTargets(fn) {
     for (const [m, ids] of app.targets()) fn(m, ids);
     app.rebuild();
-  }
-  const classIds = (m, k) => app.range(m.topo.natoms).filter(a => m.topo.atoms.class[a] === k);
-  const hydrogenIds = m => app.range(m.topo.natoms).filter(a => m.topo.atoms.element[a] === "H");
-
-  // the atoms of a category in every shown model: [[m, ids]]
-  function category(what) {
-    return app.shownModels().map(m => {
-      const n = m.topo.natoms, sel = m.state.sel;
-      const ids = {
-        all: () => app.range(n), receptor: () => classIds(m, 0), ligand: () => classIds(m, 1),
-        solvent: () => classIds(m, 2), hydrogens: () => hydrogenIds(m),
-        selected: () => app.selected(m), unselected: () => app.range(n).filter(a => !sel[a]),
-      }[what]();
-      return [m, ids];
-    });
-  }
-
-  function setShown(what, on) {
-    for (const [m, ids] of category(what)) for (const a of ids) m.state.show[a] = on ? 1 : 0;
-    if (on && what === "hydrogens" && state.hydrogens !== "all") { state.hydrogens = "all"; }
-    app.rebuild();
-  }
-
-  function setStyle(style) {
-    forTargets((m, ids) => { for (const a of ids) { m.state.style[a] = style; m.state.show[a] = 1; } });
-  }
-
-  function colorBy(spec) {
-    forTargets((m, ids) => colorAtoms(spec, ids, m.topo, m.ss, m.state.rgb));
-  }
-
-  // ribbons: of the residues of the target atoms
-  function targetResidues(m, ids) {
-    const out = new Set();
-    for (const a of ids) out.add(m.topo.atoms.residue[a]);
-    return [...out].filter(r => m.topo.residues.trace[r] >= 0);
-  }
-  function ribbon(on) {
-    forTargets((m, ids) => { for (const r of targetResidues(m, ids)) m.state.ribbon[r] = on ? 1 : 0; });
-  }
-  function ribbonStyle(style) {
-    forTargets(m => { m.state.ribbonStyle = style; });
-  }
-  function ribbonColor(spec) {
-    forTargets((m, ids) => colorResidues(spec, targetResidues(m, ids), m.topo, m.ss, m.state.ribbonRGB));
   }
 
   function labels(mode) {
@@ -134,37 +176,16 @@ export function setupUI(app) {
     ? `(same residue as ((same residue as name BB GC PX) and within 6 of (${m.topo.ligand}))) and not (${m.topo.ligand})`
     : `(same residue as ((protein or nucleic) and within 4.5 of (${m.topo.ligand}))) and not (${m.topo.ligand})`;
 
-  // SiteView: the ligand and its pocket, everything else as ribbon, looked at
-  async function siteView() {
+  // the ligand and its pocket in view; drawn as the binding site preset if neither is drawn
+  async function focusLigand() {
     const m = app.currentModel();
-    if (!m.topo) return;
+    if (!m?.topo) return;
     const lig = await serverSelect(m, `same residue as (${m.topo.ligand})`);
-    if (!lig.length) { app.message("no ligand: Ligand | Choose Ligand picks one", true); return; }
+    if (!lig.length) { app.message("no ligand: right-click it and Set as Ligand", true); return; }
     const pocket = await serverSelect(m, pocketSelection(m));
-    const st = m.state;
-    if (!m.beforeSite) m.beforeSite = { show: st.show.slice(), style: st.style.slice(), rgb: st.rgb.slice(), ribbon: st.ribbon.slice() };
-    st.show.fill(0);
-    for (let r = 0; r < st.ribbon.length; r++) st.ribbon[r] = m.topo.residues.trace[r] >= 0 ? 1 : 0;
-    for (const a of pocket) { st.show[a] = 1; st.style[a] = app.STYLE.stick; }
-    // a ligand of points (a site's) stays spheres, coloured as it was
-    const molecule = lig.filter(a => m.topo.bondsOf[a].length);
-    for (const a of lig) { st.show[a] = 1; st.style[a] = m.topo.bondsOf[a].length ? app.STYLE.stick : app.STYLE.space; }
-    colorAtoms(`element/${m.topo.carbon || "green"}`, molecule, m.topo, m.ss, st.rgb);
-    app.rebuild();
+    if (![...lig, ...pocket].some(a => m.state.show[a])) await preset(m, "site");
     const [c, r] = app.bounds(m, [...lig, ...pocket]);
     app.flyTo(c, Math.max(r, 8));
-  }
-
-  // WholeView: the display from before SiteView back, and everything in view
-  function wholeView() {
-    for (const m of app.shownModels()) {
-      const b = m.beforeSite;
-      if (!b || !m.state || b.show.length !== m.state.show.length) { m.beforeSite = null; continue; }
-      Object.assign(m.state, { show: b.show, style: b.style, rgb: b.rgb, ribbon: b.ribbon });
-      m.beforeSite = null;
-    }
-    app.rebuild();
-    app.viewAll();
   }
 
   // --- selection commands --------------------------------------------------------------
@@ -212,13 +233,15 @@ export function setupUI(app) {
     app.rebuild(); app.onSelection();
   }
 
+  // which atoms a click can pick: receptor, ligand, solvent, ribbons
+  const PICKABLE = [["Protein and other receptor atoms", 0], ["Ligand", 1], ["Solvent", 2], ["Ribbons", 3]];
   const selectItems = () => [
     { label: "All", run: () => selectWhere(() => true), key: "Ctrl A" },
-    { label: "Clear", run: () => { app.clearSelection(); app.rebuild(); app.onSelection(); } },
+    { label: "None", run: () => { app.clearSelection(); app.rebuild(); app.onSelection(); }, key: "Esc" },
     { label: "Invert", run: invert },
     "-",
     { label: "Ligand", run: () => selectServer(m => `same residue as (${m.topo.ligand})`) },
-    { label: "Pocket", run: () => selectServer(pocketSelection) },
+    { label: "Binding Site", run: () => selectServer(pocketSelection) },
     { label: "Receptor", run: () => selectWhere((m, a) => m.topo.atoms.class[a] === 0) },
     { label: "Solvent", run: () => selectWhere((m, a) => m.topo.atoms.class[a] === 2) },
     { label: "Hydrogens", run: () => selectWhere((m, a) => m.topo.atoms.element[a] === "H") },
@@ -227,53 +250,24 @@ export function setupUI(app) {
       { label: "Halogens", run: () => selectWhere((m, a) => ["F", "Cl", "Br", "I"].includes(m.topo.atoms.element[a])) },
     ] },
     "-",
-    { label: "Selector…", run: () => openCLI("select ") },
+    { label: "Grow", sub: extendItems },
+    { label: "Clickable", sub: () => PICKABLE.map(([label, k]) => ({ label, checked: () => state.masks[k],
+      run: () => { state.masks[k] = !state.masks[k]; } })) },
+    "-",
+    { label: "By Expression…", run: () => openCLI("select ") },
   ];
   const extendItems = () => [
-    { label: "Residues", run: () => extend("residues") },
-    { label: "Chains", run: () => extend("chains") },
-    { label: "Molecules", run: () => extend("molecules") },
-    { label: "Hydrogens", run: () => extend("hydrogens") },
-    { label: "Near (4.5 Å)", run: () => extendNear() },
+    { label: "To Residues", run: () => extend("residues") },
+    { label: "To Chains", run: () => extend("chains") },
+    { label: "To Molecules", run: () => extend("molecules") },
+    { label: "Their Hydrogens", run: () => extend("hydrogens") },
+    { label: "Within 4.5 Å", run: () => extendNear() },
   ];
 
-  // --- render items ------------------------------------------------------------------
+  // --- view items ------------------------------------------------------------------------
 
-  const categories = [["All", "all"], ["Receptor", "receptor"], ["Ligand", "ligand"], ["Solvent", "solvent"],
-                      ["Hydrogens", "hydrogens"], "-", ["Selected", "selected"], ["Unselected", "unselected"]];
-  const hideItems = () => categories.map(c => c === "-" ? c : { label: c[0], run: () => setShown(c[1], false) });
-  const showItems = () => categories.map(c => c === "-" ? c : { label: c[0], run: () => setShown(c[1], true) });
-  const atomItems = () => [
-    ...STYLE_NAMES.map((name, k) => ({ label: name, run: () => setStyle(k) })),
-    "-",
-    { label: "Color", sub: atomColorItems },
-    { label: "Hide", run: () => forTargets((m, ids) => { for (const a of ids) m.state.show[a] = 0; }) },
-  ];
-  const atomColorItems = () => [
-    { label: "Element", run: () => colorBy("element") },
-    { label: "Carbon", sub: CARBONS.map(c => ({ label: c, run: () => colorBy(`element/${c}`) })) },
-    { label: "Chain", run: () => colorBy("chain") },
-    { label: "Residue Type", run: () => colorBy("restype") },
-    { label: "Residue Name", run: () => colorBy("resname") },
-    { label: "Secondary Structure", run: () => colorBy("ss") },
-    { label: "B-factor", run: () => colorBy("bfactor") },
-    { label: "Single", sub: SINGLE.map(c => ({ label: c, run: () => colorBy(c) })) },
-  ];
-  const ribbonItems = () => [
-    { label: "Show", run: () => ribbon(true) },
-    { label: "Hide", run: () => ribbon(false) },
-    "-",
-    { label: "Cartoon", run: () => ribbonStyle("cartoon"), checked: () => app.currentModel()?.state?.ribbonStyle === "cartoon" },
-    { label: "Tube", run: () => ribbonStyle("tube"), checked: () => app.currentModel()?.state?.ribbonStyle === "tube" },
-    "-",
-    { label: "Color", sub: [
-      { label: "Secondary Structure", run: () => ribbonColor("ss") },
-      { label: "Chain", run: () => ribbonColor("chain") },
-      { label: "Spectrum (N to C)", run: () => ribbonColor("spectrum") },
-      { label: "Residue Type", run: () => ribbonColor("restype") },
-      { label: "Single", sub: SINGLE.map(c => ({ label: c, run: () => ribbonColor(c) })) },
-    ] },
-  ];
+  const ATOM_STYLES = app.REP_STYLES.filter(([s]) => !["cartoon", "tube", "surface"].includes(s));
+  const showAsItems = () => ATOM_STYLES.map(([s, label]) => ({ label, run: () => showAs(app.targets(), s) }));
   const labelItems = () => [
     ...[["Name", "name"], ["Element", "element"], ["Residue", "residue"], ["Charge", "charge"]]
       .map(([l, mode]) => ({ label: l, run: () => labels(mode) })),
@@ -285,59 +279,70 @@ export function setupUI(app) {
     app.message(`pocket numbers ${state.pocketNumbers ? "shown" : "hidden"}`);
     app.rebuild();
   }
-  function cycleHydrogens() {
-    state.hydrogens = { polar: "all", all: "none", none: "polar" }[state.hydrogens];
-    app.message(`hydrogens: ${{ all: "all shown", polar: "polar ones shown", none: "hidden" }[state.hydrogens]}`);
+  function setHydrogens(mode) {
+    state.hydrogens = mode;
+    $("f-hydrogens").textContent = `H: ${mode}`;
     app.rebuild();
+  }
+  function cycleHydrogens() {
+    setHydrogens({ polar: "all", all: "none", none: "polar" }[state.hydrogens]);
+    app.message(`hydrogens: ${{ all: "all shown", polar: "polar ones shown", none: "hidden" }[state.hydrogens]}`);
   }
   function toggleContacts() {
     state.contacts = !state.contacts;
-    $("f-contacts").classList.toggle("on", state.contacts);
     app.refreshContacts().then(app.rebuild);
   }
-  const renderItems = () => [
-    { label: "Center", run: () => app.centerView() },
-    { label: "SiteView", run: siteView },
-    { label: "WholeView", run: wholeView, key: "W" },
-    { label: "Reset View", run: () => app.resetView(), key: "R" },
+  function toggleCell() {
+    state.cell = !state.cell;
+    $("f-cell").classList.toggle("on", state.cell);
+    app.rebuild();
+  }
+  const viewItems = () => [
+    { label: "Representations", run: () => toggleSide(), checked: () => !$("window").classList.contains("nomodels") },
     "-",
-    { label: "Hide", sub: hideItems },
-    { label: "Show", sub: showItems },
-    { label: "Atoms", sub: atomItems },
-    { label: "Ribbon", sub: ribbonItems },
-    { label: "Atom Labels", sub: labelItems },
-    { label: "Surface", sub: surfaceItems },
+    { label: "Fit All", run: () => app.viewAll(), key: "W" },
+    { label: "Center on Selection", run: () => app.centerView() },
+    { label: "Focus on Ligand", run: focusLigand },
+    { label: "Reset", run: () => app.resetView(), key: "R" },
+    "-",
+    { label: "Show Selection As", sub: showAsItems },
+    { label: "Hide Selection", run: () => hideAtoms(app.targets()) },
+    { label: "Add Surface", sub: surfaceItems },
+    { label: "Labels", sub: labelItems },
     { label: "Hydrogens", sub: [
-      { label: "All", run: () => { state.hydrogens = "all"; app.rebuild(); }, checked: () => state.hydrogens === "all" },
-      { label: "Polar", run: () => { state.hydrogens = "polar"; app.rebuild(); }, checked: () => state.hydrogens === "polar" },
-      { label: "None", run: () => { state.hydrogens = "none"; app.rebuild(); }, checked: () => state.hydrogens === "none" },
+      { label: "All", run: () => setHydrogens("all"), checked: () => state.hydrogens === "all" },
+      { label: "Polar", run: () => setHydrogens("polar"), checked: () => state.hydrogens === "polar" },
+      { label: "None", run: () => setHydrogens("none"), checked: () => state.hydrogens === "none" },
     ] },
+    "-",
     { label: "Contacts", run: toggleContacts, checked: () => state.contacts },
     { label: "Pocket Numbers", run: togglePocketNumbers, checked: () => state.pocketNumbers },
-    "-",
-    { label: "Unit Cell", run: () => { state.cell = !state.cell; app.rebuild(); }, checked: () => !!state.cell },
+    { label: "Unit Cell", run: toggleCell, checked: () => !!state.cell },
     { label: "Secondary Structure of Each Frame", run: () => { state.ssEachFrame = !state.ssEachFrame; app.setFrame(state.frame); },
       checked: () => !!state.ssEachFrame },
+    { label: "2D Ligand", run: toggle2D, checked: () => !$("lig2d").hidden },
+    "-",
+    { label: "Fog…", run: fogPanel },
+    { label: "Clipping…", run: zclipPanel },
     { label: "Projection", sub: [
       { label: "Orthographic", run: () => projection(true), checked: () => app.camera.ortho },
       { label: "Perspective", run: () => projection(false), checked: () => !app.camera.ortho },
     ] },
-    { label: "Theme", sub: themeItems },
     { label: "Lighting", sub: [
       { label: "Standard", run: () => lighting(false), checked: () => !app.renderer.publication },
-      { label: "Publication (outlines, occlusion)", run: () => lighting(true), checked: () => app.renderer.publication },
+      { label: "Outlines and Occlusion", run: () => lighting(true), checked: () => app.renderer.publication },
     ] },
+    { label: "Theme", sub: themeItems },
     { label: "Full Screen", run: () => document.documentElement.requestFullscreen?.(), key: "F12" },
   ];
-  // Render | Surface: of the selected atoms, else of the current model's receptor
-  const SURFACES = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"], ["plain", "One Colour"]];
+  // View | Add Surface: a surface representation of the selected atoms, else of each
+  // shown model's receptor (else of all but its solvent)
+  const SURFACES = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"], ["white", "One Color"]];
   const surfaceItems = () => [
-    ...SURFACES.map(([kind, label]) => ({ label, run: () => setSurface(kind),
-      checked: () => app.currentModel()?.surfaceSpec?.kind === kind })),
+    ...SURFACES.map(([kind, label]) => ({ label, run: () => addSurface(kind) })),
+    "-",
     { label: "Resolution", sub: () => GRIDS.map(([h, label]) => ({ label, run: () => surfaceGrid(h),
       checked: () => state.surfaceGrid === h })) },
-    "-",
-    { label: "Off", run: () => setSurface(null) },
   ];
   // the surface's grid spacing (A; beads twice it): finer is smoother and slower
   function surfaceGrid(h) {
@@ -345,19 +350,21 @@ export function setupUI(app) {
     localStorage.setItem("boonza.surfaceGrid", String(h));
     app.rebuild();
   }
-  let surfaceVersion = 0;
-  // a model's surface: of these atoms, else of its receptor (else of all but solvent)
-  function surfaceOf(m, kind, ids = null) {
-    if (!kind) { m.surfaceSpec = null; m.surfaceMesh = null; return; }
-    let atoms = ids;
-    if (!atoms) {
-      const A = m.topo.atoms, all = app.range(m.topo.natoms);
-      atoms = all.filter(a => A.class[a] === 0);
-      if (!atoms.length) atoms = all.filter(a => A.class[a] !== 2);
-    }
-    m.surfaceSpec = { kind, ids: atoms, version: ++surfaceVersion };
-    if (kind === "electrostatic") forceFieldCharges(m);
+  function surfaceAtoms(m) {
+    const A = m.topo.atoms, all = app.range(m.topo.natoms);
+    const receptor = all.filter(a => A.class[a] === 0);
+    return receptor.length ? receptor : all.filter(a => A.class[a] !== 2);
   }
+  function addSurface(kind) {
+    const sel = app.selection();
+    const pairs = sel.length ? sel : app.shownModels().map(m => [m, surfaceAtoms(m)]);
+    const rep = addRep(pairs, { style: "surface", color: kind, label: sel.length ? null : "receptor" });
+    if (!rep) return;
+    for (const [m] of pairs) if (kind === "electrostatic") forceFieldCharges(m);
+    app.message(surfaceNote(kind));
+  }
+  const surfaceNote = kind => kind === "electrostatic" ? "electrostatic surface: red −10 to blue +10 kcal/(mol·e) (Coulomb, ε = 4r, 1.4 Å off the surface)"
+    : kind === "hydrophobic" ? "hydrophobic surface: dark cyan hydrophilic, goldenrod hydrophobic" : "molecular surface";
   // an electrostatic surface's charges: the force field's (Amber ff19SB, hydrogens
   // added on a copy), once per topology, for a structure that has none of its own
   async function forceFieldCharges(m) {
@@ -369,7 +376,7 @@ export function setupUI(app) {
                                  () => app.post("api/surface_charges", { m: m.index }));
       if (m.topo !== t) return;  // the model changed meanwhile
       t.atoms.q = out.q;
-      if (m.surfaceSpec) m.surfaceSpec = { ...m.surfaceSpec, version: ++surfaceVersion };
+      for (const rep of m.reps) if (rep.style === "surface") rep.version++;
       app.rebuild();
       app.message(`electrostatic surface: Amber ff19SB charges on ${out.assigned} of ${out.natoms} atoms`
         + `${out.assigned < out.natoms ? " (the rest by residue)" : ""}; red −10 to blue +10 kcal/(mol·e)`);
@@ -377,22 +384,10 @@ export function setupUI(app) {
       app.message(`${e.message}\nthe surface's charges are by residue`, true);
     }
   }
-  function setSurface(kind) {
-    const sel = app.selection();
-    const targets = sel.length ? sel : [[app.currentModel(), null]];
-    for (const [m, ids] of targets) {
-      if (!m?.topo) continue;
-      surfaceOf(m, kind, ids);
-    }
-    if (kind) app.message(`${kind === "plain" ? "molecular" : kind} surface${kind === "electrostatic" ? ": red −10 to blue +10 kcal/(mol·e) (Coulomb, ε = 4r, 1.4 Å off the surface)" : kind === "hydrophobic" ? ": dark cyan hydrophilic, goldenrod hydrophobic" : ""}`);
-    app.rebuild();
-  }
 
   const themeItems = () => [
-    { label: "Blanc", run: () => theme("blanc"), checked: () => document.body.classList.contains("blanc") },
-    { label: "Noir", run: () => theme("noir"), checked: () => document.body.classList.contains("noir") },
-    "-",
-    { label: "Save Picture…", run: savePicture },
+    { label: "Dark", run: () => theme("dark"), checked: () => document.body.classList.contains("dark") },
+    { label: "Light", run: () => theme("light"), checked: () => document.body.classList.contains("light") },
   ];
   function lighting(on) {
     app.renderer.publication = on;
@@ -407,21 +402,38 @@ export function setupUI(app) {
   }
   app.camera.ortho = localStorage.getItem("boonza.projection") !== "persp";
 
+  // a session or a setting from before the themes were renamed
+  const THEMES = { blanc: "light", noir: "dark", light: "light", dark: "dark" };
   app.setTheme = name => theme(name);
   function theme(name) {
+    name = THEMES[name] || "dark";
     document.body.className = name;
-    app.renderer.background = name === "noir" ? [0, 0, 0] : [1, 1, 1];
+    app.renderer.background = name === "dark" ? [0, 0, 0] : [1, 1, 1];
     localStorage.setItem("boonza.theme", name);
     app.draw();
   }
-  // File | Save Picture: the view as it is, drawn larger in detail and finished
-  // (outlines, occlusion), with the labels; a PNG that carries its print resolution
+
+  // Render: how the view looks on screen (lighting, projection, background), and a
+  // picture of it, drawn larger in detail and finished (outlines, occlusion), with the
+  // labels: a PNG that carries its print resolution
   const PICTURE_SIZES = [["view3", "3 × the view"], ["view2", "2 × the view"], ["view4", "4 × the view"],
     ["col1", "1 journal column (3.5 in)"], ["col2", "2 journal columns (7 in)"],
     ["slide", "slide (1920 × 1080)"], ["uhd", "3840 × 2160"], ["custom", "custom"]];
-  function savePicture() {
-    panel("picture", "Save Picture", body => {
+  function renderPanel() {
+    panel("picture", "Render", body => {
       const w0 = app.canvas.clientWidth, h0 = app.canvas.clientHeight;
+      // on screen
+      const pub = el("input", { type: "checkbox", checked: app.renderer.publication });
+      pub.onchange = () => lighting(pub.checked);
+      const ortho = el("input", { type: "checkbox", checked: app.camera.ortho });
+      ortho.onchange = () => projection(ortho.checked);
+      const dark = el("input", { type: "checkbox", checked: document.body.classList.contains("dark") });
+      dark.onchange = () => theme(dark.checked ? "dark" : "light");
+      body.append(el("h4", {}, "On screen"),
+                  row(el("label", {}, pub, " outlines and ambient occlusion")),
+                  row(el("label", {}, ortho, " orthographic (no perspective)")),
+                  row(el("label", {}, dark, " dark background")),
+                  el("h4", {}, "Picture"));
       const saved = (k, d) => { try { return localStorage.getItem(`boonza.picture.${k}`) ?? d; } catch (e) { return d; } };
       const keep = (k, v) => { try { localStorage.setItem(`boonza.picture.${k}`, v); } catch (e) { /* not kept */ } };
       const select = (pairs, value) => {
@@ -474,7 +486,7 @@ export function setupUI(app) {
         await new Promise(ok => setTimeout(ok, 30));  // let the message show
         const pic = app.withPictureScene(r => r.picture(app.camera, w, h, { outline: outline.checked, ao: ao.checked,
           background: bg, transparent: back.value === "none", fog: fog.checked, quality: +quality.value }));
-        const dark = back.value === "black" || (back.value === "view" && document.body.classList.contains("noir"));
+        const dark = back.value === "black" || (back.value === "view" && document.body.classList.contains("dark"));
         if (labels.checked) drawLabels(pic, (+font.value || 8) / 72 * (+dpi.value || 300), dark);
         const blob = await new Promise(ok => pic.toBlob(ok, "image/png"));
         return [withDpi(new Uint8Array(await blob.arrayBuffer()), +dpi.value || 300), pic];
@@ -510,8 +522,7 @@ export function setupUI(app) {
                   row(labelsLabel, el("span", { className: "what", style: "width:auto;margin-left:6px" }, "size (pt)"), font));
       body.append(row(go, copy));
       body.append(el("p", { className: "help" }, "Drawn in tiles at several samples per pixel, so any size is sharp: "
-        + "rounder sticks and ribbons than on screen, lines drawn as thin sticks, the selection's pink left out. "
-        + "Render | Lighting | Publication shows outlines and occlusion on screen too."));
+        + "rounder sticks and ribbons than on screen, lines drawn as thin sticks, the selection's pink left out."));
       fill();
     });
   }
@@ -545,7 +556,7 @@ export function setupUI(app) {
     const chunk = new Uint8Array(21), view = new DataView(chunk.buffer), ppm = Math.round(dpi / 0.0254);
     view.setUint32(0, 9);
     chunk.set([0x70, 0x48, 0x59, 0x73], 4);  // "pHYs"
-    view.setUint32(8, ppm); view.setUint32(12, ppm); chunk[16] = 1;  // per metre
+    view.setUint32(8, ppm); view.setUint32(12, ppm); chunk[16] = 1;  // per meter
     view.setUint32(17, CRC(chunk.subarray(4, 17)));
     const out = new Uint8Array(png.length + 21);
     out.set(png.subarray(0, 33)); out.set(chunk, 33); out.set(png.subarray(33), 54);
@@ -629,7 +640,7 @@ export function setupUI(app) {
     }
   }
 
-  // constraints (Constrain): 0 free, 1 tethered, 2 fixed
+  // restraints (Edit | Restraints): 0 free, 1 restrained, 2 frozen
   function constrain(kind) {
     const sel = app.selection();
     if (!sel.length && kind !== "freeall") { app.message("select atoms first", true); return; }
@@ -639,7 +650,7 @@ export function setupUI(app) {
       else m.state.constraint[a] = { tether: 1, fix: 2, free: 0 }[kind];
     }
     const counts = constraintCounts(app.currentModel());
-    app.message(`fixed ${counts.fixed}, tethered ${counts.tethered}`);
+    app.message(`frozen ${counts.fixed}, restrained ${counts.tethered}`);
   }
   function constraintCounts(m) {
     const c = m?.state?.constraint || [];
@@ -663,10 +674,10 @@ export function setupUI(app) {
     try {
       const out = await app.busy("minimizing (the first time sets up the force field)", () => app.post("api/minimize", body));
       await app.reloadModel(m, false);
-      const how = out.mobile === "constraints" ? `${out.fixed_atoms} fixed, ${out.held_atoms} tethered`
+      const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
         : out.mobile_atoms === 0 || out.mobile_rmsd === 0
-          ? `no ligand, so only hydrogens were free (${out.held_atoms} heavy atoms tethered): Constrain sets what moves`
-          : `the ligand and its pocket free, ${out.held_atoms} heavy atoms tethered`;
+          ? `no ligand, so only hydrogens were free (${out.held_atoms} heavy atoms restrained): Edit | Restraints sets what moves`
+          : `the ligand and its pocket free, ${out.held_atoms} heavy atoms restrained`;
       app.message(`Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol; ${how}`
         + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : ""));
     } catch (e) { app.message(e.message, true); }
@@ -676,7 +687,7 @@ export function setupUI(app) {
     const t = editTarget(2);
     if (!t) return;
     const [m, atoms] = t;
-    if (atoms.length > 4) { app.message("a meter is 2, 3 or 4 atoms", true); return; }
+    if (atoms.length > 4) { app.message("a measurement is 2, 3 or 4 atoms", true); return; }
     state.meters.push({ model: m, atoms: orderChain(m, atoms) });
     app.rebuild();
   }
@@ -701,13 +712,16 @@ export function setupUI(app) {
   const menus = {
     File: () => [
       { label: "Open…", run: openPanel, key: "Ctrl O" },
-      { label: "Save…", run: savePanel, key: "Ctrl S" },
       { label: "Open from This Computer…", run: browse },
+      { label: "Fetch from PDB…", run: fetchPanel },
+      "-",
+      { label: "Save Model…", run: savePanel, key: "Ctrl S" },
       { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: () => download(fmt) })) },
       { label: "Save Session…", run: saveSessionPanel },
-      { label: "Close", run: () => closeModel() },
       "-",
-      { label: "Save Picture…", run: savePicture },
+      { label: "Render Picture…", run: renderPanel },
+      "-",
+      { label: "Close Model", run: () => closeModel() },
     ],
     Edit: () => [
       { label: "Undo", run: () => undo(), key: "Ctrl Z" },
@@ -715,37 +729,40 @@ export function setupUI(app) {
       "-",
       { label: "Delete", run: deleteSelected, key: "Del" },
       { label: "Copy SMILES", run: copySmiles, key: "Ctrl C" },
-      { label: "Residue and Chain…", run: relabelPanel },
-      { label: "Build", sub: [
-        { label: "Builder…", run: builderPanel },
-        { label: "Hydrogens", sub: [
-          { label: "Add Hydrogens", run: () => hydrogens("add") },
-          { label: "Adjust Hydrogens", run: () => hydrogens("add") },
-          { label: "Delete Hydrogens", run: () => hydrogens("delete") },
-        ] },
+      { label: "Rename Residue or Chain…", run: relabelPanel },
+      "-",
+      { label: "Hydrogens", sub: [
+        { label: "Add Hydrogens", run: () => hydrogens("add") },
+        { label: "Delete Hydrogens", run: () => hydrogens("delete") },
       ] },
-      { label: "Constrain", sub: constrainItems },
-      { label: "Minimize…", run: minimizePanel },
-      { label: "Measure", sub: measureItems },
+      { label: "Restraints", sub: constrainItems },
+      { label: "Set Selection as Ligand", run: chooseLigand },
     ],
     Select: selectItems,
-    Render: renderItems,
-    Protein: () => [
-      { label: "Fetch from PDB…", run: fetchPanel },
-      { label: "Protein Builder…", run: () => openDock("protein") },
-      { label: "Align/Superpose…", run: alignPanel, off: () => app.live().length < 2 },
+    View: viewItems,
+    Build: () => [
+      { label: "Molecule Builder", run: builderPanel, checked: () => !$("ldock").hidden && dockTab === "builder" },
+      { label: "Protein Builder", run: () => openDock("protein"), checked: () => !$("ldock").hidden && dockTab === "protein" },
+      { label: "Clean Up Geometry", run: cleanUp },
+      "-",
+      { label: "Superpose Models…", run: () => alignPanel(), off: () => app.live().length < 2 },
     ],
-    Compute: () => [
+    Analyze: () => [
       { label: "Assign Force Field", run: assignForceField },
-      { label: "Energy Minimize…", run: minimizePanel },
-      { label: "Conformations", sub: [{ label: "Torsion Profile…", run: () => profilePanel() }] },
-      { label: "Ligand Interactions", run: toggleContacts, checked: () => state.contacts },
+      { label: "Minimize…", run: minimizePanel },
+      { label: "Minimize Ligand Only", run: () => minimize({ ligandOnly: true }) },
+      { label: "Torsion Profile…", run: () => profilePanel() },
+      { label: "Ramachandran Plot…", run: () => ramaPanel() },
+      "-",
+      { label: "Contacts", run: toggleContacts, checked: () => state.contacts },
       { label: "Hydrogen Bonds…", run: hbondPanel, checked: () => !!state.hbonds },
-      { label: "Dynamics Player", run: () => { $("player").hidden = app.nframes() < 2; },
+      { label: "Measure", sub: measureItems },
+      "-",
+      { label: "Trajectory Player", run: () => { $("player").hidden = app.nframes() < 2; },
         off: () => app.nframes() < 2 },
     ],
     Window: () => [
-      { label: "Models", run: modelsPanel, checked: () => !$("window").classList.contains("nomodels") },
+      { label: "Models and Representations", run: toggleSide, checked: () => !$("window").classList.contains("nomodels") },
       { label: "Sequence", run: () => toggleSequence(), checked: () => !$("seqbar").hidden },
       { label: "Builder", run: builderPanel, checked: () => !$("ldock").hidden },
       { label: "Command Line", run: () => openCLI(), key: "Space" },
@@ -753,95 +770,45 @@ export function setupUI(app) {
     ],
     Help: () => [
       { label: "Mouse…", run: mousePanel },
-      { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset view · F12: full screen · Esc: close menus, put a message away, else deselect") },
+      { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset the view · W: fit all · F12: full screen · Esc: close menus, put a message away, else select none") },
     ],
   };
+  // restraints for Minimize: 0 free, 1 restrained (a spring to where it is), 2 frozen
   const constrainItems = () => [
-    { label: "Tether", run: () => constrain("tether") },
-    { label: "Fix", run: () => constrain("fix") },
-    { label: "Unfix", run: () => constrain("unfix") },
-    { label: "Free", run: () => constrain("free") },
+    { label: "Restrain Selection", run: () => constrain("tether") },
+    { label: "Freeze Selection", run: () => constrain("fix") },
+    { label: "Unfreeze Selection", run: () => constrain("unfix") },
+    { label: "Release Selection", run: () => constrain("free") },
     "-",
-    { label: "Free All", run: () => constrain("freeall") },
+    { label: "Release All", run: () => constrain("freeall") },
   ];
   const measureItems = () => [
-    { label: "Meter (2-4 selected atoms)", run: measureMeter },
-    { label: "Clear Meters", run: () => { state.meters = []; app.rebuild(); } },
+    { label: "Measure Selection (2-4 atoms)", run: measureMeter },
+    { label: "Clear Measurements", run: () => { state.meters = []; app.rebuild(); } },
   ];
 
   for (const [name, items] of Object.entries(menus)) {
-    const t = el("div", { className: "menutitle" });
-    t.innerHTML = `<u>${name[0]}</u>${name.slice(1)}`;
+    const t = el("div", { className: "menutitle" }, name);
     t.onclick = () => {
       const open = t.classList.contains("open");
       closeMenus();
       if (open) return;
       t.classList.add("open");
       const r = t.getBoundingClientRect();
-      menu(items, r.left, r.bottom);
+      menu(items, r.left, r.bottom + 4);
     };
     t.onmouseenter = () => { if (document.querySelector(".menutitle.open") && !t.classList.contains("open")) t.click(); };
     $("menus").append(t);
   }
 
-  // --- right button bar (RHS) --------------------------------------------------------------
-
-  const rhs = [
-    { label: "System", blue: true, sub: systemItems },
-    "-",
-    { label: "Open", run: openPanel },
-    { label: "Constrain", sub: constrainItems },
-    { label: "Close", red: true, run: () => closeModel() },
-    "-",
-    { label: "Center", blue: true, run: () => app.centerView() },
-    { label: "SiteView", run: siteView },
-    { label: "WholeView", run: wholeView },
-    "-",
-    { label: "Hydrogens", run: cycleHydrogens },
-    { label: "Hide", sub: hideItems },
-    { label: "Show", sub: showItems },
-    "-",
-    { label: "Ligand", sub: () => [
-      { label: "Ligand Interactions", run: toggleContacts, checked: () => state.contacts },
-      "-",
-      { label: "Choose Ligand", run: chooseLigand },
-      { label: "Ligand Torsion Profile", run: () => profilePanel() },
-      "-",
-      { label: "Minimize (Vac)", run: () => minimize({ ligandOnly: true }) },
-    ] },
-    { label: "Measure", sub: measureItems },
-    "-",
-    { label: "Builder", blue: true, run: builderPanel },
-    { label: "Minimize", run: () => minimize() },
-    "-",
-    { label: "Select", sub: selectItems },
-    { label: "Extend", sub: extendItems },
-    "-",
-    { label: "Delete", red: true, run: deleteSelected },
-  ];
-  function systemItems() {
+  // the models open, for the popup
+  function modelItems() {
     return [
       ...app.live().map(m => ({ label: m.name, checked: () => m.shown,
                                 run: () => { app.state.current = m.index; app.show([m], !m.shown); } })),
       "-",
-      { label: "Models…", run: modelsPanel },
+      { label: "Models and Representations", run: toggleSide },
     ];
-  }
-  // a static page (an export) shows models: what would change them is left off
-  const EDITS = new Set(["Open", "Constrain", "Close", "Builder", "Minimize", "Delete"]);
-  for (const b of rhs) {
-    if (app.STATIC && EDITS.has(b.label)) continue;
-    if (b === "-") { $("rhs").append(el("div", { className: "sep" })); continue; }
-    const btn = el("button", { className: `rbtn${b.sub ? " sub" : ""}${b.blue ? " blue" : ""}${b.red ? " red" : ""}` }, b.label);
-    btn.onclick = () => {
-      if (b.sub) {
-        const r = btn.getBoundingClientRect();
-        const items = typeof b.sub === "function" ? b.sub() : b.sub;
-        const m = menu(items, 0, r.top);
-        m.style.left = `${r.left - m.getBoundingClientRect().width - 2}px`;
-      } else b.run();
-    };
-    $("rhs").append(btn);
   }
 
   async function chooseLigand() {
@@ -851,7 +818,7 @@ export function setupUI(app) {
     try {
       const out = await app.post("api/set_ligand", { m: m.index, atoms });
       m.topo.ligand = out.ligand;
-      app.message("ligand chosen: SiteView, Pocket, contacts and Minimize use it");
+      app.message("ligand chosen: Focus on Ligand, Binding Site, contacts and Minimize use it");
       await app.refreshContacts();
       app.rebuild();
     } catch (e) { app.message(e.message, true); }
@@ -865,7 +832,7 @@ export function setupUI(app) {
     try {
       const info = await app.getJSON(`api/atom?m=${m.index}&a=${a}`);
       const ff = info.charge === undefined
-        ? "  · no force field yet: Compute | Assign Force Field"
+        ? "  · no force field yet: Analyze | Assign Force Field"
         : `  · q ${info.charge.toFixed(4)} e · σ ${info.sigma?.toFixed(3) ?? "–"} Å · ε ${info.epsilon?.toFixed(4) ?? "–"} kcal/mol`
           + `${info.type ? ` · type ${info.type}` : ""}${info.force_field === "assigned" ? " (Amber ff19SB/GAFF2)" : ""}`;
       app.message(`${app.atomLabel(m, a)}${ff}`);
@@ -907,6 +874,7 @@ export function setupUI(app) {
     ...(c => c ? [
       { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
       { label: "Select Molecule", run: () => app.select(c.m, c.molecule) },
+      { label: "Set as Ligand", run: () => { app.select(c.m, c.molecule); chooseLigand(); } },
       { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
       { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
       ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
@@ -915,32 +883,41 @@ export function setupUI(app) {
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
       "-",
     ] : [])(clicked(hit)),
-    ...renderItems().slice(0, 9),
-    { label: "Surface", sub: surfaceItems },
+    { label: "Fit All", run: () => app.viewAll(), key: "W" },
+    { label: "Center on Selection", run: () => app.centerView() },
+    { label: "Focus on Ligand", run: focusLigand },
+    "-",
+    { label: "Show Selection As", sub: showAsItems },
+    { label: "Hide Selection", run: () => hideAtoms(app.targets()) },
+    { label: "New Representation of Selection", run: () => newRepFromSelection() },
+    { label: "Add Surface", sub: surfaceItems },
+    { label: "Labels", sub: labelItems },
     "-",
     { label: "Select", sub: selectItems },
-    { label: "Extend", sub: extendItems },
-    { label: "System", sub: systemItems },
+    { label: "Grow Selection", sub: extendItems },
+    { label: "Models", sub: modelItems },
     "-",
     { label: "Copy SMILES", run: copySmiles },
-    { label: "Residue and Chain…", run: relabelPanel },
+    { label: "Rename Residue or Chain…", run: relabelPanel },
     { label: "Delete", run: deleteSelected },
   ], x, y);
 
-  // --- footer ---------------------------------------------------------------------------------
+  // --- the view's own buttons, the status bar ---------------------------------------------------
 
-  $("f-atoms").onclick = () => { const r = $("f-atoms").getBoundingClientRect(); const m = menu(atomItems, r.left, 0); m.style.top = `${r.top - m.getBoundingClientRect().height}px`; };
-  $("f-ribbon").onclick = () => { const r = $("f-ribbon").getBoundingClientRect(); const m = menu(ribbonItems, r.left, 0); m.style.top = `${r.top - m.getBoundingClientRect().height}px`; };
-  $("f-surface").onclick = () => { const r = $("f-surface").getBoundingClientRect(); const m = menu(surfaceItems, r.left, 0); m.style.top = `${r.top - m.getBoundingClientRect().height}px`; };
-  $("f-contacts").onclick = toggleContacts;
-  $("f-fog").onclick = fogPanel;
-  $("f-zclip").onclick = zclipPanel;
-  $("f-2d").onclick = () => {
+  $("vt-fit").onclick = () => app.viewAll();
+  $("vt-center").onclick = () => app.centerView();
+  $("vt-reset").onclick = () => app.resetView();
+  $("vt-2d").onclick = () => toggle2D();
+  $("vt-fog").onclick = fogPanel;
+  $("vt-clip").onclick = zclipPanel;
+  $("f-hydrogens").onclick = cycleHydrogens;
+  $("f-cell").onclick = toggleCell;
+  function toggle2D() {
     const on = $("lig2d").hidden;
     $("lig2d").hidden = !on;
-    $("f-2d").classList.toggle("on", on);
+    $("vt-2d").classList.toggle("on", on);
     if (on) refresh2D();
-  };
+  }
   let pending2D = 0;
   async function refresh2D() {
     if ($("lig2d").hidden) return;
@@ -949,7 +926,7 @@ export function setupUI(app) {
     const m = sel[0]?.[0] || app.currentModel();
     if (!m?.topo) return;
     const ids = sel[0]?.[1] || [];
-    const dark = document.body.classList.contains("noir") ? 1 : 0;
+    const dark = document.body.classList.contains("dark") ? 1 : 0;
     try {
       const out = await app.getJSON(`api/ligand2d?m=${m.index}&dark=${dark}&sel=${ids.slice(0, 400).join(",")}`);
       if (ticket !== pending2D) return;
@@ -967,12 +944,10 @@ export function setupUI(app) {
       $("lig2d").querySelector(".lig2d-svg").innerHTML = "";
     }
   }
-  $("ff-button").onclick = () => app.message("Force field for Minimize and the energy profiles: Amber ff19SB "
-    + "(with its water and ion partners) through viparr, GAFF2 with AM1-BCC charges for anything else (AmberTools)");
-  $("pbc-button").onclick = () => { state.cell = !state.cell; app.rebuild(); $("pbc-button").classList.toggle("on", state.cell); };
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {
+    ramaRefresh?.();
     footerEdit();
     footerSmiles();
     refreshSmilesBox();
@@ -984,7 +959,7 @@ export function setupUI(app) {
     box.innerHTML = "";
     const sel = app.selection();
     const m = sel.length === 1 ? sel[0][0] : app.currentModel();
-    $("pbc-button").classList.toggle("lit", !!(m?.box && m.box.flat().some(x => x)));
+    $("f-cell").hidden = !(m?.box && m.box.flat().some(x => x));  // a periodic box: it can be drawn
     if (!m || !m.topo) return;
     const n = sel.reduce((k, [, ids]) => k + ids.length, 0);
     if (!n) {
@@ -1077,29 +1052,6 @@ export function setupUI(app) {
     box.append(el("span", { className: "what" }, "Rotate"), wheel, label, prof);
   }
 
-  // --- corner: theme, R S L, trackball, dial ----------------------------------------------------
-
-  $("theme-button").onclick = () => {
-    const r = $("theme-button").getBoundingClientRect();
-    const m = menu(themeItems, 0, 0);
-    const b = m.getBoundingClientRect();
-    m.style.left = `${r.right - b.width}px`; m.style.top = `${r.top - b.height}px`;
-  };
-  for (const b of document.querySelectorAll("#rsl button")) {
-    const k = +b.dataset.mask;
-    b.onclick = () => { state.masks[k] = !state.masks[k]; b.classList.toggle("off", !state.masks[k]); };
-    b.ondblclick = () => {  // only this class
-      for (const o of document.querySelectorAll("#rsl button")) {
-        const j = +o.dataset.mask;
-        if (j === 3) continue;
-        state.masks[j] = j === k;
-        o.classList.toggle("off", !state.masks[j]);
-      }
-    };
-  }
-  trackball(app);
-  dial(app);
-
   // --- command line -------------------------------------------------------------------------------
 
   function openCLI(text = "") {
@@ -1121,7 +1073,7 @@ export function setupUI(app) {
     if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); command($("cli-input").value.trim()); }
   };
 
-  // models by number (as Window | Models lists them), by name, or all: "2", "1,3", "1FNA"
+  // models by number (as the side bar lists them), by name, or all: "2", "1,3", "1FNA"
   function modelsNamed(spec) {
     const open = state.models.filter(m => !m.closed);
     if (spec === "all") return open;
@@ -1129,7 +1081,7 @@ export function setupUI(app) {
     for (const w of spec.split(",").filter(Boolean)) {
       const m = /^\d+$/.test(w) ? state.models[+w - 1] : open.find(m => m.name === w)
         ?? open.find(m => m.name.toLowerCase().includes(w.toLowerCase()));
-      if (!m || m.closed) throw new Error(`no model ${w}: Window | Models numbers them`);
+      if (!m || m.closed) throw new Error(`no model ${w}: the side bar numbers them`);
       if (!out.includes(m)) out.push(m);
     }
     return out;
@@ -1151,17 +1103,22 @@ export function setupUI(app) {
     }
     const [word, ...rest] = text.split(/\s+/);
     const arg = rest.join(" ");
-    const on = async (sel, fn) => {  // a selection in each model, or the targets
-      if (!sel && !models) { forTargets(fn); return; }
-      for (const m of models || app.shownModels()) fn(m, sel ? await serverSelect(m, sel) : app.range(m.topo.natoms));
-      app.rebuild();
+    // the atoms of a selection in each model (or the models named), else the targets
+    const pairsOf = async sel => {
+      if (!sel && !models) return app.targets();
+      const out = [];
+      for (const m of models || app.shownModels()) out.push([m, sel ? await serverSelect(m, sel) : app.range(m.topo.natoms)]);
+      return out;
     };
+    const STYLE_WORDS = app.REP_STYLES.map(([s]) => s).join("|");
     switch (word) {
       case "help":
         app.message("a selection selects atoms (boonza's language, e.g. resname LIG or within 5 of resname LIG)\n"
-          + "commands: select SEL · show SEL · hide SEL · center [SEL] · style line|stick|ballline|ballstick|space [SEL] · "
-          + "color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · minimize · undo · redo · "
-          + "open PATH|PDB-ID · save PATH · siteview · wholeview · surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine] · reset\n"
+          + `drawing: rep SEL [${STYLE_WORDS}] [COLOR] adds a representation · show SEL [STYLE] · hide SEL · `
+          + "style STYLE [SEL] (those atoms in that style only) · color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · "
+          + "material opaque|glossy|matte|transparent|ghost · opacity 0.5 (the current representation's) · "
+          + "surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine] · center [SEL] · fit · focus · reset\n"
+          + "editing: select SEL · minimize · undo · redo · open PATH|PDB-ID · save PATH\n"
           + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
         return;
       case "model": {  // show these models alone
@@ -1176,26 +1133,51 @@ export function setupUI(app) {
         return;
       }
       case "select": await selectServer(() => arg, models || undefined); return;
-      case "show": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 1; }); return;
-      case "hide": await on(arg, (m, ids) => { for (const a of ids) m.state.show[a] = 0; }); return;
+      case "rep": case "show": {  // rep SEL [STYLE] [COLOR]: the last words, when they are a style and a color
+        const words = [...rest];
+        let color = "element", style = "lines";
+        if (words.length && isColor(words[words.length - 1]) && words.length > 1 && !app.repStyle(words[words.length - 1])) color = words.pop();
+        if (words.length && app.repStyle(words[words.length - 1])) style = app.repStyle(words.pop());
+        const sel = words.join(" ") || (app.selection().length ? null : "all");
+        addRep(await pairsOf(sel), { style, color, sel });
+        return;
+      }
+      case "hide": hideAtoms(await pairsOf(arg), arg || null); return;
+      case "material": case "opacity": {  // the current representation's: material NAME, opacity 0-1 (or %)
+        const m = app.currentModel(), rep = currentRep(m);
+        if (!rep) { app.message("no representation: make one first (rep SEL)", true); return; }
+        if (word === "material") {
+          if (!app.MATERIALS.some(([k]) => k === arg)) { app.message(`materials: ${app.MATERIALS.map(([k]) => k).join(", ")}`, true); return; }
+          setRepMaterial(m, rep, arg);
+        } else {
+          const v = parseFloat(arg);
+          if (!(v > 0)) { app.message("opacity 0.5 (or 50%)", true); return; }
+          rep.opacity = Math.min(1, v > 1 ? v / 100 : v);
+          app.repsChanged(m);
+        }
+        return;
+      }
       case "center": if (arg) await selectServer(() => arg, models || undefined); app.centerView(); return;
       case "style": {
         const [s, ...sel] = rest;
-        const k = STYLES.indexOf(s);
-        if (k < 0) { app.message(`styles: ${STYLES.join(", ")}`, true); return; }
-        await on(sel.join(" "), (m, ids) => { for (const a of ids) { m.state.style[a] = k; m.state.show[a] = 1; } });
+        const style = app.repStyle(s);
+        if (!style) { app.message(`styles: ${STYLE_WORDS.replaceAll("|", ", ")}`, true); return; }
+        const what = sel.join(" ");
+        if (app.isRibbon({ style }) || style === "surface") addRep(await pairsOf(what), { style, color: style === "surface" ? "white" : "ss", sel: what || null });
+        else showAs(await pairsOf(what), style, what || null);
         return;
       }
       case "color": {
         const [c, ...sel] = rest;
-        if (!isColor(c)) { app.message("colors: element, element/green, chain, restype, resname, ss, bfactor, or a name", true); return; }
-        await on(sel.join(" "), (m, ids) => colorAtoms(c, ids, m.topo, m.ss, m.state.rgb));
+        if (!isColor(c)) { app.message("colors: element, element/green, chain, restype, resname, ss, spectrum, bfactor, or a name", true); return; }
+        colorIn(await pairsOf(sel.join(" ")), c);
         return;
       }
       case "label": {
         const [mode, ...sel] = rest;
         if (mode !== "off") state.labelMode = mode;
-        await on(sel.join(" "), (m, ids) => { for (const a of ids) m.state.labels[a] = mode === "off" ? 0 : 1; });
+        for (const [m, ids] of await pairsOf(sel.join(" "))) for (const a of ids) m.state.labels[a] = mode === "off" ? 0 : 1;
+        app.rebuild();
         return;
       }
       case "minimize": await minimize(); return;
@@ -1203,13 +1185,13 @@ export function setupUI(app) {
       case "redo": await undo(true); return;
       case "open": await openPath(arg); return;
       case "save": await savePath(arg); return;
-      case "siteview": await siteView(); return;
-      case "wholeview": wholeView(); return;
-      case "surface": {  // surface [electrostatic|hydrophobic|plain|off] [coarse|standard|fine]
+      case "focus": await focusLigand(); return;
+      case "fit": app.viewAll(); return;
+      case "surface": {  // surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine]
         const grids = { coarse: 1.0, standard: 0.5, fine: 0.3 };
         for (const w of rest) if (w in grids) surfaceGrid(grids[w]);
-        const kind = rest.find(w => ["electrostatic", "hydrophobic", "plain", "off"].includes(w));
-        if (kind || !app.currentModel()?.surfaceSpec) setSurface(kind === "off" ? null : kind || "electrostatic");
+        const kind = rest.find(w => ["electrostatic", "hydrophobic"].includes(w) || (named(w) && !(w in grids)));
+        if (kind || !rest.length) addSurface(kind || "electrostatic");
         return;
       }
       case "reset": app.resetView(); return;
@@ -1263,9 +1245,9 @@ export function setupUI(app) {
       await app.load(m);
       const st = m.state;
       if (a.do === "select") app.select(m, a.ids, a.add ? "add" : "set");
-      else if (a.do === "show") for (const k of a.ids) { st.show[k] = 1; if (a.style) st.style[k] = STYLES.indexOf(a.style); }
-      else if (a.do === "hide") for (const k of a.ids) st.show[k] = 0;
-      else if (a.do === "color") colorAtoms(a.scheme, a.ids, m.topo, m.ss, st.rgb);
+      else if (a.do === "show") addRep([[m, a.ids]], { style: app.repStyle(a.style || "lines") || "lines" });
+      else if (a.do === "hide") hideAtoms([[m, a.ids]]);
+      else if (a.do === "color") colorIn([[m, a.ids]], a.scheme);
       else if (a.do === "label") { if (a.mode !== "off") state.labelMode = a.mode; for (const k of a.ids) st.labels[k] = a.mode === "off" ? 0 : 1; }
       else if (a.do === "center" && a.ids.length) { const [c, r] = app.bounds(m, a.ids); app.flyTo(c, Math.max(r, 6)); }
     }
@@ -1318,7 +1300,7 @@ export function setupUI(app) {
     else if (e.key === "ArrowDown" && app.live().length > 1) { e.preventDefault(); stepModel(1); }
     else if (e.key === "ArrowUp" && app.live().length > 1) { e.preventDefault(); stepModel(-1); }
     else if (e.key === "r" || e.key === "R") app.resetView();
-    else if (e.key === "w" || e.key === "W") wholeView();
+    else if (e.key === "w" || e.key === "W") app.viewAll();
     else if (e.key === "F12") document.documentElement.requestFullscreen?.();
   });
 
@@ -1395,7 +1377,86 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
 
-  // Compute | Hydrogen Bonds: between two selections, drawn green and dashed
+  // Analyze | Ramachandran Plot: phi and psi of each residue of the current model at this
+  // frame, over the regions residues usually take; the selected residues are marked, and
+  // a click on a point selects its residue (Shift: adds or takes it away)
+  const RAMA_CLUSTERS = [  // phi, psi, spread of each, weight: where residues are found
+    [-63, -43, 15, 15, 1], [-120, 130, 25, 25, 0.8], [-65, 145, 15, 20, 0.7], [-90, 0, 20, 15, 0.3], [57, 47, 12, 12, 0.25],
+    // and the broad bands around them that are allowed, if less often taken
+    [-100, 30, 35, 55, 0.12], [-115, 160, 45, 40, 0.15], [-80, -40, 35, 30, 0.12], [65, 30, 18, 25, 0.08]];
+  const ramaDensity = (phi, psi) => {
+    const wrap = d => ((d + 540) % 360) - 180;
+    let s = 0;
+    for (const [p, q, sp, sq, w] of RAMA_CLUSTERS) s += w * Math.exp(-(wrap(phi - p) ** 2) / (2 * sp * sp) - (wrap(psi - q) ** 2) / (2 * sq * sq));
+    return s;
+  };
+  const FAVORED = 0.35, ALLOWED = 0.06;
+  // phi, psi of each residue with a backbone and bonded neighbors on both sides
+  function phiPsi(m) {
+    const T = m.topo, A = T.atoms, R = T.residues;
+    const atom = (r, name) => T.residueAtoms[r].find(a => A.name[a] === name);
+    const close = (a, b) => a !== undefined && b !== undefined && Math.hypot(...app.xyz(m, a).map((x, d) => x - app.xyz(m, b)[d])) < 2.0;
+    const out = [];
+    for (let r = 1; r < R.name.length - 1; r++) {
+      if (R.kind[r] !== 1) continue;
+      const n = atom(r, "N"), ca = atom(r, "CA"), c = atom(r, "C"), cp = atom(r - 1, "C"), nn = atom(r + 1, "N");
+      if ([n, ca, c].some(a => a === undefined) || !close(cp, n) || !close(c, nn)) continue;
+      out.push({ r, phi: app.measure(m, [cp, n, ca, c]).value, psi: app.measure(m, [n, ca, c, nn]).value });
+    }
+    return out;
+  }
+  let ramaRefresh = null;
+  app.onFrame = () => ramaRefresh?.();
+  function ramaPanel() {
+    const m = app.selection()[0]?.[0] || app.currentModel();
+    if (!m?.topo) { app.message("no model", true); return; }
+    if (m.topo.cg) { app.message("a Ramachandran plot needs an all-atom protein (N, CA and C of each residue)", true); return; }
+    const W = 330, H = 330, L = 34, B = 26, T0 = 8, R0 = 8;
+    const x = phi => L + (phi + 180) / 360 * (W - L - R0), y = psi => T0 + (180 - psi) / 360 * (H - T0 - B);
+    // the regions, drawn once as a small picture the plot stretches: favored darker than allowed
+    const N = 72, pic = el("canvas", { width: N, height: N }), g = pic.getContext("2d"), img = g.createImageData(N, N);
+    const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#f0a23b";
+    const rgb = /^#([0-9a-f]{6})$/i.test(accent) ? [0, 2, 4].map(k => parseInt(accent.slice(1 + k, 3 + k), 16)) : [240, 162, 59];
+    for (let row = 0; row < N; row++) {
+      for (let col = 0; col < N; col++) {
+        const d = ramaDensity(-180 + (col + 0.5) * 360 / N, 180 - (row + 0.5) * 360 / N), k = 4 * (row * N + col);
+        img.data.set([...rgb, d >= FAVORED ? 95 : d >= ALLOWED ? 38 : 0], k);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const cells = `<image href="${pic.toDataURL()}" x="${L}" y="${T0}" width="${W - L - R0}" height="${H - T0 - B}" preserveAspectRatio="none"/>`;
+    const ticks = [-180, -90, 0, 90, 180].map(v => `<line x1="${x(v)}" x2="${x(v)}" y1="${T0}" y2="${H - B}" class="grid"/>`
+      + `<line x1="${L}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}" class="grid"/>`
+      + `<text x="${x(v)}" y="${H - 10}" text-anchor="middle">${v}</text><text x="${L - 4}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join("");
+    panel("rama", "Ramachandran Plot", body => {
+      const head = el("div", { className: "help", style: "margin:0 0 6px" });
+      const box = el("div", { className: "plot rama" });
+      const legend = el("div", { className: "help" });
+      body.append(head, box, legend);
+      const draw = () => {
+        if (!m.topo || m.closed) return;
+        const pts = phiPsi(m), A = m.topo.atoms, Rr = m.topo.residues;
+        const picked = new Set(app.selected(m).map(a => A.residue[a]));
+        const kind = r => Rr.name[r] === "GLY" ? "gly" : Rr.name[r] === "PRO" ? "pro" : "res";
+        const dots = pts.map(p => `<circle cx="${x(p.phi).toFixed(1)}" cy="${y(p.psi).toFixed(1)}" r="${picked.has(p.r) ? 3.6 : 2.6}" class="${kind(p.r)}${picked.has(p.r) ? " on" : ""}" data-r="${p.r}"><title>${Rr.name[p.r]} ${Rr.resid[p.r]}${Rr.insertion[p.r].trim()} ${m.topo.chains.name[Rr.chain[p.r]] || ""}: φ ${p.phi.toFixed(0)}°, ψ ${p.psi.toFixed(0)}°</title></circle>`).join("");
+        box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${cells}${ticks}<text x="${(L + W) / 2}" y="${H}" text-anchor="middle">φ</text><text x="9" y="${(T0 + H - B) / 2}" text-anchor="middle">ψ</text>${dots}</svg>`;
+        for (const c of box.querySelectorAll("circle")) c.onclick = e => app.select(m, m.topo.residueAtoms[+c.dataset.r], e.shiftKey ? "toggle" : "set");
+        const general = pts.filter(p => kind(p.r) === "res");
+        const fav = general.filter(p => ramaDensity(p.phi, p.psi) >= FAVORED).length;
+        const out = general.filter(p => ramaDensity(p.phi, p.psi) < ALLOWED).length;
+        head.textContent = `${m.name}${app.nframes() > 1 ? `, frame ${state.frame + 1}` : ""}: ${pts.length} residues`
+          + (picked.size ? `, ${pts.filter(p => picked.has(p.r)).length} selected` : "")
+          + (general.length ? ` · ${Math.round(100 * fav / general.length)}% favored, ${out} outside (glycine and proline aside)` : "");
+      };
+      legend.innerHTML = '<span class="key res"></span> residue <span class="key gly"></span> glycine <span class="key pro"></span> proline · '
+        + "shaded: where residues are usually found (darker: favored), a rough guide rather than a validation. "
+        + "Click a point to select its residue, Shift to add it.";
+      draw();
+      ramaRefresh = () => { if (box.isConnected) draw(); else ramaRefresh = null; };
+    });
+  }
+
+  // Analyze | Hydrogen Bonds: between two selections, drawn green and dashed
   const HBOND_SETS = [["@ligand", "the ligand and the rest"], ["@sel", "the selection and the rest"],
     ["@chains", "chains (every interface)"], ["protein|water", "protein and water"], ["custom", "two selections…"]];
   function hbondPanel() {
@@ -1416,15 +1477,18 @@ export function setupUI(app) {
         if (v === "custom" && !state.hbonds.a) { app.message("give selection A", true); return; }
         if (v === "@sel" && !app.selection().length) { app.message("select atoms first", true); return; }
         const { n, how } = await app.busy("finding hydrogen bonds", () => app.refreshHbonds());
-        // the residues at both ends, so no bond hangs in the air
-        for (const m of app.shownModels()) {
+        // the residues at both ends, so no bond hangs in the air: in sticks, those not drawn yet
+        const ends = app.shownModels().map(m => {
+          const ids = new Set();
           for (const [i, j] of m.hbonds || []) {
             for (const r of [m.topo.atoms.residue[i], m.topo.atoms.residue[j]]) {
-              for (const a of m.topo.residueAtoms[r]) if (!m.state.show[a]) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; }
+              for (const a of m.topo.residueAtoms[r]) if (!m.state.show[a]) ids.add(a);
             }
           }
-        }
-        app.rebuild();
+          return [m, [...ids]];
+        });
+        if (ends.some(([, ids]) => ids.length)) addRep(ends, { style: "sticks", label: "hydrogen-bonded residues" });
+        else app.rebuild();
         result.textContent = `${n} hydrogen bond${n === 1 ? "" : "s"} (${how})`;
         app.message(result.textContent);
       }, "blue");
@@ -1435,7 +1499,7 @@ export function setupUI(app) {
       });
       body.append(row(el("span", { className: "what" }, "between"), kind), ...custom, row(go, clear), result);
       body.append(el("p", { className: "help" }, "With hydrogens: donor-acceptor within 3.5 Å and D-H…A above 120°. "
-        + "Without (most PDB entries): N and O of different residues within 3.5 Å; Edit | Build | Hydrogens | "
+        + "Without (most PDB entries): N and O of different residues within 3.5 Å; Edit | Hydrogens | "
         + "Add Hydrogens adds them. Followed frame by frame."));
       sync();
     }, [innerWidth / 2 - 180, 80]);
@@ -1488,14 +1552,20 @@ export function setupUI(app) {
     body.innerHTML = "";
     (tab === "protein" ? proteinBuilder : atomBuilder)(body);
     if (tab === "builder") {  // the hydrogens are where molecules grow: those of shown molecules too
-      state.hydrogens = "all";
+      setHydrogens("all");
       for (const m of app.shownModels()) {
-        const A = m.topo.atoms, st = m.state;
-        for (let a = 0; a < m.topo.natoms; a++) {
-          if (A.element[a] !== "H" || A.class[a] !== 1) continue;
-          const heavy = m.topo.bondsOf[a][0];
-          if (heavy !== undefined && st.show[heavy]) { st.show[a] = 1; st.style[a] = st.style[heavy]; }
+        const A = m.topo.atoms;
+        for (const rep of m.reps) {
+          if (app.isRibbon(rep) || rep.style === "surface") continue;
+          let grew = false;
+          for (let a = 0; a < m.topo.natoms; a++) {
+            if (A.element[a] !== "H" || A.class[a] !== 1 || rep.mask[a]) continue;
+            const heavy = m.topo.bondsOf[a][0];
+            if (heavy !== undefined && rep.mask[heavy]) { rep.mask[a] = 1; grew = true; }
+          }
+          if (grew) app.colorRep(m, rep);
         }
+        app.aggregate(m);
       }
       app.rebuild();
     }
@@ -1559,16 +1629,15 @@ export function setupUI(app) {
 
   // the model new molecules go into: the current one if it can take them, else a new one
   const canTake = m => m && !m.closed && m.shown && m.topo?.editable;
-  async function newMolecule(smiles, centre, intoNew = false) {
+  async function newMolecule(smiles, center, intoNew = false) {
     const m = app.currentModel();
     try {
       if (!intoNew && canTake(m)) {
-        await serverEdit(m, "api/edit", { op: "molecule", value: { smiles, centre } });
+        await serverEdit(m, "api/edit", { op: "molecule", value: { smiles, centre: center } });
       } else {
-        const out = await app.busy("building", () => app.post("api/build", { smiles, centre }));
+        const out = await app.busy("building", () => app.post("api/build", { smiles, centre: center }));
         await addModels(out, false);
-        state.hydrogens = "all";
-        app.rebuild();
+        setHydrogens("all");
       }
       app.message(`added ${smiles}: grow it by clicking its hydrogens with a tool`);
     } catch (e) { app.message(e.message, true); }
@@ -1769,7 +1838,7 @@ export function setupUI(app) {
   }
   function builderPanel() { toggleDock("builder"); }
 
-  // the selected residues' name, number and chain (Edit | Residue and Chain)
+  // the selected residues' name, number and chain (Edit | Rename Residue or Chain)
   function relabelPanel() {
     const t = editTarget();
     if (!t) return;
@@ -1809,11 +1878,11 @@ export function setupUI(app) {
       const k = el("input", { type: "number", value: localStorage.getItem("boonza.restraint") || 10, min: 0, step: 1, style: "width:60px" });
       k.onchange = () => localStorage.setItem("boonza.restraint", k.value);
       const what = c.fixed || c.tethered
-        ? `Constraints: ${c.fixed} fixed, ${c.tethered} tethered (Edit | Constrain); the rest is free.`
-        : "No constraints: the ligand and its pocket move, the other heavy atoms are tethered. "
-          + "Constrain sets your own.";
+        ? `Restraints: ${c.fixed} frozen, ${c.tethered} restrained (Edit | Restraints); the rest is free.`
+        : "No restraints: the ligand and its pocket move, the other heavy atoms are restrained. "
+          + "Edit | Restraints sets your own.";
       body.append(el("p", { className: "help" }, what));
-      body.append(row(el("span", { className: "what" }, "Tether"), k, el("span", {}, "kcal/mol/Å²")));
+      body.append(row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²")));
       body.append(el("p", { className: "help" }, "Hydrogens are never held. Force field: Amber ff19SB, "
         + "GAFF2/AM1-BCC for ligands; vacuum with a 12 Å reaction field."));
       body.append(row(button("Minimize", () => minimize({ restraint: +k.value }), "blue"),
@@ -1890,62 +1959,287 @@ export function setupUI(app) {
     return div;
   }
 
-  // --- the models, docked on the right: on/off, colour, representation, the table's data --
+  // --- the side bar: the models (on/off, color, the table's data), and below them the
+  // representations of the current one: each a selection, a style and a color, switched
+  // on and off, edited, added and deleted one by one -------------------------------------
 
-  const PRESETS = [["site", "SiteView"], ["ribbon", "Ribbon"], ["ribbonlig", "Ribbon + ligand"],
-                   ["ribbonpocket", "Ribbon + pocket"], ["ribbonlines", "Ribbon + lines"],
-                   ["ribbonspace", "Ribbon + Space Filling"], ["lig", "Ligand"],
-                   ["ligspace", "Ligand, Space Filling"], ["line", "Lines"], ["stick", "Sticks"],
-                   ["ballstick", "Ball and Stick"], ["space", "Space filling"], ["surface", "Surface + ligand"]];
+  // a preset: the model's representations replaced by these [atoms, style, color];
+  // "keep" keeps the color the atoms have now (a site's points), "carbon" the ligand's
+  // carbons in the model's own ligand color
+  const PRESETS = [
+    ["default", "Default", null],
+    ["site", "Binding site", [["polymer", "cartoon", "white"], ["pocket", "sticks", "element"], ["ligand", "sticks", "carbon"]]],
+    ["ribbon", "Cartoon", [["polymer", "cartoon", "ss"]]],
+    ["ribbonlig", "Cartoon + ligand", [["polymer", "cartoon", "ss"], ["ligand", "sticks", "carbon"]]],
+    ["ribbonpocket", "Cartoon + pocket lines", [["polymer", "cartoon", "white"], ["pocket", "lines", "element"], ["ligand", "sticks", "carbon"]]],
+    ["ribbonlines", "Cartoon + lines", [["polymer", "cartoon", "ss"], ["nosolvent", "lines", "element"]]],
+    ["ribbonspace", "Cartoon + ligand spheres", [["polymer", "cartoon", "ss"], ["ligand", "spheres", "carbon"]]],
+    ["lig", "Ligand", [["ligand", "sticks", "keep"]]],
+    ["ligspace", "Ligand spheres", [["ligand", "spheres", "keep"]]],
+    ["line", "Lines", [["all", "lines", "element"]]],
+    ["stick", "Sticks", [["all", "sticks", "element"]]],
+    ["ballstick", "Ball & stick", [["all", "ballstick", "element"]]],
+    ["space", "Spheres", [["all", "spheres", "element"]]],
+    ["surface", "Surface + ligand", [["receptor", "surface", "electrostatic"], ["ligand", "sticks", "carbon"]]],
+  ];
   const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...["green", "cyan", "magenta", "yellow",
     "orange", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
 
+  async function presetAtoms(m, what) {
+    const A = m.topo.atoms, R = m.topo.residues, all = app.range(m.topo.natoms);
+    if (what === "all") return all;
+    if (what === "nosolvent") return all.filter(a => A.class[a] !== 2);
+    if (what === "receptor") return surfaceAtoms(m);
+    if (what === "polymer") return all.filter(a => R.trace[A.residue[a]] >= 0);
+    if (what === "ligand") return serverSelect(m, `same residue as (${m.topo.ligand})`);
+    if (what === "pocket") return serverSelect(m, pocketSelection(m));
+    return [];
+  }
+  const PRESET_SEL = { all: "all", nosolvent: "not solvent", ligand: null, pocket: null, polymer: null, receptor: null };
+  const PRESET_LABEL = { all: "all", nosolvent: "all but solvent", ligand: "ligand", pocket: "binding site",
+                         polymer: "polymer", receptor: "receptor" };
+
   async function preset(m, kind) {
     await app.load(m);
-    const st = m.state, n = m.topo.natoms, R = m.topo.residues;
-    m.preset = kind;
-    surfaceOf(m, kind === "surface" ? "electrostatic" : null);
-    if (kind === "site") {  // the defaults: cartoon, pocket, ligand
-      const reps = await Promise.all(m.topo.reps.map(async r => ({ ...r, ids: await serverSelect(m, r.sel) })));
-      st.show.fill(0); st.ribbon.fill(0);
-      app.applyReps(m, reps);
+    const spec = PRESETS.find(([k]) => k === kind)?.[2];
+    if (spec === undefined) return;
+    const before = m.reps;
+    m.reps = [];
+    if (spec === null) {  // the model's own: what it came with
+      app.applyReps(m, await Promise.all(m.topo.reps.map(async r => ({ ...r, ids: r.ids || await serverSelect(m, r.sel) }))));
     } else {
-      const ribbon = kind.startsWith("ribbon");
-      for (let r = 0; r < st.ribbon.length; r++) st.ribbon[r] = ribbon && R.trace[r] >= 0 ? 1 : 0;
-      const style = { line: 0, stick: 1, ballstick: 3, space: 4, ribbonlines: 0, ribbonlig: 1, ribbonpocket: 1,
-                      ribbonspace: 4, lig: 1, ligspace: 4, surface: 1 }[kind];
-      st.show.fill(0);
-      let ids = app.range(n);
-      // the ligand alone (lig, ligspace): its sticks or spheres, no ribbon
-      if (["ribbonlig", "ribbonpocket", "ribbonspace", "lig", "ligspace", "surface"].includes(kind)) {
-        ids = await serverSelect(m, `same residue as (${m.topo.ligand})`);
+      for (const [what, style, color] of spec) {
+        const ids = await presetAtoms(m, what);
+        if (!ids.length) continue;
+        let c = color;
+        if (color === "carbon") c = `element/${m.topo.carbon || "green"}`;
+        if (color === "keep") c = before.find(r => !app.isRibbon(r) && r.style !== "surface" && r.mask[ids[0]])?.color || "element";
+        const rep = app.makeRep(m, { ids, sel: PRESET_SEL[what] || null, label: PRESET_LABEL[what], style, color: c });
+        m.reps.push(rep);
+        if (style === "surface" && c === "electrostatic") forceFieldCharges(m);
       }
-      if (kind === "ribbonlines") ids = ids.filter(a => m.topo.atoms.class[a] !== 2);
-      if (kind !== "ribbon") for (const a of ids) { st.show[a] = 1; st.style[a] = style; }
-      // the pocket's residues in lines around the ligand's sticks
-      if (kind === "ribbonpocket") for (const a of await serverSelect(m, pocketSelection(m))) { st.show[a] = 1; st.style[a] = 0; }
     }
-    app.rebuild();
+    m.currentRep = m.reps[0]?.id;
+    app.repsChanged(m);
   }
 
+  // a model's own color: every representation it has not been given a color of its own
   function colorModel(m, spec) {
     if (!m.state) return;
     m.color = spec;
-    const all = app.range(m.topo.natoms), res = app.range(m.topo.residues.name.length);
-    if (spec === "default") {
-      colorAtoms("element", all, m.topo, m.ss, m.state.rgb);
-      colorResidues(m.topo.cg ? "chain" : "ss", res, m.topo, m.ss, m.state.ribbonRGB);
-    } else if (spec === "chain") {
-      colorAtoms("element", all, m.topo, m.ss, m.state.rgb);
-      const carbons = all.filter(a => m.topo.atoms.element[a] === "C");
-      colorAtoms("chain", carbons, m.topo, m.ss, m.state.rgb);
-      colorResidues("chain", res, m.topo, m.ss, m.state.ribbonRGB);
-    } else {  // one colour: the carbons and the ribbon
-      colorAtoms(`element/${spec}`, all, m.topo, m.ss, m.state.rgb);
-      colorResidues(spec, res, m.topo, m.ss, m.state.ribbonRGB);
+    m.tintAll = true;
+    for (const rep of m.reps) {
+      if (!rep.tinted) continue;
+      if (spec === "chain" && rep.color !== "chain") {
+        if (app.isRibbon(rep)) rep.color = "chain";
+        else if (rep.color.startsWith("element")) rep.color = "element/chain";
+      }
+      app.colorRep(m, rep);
     }
-    m.surfaceMesh = null;  // a plain surface takes the atoms' colours
-    app.rebuild();
+    app.repsChanged(m);
+  }
+
+  // the representations of the current model, and the one being edited
+  const SCHEMES_ATOMS = [["element", "Element"], ["chain", "Chain"], ["restype", "Residue type"], ["resname", "Residue name"],
+                         ["ss", "Secondary structure"], ["spectrum", "Spectrum (N to C)"], ["bfactor", "B-factor"]];
+  const SCHEMES_RIBBON = [["ss", "Secondary structure"], ["chain", "Chain"], ["spectrum", "Spectrum (N to C)"],
+                          ["restype", "Residue type"], ["resname", "Residue name"], ["bfactor", "B-factor"]];
+  const SCHEMES_SURFACE = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"]];
+  const rgbCss = c => `rgb(${c.map(x => Math.round(x * 255)).join(",")})`;
+
+  function chipColor(rep) {
+    if (rep.custom) return "conic-gradient(#e53935, #ffd54f, #4d4, #3bd, #66f, #e5c, #e53935)";
+    const c = rep.color, [scheme, carbon] = c.split("/");
+    if (scheme === "element") return carbon && named(carbon) ? `linear-gradient(135deg, ${rgbCss(named(carbon))} 55%, #3355ff 55% 75%, #ff2a2a 75%)`
+      : "linear-gradient(135deg, #999 55%, #3355ff 55% 75%, #ff2a2a 75%)";
+    if (named(c)) return rgbCss(named(c));
+    return { chain: "linear-gradient(135deg,#5c5 33%,#3bd 33% 66%,#e5c 66%)", ss: "linear-gradient(135deg,#e53935 50%,#ffd54f 50%)",
+             spectrum: "linear-gradient(90deg,#3355ff,#33ddff,#4d4,#fe3,#f43)", electrostatic: "linear-gradient(90deg,#d63027,#fff,#3061db)",
+             hydrophobic: "linear-gradient(90deg,#008c8c,#fff,#d9a621)", bfactor: "linear-gradient(90deg,#33f,#fff,#f33)" }[c]
+      || "linear-gradient(135deg,#ccc 50%,#888 50%)";
+  }
+  const colorName = c => {
+    const [scheme, carbon] = c.split("/");
+    if (scheme === "element") return carbon ? `element, ${carbon} C` : "element";
+    return [...SCHEMES_ATOMS, ...SCHEMES_RIBBON, ...SCHEMES_SURFACE].find(([k]) => k === c)?.[1].toLowerCase() || c;
+  };
+
+  function currentRep(m) {
+    if (!m?.reps?.length) return null;
+    return m.reps.find(r => r.id === m.currentRep) || m.reps[0];
+  }
+
+  function repsPanel() {
+    const m = app.currentModel(), list = $("rep-list"), edit = $("rep-edit");
+    list.innerHTML = ""; edit.innerHTML = "";
+    $("reps-model").textContent = m && !m.closed ? `${m.index + 1}  ${m.name}` : "";
+    $("reps-model").title = m?.name || "";
+    for (const b of ["rep-dup", "rep-del"]) $(b).disabled = !currentRep(m);
+    $("rep-new").disabled = $("rep-presets").disabled = !m?.state || m.closed;
+    if (!m?.state || m.closed) { list.append(el("p", { className: "mgroup" }, m && !m.closed ? "loading…" : "no model")); edit.hidden = true; return; }
+    const cur = currentRep(m);
+    for (const rep of m.reps) {
+      const row = el("div", { className: `rep${rep.on ? " on" : " off"}${rep === cur ? " current" : ""}`,
+                              title: `${STYLE_LABEL[rep.style]} · ${rep.custom ? "colors of its own" : colorName(rep.color)} · ${rep.sel || rep.label} (${app.repIds(rep).length} atoms)` });
+      const eye = el("button", { className: "eye", title: rep.on ? "drawn: click to hide" : "hidden: click to draw" });
+      eye.onclick = e => { e.stopPropagation(); rep.on = !rep.on; app.repsChanged(m); };
+      const chip = el("span", { className: "chip" });
+      chip.style.background = chipColor(rep);
+      const x = el("button", { className: "x", title: "delete this representation" }, "✕");
+      x.onclick = e => { e.stopPropagation(); deleteRep(m, rep); };
+      const alpha = app.repAlpha(rep);
+      row.append(eye, el("span", { className: "style" }, STYLE_LABEL[rep.style], ...(alpha < 1 ? [el("small", {}, ` ${Math.round(100 * alpha)}%`)] : [])), chip,
+                 el("span", { className: "what" }, rep.label || rep.sel), x);
+      row.onclick = () => { m.currentRep = rep.id; repsPanel(); };
+      row.ondblclick = () => { rep.on = !rep.on; app.repsChanged(m); };
+      list.append(row);
+    }
+    if (!m.reps.length) list.append(el("p", { className: "mgroup" }, "nothing drawn: + New, or a preset"));
+    edit.hidden = !cur;
+    if (cur) repEditor(m, cur, edit);
+  }
+
+  function repEditor(m, rep, box) {
+    const sel = el("textarea", { value: rep.sel ?? "", rows: 2, spellcheck: false,
+                                 placeholder: rep.sel ? "" : `${rep.label}: type a selection to replace them` });
+    const apply = button("Apply", () => setRepSelection(m, rep, sel.value.trim()));
+    sel.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); apply.click(); } e.stopPropagation(); };
+    const picked = button("Use selected atoms", () => {
+      const ids = app.selected(m);
+      if (!ids.length) { app.message("nothing selected in this model", true); return; }
+      rep.mask = new Uint8Array(m.topo.natoms);
+      for (const a of ids) rep.mask[a] = 1;
+      rep.sel = null; rep.label = describeAtoms(m, ids); rep.version++;
+      app.colorRep(m, rep); app.repsChanged(m);
+    });
+    box.append(el("div", { className: "lab" }, "Atoms"), sel, el("div", { className: "row", style: "margin-top:4px" }, apply, picked));
+    // style
+    const seg = el("div", { className: "seg" });
+    for (const [s, label] of app.REP_STYLES) {
+      const b = button(label, () => setRepStyle(m, rep, s), rep.style === s ? "on" : "");
+      seg.append(b);
+    }
+    box.append(el("div", { className: "lab" }, "Style"), seg);
+    // color: a scheme, carbons of a color, or one color
+    const schemes = rep.style === "surface" ? SCHEMES_SURFACE : app.isRibbon(rep) ? SCHEMES_RIBBON : SCHEMES_ATOMS;
+    const scheme = el("select");
+    scheme.add(new Option(rep.custom ? "colors of its own" : schemes.some(([k]) => k === rep.color.split("/")[0]) ? "" : `${colorName(rep.color)}`, "", false, true));
+    for (const [k, label] of schemes) scheme.add(new Option(label, k, false, !rep.custom && (rep.color === k || (k === "element" && rep.color.startsWith("element")))));
+    scheme.onchange = () => scheme.value && setRepColor(m, rep, scheme.value);
+    const dots = (label, names, spec, title) => {
+      const d = el("div", { className: "dots" }, el("span", { className: "dots-label" }, label));
+      for (const c of names) {
+        const b = el("button", { className: `dot${rep.color === spec(c) ? " on" : ""}`, title: title(c) });
+        b.style.background = rgbCss(named(c));
+        b.onclick = () => setRepColor(m, rep, spec(c));
+        d.append(b);
+      }
+      return d;
+    };
+    box.append(el("div", { className: "lab" }, "Color"), el("div", { className: "row" }, scheme));
+    if (!app.isRibbon(rep) && rep.style !== "surface") box.append(dots("carbons", CARBONS, c => `element/${c}`, c => `element, ${c} carbons`));
+    box.append(dots("one color", SINGLE, c => c, c => c));
+    // material: how it shines and how opaque it is; the slider sets opacity apart from it
+    const mat = el("div", { className: "seg" });
+    for (const [k, label] of app.MATERIALS) mat.append(button(label, () => setRepMaterial(m, rep, k), rep.material === k ? "on" : ""));
+    const alpha = app.repAlpha(rep);
+    const slider = el("input", { type: "range", min: 5, max: 100, step: 5, value: Math.round(100 * alpha), className: "opacity" });
+    const pct = el("span", { className: "pct" }, `${Math.round(100 * alpha)}%`);
+    slider.oninput = () => { rep.opacity = +slider.value / 100; pct.textContent = `${slider.value}%`; app.rebuild(); };
+    slider.onchange = () => app.repsChanged(m);
+    box.append(el("div", { className: "lab" }, "Material"), mat,
+               el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"), slider, pct));
+    const n = app.repIds(rep).length;
+    box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color} over it` : ""}`));
+  }
+
+  async function setRepSelection(m, rep, text) {
+    if (!text) return;
+    let ids;
+    try { ids = Array.from(await app.selectIds(m, text)); } catch (e) { app.message(e.message, true); return; }
+    rep.mask = new Uint8Array(m.topo.natoms);
+    for (const a of ids) rep.mask[a] = 1;
+    rep.sel = text; rep.label = text; rep.version++;
+    app.colorRep(m, rep);
+    app.repsChanged(m);
+    app.message(`${text}: ${ids.length} atom${ids.length === 1 ? "" : "s"}`);
+  }
+  function setRepStyle(m, rep, style) {
+    const was = rep.style;
+    rep.style = style;
+    // a color that means nothing in the new style: that style's usual one
+    if (style === "surface" && !["electrostatic", "hydrophobic"].includes(rep.color) && !named(rep.color)) rep.color = "electrostatic";
+    else if (was === "surface" && ["electrostatic", "hydrophobic"].includes(rep.color)) rep.color = app.isRibbon(rep) ? "ss" : "element";
+    rep.version++;
+    app.colorRep(m, rep);
+    if (style === "surface" && rep.color === "electrostatic") forceFieldCharges(m);
+    app.repsChanged(m);
+  }
+  function setRepColor(m, rep, spec) {
+    rep.color = spec; rep.tinted = false;
+    app.colorRep(m, rep);
+    if (rep.style === "surface" && spec === "electrostatic") forceFieldCharges(m);
+    app.repsChanged(m);
+  }
+  function setRepMaterial(m, rep, name) {
+    rep.material = name;
+    rep.opacity = null;  // the material's own
+    app.repsChanged(m);
+  }
+  function deleteRep(m, rep) {
+    m.reps = m.reps.filter(r => r !== rep);
+    if (m.currentRep === rep.id) m.currentRep = m.reps[Math.max(0, m.reps.length - 1)]?.id;
+    app.repsChanged(m);
+  }
+  // + New: the selected atoms of this model, else a copy of the current representation's atoms
+  function newRepFromSelection() {
+    const m = app.selection()[0]?.[0] || app.currentModel();
+    if (!m?.state) return;
+    const ids = app.selected(m);
+    if (ids.length) { addRep([[m, ids]], { style: "sticks" }); return; }
+    const cur = currentRep(m);
+    if (cur) addRep([[m, app.repIds(cur)]], { style: "lines", sel: cur.sel, label: cur.label });
+    else addRep([[m, app.range(m.topo.natoms)]], { style: "lines", sel: "all" });
+  }
+  $("rep-new").onclick = newRepFromSelection;
+  $("rep-dup").onclick = () => {
+    const m = app.currentModel(), cur = currentRep(m);
+    if (!cur) return;
+    const copy = app.makeRep(m, { mask: cur.mask.slice(), sel: cur.sel, label: cur.label, style: cur.style, color: cur.color,
+                                  tinted: cur.tinted, material: cur.material, opacity: cur.opacity });
+    if (cur.custom) { copy.rgb = cur.rgb.slice(); copy.custom = true; }
+    m.reps.splice(m.reps.indexOf(cur) + 1, 0, copy);
+    m.currentRep = copy.id;
+    app.repsChanged(m);
+  };
+  $("rep-del").onclick = () => { const m = app.currentModel(), cur = currentRep(m); if (cur) deleteRep(m, cur); };
+  $("rep-presets").onclick = () => {
+    const m = app.currentModel();
+    if (!m?.state) return;
+    const r = $("rep-presets").getBoundingClientRect();
+    const box = menu(PRESETS.map(([k, label]) => ({ label, run: () => preset(m, k) })), r.left, r.bottom + 4);
+    box.style.left = `${Math.max(0, r.right - box.getBoundingClientRect().width)}px`;
+  };
+  app.onReps = m => { if (!m || m === app.currentModel()) repsPanel(); };
+
+  // the side bar: shown or put away; its split between models and representations dragged
+  function toggleSide() {
+    $("window").classList.toggle("nomodels");
+    $("btn-reps").classList.toggle("on", !$("window").classList.contains("nomodels"));
+    app.draw();
+  }
+  $("btn-reps").onclick = toggleSide;
+  $("btn-reps").classList.add("on");
+  {
+    const split = $("side-split"), sec = $("models-sec");
+    let start = null;
+    split.onpointerdown = e => { start = [e.clientY, sec.getBoundingClientRect().height]; split.setPointerCapture(e.pointerId); };
+    split.onpointermove = e => {
+      if (!start) return;
+      const h = Math.max(70, Math.min($("rdock").clientHeight - 160, start[1] + e.clientY - start[0]));
+      sec.style.setProperty("--models-h", `${h}px`);
+    };
+    split.onpointerup = () => { start = null; };
   }
 
   // a choice on a model's row: a button and a menu, so that choosing what it
@@ -1996,13 +2290,19 @@ export function setupUI(app) {
         + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
       name.onclick = () => app.solo(m);
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
-      const color = picker("colour", colors, () => m.color || "default", async v => {
+      const color = picker("color", colors, () => m.color || "default", async v => {
         await app.load(m); colorModel(m, v); sw.style.background = swatchColor(m.swatch || v);
       });
-      const rep = picker("representation", PRESETS, () => m.preset || "site", v => preset(m, v));
       const x = el("button", { className: "x", title: "close this model" }, "✕");
       x.onclick = () => closeModel(m);
-      row.append(el("div", { className: "top" }, box, sw, name, color, rep, x));
+      row.append(el("div", { className: "top" }, box, sw, name, color, x));
+      // a click on the row (not on its controls): this model's representations below
+      row.onclick = async e => {
+        if (e.target.closest("button, input, .name")) return;
+        state.current = m.index;
+        await app.load(m);
+        modelsDock(); repsPanel();
+      };
       row.oncontextmenu = e => {
         e.preventDefault();
         menu([
@@ -2012,6 +2312,7 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },
           { label: "Copy Into", sub: copyIntoItems(m, []) },
           { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: async () => { await app.load(m); download(fmt, m, []); } })) },
           { label: "Save…", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; app.rebuild(); savePanel(); } },
@@ -2032,7 +2333,7 @@ export function setupUI(app) {
   };
   $("rdock-all").onclick = () => app.show(app.live(), true);
   $("rdock-none").onclick = () => app.show(app.live().filter(m => m.index !== state.current), false);
-  app.onModels = modelsDock;
+  app.onModels = () => { modelsDock(); repsPanel(); };
   // a group's header: its box shows or hides every model in it (all the pockets, say)
   function groupHeader(group) {
     const members = state.models.filter(m => m.group === group && !m.closed);
@@ -2049,7 +2350,6 @@ export function setupUI(app) {
     return el("label", { className: "mgroup" }, box, ` ${group} (${members.length})`);
   }
 
-  function modelsPanel() { $("window").classList.toggle("nomodels"); app.draw(); }
 
   const cell = v => typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")) : v ?? "";
   function sortedModels() {
@@ -2072,11 +2372,11 @@ export function setupUI(app) {
     const next = list[Math.min(Math.max(list.indexOf(now) + by, 0), list.length - 1)];
     if (next && next !== now) app.solo(next);
   }
-  $("btn-models").onclick = modelsPanel;
-  $("btn-pic").onclick = savePicture;
+  $("btn-render").onclick = renderPanel;
+  $("btn-min").onclick = minimizePanel;
 
   // --- the sequence, above the view: click a residue to select it (drag or Shift: a
-  // run of them; Ctrl: add or take away), right click to mutate, centre or show it ------
+  // run of them; Ctrl: add or take away), right click to mutate, center or show it ------
 
   const ONE = { ALA: "A", ARG: "R", ASN: "N", ASP: "D", CYS: "C", GLN: "Q", GLU: "E", GLY: "G", HIS: "H", ILE: "I",
     LEU: "L", LYS: "K", MET: "M", PHE: "F", PRO: "P", SER: "S", THR: "T", TRP: "W", TYR: "Y", VAL: "V",
@@ -2202,9 +2502,9 @@ export function setupUI(app) {
       { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
       { label: "Center", run: () => app.centerView() },
-      { label: "Show Side Chains", run: () => { for (const a of ids) { m.state.show[a] = 1; m.state.style[a] = app.STYLE.stick; } app.rebuild(); } },
-      { label: "Hide Atoms", run: () => { for (const a of ids) m.state.show[a] = 0; app.rebuild(); } },
-      { label: "Ribbon Color", sub: () => SINGLE.map(c => ({ label: c, run: () => ribbonColor(c) })) },
+      { label: "Show as Sticks", run: () => addRep([[m, ids]], { style: "sticks" }) },
+      { label: "Hide Atoms", run: () => hideAtoms([[m, ids.filter(a => !m.topo.residues.trace.includes(a))]]) },
+      { label: "Color", sub: () => SINGLE.map(c => ({ label: c, run: () => colorIn([[m, ids]], c) })) },
       "-",
       { label: "Delete", run: deleteSelected },
     ], e.clientX, e.clientY);
@@ -2229,9 +2529,9 @@ export function setupUI(app) {
   // an empty view (nothing given, or the last model closed): the builder, to start
   app.onEmpty = () => {
     openDock("builder");
-    state.hydrogens = "all";
+    setHydrogens("all");
     app.message("An empty view: pick an atom or a ring in the Builder and click in the view to start a molecule, "
-      + "or type its SMILES. File | Open and Protein | Fetch from PDB bring in structures.");
+      + "or type its SMILES. File | Open and File | Fetch from PDB bring in structures.");
   };
 
 
@@ -2242,7 +2542,7 @@ export function setupUI(app) {
         ["Shift / Ctrl click", "toggle / the whole residue"], ["Double / triple click", "the residue / the molecule"],
         ["Left drag", "select a box (Shift adds, Ctrl takes residues)"], ["Click away", "clear the selection"],
         ["Middle drag", "rotate (in the perimeter: about z)"], ["Shift + middle", "pan"], ["Ctrl + middle", "zoom"],
-        ["Middle click", "centre of rotation (away from atoms: reset)"], ["Wheel", "zoom"],
+        ["Middle click", "center of rotation (away from atoms: reset)"], ["Wheel", "zoom"],
         ["Alt + middle", "rotate the selected atoms"], ["Shift + Alt + middle", "translate the selected atoms"],
         ["Alt + left drag", "turn the selected bond"], ["Right click", "the popup menu"], ["Right drag", "zoom"],
         ["Shift (hover)", "what an atom is"], ["Space", "command line"],
@@ -2258,7 +2558,7 @@ export function setupUI(app) {
       body.append(row(el("label", {}, pad, " trackpad: a two-finger swipe rotates (in the perimeter: about z), "
         + "Shift + swipe pans, a pinch zooms")));
       body.append(el("p", { className: "help" }, "On a Mac, Ctrl is Cmd and Alt is Option. Without a middle button, "
-        + "use the trackpad or two-button setting, or the trackball in the corner."));
+        + "use the trackpad or two-button setting."));
     });
   }
 
@@ -2268,22 +2568,22 @@ export function setupUI(app) {
       const on = el("input", { type: "checkbox", checked: f.on });
       const start = el("input", { type: "range", min: 0, max: 1, step: 0.01, value: f.start });
       const strength = el("input", { type: "range", min: 0, max: 1, step: 0.01, value: f.strength });
-      const apply = () => { f.on = on.checked; f.start = +start.value; f.strength = +strength.value; app.draw(); $("f-fog").classList.toggle("on", f.on); };
+      const apply = () => { f.on = on.checked; f.start = +start.value; f.strength = +strength.value; app.draw(); $("vt-fog").classList.toggle("on", f.on); };
       on.onchange = start.oninput = strength.oninput = apply;
       body.append(row(el("label", {}, on, " depth cue")), row(el("span", { className: "what" }, "Start"), start),
                   row(el("span", { className: "what" }, "Strength"), strength));
-    }, [innerWidth - 880, innerHeight - 210]);
+    }, [innerWidth - 700, innerHeight - 230]);
   }
   function zclipPanel() {
-    panel("zclip", "ZClip", body => {
+    panel("zclip", "Clipping", body => {
       const c = app.camera.zclip;
       const front = el("input", { type: "range", min: 0.02, max: 1, step: 0.01, value: c[0] });
       const back = el("input", { type: "range", min: 0.02, max: 1, step: 0.01, value: c[1] });
-      const apply = () => { c[0] = +front.value; c[1] = +back.value; app.draw(); $("f-zclip").classList.toggle("on", c[0] < 1 || c[1] < 1); };
+      const apply = () => { c[0] = +front.value; c[1] = +back.value; app.draw(); $("vt-clip").classList.toggle("on", c[0] < 1 || c[1] < 1); };
       front.oninput = back.oninput = apply;
       body.append(row(el("span", { className: "what" }, "Front"), front), row(el("span", { className: "what" }, "Back"), back),
                   row(button("Reset", () => { front.value = back.value = 1; apply(); })));
-    }, [innerWidth - 630, innerHeight - 210]);
+    }, [innerWidth - 640, innerHeight - 230]);
   }
 
   // boonza on the models: fetch a PDB entry, superpose one model on another
@@ -2307,43 +2607,107 @@ export function setupUI(app) {
     }, [innerWidth / 2 - 160, 80]);
   }
 
-  function alignPanel() {
-    panel("align", "Align/Superpose", body => {
-      const models = app.live();
-      const pickModel = (chosen) => {
-        const s = el("select");
-        for (const m of models) s.add(new Option(m.name, m.index, false, m.index === chosen));
-        return s;
+  // superpose one model on another: on all of each, or on chains, residue ranges and
+  // atoms chosen for each side (or any selection), by sequence, structure or atom for atom
+  const ALIGN_METHODS = [["matchmaker", "Sequence alignment (matchmaker, whole chains)"],
+                         ["superpose", "Fit matched residues (paired by sequence)"],
+                         ["pair", "Fit atom for atom (in order)"],
+                         ["cealign", "Structure only (CE, remote homologs)"]];
+  const ALIGN_ATOMS = [["ca", "alpha carbons"], ["backbone", "backbone"], ["heavy", "all heavy atoms"]];
+  async function alignPanel(mobileIndex = null) {
+    const models = app.live();
+    if (models.length < 2) { app.message("superposing needs two models: open another", true); return; }
+    await Promise.all(models.map(m => app.load(m)));
+    panel("align", "Superpose", body => {
+      const mob = mobileIndex ?? app.currentModel().index;
+      // onto: a shown model with chains of the same kind (protein onto protein), else any other
+      const kinds = m => new Set(m.topo.residues.kind.filter(k => k));
+      const same = m => [...kinds(m)].some(k => kinds(state.models[mob]).has(k));
+      const others = models.filter(m => m.index !== mob);
+      const other = others.find(m => m.shown && same(m)) || others.find(same) || others.find(m => m.shown) || others[0];
+      const side = (chosen, label) => {
+        const model = el("select");
+        for (const m of models) model.add(new Option(`${m.index + 1}  ${m.name}`, m.index, false, m.index === chosen));
+        const chain = el("select");
+        const residues = el("input", { placeholder: "all, or 10-120 150-160", spellcheck: false, style: "width:150px" });
+        const sel = el("input", { placeholder: "or any selection (replaces the rest)", spellcheck: false, style: "width:290px" });
+        const count = el("span", { className: "what", style: "width:auto" });
+        const chains = () => {
+          const m = state.models[+model.value], C = m.topo.chains;
+          chain.innerHTML = "";
+          chain.add(new Option("all chains", ""));
+          for (const c of [...new Set(C.name.map((n, k) => n || C.segid[k]).filter(Boolean))]) chain.add(new Option(`chain ${c}`, c));
+        };
+        chains();
+        model.onchange = () => { chains(); refresh(); };
+        chain.onchange = residues.oninput = sel.oninput = () => refresh();
+        body.append(el("h4", {}, label), row(model, chain), row(el("span", { className: "what" }, "residues"), residues),
+                    row(sel), row(count));
+        return { model, chain, residues, sel, count };
       };
-      const current = app.currentModel().index;
-      const other = models.find(m => m.index !== current)?.index ?? current;
-      const mobile = pickModel(current), ref = pickModel(other);
-      const method = el("select");
-      for (const [v, l] of [["matchmaker", "Matchmaker (sequence + pruning, as ChimeraX)"],
-                            ["cealign", "CE (structure only, for remote homologs)"],
-                            ["superpose", "Superpose alpha carbons (by sequence)"]]) method.add(new Option(l, v));
-      body.append(row(el("span", { className: "what" }, "Move"), mobile),
-                  row(el("span", { className: "what" }, "Onto"), ref),
-                  row(el("span", { className: "what" }, "Method"), method));
+      const a = side(mob, "Move"), b = side(other.index, "Onto");
+      const method = el("select"), atoms = el("select");
+      for (const [v, l] of ALIGN_METHODS) method.add(new Option(l, v));
+      for (const [v, l] of ALIGN_ATOMS) atoms.add(new Option(l, v));
+      method.onchange = atoms.onchange = () => refresh();
+      body.append(el("h4", {}, "How"), row(el("span", { className: "what" }, "method"), method),
+                  row(el("span", { className: "what" }, "atoms"), atoms));
+      // the selection a side's choices make
+      const selection = (s, kind) => {
+        if (s.sel.value.trim()) return s.sel.value.trim();
+        const m = state.models[+s.model.value], parts = [];
+        if (s.chain.value) parts.push(`chain ${s.chain.value}`);
+        const ranges = s.residues.value.trim().split(/[\s,]+/).filter(Boolean).map(r => r.replace(/^(-?\d+)-(-?\d+)$/, "$1 to $2"));
+        if (ranges.length) parts.push(`resid ${ranges.join(" ")}`);
+        if (kind !== "cealign") {
+          const at = atoms.value;
+          parts.push(at === "heavy" ? "not hydrogen" : at === "backbone" ? (m.topo.cg ? "name BB" : "backbone")
+            : m.topo.cg ? "name BB GC" : "name CA");
+        }
+        return parts.join(" and ");
+      };
+      const restricted = s => !!(s.sel.value.trim() || s.residues.value.trim());
+      // matchmaker takes whole chains: a residue range or a selection fits matched residues instead
+      const how = () => method.value === "matchmaker" && (restricted(a) || restricted(b)) ? "superpose" : method.value;
+      let ticket = 0;
+      async function refresh() {
+        const t0 = ++ticket, kind = how();
+        atoms.disabled = kind === "matchmaker" || kind === "cealign";
+        for (const s of [a, b]) {
+          if (kind === "matchmaker") { s.count.textContent = s.chain.value ? `chain ${s.chain.value}` : "every chain tried"; continue; }
+          const q = selection(s, kind);
+          try {
+            const ids = await app.selectIds(state.models[+s.model.value], q || "all");
+            if (t0 === ticket) s.count.textContent = `${ids.length} atoms: ${q || "all"}`;
+          } catch (e) { if (t0 === ticket) s.count.textContent = e.message; }
+        }
+      }
       const go = button("Superpose", async () => {
-        const m = state.models[+mobile.value], r = state.models[+ref.value];
+        const m = state.models[+a.model.value], r = state.models[+b.model.value];
         if (m === r) { app.message("pick two different models", true); return; }
+        const kind = how();
+        const req = { m: m.index, ref: r.index, method: kind };
+        if (kind === "matchmaker") Object.assign(req, { chain: a.chain.value || null, ref_chain: b.chain.value || null });
+        else Object.assign(req, { sel: selection(a, kind) || null, ref_sel: selection(b, kind) || null });
         try {
-          await Promise.all([app.load(m), app.load(r)]);
-          const out = await app.busy("superposing", () => app.post("api/align", { m: m.index, ref: r.index, method: method.value }));
+          const out = await app.busy("superposing", () => app.post("api/align", req));
           m.shown = r.shown = true;
           await app.reloadModel(m, false);
           await app.show([m, r]);
           app.centerView();
           const id = out.identity != null ? `, sequence identity ${(100 * out.identity).toFixed(0)}%` : "";
           const all = out.full_rmsd != null ? ` (all ${out.paired} pairs: ${out.full_rmsd} Å)` : "";
-          app.message(`${m.name} onto ${r.name} by ${out.method}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs${all}${id}. Undo puts it back.`);
+          const swap = kind !== method.value ? " (residues chosen: fitted matched residues)" : "";
+          app.message(`${m.name} onto ${r.name} by ${out.method}${swap}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs${all}${id}. Undo puts it back.`);
         } catch (e) { app.message(e.message, true); }
       }, "blue");
       body.append(row(go));
-      body.append(el("p", { className: "help" }, "boonza.matchmaker, boonza.cealign or boonza.superpose; "
-        + "the moving model's coordinates change (Edit | Undo restores them, File | Save keeps them)."));
-    }, [innerWidth / 2 - 200, 80]);
+      body.append(el("p", { className: "help" }, "Residues: numbers and ranges (10-120 150-160). Fit matched residues "
+        + "pairs one atom a residue by aligning the two sequences and drops the pairs far apart; atom for atom pairs "
+        + "the two selections in order, as many on each side. The moving model's coordinates change: "
+        + "Edit | Undo restores them, File | Save Model keeps them."));
+      refresh();
+    }, [innerWidth / 2 - 220, 70]);
   }
 
   async function addModels(out, look = true) {
@@ -2426,98 +2790,9 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
 
-  theme(localStorage.getItem("boonza.theme") || "noir");  // black by default
+  theme(localStorage.getItem("boonza.theme") || "dark");  // black by default
+  setHydrogens(state.hydrogens);
   $("seqbar").hidden = localStorage.getItem("boonza.sequence") === "0";
   const onModels = app.onModels;
   app.onModels = () => { onModels(); paintSequence(); };
-}
-
-// --- the trackball and the dial --------------------------------------------------------------
-
-function trackball(app) {
-  const svg = $("ball"), box = $("trackball");
-  let translate = false;
-  // a ball drawn as its great circles, turning with the view
-  function paint() {
-    const r = app.camera.rot, lines = [];
-    const circle = (axis) => {
-      const pts = [];
-      for (let k = 0; k <= 48; k++) {
-        const t = 2 * Math.PI * k / 48;
-        const u = axis === 0 ? [0, Math.cos(t), Math.sin(t)] : axis === 1 ? [Math.cos(t), 0, Math.sin(t)] : [Math.cos(t), Math.sin(t), 0];
-        const v = [0, 1, 2].map(i => r[3 * i] * u[0] + r[3 * i + 1] * u[1] + r[3 * i + 2] * u[2]);
-        pts.push([50 + 30 * v[0], 50 - 30 * v[1], v[2]]);
-      }
-      return pts;
-    };
-    for (const axis of [0, 1, 2]) {
-      const pts = circle(axis);
-      for (let k = 0; k < pts.length - 1; k++) {
-        const front = pts[k][2] + pts[k + 1][2] > 0;
-        lines.push(`<line x1="${pts[k][0].toFixed(1)}" y1="${pts[k][1].toFixed(1)}" x2="${pts[k + 1][0].toFixed(1)}" y2="${pts[k + 1][1].toFixed(1)}" stroke="${front ? "#fff" : "rgba(255,255,255,0.35)"}" stroke-width="${front ? 1.6 : 1}"/>`);
-      }
-    }
-    svg.innerHTML = `<defs><radialGradient id="g" cx="40%" cy="35%" r="65%"><stop offset="0" stop-color="#7fb6ff"/><stop offset="1" stop-color="#1e5fc8"/></radialGradient></defs>
-      <circle cx="50" cy="50" r="31" fill="url(#g)"/>${lines.join("")}`;
-  }
-  const draw = app.draw;
-  app.draw = () => { draw(); paint(); };
-  paint();
-
-  $("ball-mode").onclick = () => { translate = !translate; $("ball-mode").textContent = translate ? "✥" : "⟳"; };
-  svg.addEventListener("contextmenu", e => {
-    e.preventDefault();
-    app.popup?.(e.clientX, e.clientY);
-  });
-  let drag = null;
-  svg.addEventListener("pointerdown", e => {
-    if (e.button !== 0) return;
-    const r = svg.getBoundingClientRect();
-    const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
-    const edgeX = fx < 0.15 || fx > 0.85, edgeY = fy < 0.15 || fy > 0.85;
-    drag = { x: e.clientX, y: e.clientY, mode: edgeX && edgeY ? "z" : edgeY ? "x" : edgeX ? "y" : "free",
-             alt: e.altKey, ctrl: e.ctrlKey || e.metaKey };
-    if (drag.alt && !app.beginMove()) drag.alt = false;
-    svg.setPointerCapture(e.pointerId);
-  });
-  svg.addEventListener("pointermove", e => {
-    if (!drag) return;
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    drag.x = e.clientX; drag.y = e.clientY;
-    if (drag.ctrl) { app.camera.zoom(Math.exp(dy * 0.01)); app.draw(); return; }
-    const k = 0.02;
-    if (translate) {
-      if (drag.alt) app.translateSelected(dx * 3, dy * 3);
-      else {
-        const s = 2 * app.camera.distance * Math.tan(app.camera.fov / 2) / 300;
-        app.camera.pan(dx * s, -dy * s); app.draw();
-      }
-      return;
-    }
-    const [ax, ay, az, ang] = drag.mode === "z" ? [0, 0, 1, -dx * k] : drag.mode === "x" ? [1, 0, 0, dy * k]
-      : drag.mode === "y" ? [0, 1, 0, dx * k] : [dy, dx, 0, Math.hypot(dx, dy) * k];
-    if (drag.alt) app.rotateSelected(ax, ay, az, ang);
-    else { app.camera.rotate(ax, ay, az, ang); app.draw(); }
-  });
-  svg.addEventListener("pointerup", () => {
-    if (drag?.alt) app.endMove();
-    drag = null;
-  });
-  box.addEventListener("wheel", e => { e.preventDefault(); app.camera.zoom(Math.exp(e.deltaY * 0.0015)); app.draw(); }, { passive: false });
-}
-
-function dial(app) {
-  const d = $("dial"), marks = $("dial-marks");
-  let drag = null, offset = 0;
-  d.addEventListener("pointerdown", e => { drag = { x: e.clientX, fine: e.ctrlKey || e.metaKey }; d.setPointerCapture(e.pointerId); });
-  d.addEventListener("pointermove", e => {
-    if (!drag) return;
-    const dx = e.clientX - drag.x;
-    drag.x = e.clientX;
-    app.camera.zoom(Math.exp(-dx * (drag.fine ? 0.002 : 0.01)));
-    offset += dx;
-    marks.style.backgroundPosition = `${offset}px 0`;
-    app.draw();
-  });
-  d.addEventListener("pointerup", () => { drag = null; });
 }

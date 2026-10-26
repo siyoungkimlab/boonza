@@ -1,5 +1,5 @@
 // A model's render state -> a scene of typed arrays for gl.js.
-// Every atom has its own state: shown or not, a style, a colour; every
+// Every atom has its own state: shown or not, a style, a color; every
 // residue its ribbon.  Selected atoms are drawn pink, with a ball (hidden ones
 // too), and a selected residue's ribbon pink.
 
@@ -37,24 +37,35 @@ const SIZES = {
   beads: { stick: 0.6, ball: 0.5, bond: 0.35, cross: 1.0, picked: 1.1 },
 };
 
-// models: [{topo, pos, ss, state, dashes}]; state: {show, style, rgb, sel, ribbon,
-// ribbonRGB, ribbonStyle}; dashes [[x, y, z, x, y, z, r, g, b], ...]
+// models: [{topo, pos, ss, state, dashes, surface, alpha, shine}]; state: {show, style,
+// rgb, sel, ribbon, ribbonRGB, ribbonStyle}; dashes [[x, y, z, x, y, z, r, g, b], ...].
+// Drawings of one material (opacity and shine) share a layer; the opaque, plain one first
 export function buildScene(models) {
-  const s = { center: new Grow(), radius: new Grow(), color: new Grow() };
-  const c = { a: new Grow(), b: new Grow(), radius: new Grow(), color: new Grow() };
-  const l = { position: new Grow(), color: new Grow() };
-  const m = { position: new Grow(), normal: new Grow(), color: new Grow(), index: [] };
+  const layers = new Map();
+  const layerOf = (alpha, shine) => {
+    const key = `${alpha}|${shine}`;
+    if (!layers.has(key)) {
+      layers.set(key, { alpha, shine, s: { center: new Grow(), radius: new Grow(), color: new Grow() },
+                        c: { a: new Grow(), b: new Grow(), radius: new Grow(), color: new Grow() },
+                        l: { position: new Grow(), color: new Grow() },
+                        m: { position: new Grow(), normal: new Grow(), color: new Grow(), index: [] } });
+    }
+    return layers.get(key);
+  };
+  layerOf(1, 1);
   for (const model of models) {
-    addModel(model, s, c, l, m);
-    if (model.surface) addSurface(model.surface, m);
+    const L = layerOf(model.alpha ?? 1, model.shine ?? 1);
+    addModel(model, L.s, L.c, L.l, L.m);
+    if (model.surface) addSurface(model.surface, L.m);
   }
-  return {
+  const out = [...layers.values()].sort((a, b) => b.alpha - a.alpha).map(({ alpha, shine, s, c, l, m }) => ({
+    alpha, shine,
     spheres: { center: s.center.array, radius: s.radius.array, color: s.color.array },
     cylinders: { a: c.a.array, b: c.b.array, radius: c.radius.array, color: c.color.array },
-    mesh: { position: m.position.array, normal: m.normal.array, color: m.color.array,
-            index: new Uint32Array(m.index) },
+    mesh: { position: m.position.array, normal: m.normal.array, color: m.color.array, index: new Uint32Array(m.index) },
     lines: { position: l.position.array, color: l.color.array },
-  };
+  }));
+  return { layers: out };
 }
 
 // a surface (surface.js) joins the meshes, its vertices after theirs
@@ -86,7 +97,7 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
     const line = si === LINE || sj === LINE || si === BALLLINE || sj === BALLLINE;
     const order = topo.cg ? 1 : Math.min(B.order[k] || 1, 3);
     const r0 = si === BALLSTICK || sj === BALLSTICK ? size.bond : size.stick;
-    // a double bond is two strands, a triple three, side by side in the plane of a neighbour
+    // a double bond is two strands, a triple three, side by side in the plane of a neighbor
     const w = order > 1 ? offsetDirection(topo, pos, i, j) : null;
     const strands = order === 1 ? [[0, 1]] : order === 2 ? [[-1, 0.5], [1, 0.5]] : [[-1, 0.4], [0, 0.4], [1, 0.4]];
     const gap = line ? (order === 2 ? 0.11 : 0.15) : r0 * (order === 2 ? 0.62 : 0.85);
@@ -135,7 +146,7 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
       }
     }
   }
-  // ribbons in the residue's colour, pink where the traced atom is selected
+  // ribbons in the residue's color, pink where the traced atom is selected
   const color = new Float32Array(n * 3);
   let any = false;
   for (let r = 0; r < R.trace.length; r++) {
@@ -147,17 +158,57 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
   if (any) {
     const shape = topo.cg ? CG_SHAPE : state.ribbonStyle === "tube" ? TUBE : SHAPE;
     cartoon(topo, pos, traced, ss, color, m, shape);
+    bases(topo, pos, traced, color, c, m);
   }
 }
 
-// a line segment of one colour: a GL line, or (a picture) a thin cylinder
+// a nucleotide's base in its ribbon: a filled slab of each ring, outlined, and a rod
+// from the backbone through the sugar to it, in the residue's colour
+const RINGS = { six: ["N1", "C2", "N3", "C4", "C5", "C6"], five: ["C4", "C5", "N7", "C8", "N9"] };
+function bases(topo, pos, traced, color, c, m) {
+  const R = topo.residues, A = topo.atoms;
+  const P = a => [pos[3 * a], pos[3 * a + 1], pos[3 * a + 2]];
+  for (let r = 0; r < R.trace.length; r++) {
+    const t = R.trace[r];
+    if (t < 0 || !traced[t] || R.kind[r] !== 2) continue;
+    const named = {};
+    for (const a of topo.residueAtoms[r]) named[A.name[a].replace("*", "'")] = a;
+    const col = [color[3 * t], color[3 * t + 1], color[3 * t + 2]];
+    const rings = [RINGS.six, ...(named.N9 !== undefined ? [RINGS.five] : [])]
+      .map(ring => ring.map(n => named[n])).filter(ring => ring.every(a => a !== undefined));
+    if (!rings.length) continue;  // no base atoms (beads, a backbone alone)
+    const rod = (a, b, radius) => { c.a.push(...a); c.b.push(...b); c.radius.push(radius); c.color.push(...col); };
+    // backbone to sugar to the base's glycosidic nitrogen (purines N9, pyrimidines N1)
+    const sugar = named["C1'"], glyco = named.N9 ?? named.N1;
+    if (sugar !== undefined && glyco !== undefined) { rod(P(t), P(sugar), 0.32); rod(P(sugar), P(glyco), 0.32); }
+    else if (glyco !== undefined) rod(P(t), P(glyco), 0.32);
+    for (const ring of rings) {
+      const pts = ring.map(P);
+      const ctr = [0, 1, 2].map(d => pts.reduce((s, q) => s + q[d], 0) / pts.length);
+      let n = [0, 0, 0];  // the ring's plane: summed cross products around it
+      for (let k = 0; k < pts.length; k++) n = n.map((x, d) => x + cross(sub(pts[k], ctr), sub(pts[(k + 1) % pts.length], ctr))[d]);
+      n = norm(n);
+      // both faces, a little apart, so the slab has a body
+      for (const side of [1, -1]) {
+        const off = n.map(x => x * 0.12 * side), first = m.position.n / 3;
+        m.position.push(...ctr.map((x, d) => x + off[d]));
+        m.normal.push(...n.map(x => x * side)); m.color.push(...col);
+        for (const q of pts) { m.position.push(...q.map((x, d) => x + off[d])); m.normal.push(...n.map(x => x * side)); m.color.push(...col); }
+        for (let k = 0; k < pts.length; k++) m.index.push(first, first + 1 + k, first + 1 + (k + 1) % pts.length);
+      }
+      for (let k = 0; k < pts.length; k++) rod(pts[k], pts[(k + 1) % pts.length], 0.13);
+    }
+  }
+}
+
+// a line segment of one color: a GL line, or (a picture) a thin cylinder
 function segment(l, c, p, q, color, r) {
   if (DETAIL > 1) { c.a.push(...p); c.b.push(...q); c.radius.push(r); c.color.push(...color); return; }
   l.position.push(...p, ...q);
   l.color.push(...color, ...color);
 }
 
-// the side a multiple bond's strands spread to: toward a neighbour of either end
+// the side a multiple bond's strands spread to: toward a neighbor of either end
 function offsetDirection(topo, pos, i, j) {
   const p = a => [pos[3 * a], pos[3 * a + 1], pos[3 * a + 2]];
   const pi = p(i), pj = p(j), v = pj.map((x, d) => x - pi[d]);

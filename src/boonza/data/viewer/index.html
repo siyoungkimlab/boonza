@@ -5,24 +5,26 @@
 <title>boonza</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body class="noir">
+<body class="dark">
 <div id="window">
-  <header id="menubar">
+  <header id="topbar">
+    <div id="brand"><span class="mark"></span>boonza</div>
     <nav id="menus"></nav>
-    <div id="menubar-right">
-      <button id="btn-seq" title="Sequence (Window | Sequence)">SEQ</button>
-      <button id="btn-pic" title="Save a picture for a paper or a slide (File | Save Picture)">IMG</button>
-      <button id="btn-models" title="Models (the systems open)">MDL</button>
-      <button id="btn-cli" title="Command line (Space)">CLI</button>
-      <button id="btn-py" title="Python console (`)">PY</button>
-      <button id="btn-cancel" class="cancel" disabled>Cancel</button>
+    <div id="actions">
+      <button id="btn-reps" class="act" title="Representations: what each model shows, and how">Representations</button>
+      <button id="btn-seq" class="act" title="The sequence above the view">Sequence</button>
+      <button id="btn-cli" class="act" title="Command line (Space)">Command</button>
+      <button id="btn-py" class="act" title="Python console (`)">Python</button>
+      <button id="btn-min" class="act" title="Energy minimize the current model (Analyze | Minimize)">Minimize</button>
+      <button id="btn-render" class="act render" title="Render a picture for a paper or a slide">Render</button>
+      <button id="btn-cancel" class="act cancel" disabled>Cancel</button>
     </div>
   </header>
 
   <aside id="ldock" hidden>
     <div id="ldock-tabs">
-      <button data-tab="builder" class="on">Builder</button>
-      <button data-tab="protein">Protein Builder</button>
+      <button data-tab="builder" class="on">Molecule</button>
+      <button data-tab="protein">Protein</button>
       <button id="ldock-close" title="close">✕</button>
     </div>
     <div id="ldock-body"></div>
@@ -51,6 +53,15 @@
           placeholder="Python with boonza: model0, m (current model), sel (its selected atoms), view.select(...) · Enter runs, Shift+Enter a new line"></textarea>
       </div>
     </div>
+    <div id="viewtools">
+      <button id="vt-fit" title="Everything in view (W)">Fit</button>
+      <button id="vt-center" title="The selected atoms in view">Center</button>
+      <button id="vt-reset" title="Turn back and fit (R)">Reset</button>
+      <span class="gap"></span>
+      <button id="vt-2d" title="2D drawing of the ligand">2D</button>
+      <button id="vt-clip" title="Clipping planes">Clip</button>
+      <button id="vt-fog" title="Depth cue">Fog</button>
+    </div>
     <div id="player" hidden>
       <button id="play" title="play (Space in the player)">▶</button>
       <input type="range" id="slider" min="0" value="0">
@@ -59,51 +70,40 @@
     </div>
   </main>
 
-  <aside id="rhs"></aside>
-
   <aside id="rdock">
-    <div id="rdock-head">
-      <span class="title">Models</span>
-      <select id="rdock-sort" title="sort by"></select>
-      <button id="rdock-all" title="show all">all</button>
-      <button id="rdock-none" title="hide all">none</button>
-    </div>
-    <div id="rdock-list"></div>
+    <section id="models-sec">
+      <div class="sec-head">
+        <span class="title">Models</span>
+        <select id="rdock-sort" title="sort by"></select>
+        <button id="rdock-all" title="show all">all</button>
+        <button id="rdock-none" title="hide all but the current one">none</button>
+      </div>
+      <div id="rdock-list"></div>
+    </section>
+    <div id="side-split" title="drag to resize"></div>
+    <section id="reps-sec">
+      <div class="sec-head">
+        <span class="title">Representations</span>
+        <span id="reps-model"></span>
+      </div>
+      <div id="reps-tools">
+        <button id="rep-new" title="a new representation of the selected atoms (else of everything)">+ New</button>
+        <button id="rep-dup" title="a copy of this representation">Duplicate</button>
+        <button id="rep-del" title="delete this representation">Delete</button>
+        <button id="rep-presets" title="replace this model's representations with a preset">Presets ▾</button>
+      </div>
+      <div id="rep-list"></div>
+      <div id="rep-edit"></div>
+    </section>
   </aside>
 
   <footer id="footer">
-    <div id="footer-left">
-      <button id="ff-button" class="flat" title="Force field: what Minimize and the energy profiles use">Amber:ff19SB</button>
-      <button id="pbc-button" class="flat" title="Periodic box">PBC</button>
-      <div id="footer-edit"></div>
-    </div>
+    <div id="footer-edit"></div>
     <div id="footer-right">
-      <button class="flat" id="f-atoms">Atoms</button>
-      <button class="flat" id="f-ribbon">Ribbon</button>
-      <button class="flat" id="f-surface">Surface</button>
-      <button class="flat" id="f-contacts">Contacts</button>
-      <button class="flat" id="f-fog">Fog</button>
-      <button class="flat" id="f-zclip">ZClip</button>
-      <button class="flat" id="f-2d" title="2D drawing of the ligand">2D</button>
+      <button class="flat" id="f-hydrogens" title="Hydrogens shown: all, polar or none (click to change)">H: polar</button>
+      <button class="flat" id="f-cell" title="The periodic box">Box</button>
     </div>
   </footer>
-
-  <div id="corner">
-    <div class="corner-row">
-      <button id="theme-button" title="Theme: Blanc or Noir; Save Picture">◐ ▸</button>
-    </div>
-    <div class="corner-row" id="rsl">
-      <button data-mask="0" title="Receptor atoms can be picked">R</button>
-      <button data-mask="2" title="Solvent atoms can be picked">S</button>
-      <button data-mask="1" title="Ligand atoms can be picked">L</button>
-      <button data-mask="3" title="Ribbons can be picked">⇨</button>
-    </div>
-    <div id="trackball" title="Drag: rotate (edges: about X or Y, corners: about Z) · Ctrl: zoom · Alt: the selected atoms · right click: View">
-      <svg viewBox="0 0 100 100" id="ball"></svg>
-      <button id="ball-mode" title="Trackball: rotate or translate">⟳</button>
-    </div>
-    <div id="dial" title="Zoom (Ctrl: finer)"><div id="dial-marks"></div></div>
-  </div>
 </div>
 
 <div id="popup" class="menu" hidden></div>

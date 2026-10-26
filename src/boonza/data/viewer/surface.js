@@ -1,30 +1,30 @@
-// Molecular surfaces: the solvent-excluded surface (SES) around atoms, coloured
-// by electrostatic potential, by hydrophobicity, or one colour.
+// Molecular surfaces: the solvent-excluded surface (SES) around atoms, colored
+// by electrostatic potential, by hydrophobicity, or one color.
 //
 // The SES is what a probe sphere (a water, 1.4 A) rolling over the atoms
 // leaves: the solvent-accessible surface (each atom's sphere grown by the
 // probe) pulled back in by the probe's radius.  On a grid: the solvent points
 // next to the molecule, moved onto the grown spheres, are where the probe's
-// centre can be; a point is inside the molecule if it is farther than the
+// center can be; a point is inside the molecule if it is farther than the
 // probe from all of them, and the surface, triangulated by marching
 // tetrahedra, is where that distance equals the probe's.  The grid's spacing
 // is the resolution (0.5 A standard).
 //
 // Potential: Coulomb with a distance-dependent dielectric (eps = 4r), read 1.4 A
-// out from the surface along its normal, as ChimeraX colours it: from -10 (red)
+// out from the surface along its normal, as ChimeraX colors it: from -10 (red)
 // through 0 (white) to +10 kcal/(mol e) (blue).  Every charge counts, unless
 // that would be slow (a large system): then those within 15 A.  It is worked
 // out on a 1 A grid where the surface reads it, and interpolated.
 // Hydrophobicity: the atoms' signs (properties.py) averaged with Gaussian
 // weights (sigma 1.5 A) at each point; dark cyan (hydrophilic), white, goldenrod
-// (hydrophobic), as ChimeraX colours it.
+// (hydrophobic), as ChimeraX colors it.
 
 export const GRIDS = [[1.0, "Coarse (1.0 Å)"], [0.5, "Standard (0.5 Å)"], [0.3, "Fine (0.3 Å)"]];
 const PROBE = 1.4;        // A, a water
 const BEAD_GRID = 2;      // beads: a grid this much coarser
 const COULOMB = 332.06;   // kcal A / (mol e^2)
 const OFFSET = 1.4;       // A, off the surface, where the potential is read
-const SCALE = 10;         // kcal/(mol e) at full colour
+const SCALE = 10;         // kcal/(mol e) at full color
 const REACH = 15;         // A, the potential's, for a large system
 const ALL_PAIRS = 3e8;    // points x charges above which REACH applies
 const PHI_GRID = 1.0;     // A, the potential's grid, interpolated to the vertices
@@ -73,10 +73,10 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
       }
     }
   }
-  // probe centres: the solvent points next to the molecule, each moved onto the
+  // probe centers: the solvent points next to the molecule, each moved onto the
   // grown sphere nearest it (unless that lands inside another)
-  const grown = neighbours(pos, ids, rmax + PROBE + band);
-  const centres = [];
+  const grown = neighbors(pos, ids, rmax + PROBE + band);
+  const centers = [];
   for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
     const p = at(i, j, k);
     if (e[p] < 0 || e[p] >= band) continue;
@@ -94,15 +94,15 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
     grown(c[0], c[1], c[2], a => {
       if (a !== b && Math.hypot(c[0] - pos[3 * a], c[1] - pos[3 * a + 1], c[2] - pos[3 * a + 2]) < R[a] + PROBE - 1e-3) clash = true;
     });
-    if (!clash) centres.push(c[0], c[1], c[2]);
+    if (!clash) centers.push(c[0], c[1], c[2]);
   }
-  // rho: a point's distance to the nearest probe centre over the probe's radius
+  // rho: a point's distance to the nearest probe center over the probe's radius
   // (0 in the solvent, large deep inside); the molecule is where it is at least 1
   const rho = e;
   for (let p = 0; p < N; p++) rho[p] = rho[p] < 0 ? INF : 0;
   const reach = PROBE + 1.5 * h;
-  for (let c = 0; c < centres.length; c += 3) {
-    const x = centres[c], y = centres[c + 1], z = centres[c + 2];
+  for (let c = 0; c < centers.length; c += 3) {
+    const x = centers[c], y = centers[c + 1], z = centers[c + 2];
     const i0 = Math.max(0, Math.ceil((x - reach - lo[0]) / h)), i1 = Math.min(nx - 1, Math.floor((x + reach - lo[0]) / h));
     const j0 = Math.max(0, Math.ceil((y - reach - lo[1]) / h)), j1 = Math.min(ny - 1, Math.floor((y + reach - lo[1]) / h));
     const k0 = Math.max(0, Math.ceil((z - reach - lo[2]) / h)), k1 = Math.min(nz - 1, Math.floor((z + reach - lo[2]) / h));
@@ -185,12 +185,12 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
   const nv = position.length / 3;
   const normal = new Float32Array(3 * nv), color = new Float32Array(3 * nv);
   const q = topo.atoms.q, lipo = topo.atoms.lipo;
-  const near = neighbours(pos, ids, 3 * SIGMA);
+  const near = neighbors(pos, ids, 3 * SIGMA);
   // the potential: on a grid of its own (it varies slowly), made where it is read
   let potential = null;
   if (kind === "electrostatic" && q) {
     const charges = ids.filter(a => q[a]);
-    const inReach = nv / 8 * charges.length > ALL_PAIRS ? neighbours(pos, charges, REACH) : null;
+    const inReach = nv / 8 * charges.length > ALL_PAIRS ? neighbors(pos, charges, REACH) : null;
     const g = PHI_GRID, plo = lo.map(x => x - OFFSET - g);
     const mx = Math.ceil((hi[0] - lo[0] + 2 * OFFSET + 2 * g) / g) + 1;
     const my = Math.ceil((hi[1] - lo[1] + 2 * OFFSET + 2 * g) / g) + 1;
@@ -249,7 +249,7 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
 }
 
 // each atom within reach of a point (and some a little further), from cells reach wide
-function neighbours(pos, ids, reach) {
+function neighbors(pos, ids, reach) {
   const cells = new Map(), key = (i, j, k) => ((i + 512) * 1024 + (j + 512)) * 1024 + (k + 512);
   for (const a of ids) {
     const k = key(Math.floor(pos[3 * a] / reach), Math.floor(pos[3 * a + 1] / reach), Math.floor(pos[3 * a + 2] / reach));

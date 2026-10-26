@@ -642,6 +642,20 @@ def test_align_models(served, tmp_path):
     ca = s.select("name CA").ids
     assert np.allclose(v.session(1).system.positions[ca], s.positions[ca], atol=0.05)
     assert post("api/align", {"m": 1, "ref": 0, "method": "nope"})[0] == 400
+    # part of each, chosen: a residue range, or atom for atom in order
+    boonza.save(_rotated(s, 0.7, [5.0, 9.0, -3.0]), tmp_path / "moved.pdb")
+    v = viewer.from_paths([DATA / "1LYZ.cif", tmp_path / "moved.pdb"])
+    get, post = served(v)
+    part = {"sel": "resid 10 to 60 and name CA", "ref_sel": "resid 10 to 60 and name CA"}
+    for method in ("superpose", "cealign", "pair"):
+        status, out = post("api/align", {"m": 1, "ref": 0, "method": method, **part})
+        assert status == 200 and out["rmsd"] < 0.05 and 40 <= out["pairs"] <= 51, (method, out)
+    assert np.allclose(v.session(1).system.positions[ca], s.positions[ca], atol=0.05)
+    short = {**part, "ref_sel": "resid 10 to 59 and name CA"}
+    status, out = post("api/align", {"m": 1, "ref": 0, "method": "pair", **short})
+    assert status == 400 and "as many atoms" in out["error"]
+    nothing = {"m": 1, "ref": 0, "method": "superpose", "sel": "resid 9999"}
+    assert post("api/align", nothing)[0] == 400
 
 
 def test_ligand_2d_and_isolated_profile(served):
@@ -1166,13 +1180,17 @@ def test_a_port_in_use_moves_on():
 
 def test_the_ligand_alone_is_a_representation():
     """Besides the ribbon with its ligand, a model can show its ligand alone, in sticks or
-    space filling, with no ribbon: a pocket's points, or a holo ligand over another model."""
+    spheres, with no ribbon: a pocket's points, or a holo ligand over another model; and
+    keep the colour its points have."""
     import re
 
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
-    presets = dict(re.findall(r'\["(\w+)", "([^"]+)"\]', ui[ui.index("const PRESETS") :]))
-    assert presets["lig"] == "Ligand" and presets["ligspace"] == "Ligand, Space Filling"
-    body = ui[ui.index("async function preset") : ui.index("function colorModel")]
-    assert "lig: 1, ligspace: 4" in body  # sticks, spheres
-    assert '"lig", "ligspace"' in body  # the ligand's atoms only
-    assert not "lig".startswith("ribbon")  # no ribbon
+    table = ui[ui.index("const PRESETS") : ui.index("const MODEL_COLORS")]
+    rows = re.findall(r'\["(\w+)", "([^"]+)", (\[.*?\]\]|null)\]', table)
+    rep = re.compile(r'\["(\w+)", "(\w+)", "([\w/]+)"\]')  # [atoms, style, colour]
+    presets = {k: (label, rep.findall(reps)) for k, label, reps in rows}
+    assert presets["lig"] == ("Ligand", [("ligand", "sticks", "keep")])
+    assert presets["ligspace"] == ("Ligand spheres", [("ligand", "spheres", "keep")])
+    assert presets["default"] == ("Default", [])  # the model's own representations
+    styles = {s for _, reps in presets.values() for _, s, _ in reps}
+    assert styles <= {"lines", "sticks", "ballstick", "spheres", "cartoon", "tube", "surface"}

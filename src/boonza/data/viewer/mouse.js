@@ -5,7 +5,7 @@
 //           triple-click (or double-click it again): the molecule (of its class);
 //           drag: select a box (Shift adds, Ctrl takes residues); click away: clear
 //   middle  drag: rotate; in the perimeter: about z; Shift: pan; Ctrl: zoom;
-//           click an atom: the centre of rotation (away from atoms: back to the view's)
+//           click an atom: the center of rotation (away from atoms: back to the view's)
 //   Alt + middle   the selected atoms: rotate them (perimeter: about z); Shift+Alt: move
 //   Alt + left     with two bonded atoms selected: turn about that bond
 //   right   the popup menu;  wheel: zoom;  Shift over an atom: what it is
@@ -133,7 +133,7 @@ export function setupMouse(app) {
     app.draw();
   });
 
-  // the angle a drag sweeps about the centre of the rendering area
+  // the angle a drag sweeps about the center of the rendering area
   function zTurn(x, y, dx, dy) {
     const cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2;
     return Math.atan2(y - dy - cy, x - dx - cx) - Math.atan2(y - cy, x - cx);
@@ -169,14 +169,14 @@ export function setupMouse(app) {
     if (d.role === "left") { click(x, y, d); return; }
     if (d.role === "middle") {
       if (d.moving === "yes") { await app.endMove(); return; }
-      if (!d.moved) {  // the centre of rotation
+      if (!d.moved) {  // the center of rotation
         const hit = app.pick(x, y);
         if (hit && hit.atom !== undefined) {
           camera.pivot = app.xyz(hit.model, hit.atom);
-          app.message(`centre of rotation: ${app.atomLabel(hit.model, hit.atom, false)}`);
+          app.message(`center of rotation: ${app.atomLabel(hit.model, hit.atom, false)}`);
         } else {
           camera.pivot = null;
-          app.message("centre of rotation: the view's");
+          app.message("center of rotation: the view's");
         }
       }
       return;

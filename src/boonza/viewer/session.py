@@ -172,24 +172,24 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
     if cg:
         lig = ligand or CG_LIGAND
         reps = [
-            (CG_POLYMER, "cartoon", "chain"),
+            (CG_POLYMER, "cartoon", "chain", "polymer"),
             (f"(same residue as ({CG_POLYMER} and within {CG_POCKET:g} of ({lig}))) "
-             f"and not ({lig})", "ballstick", "restype"),
-            (f"({lig}) and not resname {CG_SOLVENT}", "ballstick", carbon),
-            (f"resname {CG_IONS}", "spheres", "resname"),
+             f"and not ({lig})", "ballstick", "restype", "binding site"),
+            (f"({lig}) and not resname {CG_SOLVENT}", "ballstick", carbon, "ligand"),
+            (f"resname {CG_IONS}", "spheres", "resname", "ions"),
         ]  # fmt: skip
     else:
         lig = ligand or LIGAND
         reps = [
-            ("protein or nucleic", "cartoon", "chain"),
+            ("protein or nucleic", "cartoon", "chain", "protein or nucleic"),
             # closed off: 'same residue as' takes everything after it
             (f"(same residue as ((protein or nucleic) and within {POCKET:g} of ({lig}))) "
-             f"and not ({lig}) and {POLAR}", "sticks", "element"),
-            (f"(same residue as ({lig})) and {POLAR}", "sticks", f"element/{carbon}"),
-            ("ions and not (" + lig + ")", "spheres", "element"),
+             f"and not ({lig}) and {POLAR}", "sticks", "element", "binding site"),
+            (f"(same residue as ({lig})) and {POLAR}", "sticks", f"element/{carbon}", "ligand"),
+            ("ions and not (" + lig + ")", "spheres", "element", "ions"),
         ]  # fmt: skip
-    out = [{"sel": sel, "style": style, "color": color}
-           for sel, style, color in reps if len(system.select(sel))]  # fmt: skip
+    out = [{"sel": sel, "style": style, "color": color, "label": label}
+           for sel, style, color, label in reps if len(system.select(sel))]  # fmt: skip
     if any(r["color"] == carbon or r["color"].endswith("/" + carbon) for r in out):
         # with a ligand, a neutral cartoon: its carbons are the colour that stands out
         out[0]["color"] = "white" if out[0]["style"] == "cartoon" else out[0]["color"]
@@ -865,21 +865,31 @@ class Session:
         a, b, c = (int(x) for x in atoms)
         return self._geometry_edit(lambda s: {"value": round(set_angle(s, a, b, c, degrees), 3)})
 
-    def align(self, reference, method: str = "matchmaker", sel: str | None = None) -> dict:
+    def align(self, reference, method: str = "matchmaker", sel: str | None = None,
+              ref_sel: str | None = None, chain: str | None = None,
+              ref_chain: str | None = None) -> dict:  # fmt: skip
         """Superpose this model onto ``reference`` (a Session) with boonza: matchmaker
-        (sequence alignment and pruning, as ChimeraX), cealign (structure only) or
-        superpose (``sel``, default alpha carbons, paired by sequence)."""
+        (sequence alignment and pruning, as ChimeraX; ``chain`` and ``ref_chain`` pick
+        the chains), cealign (structure only), superpose (one atom a residue, paired by
+        sequence) or pair (``sel`` atom for atom onto ``ref_sel``, in order, no pruning).
+        ``sel`` and ``ref_sel`` (default: ``sel``) are the atoms of each that count, by
+        default the alpha carbons; the whole model moves."""
         from ..align import superpose
         from ..ce import cealign
         from ..matchmaker import matchmaker
 
-        if method not in ("matchmaker", "cealign", "superpose"):
-            raise ValueError("method: matchmaker, cealign or superpose")
+        if method not in ("matchmaker", "cealign", "superpose", "pair"):
+            raise ValueError("method: matchmaker, cealign, superpose or pair")
         ref = reference.system
+        sides = (("this model", self.system, sel), ("the reference", ref, ref_sel or sel))
+        for name, s, q in sides:
+            if q and not len(s.select(q)):
+                raise ValueError(f"no atoms of {name} in {q!r}")
 
         def change(s):
             if method == "matchmaker":
-                r = matchmaker(s, ref)
+                r = matchmaker(s, ref, mobile_chain=chain or None,
+                               reference_chain=ref_chain or None)  # fmt: skip
                 a, b = r.aligned_mobile, r.aligned_reference
                 pairs = [(x, y) for x, y in zip(a, b, strict=True) if x != "-" and y != "-"]
                 same = sum(1 for x, y in pairs if x == y)
@@ -887,10 +897,18 @@ class Session:
                         "pairs": int(len(r.kept)), "paired": int(len(r.mobile_atoms)),
                         "identity": round(same / len(pairs), 3) if pairs else None}  # fmt: skip
             if method == "cealign":
-                r = cealign(s, ref)
+                r = cealign(s, ref, sel=sel or None, ref_sel=ref_sel or None)
                 return {"rmsd": round(float(r.rmsd), 3), "pairs": int(len(r.mobile_atoms)),
                         "z_score": round(float(r.z_score), 2)}  # fmt: skip
-            r = superpose(s, ref, sel=sel or "protein and name CA")
+            if method == "pair":
+                a, b = s.select(sel or "name CA"), ref.select(ref_sel or sel or "name CA")
+                if len(a) != len(b):
+                    raise ValueError("atom for atom needs as many atoms on each side: "
+                                     f"{len(a)} and {len(b)}")  # fmt: skip
+                r = superpose(s, ref, sel=sel or "name CA", ref_sel=ref_sel or sel or "name CA",
+                              match="order", cutoff=None)  # fmt: skip
+                return {"rmsd": round(float(r.rmsd), 3), "pairs": int(r.n_used)}
+            r = superpose(s, ref, sel=sel or "protein and name CA", ref_sel=ref_sel or None)
             return {"rmsd": round(float(r.rmsd), 3), "pairs": int(r.n_used)}
 
         out = self._geometry_edit(change)
