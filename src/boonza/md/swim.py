@@ -308,10 +308,6 @@ def _rdkit(s: System):
     return Chem.RemoveHs(to_rdkit(t, implicit_hydrogens=False))
 
 
-#: Ligand libraries shipped with boonza, by the name of their file.
-FRAGMENTS = Path(__file__).resolve().parent.parent / "data" / "fragments"
-
-
 #: The probe libraries, which are peptides rather than a file of fragments, so an
 #: all-atom swim can run the chemistry a coarse-grained one does.  They are built
 #: here as RDKit builds them, with a free amine and acid at the ends, which is
@@ -322,9 +318,8 @@ PEPTIDE_LIBRARIES = {"SingleAminoAcid18": "single_sequences",
 
 
 def bundled_libraries() -> list[str]:
-    """The ligand libraries boonza offers, by name: the fragment files it ships
-    and the probe libraries it builds."""
-    return sorted([p.stem for p in FRAGMENTS.glob("*.sdf")] + list(PEPTIDE_LIBRARIES))
+    """The ligand libraries boonza offers, by name: the probe libraries it builds."""
+    return sorted(PEPTIDE_LIBRARIES)
 
 
 def is_peptide_library(name) -> bool:
@@ -349,19 +344,16 @@ def peptide_library(name: str) -> list[tuple[str, System]]:
 
 
 def find_library(name):
-    """A ligand library: a file of your own, the name of a bundled one, or the
-    name of a probe library, which is built rather than read."""
+    """A ligand library: a file of your own, or the name of a probe library,
+    which is built rather than read."""
     path = Path(name).expanduser()
     if path.is_file():
         return path
-    for candidate in sorted(FRAGMENTS.glob("*.sdf")):
-        if candidate.stem.lower() == str(name).lower():
-            return candidate
     if is_peptide_library(name):
         return str(name)
     raise FileNotFoundError(
         f"no ligand library {str(name)!r}: give the path to an SDF or DMS file, or one "
-        f"of the libraries boonza ships: {', '.join(bundled_libraries())}"
+        f"of the libraries boonza builds: {', '.join(bundled_libraries())}"
     )
 
 
@@ -639,9 +631,9 @@ def main(argv=None) -> int:
     g = parser.add_argument_group("swim")
     g.add_argument("--ligands",
                    help="what to swim: an SDF or DMS file of ligands (all-atom only, with or "
-                        "without a force field), or a library by name -- AstexMiniFrag or "
-                        "Essential320 all-atom, SingleAminoAcid18, Dipeptide105 or "
-                        "Dipeptide196 in any model")  # fmt: skip
+                        "without a force field), or a library by name -- "
+                        "SingleAminoAcid18, Dipeptide105 or Dipeptide196, in any "
+                        "model")  # fmt: skip
     g.add_argument("--types", type=int,
                    help="ligand types per simulation (default: 5; probes: 10)")  # fmt: skip
     g.add_argument("--copies", type=int,
