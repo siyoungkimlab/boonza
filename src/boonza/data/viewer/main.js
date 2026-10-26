@@ -213,6 +213,7 @@ function colorRep(model, rep) {
         : residues.filter(r => topo.residueAtoms[r].some(a => topo.atoms.class[a] === 0));
       colorResidues(tint, own, topo, model.ss, rep.rgb);
     }
+    rep.custom = false;
     return;
   }
   if (!rep.rgb || rep.rgb.length !== n * 3) rep.rgb = new Float32Array(n * 3);
@@ -347,9 +348,16 @@ function carryOver(old, model) {
   }
   model.reps = old.reps.map((rep, k) => {
     const out = { ...rep, mask: masks[k], rgb: null, version: rep.version + 1 };
-    const custom = rep.custom && !isRibbon(rep) && rep.style !== "surface";
+    const custom = rep.custom && rep.style !== "surface";
     colorRep(model, out);
-    if (custom) {  // its own colors, atom by atom, where the atom was there
+    if (custom && isRibbon(rep)) {  // its own colors, residue by residue, through their traced atoms
+      const T = topo.residues.trace;
+      for (let r = 0; r < T.length; r++) {
+        const o = T[r] >= 0 ? found[T[r]] : -1;
+        if (o >= 0) for (let d = 0; d < 3; d++) out.rgb[3 * r + d] = rep.rgb[3 * old.residue[o] + d];
+      }
+      out.custom = true;
+    } else if (custom) {  // its own colors, atom by atom, where the atom was there
       for (let a = 0; a < n; a++) {
         const o = found[a];
         if (o >= 0 && topo.atoms.element[a] === old.element[o]) for (let d = 0; d < 3; d++) out.rgb[3 * a + d] = rep.rgb[3 * o + d];
@@ -374,7 +382,8 @@ async function reloadModel(model, topology) {
   model.frames.clear();
   if (topology) {
     const st = model.state, topo = model.topo;
-    model.keep = { ...st, reps: model.reps, keys: range(topo.natoms).map(a => atomKey(topo, a)), element: topo.atoms.element };
+    model.keep = { ...st, reps: model.reps, keys: range(topo.natoms).map(a => atomKey(topo, a)), element: topo.atoms.element,
+                   residue: topo.atoms.residue };
     model.topo = null;
     model.loading = null;
     await load(model);
@@ -573,6 +582,7 @@ function modelItems(m) {
 
 function rebuild() {
   const models = shownModels();
+  app.onRebuild?.(models);  // a change in how they look is a step to undo
   const scene = buildScene(models.flatMap(modelItems));
   showSummary();
   if (state.cell) {
@@ -931,7 +941,7 @@ async function endMove() {
   for (const a of ids) flat.push(...xyz(m, a));
   try {
     await post("api/set_positions", { m: m.index, atoms: ids, xyz: flat });
-    await reloadModel(m, false);
+    await app.reloadModel(m, false);  // through the app: an edit for Undo
   } catch (e) {
     message(e.message, true);
   }

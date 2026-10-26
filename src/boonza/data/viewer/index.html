@@ -53,6 +53,10 @@
           placeholder="Python with boonza: model0, m (current model), sel (its selected atoms), view.select(...) · Enter runs, Shift+Enter a new line"></textarea>
       </div>
     </div>
+    <div id="trackball" title="Drag the ball: rotate (the point grabbed follows) · the ring around it: about Z · Ctrl: zoom · Alt: the selected atoms · wheel: zoom · View | Trackball hides it">
+      <svg viewBox="0 0 100 100" id="ball"></svg>
+      <button id="ball-mode" title="Rotate or translate">⟳</button>
+    </div>
     <div id="viewtools">
       <button id="vt-fit" title="Everything in view (W)">Fit</button>
       <button id="vt-center" title="The selected atoms in view">Center</button>

@@ -204,6 +204,18 @@ body.dark .label.meter { color: #ffd34d; }
 #viewtools .gap { width: 1px; height: 14px; background: var(--line); margin: 0 3px; }
 #stage:has(#player:not([hidden])) #viewtools { bottom: 46px; }
 
+/* a trackball over the view, above its buttons: drag it to turn the view without a mouse */
+#trackball { position: absolute; right: 10px; bottom: 48px; z-index: 6; width: 92px; height: 92px; border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 70%, transparent); }
+#trackball[hidden] { display: none; }
+#stage:has(#player:not([hidden])) #trackball { bottom: 84px; }
+#ball { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#ball:active { cursor: grabbing; }
+#ball-mode { position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  background: var(--raised); border: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1; }
+#ball-mode:hover { color: var(--text); }
+#ball-mode.on { color: var(--accent); }
+
 #cli { position: absolute; left: 10px; right: 10px; top: 8px; display: flex; align-items: center; gap: 6px;
   background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; z-index: 10;
   box-shadow: 0 6px 18px var(--shadow); }

@@ -1,8 +1,8 @@
 // The window around the view: the top bar (menus and actions), the popup menu, the
 // side bar (the models, and the representations of the current one), the status bar
-// (the selection's geometry to edit), the view's own buttons, the command line and the
-// panels.  Commands that change what is drawn act on the selected atoms, or on all of
-// them if none are.
+// (the selection's geometry to edit), the view's own buttons and trackball, the command
+// line and the panels.  Commands that change what is drawn act on the selected atoms, or
+// on all of them if none are.
 
 import { colorAtoms, colorResidues, isColor, named } from "./colors.js";
 import { GRIDS } from "./surface.js";
@@ -148,6 +148,7 @@ export function setupUI(app) {
         if (app.isRibbon(rep)) {
           const res = [...new Set(mine.map(a => m.topo.atoms.residue[a]))].filter(r => m.topo.residues.trace[r] >= 0);
           colorResidues(named(spec) ? spec : spec.startsWith("element/") ? spec.split("/")[1] : spec, res, m.topo, m.ss, rep.rgb);
+          rep.custom = true;
         } else {
           colorAtoms(spec, mine, m.topo, m.ss, rep.rgb);
           rep.custom = true;
@@ -321,6 +322,7 @@ export function setupUI(app) {
     { label: "Secondary Structure of Each Frame", run: () => { state.ssEachFrame = !state.ssEachFrame; app.setFrame(state.frame); },
       checked: () => !!state.ssEachFrame },
     { label: "2D Ligand", run: toggle2D, checked: () => !$("lig2d").hidden },
+    { label: "Trackball", run: toggleTrackball, checked: () => !$("trackball").hidden },
     "-",
     { label: "Fog…", run: fogPanel },
     { label: "Clipping…", run: zclipPanel },
@@ -465,7 +467,7 @@ export function setupUI(app) {
       width.oninput = height.oninput = () => { size.value = "custom"; info(); };
       const quality = select([["2", "good (2 × 2 samples)"], ["3", "fine (3 × 3)"], ["4", "finest (4 × 4)"]], saved("quality", "3"));
       quality.onchange = () => keep("quality", quality.value);
-      const back = select([["white", "white"], ["black", "black"], ["none", "transparent"], ["view", "as the view"]], saved("back", "white"));
+      const back = select([["white", "white"], ["black", "black"], ["none", "transparent"], ["view", "as the view"]], saved("back", "none"));
       back.onchange = () => keep("back", back.value);
       const check = (key, label, on) => {
         const box = el("input", { type: "checkbox", checked: saved(key, on ? "1" : "0") === "1" });
@@ -595,11 +597,93 @@ export function setupUI(app) {
     if (op === "bond" && atoms.length !== 2) { app.message("select the bond's two atoms", true); return; }
     await serverEdit(m, "api/edit", { op, atoms, value, hydrogens: op === "name" ? false : autoH() });
   }
+  // Undo and Redo step back through one history of both kinds of change: how the
+  // models look (their representations, labels and colors: kept here, as snapshots)
+  // and edits to a model (atoms, bonds, positions: undone by the server)
+  const REP_KEYS = ["id", "sel", "label", "style", "color", "on", "tinted", "material", "opacity", "custom", "version", "fresh"];
+  const looks = new WeakMap();  // model -> { state, snap }: how it looked after the last step
+  const steps = [], undone = [];
+  let replaying = false;
+  const snapshot = m => ({ reps: m.reps.map(r => ({ ...r, mask: r.mask.slice(), rgb: r.rgb?.slice() ?? null })),
+                           labels: m.state.labels.slice(), color: m.color, tintAll: m.tintAll });
+  const same = (a, b) => {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  };
+  const sameLook = (m, snap) => m.color === snap.color && m.tintAll === snap.tintAll
+    && same(m.state.labels, snap.labels) && m.reps.length === snap.reps.length
+    && m.reps.every((r, k) => { const o = snap.reps[k]; return REP_KEYS.every(key => r[key] === o[key]) && same(r.mask, o.mask) && same(r.rgb, o.rgb); });
+  const remember = step => {
+    steps.push(step);
+    if (steps.length > 50) steps.shift();
+    undone.length = 0;
+  };
+  app.onRebuild = models => {
+    if (replaying) return;
+    const changed = [];
+    for (const m of models) {
+      if (!m.state) continue;
+      const was = looks.get(m);
+      if (was?.state === m.state && sameLook(m, was.snap)) continue;
+      // a model loaded again after an edit starts afresh: the edit is its step
+      if (was?.state === m.state) changed.push([m, was.snap]);
+      looks.set(m, { state: m.state, snap: snapshot(m) });
+    }
+    if (changed.length) remember({ look: changed });
+  };
+  const reloadModel = app.reloadModel;
+  app.reloadModel = async (m, topology) => {
+    if (!replaying) remember({ edit: m, before: m.state ? snapshot(m) : null });
+    return reloadModel(m, topology);
+  };
+  // a model just loaded again takes a look its atoms fit (what an edit undone or redone had)
+  function lookAgain(m, snap) {
+    if (snap && m.state && snap.labels.length === m.state.labels.length) {
+      m.reps = snap.reps.map(r => ({ ...r, mask: r.mask.slice(), rgb: r.rgb?.slice() ?? null }));
+      m.state.labels.set(snap.labels);
+      m.color = snap.color; m.tintAll = snap.tintAll;
+      app.repsChanged(m);
+    }
+    if (m.state) looks.set(m, { state: m.state, snap: snapshot(m) });
+  }
+  function putLook(pairs) {  // the snapshots back; how the models look now, to go the other way
+    const now = [];
+    for (const [m, snap] of pairs) {
+      const was = looks.get(m);
+      if (m.closed || was?.state !== m.state || snap.labels.length !== m.state.labels.length) continue;
+      now.push([m, was.snap]);
+      lookAgain(m, snap);
+    }
+    return now;
+  }
   async function undo(redo = false) {
-    const m = actingModel();
-    if (!m) return;
-    const out = await serverEdit(m, redo ? "api/redo" : "api/undo", {});
-    if (out) app.message(redo ? "redone" : "undone");
+    const from = redo ? undone : steps, to = redo ? steps : undone;
+    const step = from.pop();
+    if (!step) {
+      if (redo) { app.message("nothing to redo"); return; }
+      // nothing done here: what the server keeps (an edit from before, say)
+      const m = actingModel();
+      if (!m) return;
+      replaying = true;
+      try { if (await serverEdit(m, "api/undo", {})) { undone.push({ edit: m }); app.message("undone"); } } finally { replaying = false; }
+      return;
+    }
+    replaying = true;
+    try {
+      if (step.look) {
+        to.push({ look: putLook(step.look) });
+        app.onModels?.();
+      } else {
+        const m = step.edit, now = m.state ? snapshot(m) : null;
+        const out = await serverEdit(m, redo ? "api/redo" : "api/undo", {});
+        if (!out) return;
+        lookAgain(m, redo ? step.after : step.before);
+        to.push({ ...step, [redo ? "before" : "after"]: now });
+      }
+      app.message(redo ? "redone" : "undone");
+    } finally { replaying = false; }
   }
   async function deleteSelected() {
     const sel = app.selection();
@@ -904,6 +988,13 @@ export function setupUI(app) {
 
   // --- the view's own buttons, the status bar ---------------------------------------------------
 
+  trackball(app);
+  function toggleTrackball() {
+    $("trackball").hidden = !$("trackball").hidden;
+    try { localStorage.setItem("boonza.trackball", $("trackball").hidden ? "0" : "1"); } catch (e) { /* not kept */ }
+  }
+  try { $("trackball").hidden = localStorage.getItem("boonza.trackball") === "0"; } catch (e) { /* shown */ }
+
   $("vt-fit").onclick = () => app.viewAll();
   $("vt-center").onclick = () => app.centerView();
   $("vt-reset").onclick = () => app.resetView();
@@ -1060,17 +1151,26 @@ export function setupUI(app) {
     $("cli-input").focus();
   }
   const closeCLI = () => { $("cli").hidden = true; $("cli-input").blur(); };
-  $("btn-cli").onclick = () => openCLI();
+  $("btn-cli").onclick = () => $("cli").hidden ? openCLI() : closeCLI();
   $("cli-close").onclick = closeCLI;
+  // Enter runs a command and the line stays, empty, for the next; up and down bring
+  // back the ones before; Esc, ✕ or Command again closes it
+  const cliHistory = [];
+  let cliAt = 0;
   $("cli").onsubmit = async e => {
     e.preventDefault();
-    const keep = e.submitter === undefined && window.event?.shiftKey;
-    await command($("cli-input").value.trim());
-    if (!keep) closeCLI();
+    const input = $("cli-input"), text = input.value.trim();
+    if (!text) return;
+    if (cliHistory.at(-1) !== text) cliHistory.push(text);
+    cliAt = cliHistory.length;
+    input.value = "";
+    await command(text);
   };
   $("cli-input").onkeydown = e => {
+    const input = $("cli-input");
     if (e.key === "Escape") closeCLI();
-    if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); command($("cli-input").value.trim()); }
+    else if (e.key === "ArrowUp" && cliAt > 0) { e.preventDefault(); input.value = cliHistory[--cliAt]; }
+    else if (e.key === "ArrowDown" && cliAt < cliHistory.length) { e.preventDefault(); input.value = cliHistory[++cliAt] ?? ""; }
   };
 
   // models by number (as the side bar lists them), by name, or all: "2", "1,3", "1FNA"
@@ -2372,7 +2472,9 @@ export function setupUI(app) {
     const next = list[Math.min(Math.max(list.indexOf(now) + by, 0), list.length - 1)];
     if (next && next !== now) app.solo(next);
   }
-  $("btn-render").onclick = renderPanel;
+  $("btn-render").onclick = () => {  // a second click puts it away, as Sequence does the sequence
+    if (panels.picture) { panels.picture.remove(); delete panels.picture; } else renderPanel();
+  };
   $("btn-min").onclick = minimizePanel;
 
   // --- the sequence, above the view: click a residue to select it (drag or Shift: a
@@ -2795,4 +2897,99 @@ export function setupUI(app) {
   $("seqbar").hidden = localStorage.getItem("boonza.sequence") === "0";
   const onModels = app.onModels;
   app.onModels = () => { onModels(); paintSequence(); };
+}
+
+// --- the trackball: turn the view by dragging a ball, without a mouse's middle button --------
+
+function trackball(app) {
+  const svg = $("ball"), box = $("trackball");
+  const R = 38, RING = 48;  // the ball and the ring around it, in the 100 x 100 viewBox
+  let translate = false;
+  // the ball's great circles turn with the view; the ring around it turns about z
+  function paint() {
+    if (box.hidden) return;
+    const r = app.camera.rot, lines = [];
+    for (const axis of [0, 1, 2]) {
+      const pts = [];
+      for (let k = 0; k <= 48; k++) {
+        const t = 2 * Math.PI * k / 48;
+        const u = axis === 0 ? [0, Math.cos(t), Math.sin(t)] : axis === 1 ? [Math.cos(t), 0, Math.sin(t)] : [Math.cos(t), Math.sin(t), 0];
+        const v = [0, 1, 2].map(i => r[3 * i] * u[0] + r[3 * i + 1] * u[1] + r[3 * i + 2] * u[2]);
+        pts.push([50 + (R - 1) * v[0], 50 - (R - 1) * v[1], v[2]]);
+      }
+      for (let k = 0; k < pts.length - 1; k++) {
+        const front = pts[k][2] + pts[k + 1][2] > 0;
+        lines.push(`<line x1="${pts[k][0].toFixed(1)}" y1="${pts[k][1].toFixed(1)}" x2="${pts[k + 1][0].toFixed(1)}" y2="${pts[k + 1][1].toFixed(1)}" `
+          + `style="stroke: var(${front ? "--accent" : "--muted"})" stroke-width="${front ? 1.8 : 0.9}" opacity="${front ? 1 : 0.45}"/>`);
+      }
+    }
+    svg.innerHTML = `<defs><radialGradient id="ball-shade" cx="38%" cy="32%" r="70%">
+        <stop offset="0" style="stop-color: var(--hover)"/><stop offset="1" style="stop-color: var(--field)"/></radialGradient></defs>
+      <circle cx="50" cy="50" r="${(R + RING) / 2}" fill="none" style="stroke: var(--line)" stroke-width="${RING - R}" opacity="0.7"/>
+      <circle cx="50" cy="50" r="${R}" fill="url(#ball-shade)" style="stroke: var(--line)"/>${lines.join("")}`;
+  }
+  const draw = app.draw;
+  app.draw = () => { draw(); paint(); };
+  new MutationObserver(paint).observe(box, { attributes: true, attributeFilter: ["hidden"] });
+  paint();
+
+  // a point relative to the ball's centre, in ball radii, y up
+  function where(e) {
+    const b = svg.getBoundingClientRect(), px = Math.min(b.width, b.height) / 100 * R;
+    return [(e.clientX - b.left - b.width / 2) / px, -(e.clientY - b.top - b.height / 2) / px];
+  }
+  // on the ball's front half (outside it: on its rim)
+  function onBall([x, y]) {
+    const d = Math.hypot(x, y);
+    return d < 1 ? [x, y, Math.sqrt(1 - d * d)] : [x / d, y / d, 0];
+  }
+
+  $("ball-mode").onclick = () => {
+    translate = !translate;
+    $("ball-mode").textContent = translate ? "✥" : "⟳";
+    $("ball-mode").classList.toggle("on", translate);
+  };
+  let drag = null;
+  svg.addEventListener("contextmenu", e => e.preventDefault());
+  svg.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    app.stopFlight();
+    const p = where(e);
+    drag = { x: e.clientX, y: e.clientY, p, z: Math.hypot(...p) > 1, alt: e.altKey, ctrl: e.ctrlKey || e.metaKey };
+    if (drag.alt && !app.beginMove()) drag.alt = false;
+    svg.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  svg.addEventListener("pointermove", e => {
+    if (!drag) { svg.style.cursor = Math.hypot(...where(e)) > 1 ? "alias" : ""; return; }
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    const p0 = drag.p, p1 = where(e);
+    drag.x = e.clientX; drag.y = e.clientY; drag.p = p1;
+    if (drag.ctrl) { app.camera.zoom(Math.exp(dy * 0.01)); app.draw(); return; }
+    if (translate) {
+      if (drag.alt) app.translateSelected(dx * 3, dy * 3);
+      else {
+        const s = 2 * app.camera.distance * Math.tan(app.camera.fov / 2) / 300;
+        app.camera.pan(dx * s, -dy * s); app.draw();
+      }
+      return;
+    }
+    let turn;
+    if (drag.z) {  // the ring: the angle swept about the ball's centre
+      turn = [0, 0, 1, Math.atan2(p1[1], p1[0]) - Math.atan2(p0[1], p0[0])];
+    } else {       // the ball: the point grabbed stays under the pointer
+      const a = onBall(p0), b = onBall(p1);
+      const c = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      turn = [...c, Math.atan2(Math.hypot(...c), a[0] * b[0] + a[1] * b[1] + a[2] * b[2])];
+    }
+    if (drag.alt) app.rotateSelected(...turn);
+    else { app.camera.rotate(...turn); app.draw(); }
+  });
+  const end = () => {
+    if (drag?.alt) app.endMove();
+    drag = null;
+  };
+  svg.addEventListener("pointerup", end);
+  svg.addEventListener("pointercancel", end);
+  box.addEventListener("wheel", e => { e.preventDefault(); app.camera.zoom(Math.exp(e.deltaY * 0.0015)); app.draw(); }, { passive: false });
 }
