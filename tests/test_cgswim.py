@@ -1368,7 +1368,9 @@ def test_a_coarse_grained_swim_takes_a_library_by_name(tmp_path):
     assert len(library_sequences("Dipeptide105")) == 105
     assert library_sequences("dipeptide105")[:2] == ["RR", "RQ"]  # whatever its case
 
-    code = main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--ligands", "AstexMiniFrag",
+    frags = tmp_path / "frags.sdf"
+    boonza.save(boonza.from_smiles("c1ccccc1", name="FRAG000101"), frags)
+    code = main([str(DATA / "1TEN.pdb"), "--model", "martini3", "--ligands", str(frags),
                  "--workdir", str(tmp_path / "sdf")])  # fmt: skip
     assert code == 1  # a library of fragments is not something Martini can map
     code = main([str(DATA / "1TEN.pdb"), "--model", "sirah", "--ligands", "Dipeptide105",

@@ -23,29 +23,24 @@ protein's helices and sheets but sets
 `dihedral_restraint_selection = "not chain LIG"`, so peptide ligands swim
 free, and `--repulsion` keeps the ligand copies apart (see below).
 
-`--ligands` takes a file of your own, or the name of a library boonza
-ships:
-
-| name | |
-|---|---|
-| `AstexMiniFrag` | 63 very small fragments, for crystallographic screening (Astex's MiniFrag approach) |
-| `Essential320` | 307 fragments of the Essential Fragment Library |
+`--ligands` takes a file of your own (SDF or DMS), or the name of a probe
+library boonza builds (`SingleAminoAcid18`, `Dipeptide105`, `Dipeptide196`).
+boonza ships no fragment library:
 
 ```bash
-boonza swim protein.pdb --ligands AstexMiniFrag --types 5 --copies 3
-boonza swim protein.pdb --ligands ~/my_fragments.sdf
+boonza swim protein.pdb --ligands ~/my_fragments.sdf --types 5 --copies 3
 ```
 
 The ligands are chain `LIG`. A ligand of one residue takes its own name as
 the residue name — an SDF record's title line, its `_Name`, so a fragment
-library keeps its catalogue IDs (`Z359510198`) — and each copy has its own
+library keeps its catalogue IDs (`FRAG000101`) — and each copy has its own
 residue number; a record without a name falls back to `LIG`, and peptide
 ligands keep their residue names (ACE, ALA, ...). `sim_NNN/ligands.csv` says
 which residue numbers are which ligand and copy.
 
 Names of any length survive in `input.dms` and in MAE files, but a PDB
 written later (`solvated.pdb`, `final.pdb`) cuts a residue name to four
-characters and a chain name to one, so `Z359510198` shows there as `Z359`
+characters and a chain name to one, so `FRAG000101` shows there as `FRAG`
 and fragments sharing a prefix become indistinguishable. `ligands.csv` and
 the DMS files remain authoritative.
 `boonza swim` writes:

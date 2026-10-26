@@ -117,7 +117,7 @@ def test_a_ligand_keeps_its_own_force_field():
 
 def test_sdf_records_keep_their_own_name(tmp_path):
     lib = None
-    for name, smi in (("Z359510198", "CCO"), ("Z104476730", "c1ccccc1"), ("", "CC(=O)N")):
+    for name, smi in (("FRAG000101", "CCO"), ("FRAG000102", "c1ccccc1"), ("", "CC(=O)N")):
         s = boonza.from_smiles(smi, name=name)
         if lib is None:
             lib = s
@@ -126,28 +126,24 @@ def test_sdf_records_keep_their_own_name(tmp_path):
     path = tmp_path / "frags.sdf"
     boonza.save(lib, path)
     ligands = swim.load_library(path, [viparr.load_forcefield("aa.amber.ff14SB")])
-    assert [x.name for x in ligands[:2]] == ["Z359510198", "Z104476730"]
+    assert [x.name for x in ligands[:2]] == ["FRAG000101", "FRAG000102"]
     # the record's own name becomes the residue name, whatever its length
     assert [x.system.residues["name"].tolist()[0] for x in ligands] == [
-        "Z359510198", "Z104476730", "LIG",  # an unnamed record falls back to LIG
+        "FRAG000101", "FRAG000102", "LIG",  # an unnamed record falls back to LIG
     ]  # fmt: skip
     assert swim._resname("ligand 7") == "LIG"  # the placeholder _entries makes up
     assert swim._resname("  two words ") == "two_words"
 
 
-def test_bundled_fragment_libraries():
-    assert set(swim.bundled_libraries()) >= {"AstexMiniFrag", "Essential320"}
-    found = swim.find_library("astexminifrag")  # by name, whatever its case
-    assert found.name == "AstexMiniFrag.sdf" and found.is_file()
-    ligands = swim.load_library(found, [viparr.load_forcefield("aa.amber.ff14SB")])
-    records = found.read_text().count("$$$$")  # every record becomes a ligand
-    assert len(ligands) == records > 50
-    assert all((x.system.atoms["anum"] == 1).any() for x in ligands)  # hydrogens, for GAFF2
-    names = [x.system.residues["name"].tolist()[0] for x in ligands]
-    assert all(n.startswith("Z") for n in names)  # the records' own names, kept
-    assert len(set(names)) == len(names)  # and distinct, so a selection picks one
-    # the message lists every library there is, files and built ones alike
-    with pytest.raises(FileNotFoundError, match="AstexMiniFrag, Dipeptide105"):
+def test_a_library_is_a_file_or_a_probe_library(tmp_path):
+    """boonza ships no fragment files: a library of fragments is a file of your
+    own, and the libraries it offers by name are the probes it builds."""
+    assert swim.bundled_libraries() == ["Dipeptide105", "Dipeptide196", "SingleAminoAcid18"]
+    path = tmp_path / "frags.sdf"
+    boonza.save(boonza.from_smiles("CCO", name="FRAG000101"), path)
+    assert swim.find_library(path) == path
+    # the message lists every library there is
+    with pytest.raises(FileNotFoundError, match="Dipeptide105, Dipeptide196, SingleAminoAcid18"):
         swim.find_library("no-such-library")
 
 
@@ -269,7 +265,6 @@ def test_the_probe_libraries_are_ligand_libraries_too():
     an all-atom run of them reads against a Martini or SIRAH run of the same."""
     assert "SingleAminoAcid18" in swim.bundled_libraries()
     assert "Dipeptide105" in swim.bundled_libraries()
-    assert "AstexMiniFrag" in swim.bundled_libraries()  # the files it ships, still
 
     assert swim.find_library("SingleAminoAcid18") == "SingleAminoAcid18"
     assert swim.find_library("dipeptide105") == "dipeptide105"  # the name as given

@@ -36,7 +36,7 @@ version = { attr = "boonza.__version__" }
 boonza = ["data/*.dms", "data/*.zip", "data/cg_radii/*.csv",
           "data/pockets/*.json",
           "data/cavity/presets/*.json", "data/viewer/*",
-          "data/fragments/*.sdf", "data/martini/LICENSE",
+          "data/martini/LICENSE",
           "data/martini/README.md", "data/martini/*.gro",
           "data/martini/*/*", "data/martini/mappings/*/*"]
 
