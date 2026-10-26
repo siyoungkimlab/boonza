@@ -74,11 +74,11 @@ button:disabled { cursor: default; opacity: 0.45; }
 #rdock-list { overflow-y: auto; flex: 1; padding: 0 6px 4px; }
 #side-split { height: 5px; flex: none; cursor: row-resize; border-top: 1px solid var(--line); }
 #side-split:hover { background: var(--accent-soft); }
-#reps-sec { display: flex; flex-direction: column; flex: 1; min-height: 120px; }
+#reps-sec { display: flex; flex-direction: column; flex: 1; min-height: 120px; overflow-y: auto; }
 #reps-model { color: var(--text); font-weight: 600; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #reps-tools { display: flex; gap: 4px; padding: 0 10px 6px; flex-wrap: wrap; }
 #reps-tools #rep-presets { margin-left: auto; }
-#rep-list { overflow-y: auto; flex: 1 1 auto; min-height: 60px; padding: 0 6px; }
+#rep-list { flex: 0 0 auto; min-height: 40px; padding: 0 6px 6px; }
 .mgroup { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
   padding: 7px 6px 3px; }
 label.mgroup { display: flex; align-items: center; gap: 5px; cursor: pointer; }
@@ -100,7 +100,7 @@ label.mgroup input { margin: 0; }
 .mrow .data { color: var(--muted); font-size: 10.5px; padding-left: 24px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
 
-/* a representation: its switch, style, colour and atoms; the current one is edited below */
+/* a representation: its switch, style, color and atoms; the current one is edited below */
 .rep { display: grid; grid-template-columns: 18px 86px 14px minmax(0, 1fr) 16px; gap: 6px; align-items: center;
   padding: 4px 6px; border-radius: 6px; margin: 1px 0; border: 1px solid transparent; cursor: pointer; }
 .rep:hover { background: var(--hover); }
@@ -130,6 +130,9 @@ label.mgroup input { margin: 0; }
 #rep-edit .dot { width: 16px; height: 16px; border-radius: 50%; padding: 0; border: 1px solid var(--line); }
 #rep-edit .dot.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
 #rep-edit .note { color: var(--muted); font-size: 11px; margin-top: 5px; }
+#rep-edit .opacity { flex: 1; accent-color: var(--accent); }
+#rep-edit .pct { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px; }
+.rep .style small { color: var(--muted); font-weight: 400; }
 
 /* --- the builder, docked on the left ---------------------------------------------- */
 #ldock { grid-area: ldock; background: var(--panel); border-right: 1px solid var(--line);
@@ -277,7 +280,7 @@ body.dark .label.meter { color: #ffd34d; }
   border-radius: 5px; font: inherit; padding: 3px 5px; }
 
 /* a static page (an export): no server behind it, so nothing that edits */
-html.static #btn-py, html.static #btn-cancel, html.static #ldock { display: none; }
+html.static #btn-py, html.static #btn-cancel, html.static #btn-min, html.static #ldock { display: none; }
 
 /* --- the sequence, above the view ------------------------------------------------------- */
 #seqbar { grid-area: seq; max-height: 28vh; overflow-y: auto; background: var(--chrome2);

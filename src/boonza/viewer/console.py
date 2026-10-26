@@ -88,7 +88,7 @@ class _View:
         return self._do("hide", atoms, model)
 
     def color(self, atoms, scheme: str, model=None):
-        """Colour atoms: element, element/green, chain, restype, a name, #rrggbb."""
+        """Color atoms: element, element/green, chain, restype, a name, #rrggbb."""
         return self._do("color", atoms, model, scheme=scheme)
 
     def center(self, atoms=None, model=None):

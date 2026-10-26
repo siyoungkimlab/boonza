@@ -642,6 +642,20 @@ def test_align_models(served, tmp_path):
     ca = s.select("name CA").ids
     assert np.allclose(v.session(1).system.positions[ca], s.positions[ca], atol=0.05)
     assert post("api/align", {"m": 1, "ref": 0, "method": "nope"})[0] == 400
+    # part of each, chosen: a residue range, or atom for atom in order
+    boonza.save(_rotated(s, 0.7, [5.0, 9.0, -3.0]), tmp_path / "moved.pdb")
+    v = viewer.from_paths([DATA / "1LYZ.cif", tmp_path / "moved.pdb"])
+    get, post = served(v)
+    part = {"sel": "resid 10 to 60 and name CA", "ref_sel": "resid 10 to 60 and name CA"}
+    for method in ("superpose", "cealign", "pair"):
+        status, out = post("api/align", {"m": 1, "ref": 0, "method": method, **part})
+        assert status == 200 and out["rmsd"] < 0.05 and 40 <= out["pairs"] <= 51, (method, out)
+    assert np.allclose(v.session(1).system.positions[ca], s.positions[ca], atol=0.05)
+    short = {**part, "ref_sel": "resid 10 to 59 and name CA"}
+    status, out = post("api/align", {"m": 1, "ref": 0, "method": "pair", **short})
+    assert status == 400 and "as many atoms" in out["error"]
+    nothing = {"m": 1, "ref": 0, "method": "superpose", "sel": "resid 9999"}
+    assert post("api/align", nothing)[0] == 400
 
 
 def test_ligand_2d_and_isolated_profile(served):

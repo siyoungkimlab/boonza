@@ -3,7 +3,7 @@
 // frames.  mouse.js binds the mouse; ui.js builds the menus, side bar and panels.
 //
 // A representation is a set of a model's atoms drawn one way: a style (lines, sticks,
-// ball and stick, spheres, cartoon, tube, surface), a colour scheme and a switch.  A
+// ball and stick, spheres, cartoon, tube, surface), a color scheme and a switch.  A
 // model has as many as it likes and they add up: the same atom can be a line in one
 // and a sphere in another.
 
@@ -34,6 +34,13 @@ const RIBBON = new Set(["cartoon", "tube"]);
 const STYLE_ALIAS = { line: "lines", stick: "sticks", ballline: "ballstick", space: "spheres", sphere: "spheres",
                       picked: "ballstick", vdw: "spheres", ribbon: "cartoon" };
 const repStyle = s => (REP_STYLES.some(([k]) => k === s) ? s : STYLE_ALIAS[s]) || null;
+// a representation's material: how opaque it is and how it shines; its opacity can be
+// set apart from the material's own
+const MATERIALS = [["opaque", "Opaque", 1, 1], ["glossy", "Glossy", 1, 2.5], ["matte", "Matte", 1, 0],
+                   ["transparent", "Transparent", 0.5, 1], ["ghost", "Ghost", 0.2, 0.3]];
+const material = name => MATERIALS.find(([k]) => k === name) || MATERIALS[0];
+const repAlpha = rep => Math.round(100 * (rep.opacity ?? material(rep.material)[2])) / 100;
+const repShine = rep => material(rep.material)[3];
 
 const state = {
   title: "", columns: [], models: [], current: 0, frame: 0,
@@ -141,7 +148,7 @@ function newModel(info, index) {
 }
 
 // what every atom carries apart from its representations: selected, constrained,
-// labelled; and what the representations add up to (worked out by aggregate)
+// labeled; and what the representations add up to (worked out by aggregate)
 function initialState(model) {
   const topo = model.topo, n = topo.natoms, nres = topo.residues.name.length;
   return {
@@ -156,11 +163,11 @@ let repSerial = 0;
 
 // a representation of these atoms (ids, or a mask): {sel, label, style, color, on}
 function makeRep(model, { ids = null, mask = null, sel = null, label = null, style = "lines", color = "element",
-                          on = true, tinted = true }) {
+                          on = true, tinted = true, material = "opaque", opacity = null }) {
   const n = model.topo.natoms;
   if (!mask) { mask = new Uint8Array(n); for (const a of ids || []) mask[a] = 1; }
   const rep = { id: ++repSerial, sel, label: label || sel || "picked atoms", mask, style: repStyle(style) || "lines",
-                color, on, tinted, custom: false, version: 0, rgb: null };
+                color, on, tinted, material, opacity, custom: false, version: 0, rgb: null };
   colorRep(model, rep);
   return rep;
 }
@@ -177,7 +184,7 @@ function repResidues(model, rep) {
   return out;
 }
 
-// a ribbon's colour per residue: the ribbon schemes, a colour, else the scheme of its traced atoms
+// a ribbon's color per residue: the ribbon schemes, a color, else the scheme of its traced atoms
 function ribbonColors(model, spec, residues, out) {
   const topo = model.topo;
   if (RIBBON_SCHEMES.includes(spec) || named(spec)) { colorResidues(spec, residues, topo, model.ss, out); return; }
@@ -189,7 +196,7 @@ function ribbonColors(model, spec, residues, out) {
   residues.forEach((r, k) => { for (let d = 0; d < 3; d++) out[3 * r + d] = tmp[3 * trace[k] + d]; });
 }
 
-// a representation's colours, from its scheme, then the model's own colour over them
+// a representation's colors, from its scheme, then the model's own color over them
 // (its receptor's carbons and its ribbon -- beads, whose protein a class does not tell
 // from a ligand, too -- or, chosen in the list, every carbon), so models of a group are
 // told apart at a glance
@@ -283,7 +290,7 @@ async function load(model) {
         applyReps(model, await Promise.all(topo.reps.map(async r => ({ ...r, ids: r.ids || await selectIds(model, r.sel) }))));
       }
       aggregate(model);
-      // a numbered model (a pocket, a site) is labelled at its ligand -- the site's points
+      // a numbered model (a pocket, a site) is labeled at its ligand -- the site's points
       // -- when it has one, not at the middle of the protein drawn with it
       if (model.label) model.labelIds = await selectIds(model, `same residue as (${topo.ligand})`).catch(() => null);
       model.keep = null;
@@ -309,7 +316,7 @@ function atomKey(topo, a) {
 
 // after an edit that changed the atoms: every atom keeps its state and its place in
 // each representation, found by name; new atoms (added hydrogens) take their bonded
-// neighbour's
+// neighbor's
 function carryOver(old, model) {
   const topo = model.topo, st = model.state, n = topo.natoms;
   const from = new Map();
@@ -330,7 +337,7 @@ function carryOver(old, model) {
     grew = false;
     for (let a = 0; a < n; a++) {
       if (known[a]) continue;
-      // a neighbour of its own residue first: a metal put back joins its heme, not the histidine
+      // a neighbor of its own residue first: a metal put back joins its heme, not the histidine
       const r = topo.atoms.residue[a];
       const nb = topo.bondsOf[a].find(b => known[b] && topo.atoms.residue[b] === r) ?? topo.bondsOf[a].find(b => known[b]);
       if (nb === undefined) continue;
@@ -342,7 +349,7 @@ function carryOver(old, model) {
     const out = { ...rep, mask: masks[k], rgb: null, version: rep.version + 1 };
     const custom = rep.custom && !isRibbon(rep) && rep.style !== "surface";
     colorRep(model, out);
-    if (custom) {  // its own colours, atom by atom, where the atom was there
+    if (custom) {  // its own colors, atom by atom, where the atom was there
       for (let a = 0; a < n; a++) {
         const o = found[a];
         if (o >= 0 && topo.atoms.element[a] === old.element[o]) for (let d = 0; d < 3; d++) out.rgb[3 * a + d] = rep.rgb[3 * o + d];
@@ -352,7 +359,7 @@ function carryOver(old, model) {
     return out;
   });
   // a new molecule, bonded to nothing that was there: sticks (built ones: ball and
-  // stick), coloured by element, in a representation of its own
+  // stick), colored by element, in a representation of its own
   const fresh = range(n).filter(a => !known[a]);
   if (fresh.length) {
     const style = model.group === "built" ? "ballstick" : "sticks";
@@ -501,9 +508,9 @@ function cellLines(box) {
   return out;
 }
 
-// a surface representation's mesh: made again when its atoms move, or its colouring,
-// atoms or the resolution change.  Electrostatic and hydrophobic colour it by property;
-// a colour name paints it that colour, anything else leaves it plain
+// a surface representation's mesh: made again when its atoms move, or its coloring,
+// atoms or the resolution change.  Electrostatic and hydrophobic color it by property;
+// a color name paints it that color, anything else leaves it plain
 function surfaceOf(m, rep) {
   const grid = state.surfaceGrid, s = rep.mesh;
   const kind = ["electrostatic", "hydrophobic"].includes(rep.color) ? rep.color : "plain";
@@ -529,23 +536,24 @@ function modelItems(m) {
   const selected = state.picture ? none : st.sel;  // a picture leaves out the selection's highlight
   const drawn = new Uint8Array(n), traced = new Uint8Array(n), items = [];
   const base = { topo, pos: m.pos, ss: m.ss };
+  const look = rep => ({ alpha: repAlpha(rep), shine: repShine(rep) });
   for (const rep of m.reps) {
     if (!rep.on) continue;
     if (rep.style === "surface") {
       const mesh = surfaceOf(m, rep);
-      if (mesh) items.push({ ...base, state: { show: none, style: none, rgb: null, sel: none, ribbon: noRibbon }, surface: mesh });
+      if (mesh) items.push({ ...base, ...look(rep), state: { show: none, style: none, rgb: null, sel: none, ribbon: noRibbon }, surface: mesh });
       continue;
     }
     if (isRibbon(rep)) {
       const ribbon = new Uint8Array(nres), sel = new Uint8Array(n);
       for (const r of repResidues(m, rep)) { ribbon[r] = 1; const t = R.trace[r]; traced[t] = 1; sel[t] = selected[t]; }
-      items.push({ ...base, state: { show: none, style: none, rgb: null, sel, ribbon, ribbonRGB: rep.rgb, ribbonStyle: rep.style } });
+      items.push({ ...base, ...look(rep), state: { show: none, style: none, rgb: null, sel, ribbon, ribbonRGB: rep.rgb, ribbonStyle: rep.style } });
       continue;
     }
     // shown atoms, through the hydrogen filter
     const show = new Uint8Array(n), sel = new Uint8Array(n);
     for (let a = 0; a < n; a++) if (rep.mask[a] && visibleAtom(m, a)) { show[a] = 1; drawn[a] = 1; sel[a] = selected[a]; }
-    items.push({ ...base, state: { show, style: new Uint8Array(n).fill(ATOM_STYLE[rep.style]), rgb: rep.rgb, sel, ribbon: noRibbon } });
+    items.push({ ...base, ...look(rep), state: { show, style: new Uint8Array(n).fill(ATOM_STYLE[rep.style]), rgb: rep.rgb, sel, ribbon: noRibbon } });
   }
   // the selected atoms nothing draws: a pink ball each; contacts, bonds and meters dashed
   const loose = new Uint8Array(n);
@@ -570,11 +578,12 @@ function rebuild() {
   if (state.cell) {
     const extra = models.flatMap(m => cellLines(m.box));
     if (extra.length) {
-      const p = new Float32Array(scene.lines.position.length + extra.length);
-      p.set(scene.lines.position); p.set(extra, scene.lines.position.length);
+      const base = scene.layers[0];  // opaque, plain
+      const p = new Float32Array(base.lines.position.length + extra.length);
+      p.set(base.lines.position); p.set(extra, base.lines.position.length);
       const c = new Float32Array(p.length).fill(0.6);
-      c.set(scene.lines.color);
-      scene.lines = { position: p, color: c };
+      c.set(base.lines.color);
+      base.lines = { position: p, color: c };
     }
   }
   renderer.setScene(scene);
@@ -747,7 +756,7 @@ function resetView() {
   draw();
 }
 
-// the point under screen (x, y), in the plane through the view's centre facing the eye
+// the point under screen (x, y), in the plane through the view's center facing the eye
 function unproject(x, y) {
   const r = camera.rot, scale = 2 * camera.distance * Math.tan(camera.fov / 2) / canvas.clientHeight;
   const vx = (x - canvas.clientWidth / 2) * scale, vy = -(y - canvas.clientHeight / 2) * scale;
@@ -863,7 +872,7 @@ function beginMove() {
   return true;
 }
 
-// rotate the selected atoms about their centre: view-space axis and angle
+// rotate the selected atoms about their center: view-space axis and angle
 function rotateSelected(ax, ay, az, angle) {
   if (!moving) return;
   const m = moving.model, ids = moving.ids, r = camera.rot;
@@ -1009,7 +1018,7 @@ async function play() {
   $("play").textContent = "▶";
 }
 
-// per residue, 0..1 along its chain's traced residues (spectrum colours)
+// per residue, 0..1 along its chain's traced residues (spectrum colors)
 function spectrum(topo) {
   const R = topo.residues, out = new Float32Array(R.chain.length);
   const byChain = new Map();
@@ -1047,7 +1056,8 @@ function pageState() {
     const st = {};
     for (const k of Object.keys(ARRAYS)) st[k] = toB64(m.state[k]);
     const reps = m.reps.map(r => ({ sel: r.sel, label: r.label, style: r.style, color: r.color, on: r.on,
-                                    tinted: r.tinted, mask: toB64(r.mask), ...(r.custom ? { rgb: toB64(r.rgb) } : {}) }));
+                                    tinted: r.tinted, material: r.material, opacity: r.opacity,
+                                    mask: toB64(r.mask), ...(r.custom ? { rgb: toB64(r.rgb) } : {}) }));
     models[m.index] = { shown: m.shown, color: m.color, tintAll: !!m.tintAll, natoms: m.topo.natoms, state: st, reps };
   }
   return {
@@ -1060,8 +1070,8 @@ function pageState() {
   };
 }
 
-// a session saved when every atom had one style and one colour: a representation
-// for each style used, with the atoms' colours, and one for the ribbon
+// a session saved when every atom had one style and one color: a representation
+// for each style used, with the atoms' colors, and one for the ribbon
 function repsFromAtoms(m, saved) {
   const show = fromB64(saved.show, Uint8Array), style = fromB64(saved.style, Uint8Array);
   const rgb = fromB64(saved.rgb, Float32Array), out = [];
@@ -1103,7 +1113,8 @@ async function restorePage(page) {
     if (saved.reps) {
       m.reps = saved.reps.map(r => {
         const rep = makeRep(m, { mask: fromB64(r.mask, Uint8Array), sel: r.sel, label: r.label, style: r.style,
-                                 color: r.color, on: r.on, tinted: r.tinted });
+                                 color: r.color, on: r.on, tinted: r.tinted, material: r.material || "opaque",
+                                 opacity: r.opacity ?? null });
         if (r.rgb) { rep.rgb = fromB64(r.rgb, Float32Array); rep.custom = true; }
         return rep;
       });
@@ -1137,7 +1148,7 @@ const app = {
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
   setFrame, play, nframes, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
   range, STYLE, pageState, restorePage, PYTHON, withPictureScene,
-  REP_STYLES, makeRep, colorRep, repIds, isRibbon, repStyle, repsChanged, aggregate,
+  REP_STYLES, MATERIALS, makeRep, colorRep, repIds, isRibbon, repStyle, repsChanged, aggregate, repAlpha,
   onSelection: () => {}, onModels: () => {}, onEmpty: () => {}, onReps: () => {},  // ui.js fills these in
 };
 app.STATIC = STATIC;

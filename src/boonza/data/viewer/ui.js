@@ -136,7 +136,7 @@ export function setupUI(app) {
     return addRep(pairs, { style, sel: what });
   }
 
-  // these atoms in this colour wherever they are drawn
+  // these atoms in this color wherever they are drawn
   function colorIn(pairs, spec) {
     for (const [m, ids] of pairs) {
       if (!m?.state) continue;
@@ -181,7 +181,7 @@ export function setupUI(app) {
     const m = app.currentModel();
     if (!m?.topo) return;
     const lig = await serverSelect(m, `same residue as (${m.topo.ligand})`);
-    if (!lig.length) { app.message("no ligand: select it and Edit | Choose Ligand", true); return; }
+    if (!lig.length) { app.message("no ligand: right-click it and Set as Ligand", true); return; }
     const pocket = await serverSelect(m, pocketSelection(m));
     if (![...lig, ...pocket].some(a => m.state.show[a])) await preset(m, "site");
     const [c, r] = app.bounds(m, [...lig, ...pocket]);
@@ -337,7 +337,7 @@ export function setupUI(app) {
   ];
   // View | Add Surface: a surface representation of the selected atoms, else of each
   // shown model's receptor (else of all but its solvent)
-  const SURFACES = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"], ["white", "One Colour"]];
+  const SURFACES = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"], ["white", "One Color"]];
   const surfaceItems = () => [
     ...SURFACES.map(([kind, label]) => ({ label, run: () => addSurface(kind) })),
     "-",
@@ -556,7 +556,7 @@ export function setupUI(app) {
     const chunk = new Uint8Array(21), view = new DataView(chunk.buffer), ppm = Math.round(dpi / 0.0254);
     view.setUint32(0, 9);
     chunk.set([0x70, 0x48, 0x59, 0x73], 4);  // "pHYs"
-    view.setUint32(8, ppm); view.setUint32(12, ppm); chunk[16] = 1;  // per metre
+    view.setUint32(8, ppm); view.setUint32(12, ppm); chunk[16] = 1;  // per meter
     view.setUint32(17, CRC(chunk.subarray(4, 17)));
     const out = new Uint8Array(png.length + 21);
     out.set(png.subarray(0, 33)); out.set(chunk, 33); out.set(png.subarray(33), 54);
@@ -736,7 +736,7 @@ export function setupUI(app) {
         { label: "Delete Hydrogens", run: () => hydrogens("delete") },
       ] },
       { label: "Restraints", sub: constrainItems },
-      { label: "Choose Ligand", run: chooseLigand },
+      { label: "Set Selection as Ligand", run: chooseLigand },
     ],
     Select: selectItems,
     View: viewItems,
@@ -745,7 +745,7 @@ export function setupUI(app) {
       { label: "Protein Builder", run: () => openDock("protein"), checked: () => !$("ldock").hidden && dockTab === "protein" },
       { label: "Clean Up Geometry", run: cleanUp },
       "-",
-      { label: "Superpose Models…", run: alignPanel, off: () => app.live().length < 2 },
+      { label: "Superpose Models…", run: () => alignPanel(), off: () => app.live().length < 2 },
     ],
     Analyze: () => [
       { label: "Assign Force Field", run: assignForceField },
@@ -873,6 +873,7 @@ export function setupUI(app) {
     ...(c => c ? [
       { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
       { label: "Select Molecule", run: () => app.select(c.m, c.molecule) },
+      { label: "Set as Ligand", run: () => { app.select(c.m, c.molecule); chooseLigand(); } },
       { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
       { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
       ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
@@ -1113,6 +1114,7 @@ export function setupUI(app) {
         app.message("a selection selects atoms (boonza's language, e.g. resname LIG or within 5 of resname LIG)\n"
           + `drawing: rep SEL [${STYLE_WORDS}] [COLOR] adds a representation · show SEL [STYLE] · hide SEL · `
           + "style STYLE [SEL] (those atoms in that style only) · color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · "
+          + "material opaque|glossy|matte|transparent|ghost · opacity 0.5 (the current representation's) · "
           + "surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine] · center [SEL] · fit · focus · reset\n"
           + "editing: select SEL · minimize · undo · redo · open PATH|PDB-ID · save PATH\n"
           + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
@@ -1129,7 +1131,7 @@ export function setupUI(app) {
         return;
       }
       case "select": await selectServer(() => arg, models || undefined); return;
-      case "rep": case "show": {  // rep SEL [STYLE] [COLOR]: the last words, when they are a style and a colour
+      case "rep": case "show": {  // rep SEL [STYLE] [COLOR]: the last words, when they are a style and a color
         const words = [...rest];
         let color = "element", style = "lines";
         if (words.length && isColor(words[words.length - 1]) && words.length > 1 && !app.repStyle(words[words.length - 1])) color = words.pop();
@@ -1139,6 +1141,20 @@ export function setupUI(app) {
         return;
       }
       case "hide": hideAtoms(await pairsOf(arg), arg || null); return;
+      case "material": case "opacity": {  // the current representation's: material NAME, opacity 0-1 (or %)
+        const m = app.currentModel(), rep = currentRep(m);
+        if (!rep) { app.message("no representation: make one first (rep SEL)", true); return; }
+        if (word === "material") {
+          if (!app.MATERIALS.some(([k]) => k === arg)) { app.message(`materials: ${app.MATERIALS.map(([k]) => k).join(", ")}`, true); return; }
+          setRepMaterial(m, rep, arg);
+        } else {
+          const v = parseFloat(arg);
+          if (!(v > 0)) { app.message("opacity 0.5 (or 50%)", true); return; }
+          rep.opacity = Math.min(1, v > 1 ? v / 100 : v);
+          app.repsChanged(m);
+        }
+        return;
+      }
       case "center": if (arg) await selectServer(() => arg, models || undefined); app.centerView(); return;
       case "style": {
         const [s, ...sel] = rest;
@@ -1532,13 +1548,13 @@ export function setupUI(app) {
 
   // the model new molecules go into: the current one if it can take them, else a new one
   const canTake = m => m && !m.closed && m.shown && m.topo?.editable;
-  async function newMolecule(smiles, centre, intoNew = false) {
+  async function newMolecule(smiles, center, intoNew = false) {
     const m = app.currentModel();
     try {
       if (!intoNew && canTake(m)) {
-        await serverEdit(m, "api/edit", { op: "molecule", value: { smiles, centre } });
+        await serverEdit(m, "api/edit", { op: "molecule", value: { smiles, centre: center } });
       } else {
-        const out = await app.busy("building", () => app.post("api/build", { smiles, centre }));
+        const out = await app.busy("building", () => app.post("api/build", { smiles, centre: center }));
         await addModels(out, false);
         setHydrogens("all");
       }
@@ -1862,13 +1878,13 @@ export function setupUI(app) {
     return div;
   }
 
-  // --- the side bar: the models (on/off, colour, the table's data), and below them the
-  // representations of the current one: each a selection, a style and a colour, switched
+  // --- the side bar: the models (on/off, color, the table's data), and below them the
+  // representations of the current one: each a selection, a style and a color, switched
   // on and off, edited, added and deleted one by one -------------------------------------
 
-  // a preset: the model's representations replaced by these [atoms, style, colour];
-  // "keep" keeps the colour the atoms have now (a site's points), "carbon" the ligand's
-  // carbons in the model's own ligand colour
+  // a preset: the model's representations replaced by these [atoms, style, color];
+  // "keep" keeps the color the atoms have now (a site's points), "carbon" the ligand's
+  // carbons in the model's own ligand color
   const PRESETS = [
     ["default", "Default", null],
     ["site", "Binding site", [["polymer", "cartoon", "white"], ["pocket", "sticks", "element"], ["ligand", "sticks", "carbon"]]],
@@ -1926,7 +1942,7 @@ export function setupUI(app) {
     app.repsChanged(m);
   }
 
-  // a model's own colour: every representation it has not been given a colour of its own
+  // a model's own color: every representation it has not been given a color of its own
   function colorModel(m, spec) {
     if (!m.state) return;
     m.color = spec;
@@ -1983,14 +1999,15 @@ export function setupUI(app) {
     const cur = currentRep(m);
     for (const rep of m.reps) {
       const row = el("div", { className: `rep${rep.on ? " on" : " off"}${rep === cur ? " current" : ""}`,
-                              title: `${STYLE_LABEL[rep.style]} · ${rep.custom ? "colours of its own" : colorName(rep.color)} · ${rep.sel || rep.label} (${app.repIds(rep).length} atoms)` });
+                              title: `${STYLE_LABEL[rep.style]} · ${rep.custom ? "colors of its own" : colorName(rep.color)} · ${rep.sel || rep.label} (${app.repIds(rep).length} atoms)` });
       const eye = el("button", { className: "eye", title: rep.on ? "drawn: click to hide" : "hidden: click to draw" });
       eye.onclick = e => { e.stopPropagation(); rep.on = !rep.on; app.repsChanged(m); };
       const chip = el("span", { className: "chip" });
       chip.style.background = chipColor(rep);
       const x = el("button", { className: "x", title: "delete this representation" }, "✕");
       x.onclick = e => { e.stopPropagation(); deleteRep(m, rep); };
-      row.append(eye, el("span", { className: "style" }, STYLE_LABEL[rep.style]), chip,
+      const alpha = app.repAlpha(rep);
+      row.append(eye, el("span", { className: "style" }, STYLE_LABEL[rep.style], ...(alpha < 1 ? [el("small", {}, ` ${Math.round(100 * alpha)}%`)] : [])), chip,
                  el("span", { className: "what" }, rep.label || rep.sel), x);
       row.onclick = () => { m.currentRep = rep.id; repsPanel(); };
       row.ondblclick = () => { rep.on = !rep.on; app.repsChanged(m); };
@@ -2022,10 +2039,10 @@ export function setupUI(app) {
       seg.append(b);
     }
     box.append(el("div", { className: "lab" }, "Style"), seg);
-    // colour: a scheme, carbons of a colour, or one colour
+    // color: a scheme, carbons of a color, or one color
     const schemes = rep.style === "surface" ? SCHEMES_SURFACE : app.isRibbon(rep) ? SCHEMES_RIBBON : SCHEMES_ATOMS;
     const scheme = el("select");
-    scheme.add(new Option(rep.custom ? "colours of its own" : schemes.some(([k]) => k === rep.color.split("/")[0]) ? "" : `${colorName(rep.color)}`, "", false, true));
+    scheme.add(new Option(rep.custom ? "colors of its own" : schemes.some(([k]) => k === rep.color.split("/")[0]) ? "" : `${colorName(rep.color)}`, "", false, true));
     for (const [k, label] of schemes) scheme.add(new Option(label, k, false, !rep.custom && (rep.color === k || (k === "element" && rep.color.startsWith("element")))));
     scheme.onchange = () => scheme.value && setRepColor(m, rep, scheme.value);
     const dots = (label, names, spec, title) => {
@@ -2038,9 +2055,19 @@ export function setupUI(app) {
       }
       return d;
     };
-    box.append(el("div", { className: "lab" }, "Colour"), el("div", { className: "row" }, scheme));
+    box.append(el("div", { className: "lab" }, "Color"), el("div", { className: "row" }, scheme));
     if (!app.isRibbon(rep) && rep.style !== "surface") box.append(dots("carbons", CARBONS, c => `element/${c}`, c => `element, ${c} carbons`));
-    box.append(dots("one colour", SINGLE, c => c, c => c));
+    box.append(dots("one color", SINGLE, c => c, c => c));
+    // material: how it shines and how opaque it is; the slider sets opacity apart from it
+    const mat = el("div", { className: "seg" });
+    for (const [k, label] of app.MATERIALS) mat.append(button(label, () => setRepMaterial(m, rep, k), rep.material === k ? "on" : ""));
+    const alpha = app.repAlpha(rep);
+    const slider = el("input", { type: "range", min: 5, max: 100, step: 5, value: Math.round(100 * alpha), className: "opacity" });
+    const pct = el("span", { className: "pct" }, `${Math.round(100 * alpha)}%`);
+    slider.oninput = () => { rep.opacity = +slider.value / 100; pct.textContent = `${slider.value}%`; app.rebuild(); };
+    slider.onchange = () => app.repsChanged(m);
+    box.append(el("div", { className: "lab" }, "Material"), mat,
+               el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"), slider, pct));
     const n = app.repIds(rep).length;
     box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color} over it` : ""}`));
   }
@@ -2059,7 +2086,7 @@ export function setupUI(app) {
   function setRepStyle(m, rep, style) {
     const was = rep.style;
     rep.style = style;
-    // a colour that means nothing in the new style: that style's usual one
+    // a color that means nothing in the new style: that style's usual one
     if (style === "surface" && !["electrostatic", "hydrophobic"].includes(rep.color) && !named(rep.color)) rep.color = "electrostatic";
     else if (was === "surface" && ["electrostatic", "hydrophobic"].includes(rep.color)) rep.color = app.isRibbon(rep) ? "ss" : "element";
     rep.version++;
@@ -2071,6 +2098,11 @@ export function setupUI(app) {
     rep.color = spec; rep.tinted = false;
     app.colorRep(m, rep);
     if (rep.style === "surface" && spec === "electrostatic") forceFieldCharges(m);
+    app.repsChanged(m);
+  }
+  function setRepMaterial(m, rep, name) {
+    rep.material = name;
+    rep.opacity = null;  // the material's own
     app.repsChanged(m);
   }
   function deleteRep(m, rep) {
@@ -2093,7 +2125,7 @@ export function setupUI(app) {
     const m = app.currentModel(), cur = currentRep(m);
     if (!cur) return;
     const copy = app.makeRep(m, { mask: cur.mask.slice(), sel: cur.sel, label: cur.label, style: cur.style, color: cur.color,
-                                  tinted: cur.tinted });
+                                  tinted: cur.tinted, material: cur.material, opacity: cur.opacity });
     if (cur.custom) { copy.rgb = cur.rgb.slice(); copy.custom = true; }
     m.reps.splice(m.reps.indexOf(cur) + 1, 0, copy);
     m.currentRep = copy.id;
@@ -2177,7 +2209,7 @@ export function setupUI(app) {
         + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
       name.onclick = () => app.solo(m);
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
-      const color = picker("colour", colors, () => m.color || "default", async v => {
+      const color = picker("color", colors, () => m.color || "default", async v => {
         await app.load(m); colorModel(m, v); sw.style.background = swatchColor(m.swatch || v);
       });
       const x = el("button", { className: "x", title: "close this model" }, "✕");
@@ -2199,6 +2231,7 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },
           { label: "Copy Into", sub: copyIntoItems(m, []) },
           { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: async () => { await app.load(m); download(fmt, m, []); } })) },
           { label: "Save…", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; app.rebuild(); savePanel(); } },
@@ -2259,9 +2292,10 @@ export function setupUI(app) {
     if (next && next !== now) app.solo(next);
   }
   $("btn-render").onclick = renderPanel;
+  $("btn-min").onclick = minimizePanel;
 
   // --- the sequence, above the view: click a residue to select it (drag or Shift: a
-  // run of them; Ctrl: add or take away), right click to mutate, centre or show it ------
+  // run of them; Ctrl: add or take away), right click to mutate, center or show it ------
 
   const ONE = { ALA: "A", ARG: "R", ASN: "N", ASP: "D", CYS: "C", GLN: "Q", GLU: "E", GLY: "G", HIS: "H", ILE: "I",
     LEU: "L", LYS: "K", MET: "M", PHE: "F", PRO: "P", SER: "S", THR: "T", TRP: "W", TYR: "Y", VAL: "V",
@@ -2389,7 +2423,7 @@ export function setupUI(app) {
       { label: "Center", run: () => app.centerView() },
       { label: "Show as Sticks", run: () => addRep([[m, ids]], { style: "sticks" }) },
       { label: "Hide Atoms", run: () => hideAtoms([[m, ids.filter(a => !m.topo.residues.trace.includes(a))]]) },
-      { label: "Colour", sub: () => SINGLE.map(c => ({ label: c, run: () => colorIn([[m, ids]], c) })) },
+      { label: "Color", sub: () => SINGLE.map(c => ({ label: c, run: () => colorIn([[m, ids]], c) })) },
       "-",
       { label: "Delete", run: deleteSelected },
     ], e.clientX, e.clientY);
@@ -2427,7 +2461,7 @@ export function setupUI(app) {
         ["Shift / Ctrl click", "toggle / the whole residue"], ["Double / triple click", "the residue / the molecule"],
         ["Left drag", "select a box (Shift adds, Ctrl takes residues)"], ["Click away", "clear the selection"],
         ["Middle drag", "rotate (in the perimeter: about z)"], ["Shift + middle", "pan"], ["Ctrl + middle", "zoom"],
-        ["Middle click", "centre of rotation (away from atoms: reset)"], ["Wheel", "zoom"],
+        ["Middle click", "center of rotation (away from atoms: reset)"], ["Wheel", "zoom"],
         ["Alt + middle", "rotate the selected atoms"], ["Shift + Alt + middle", "translate the selected atoms"],
         ["Alt + left drag", "turn the selected bond"], ["Right click", "the popup menu"], ["Right drag", "zoom"],
         ["Shift (hover)", "what an atom is"], ["Space", "command line"],
@@ -2492,43 +2526,107 @@ export function setupUI(app) {
     }, [innerWidth / 2 - 160, 80]);
   }
 
-  function alignPanel() {
-    panel("align", "Align/Superpose", body => {
-      const models = app.live();
-      const pickModel = (chosen) => {
-        const s = el("select");
-        for (const m of models) s.add(new Option(m.name, m.index, false, m.index === chosen));
-        return s;
+  // superpose one model on another: on all of each, or on chains, residue ranges and
+  // atoms chosen for each side (or any selection), by sequence, structure or atom for atom
+  const ALIGN_METHODS = [["matchmaker", "Sequence alignment (matchmaker, whole chains)"],
+                         ["superpose", "Fit matched residues (paired by sequence)"],
+                         ["pair", "Fit atom for atom (in order)"],
+                         ["cealign", "Structure only (CE, remote homologs)"]];
+  const ALIGN_ATOMS = [["ca", "alpha carbons"], ["backbone", "backbone"], ["heavy", "all heavy atoms"]];
+  async function alignPanel(mobileIndex = null) {
+    const models = app.live();
+    if (models.length < 2) { app.message("superposing needs two models: open another", true); return; }
+    await Promise.all(models.map(m => app.load(m)));
+    panel("align", "Superpose", body => {
+      const mob = mobileIndex ?? app.currentModel().index;
+      // onto: a shown model with chains of the same kind (protein onto protein), else any other
+      const kinds = m => new Set(m.topo.residues.kind.filter(k => k));
+      const same = m => [...kinds(m)].some(k => kinds(state.models[mob]).has(k));
+      const others = models.filter(m => m.index !== mob);
+      const other = others.find(m => m.shown && same(m)) || others.find(same) || others.find(m => m.shown) || others[0];
+      const side = (chosen, label) => {
+        const model = el("select");
+        for (const m of models) model.add(new Option(`${m.index + 1}  ${m.name}`, m.index, false, m.index === chosen));
+        const chain = el("select");
+        const residues = el("input", { placeholder: "all, or 10-120 150-160", spellcheck: false, style: "width:150px" });
+        const sel = el("input", { placeholder: "or any selection (replaces the rest)", spellcheck: false, style: "width:290px" });
+        const count = el("span", { className: "what", style: "width:auto" });
+        const chains = () => {
+          const m = state.models[+model.value], C = m.topo.chains;
+          chain.innerHTML = "";
+          chain.add(new Option("all chains", ""));
+          for (const c of [...new Set(C.name.map((n, k) => n || C.segid[k]).filter(Boolean))]) chain.add(new Option(`chain ${c}`, c));
+        };
+        chains();
+        model.onchange = () => { chains(); refresh(); };
+        chain.onchange = residues.oninput = sel.oninput = () => refresh();
+        body.append(el("h4", {}, label), row(model, chain), row(el("span", { className: "what" }, "residues"), residues),
+                    row(sel), row(count));
+        return { model, chain, residues, sel, count };
       };
-      const current = app.currentModel().index;
-      const other = models.find(m => m.index !== current)?.index ?? current;
-      const mobile = pickModel(current), ref = pickModel(other);
-      const method = el("select");
-      for (const [v, l] of [["matchmaker", "Matchmaker (sequence + pruning, as ChimeraX)"],
-                            ["cealign", "CE (structure only, for remote homologs)"],
-                            ["superpose", "Superpose alpha carbons (by sequence)"]]) method.add(new Option(l, v));
-      body.append(row(el("span", { className: "what" }, "Move"), mobile),
-                  row(el("span", { className: "what" }, "Onto"), ref),
-                  row(el("span", { className: "what" }, "Method"), method));
+      const a = side(mob, "Move"), b = side(other.index, "Onto");
+      const method = el("select"), atoms = el("select");
+      for (const [v, l] of ALIGN_METHODS) method.add(new Option(l, v));
+      for (const [v, l] of ALIGN_ATOMS) atoms.add(new Option(l, v));
+      method.onchange = atoms.onchange = () => refresh();
+      body.append(el("h4", {}, "How"), row(el("span", { className: "what" }, "method"), method),
+                  row(el("span", { className: "what" }, "atoms"), atoms));
+      // the selection a side's choices make
+      const selection = (s, kind) => {
+        if (s.sel.value.trim()) return s.sel.value.trim();
+        const m = state.models[+s.model.value], parts = [];
+        if (s.chain.value) parts.push(`chain ${s.chain.value}`);
+        const ranges = s.residues.value.trim().split(/[\s,]+/).filter(Boolean).map(r => r.replace(/^(-?\d+)-(-?\d+)$/, "$1 to $2"));
+        if (ranges.length) parts.push(`resid ${ranges.join(" ")}`);
+        if (kind !== "cealign") {
+          const at = atoms.value;
+          parts.push(at === "heavy" ? "not hydrogen" : at === "backbone" ? (m.topo.cg ? "name BB" : "backbone")
+            : m.topo.cg ? "name BB GC" : "name CA");
+        }
+        return parts.join(" and ");
+      };
+      const restricted = s => !!(s.sel.value.trim() || s.residues.value.trim());
+      // matchmaker takes whole chains: a residue range or a selection fits matched residues instead
+      const how = () => method.value === "matchmaker" && (restricted(a) || restricted(b)) ? "superpose" : method.value;
+      let ticket = 0;
+      async function refresh() {
+        const t0 = ++ticket, kind = how();
+        atoms.disabled = kind === "matchmaker" || kind === "cealign";
+        for (const s of [a, b]) {
+          if (kind === "matchmaker") { s.count.textContent = s.chain.value ? `chain ${s.chain.value}` : "every chain tried"; continue; }
+          const q = selection(s, kind);
+          try {
+            const ids = await app.selectIds(state.models[+s.model.value], q || "all");
+            if (t0 === ticket) s.count.textContent = `${ids.length} atoms: ${q || "all"}`;
+          } catch (e) { if (t0 === ticket) s.count.textContent = e.message; }
+        }
+      }
       const go = button("Superpose", async () => {
-        const m = state.models[+mobile.value], r = state.models[+ref.value];
+        const m = state.models[+a.model.value], r = state.models[+b.model.value];
         if (m === r) { app.message("pick two different models", true); return; }
+        const kind = how();
+        const req = { m: m.index, ref: r.index, method: kind };
+        if (kind === "matchmaker") Object.assign(req, { chain: a.chain.value || null, ref_chain: b.chain.value || null });
+        else Object.assign(req, { sel: selection(a, kind) || null, ref_sel: selection(b, kind) || null });
         try {
-          await Promise.all([app.load(m), app.load(r)]);
-          const out = await app.busy("superposing", () => app.post("api/align", { m: m.index, ref: r.index, method: method.value }));
+          const out = await app.busy("superposing", () => app.post("api/align", req));
           m.shown = r.shown = true;
           await app.reloadModel(m, false);
           await app.show([m, r]);
           app.centerView();
           const id = out.identity != null ? `, sequence identity ${(100 * out.identity).toFixed(0)}%` : "";
           const all = out.full_rmsd != null ? ` (all ${out.paired} pairs: ${out.full_rmsd} Å)` : "";
-          app.message(`${m.name} onto ${r.name} by ${out.method}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs${all}${id}. Undo puts it back.`);
+          const swap = kind !== method.value ? " (residues chosen: fitted matched residues)" : "";
+          app.message(`${m.name} onto ${r.name} by ${out.method}${swap}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs${all}${id}. Undo puts it back.`);
         } catch (e) { app.message(e.message, true); }
       }, "blue");
       body.append(row(go));
-      body.append(el("p", { className: "help" }, "boonza.matchmaker, boonza.cealign or boonza.superpose; "
-        + "the moving model's coordinates change (Edit | Undo restores them, File | Save Model keeps them)."));
-    }, [innerWidth / 2 - 200, 80]);
+      body.append(el("p", { className: "help" }, "Residues: numbers and ranges (10-120 150-160). Fit matched residues "
+        + "pairs one atom a residue by aligning the two sequences and drops the pairs far apart; atom for atom pairs "
+        + "the two selections in order, as many on each side. The moving model's coordinates change: "
+        + "Edit | Undo restores them, File | Save Model keeps them."));
+      refresh();
+    }, [innerWidth / 2 - 220, 70]);
   }
 
   async function addModels(out, look = true) {

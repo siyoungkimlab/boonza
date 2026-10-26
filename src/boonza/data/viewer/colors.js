@@ -68,7 +68,7 @@ const CHAINS = [
   [0.95, 0.55, 0.45], [0.6, 0.6, 1], [1, 0.6, 0.1], [0.4, 0.85, 0.7],
   [0.85, 0.85, 0.85], [0.7, 0.45, 0.95],
 ];
-// ribbon colours by secondary structure: helix red, strand yellow, coil light
+// ribbon colors by secondary structure: helix red, strand yellow, coil light
 const SS = { H: [0.9, 0.12, 0.12], E: [1, 0.85, 0.1], C: [0.82, 0.82, 0.85], "": [0.82, 0.82, 0.85] };
 
 function hex(text) {
@@ -139,7 +139,7 @@ function put(out, a, c) {
   out[3 * a] = c[0]; out[3 * a + 1] = c[1]; out[3 * a + 2] = c[2];
 }
 
-// per residue colours for ribbons: ss, chain, spectrum, restype, or one colour
+// per residue colors for ribbons: ss, chain, spectrum, restype, or one color
 export const RIBBON_SCHEMES = ["ss", "chain", "spectrum", "restype"];
 export function colorResidues(spec, residues, topo, ss, out) {
   const R = topo.residues;

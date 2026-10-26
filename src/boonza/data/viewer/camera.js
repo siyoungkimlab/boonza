@@ -7,12 +7,12 @@ export class Camera {
     this.distance = 50;
     this.radius = 20;  // of the scene, for clipping and fog
     this.fov = 0.6;    // vertical, radians
-    this.pivot = null; // the centre of rotation (middle-click an atom), else the view's
+    this.pivot = null; // the center of rotation (middle-click an atom), else the view's
     this.zclip = [1, 1]; // front and back clipping, as fractions of the default depth
     this.ortho = true;   // orthographic by default; perspective on request
   }
 
-  // the half height of the view (Å) at the centre: what zooming changes
+  // the half height of the view (Å) at the center: what zooming changes
   halfHeight() { return this.distance * Math.tan(this.fov / 2); }
 
   // a view-space point on the screen: [x, y, pixels per Å there] for a w x h canvas
@@ -61,7 +61,7 @@ export class Camera {
     // space as: the pivot's view position is unchanged
     const p = this.pivot, c = this.center, r0 = before, r1 = this.rot;
     const q = [0, 1, 2].map(i => r0[3 * i] * (p[0] - c[0]) + r0[3 * i + 1] * (p[1] - c[1]) + r0[3 * i + 2] * (p[2] - c[2]));
-    // the new centre puts p at the same view coordinates q under the new rotation
+    // the new center puts p at the same view coordinates q under the new rotation
     for (let d = 0; d < 3; d++) c[d] = p[d] - (r1[d] * q[0] + r1[3 + d] * q[1] + r1[6 + d] * q[2]);
   }
 
