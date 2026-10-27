@@ -1194,3 +1194,53 @@ def test_the_ligand_alone_is_a_representation():
     assert presets["default"] == ("Default", [])  # the model's own representations
     styles = {s for _, reps in presets.values() for _, s, _ in reps}
     assert styles <= {"lines", "sticks", "ballstick", "spheres", "cartoon", "tube", "surface"}
+
+
+def test_a_cell_that_is_not_a_number_is_null():
+    """boonza triage leaves a metric it could not measure as the text `nan` -- a
+    run whose ligand detached has no dRMSD against its own first frame -- and
+    those cells reach the table."""
+    from boonza.viewer.outputs import _number
+
+    assert _number("nan") is None
+    assert _number("-inf") is None
+    assert _number("1.5") == 1.5
+    assert _number("3") == 3
+    assert _number("target_reached") == "target_reached"
+
+
+def test_no_bare_nan_reaches_the_page():
+    """JSON has no NaN: json.dumps writes a bare NaN token, and JSON.parse
+    rejects the whole body over one of them, so a single unmeasured cell used to
+    mean not one model in the response loaded."""
+    from boonza.viewer.server import _dumps
+
+    raw = _dumps({"models": [{"row": {"drifted": float("nan"), "spread": float("inf"),
+                                      "ok": 1.5, "name": "md_x"}}]})  # fmt: skip
+    assert "NaN" not in raw and "Infinity" not in raw
+
+    def bare(token):  # what a browser does with NaN, Infinity or -Infinity
+        raise AssertionError(f"bare {token} in the response")
+
+    row = json.loads(raw, parse_constant=bare)["models"][0]["row"]
+    assert row == {"drifted": None, "spread": None, "ok": 1.5, "name": "md_x"}
+
+
+def test_a_nan_property_still_serves_a_topology(served):
+    """Any response, not only the table: a structure carrying an unmeasured
+    per-atom value must still reach the page whole."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    bfactor = np.asarray(s.atoms["bfactor"], float).copy()
+    bfactor[:4] = np.nan
+    s.atoms["bfactor"] = bfactor
+    get, _ = served(viewer.Session(s))
+
+    status, _, body = get("api/topology?m=0")
+    assert status == 200
+
+    def bare(token):
+        raise AssertionError(f"bare {token} in the response")
+
+    topo = json.loads(body, parse_constant=bare)
+    assert topo["natoms"] == s.natoms
+    assert topo["atoms"]["bfactor"][:4] == [None] * 4
