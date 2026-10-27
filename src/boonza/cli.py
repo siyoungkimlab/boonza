@@ -644,9 +644,17 @@ def _triage(args) -> int:
             system = _load(here / "solvated.dms")
             traj = open_trajectory(here / "trajectory.dcd", system)
             # the pose as prepped, when the workdir kept it: measured against as
-            # well, so a run that left during equilibration is not read as stable
-            prepped = here / "input.prepped.mae"
-            ref = _load(prepped) if prepped.is_file() else None
+            # well, so a run that left during equilibration is not read as stable.
+            # boonza md copies its input in as `input` plus the original's
+            # suffixes, so the name varies with what was handed to it
+            # (input.prepped.mae, input.mae); final.toml names it outright.
+            ref = None
+            for f in sorted(here.glob("input*.mae")) + sorted(here.glob("input*.mae.gz")):
+                try:
+                    ref = _load(f)
+                    break
+                except Exception:  # not readable: measure the rest of the run anyway
+                    continue
             got = triage(system, traj, reference=ref, ligand=args.ligandsel,
                          protein=args.proteinsel, pocket=args.pocketsel,
                          cutoff=args.pose_cutoff,
