@@ -1244,3 +1244,58 @@ def test_a_nan_property_still_serves_a_topology(served):
     topo = json.loads(body, parse_constant=bare)
     assert topo["natoms"] == s.natoms
     assert topo["atoms"]["bfactor"][:4] == [None] * 4
+
+
+def test_the_topology_carries_only_the_numbers_asked_for():
+    """Each one is an array as long as the atoms, so they are named rather than
+    sent wholesale; a string property is not a number to put a slider on."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    s.atoms["drifted"] = np.arange(s.natoms, dtype=float)
+    s.atoms["n_poses"] = np.arange(s.natoms) % 5
+    s.atoms["source"] = np.array(["/runs/a.mae"] * s.natoms)
+
+    assert viewer.Session(s).topology()["numbers"] == {}
+
+    nums = viewer.Session(s, numbers=["drifted", "n_poses", "source", "nope"]).topology()["numbers"]
+    assert set(nums) == {"drifted", "n_poses"}  # the string and the missing one are out
+    assert nums["drifted"][:3] == [0.0, 1.0, 2.0]
+    assert nums["n_poses"][:6] == [0, 1, 2, 3, 4, 0]
+
+
+def test_an_unmeasured_number_is_null_not_hidden():
+    """A filter has nothing to say about an atom whose number was never measured,
+    so it goes out as null and the page leaves that atom alone -- otherwise
+    filtering a merged set of ligands would hide the protein with them."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    drifted = np.full(s.natoms, np.nan)
+    drifted[s.select("name CA").ids] = 1.25
+    s.atoms["drifted"] = drifted
+
+    nums = viewer.Session(s, numbers=["drifted"]).topology()["numbers"]["drifted"]
+    assert nums.count(None) == s.natoms - len(s.select("name CA"))
+    assert {v for v in nums if v is not None} == {1.25}
+
+
+def test_atom_info_carries_the_atoms_own_properties():
+    """Clicking an atom should say what the file put on it, not only its element
+    and charge: which pose of a merged set it belongs to, what its run did."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    s.atoms["pose"] = np.arange(s.natoms, dtype=float)
+    s.atoms["drifted"] = np.full(s.natoms, np.nan)
+    s.atoms["source"] = np.array(["/runs/md_a/pose.mae"] * s.natoms)
+
+    props = viewer.Session(s).atom_info(5)["properties"]
+    assert props["pose"] == 5.0
+    assert props["source"] == "/runs/md_a/pose.mae"
+    assert props["drifted"] is None  # unmeasured, and never a bare NaN
+    assert "bfactor" in props  # the PDB's own, carried the same way
+
+
+def test_a_model_says_whether_its_parts_name_a_source():
+    """The topology carries one flag, not a path per atom, so the page can offer
+    Open Its Source Structure only where there is one to open."""
+    s = boonza.load(DATA / "1LYZ.pdb")
+    assert viewer.Session(s).topology()["sources"] is False
+
+    s.atoms["source"] = np.array(["/runs/md_a/pose.mae"] * s.natoms)
+    assert viewer.Session(s).topology()["sources"] is True

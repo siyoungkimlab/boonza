@@ -334,3 +334,18 @@ html.static #btn-py, html.static #btn-cancel, html.static #btn-min, html.static 
   justify-content: center; border: 2px dashed var(--accent); border-radius: 12px; color: var(--accent);
   font: 600 18px system-ui, sans-serif; background: color-mix(in srgb, var(--canvas) 70%, transparent);
   pointer-events: none; z-index: 30; }
+
+/* one filter a row: a narrow name, the direction, the slider, and a cutoff that can be
+   typed.  Scoped to #rep-edit, where the rows are: on #side it matched nothing, and the
+   field kept a default white background while `input { color: var(--text) }` made the
+   text light -- white on white in the dark theme. */
+#rep-edit .filter { flex-wrap: nowrap; }
+#rep-edit .filter .dots-label { width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rep-edit .filter .opacity { min-width: 0; }
+#rep-edit .filter button { padding: 0 5px; min-width: 17px; line-height: 17px; }
+#rep-edit input.cut { width: 46px; flex: none; background: var(--field); color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 3px; font-size: 11px;
+  text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+#rep-edit input.cut::-webkit-outer-spin-button,
+#rep-edit input.cut::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#rep-edit input.cut:focus { outline: none; border-color: var(--accent); }

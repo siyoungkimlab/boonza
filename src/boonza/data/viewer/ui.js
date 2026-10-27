@@ -959,6 +959,12 @@ export function setupUI(app) {
       { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
       { label: "Select Molecule", run: () => app.select(c.m, c.molecule) },
       { label: "Set as Ligand", run: () => { app.select(c.m, c.molecule); chooseLigand(); } },
+      // The selected part, when one is selected, and the atom under the cursor
+      // otherwise: in a structure of a thousand superposed parts the cursor atom is
+      // one of dozens within a few A of it, so a selection is what was meant.  The
+      // item names the part either way, before it is clicked.
+      ...(c.m.topo.sources ? [(t => ({ label: `Open Source of ${t.name}`,
+                                       run: () => openSource(c.m, t.a) }))(sourceTarget(c))] : []),  // fmt: skip
       { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
       { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
       ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
@@ -995,8 +1001,9 @@ export function setupUI(app) {
   }
   try { $("trackball").hidden = localStorage.getItem("boonza.trackball") === "0"; } catch (e) { /* shown */ }
 
-  $("vt-fit").onclick = () => app.viewAll();
+  $("vt-whole").onclick = () => app.viewAll();
   $("vt-center").onclick = () => app.centerView();
+  $("vt-site").onclick = () => focusLigand();
   $("vt-reset").onclick = () => app.resetView();
   $("vt-2d").onclick = () => toggle2D();
   $("vt-fog").onclick = fogPanel;
@@ -2249,8 +2256,130 @@ export function setupUI(app) {
     slider.onchange = () => app.repsChanged(m);
     box.append(el("div", { className: "lab" }, "Material"), mat,
                el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"), slider, pct));
+    numberRows(m, box);
     const n = app.repIds(rep).length;
     box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color} over it` : ""}`));
+  }
+
+  // --- filter by a number on the atoms -------------------------------------------------
+  // A model can carry per-atom numbers (what each pose of a merged docking set did in
+  // MD, a B-factor).  One slider a number keeps the atoms whose value is in range.  An
+  // atom with no value is left as it was: a filter has nothing to say about a number
+  // that was never measured, and hiding those atoms would take the one protein a merged
+  // set of ligands sits on with them.  The filter is the model's, not one
+  // representation's, since it decides which of its atoms are drawn at all.
+  function numberTests(m) {
+    return Object.entries(m.numberFilters || {})
+      .map(([name, f]) => [m.topo.numbers?.[name], f])
+      .filter(([vals]) => vals);  // fmt: skip
+  }
+  // Which atoms a filter is about at all: those carrying a value for any of the
+  // model's numbers.  The rest -- the one protein a merged set of ligands sits on --
+  // is never filtered.  A part that should have had a number and has none is not
+  // exempt though: it fails, or a cutoff of 0.5 keeps the 16 poses under it together
+  // with the 195 that were never measured, which is not what anyone asked for.
+  function inScope(m) {
+    if (m._scope) return m._scope;
+    const scope = new Uint8Array(m.topo.natoms);
+    for (const vals of Object.values(m.topo.numbers || {})) {
+      for (let a = 0; a < scope.length; a++) {
+        if (!scope[a] && vals[a] !== null && vals[a] !== undefined) scope[a] = 1;
+      }
+    }
+    m._scope = scope;
+    return scope;
+  }
+  function passes(tests, scope, a) {
+    if (!scope[a]) return true;  // not a part these numbers describe
+    for (const [vals, f] of tests) {
+      const v = vals[a];
+      if (v === null || v === undefined) return false;  // should have had one; has none
+      if (f.above ? !(v >= f.cut) : !(v <= f.cut)) return false;
+    }
+    return true;
+  }
+  function applyNumbers(m) {
+    const tests = numberTests(m), scope = inScope(m);
+    for (const rep of m.reps) {
+      if (!rep.full) rep.full = rep.mask.slice();  // what it was before any filter
+      for (let a = 0; a < rep.mask.length; a++) {
+        rep.mask[a] = rep.full[a] && passes(tests, scope, a) ? 1 : 0;
+      }
+      rep.version++;
+      app.colorRep(m, rep);
+    }
+    app.aggregate(m);
+    app.rebuild();
+    // What the count means: the residues the filters actually judge, not every
+    // residue left drawn.  An atom with no value passes, so counting those would
+    // add the protein and every unmeasured part to the number and leave it
+    // nothing like the same selection typed out.
+    const kept = new Set(), parts = new Set(), R = m.topo.atoms.residue;
+    for (let a = 0; a < R.length; a++) {
+      if (!scope[a]) continue;  // not a part the numbers describe
+      parts.add(R[a]);
+      if (passes(tests, scope, a)) kept.add(R[a]);
+    }
+    return [kept.size, parts.size];
+  }
+  //: one row a number, appended to the representations panel under Opacity
+  function numberRows(m, box) {
+    const nums = m.topo?.numbers || {};
+    const names = Object.keys(nums);
+    if (!names.length) return;
+    m.numberFilters = m.numberFilters || {};
+    const count = el("div", { className: "note" });
+    const rows = [];
+    const show = () => {
+      const [kept, measured] = applyNumbers(m);
+      count.textContent = measured
+        ? `${kept} of ${measured} drawn \u00b7 the rest of the model is untouched`
+        : "nothing here carries these numbers";  // fmt: skip
+      for (const f of rows) f();
+    };
+    box.append(el("div", { className: "lab" }, "Filter the model by a number"));
+    for (const name of names) {
+      // a loop, not Math.min(...vals): spreading an array of 40,000 numbers into a
+      // call is enough to overflow the stack
+      let lo = Infinity, hi = -Infinity, seen = 0;
+      for (const v of nums[name]) {
+        if (v === null || v === undefined) continue;
+        seen++;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      if (!seen) continue;
+      const f = m.numberFilters[name] || (m.numberFilters[name] = { above: false, cut: hi });
+      const dir = button(f.above ? "\u2265" : "\u2264", () => {
+        f.above = !f.above;
+        show();
+      });
+      const slider = el("input", { type: "range", min: lo, max: hi,
+                                   step: (hi - lo) / 200 || 1, value: f.cut, className: "opacity" });  // fmt: skip
+      // typed as well as dragged: a slider cannot hit 1.5 exactly on a range of
+      // 0.314 to 16.703, and a cutoff worth using is usually a round number
+      const read = el("input", { className: "cut", type: "number", step: (hi - lo) / 200 || 1 });
+      const set = v => {
+        if (!Number.isFinite(v)) return;
+        f.cut = Math.min(hi, Math.max(lo, v));
+        show();
+      };
+      slider.oninput = () => set(+slider.value);
+      slider.onchange = () => app.repsChanged(m);
+      read.onchange = () => { set(+read.value); app.repsChanged(m); };
+      read.onkeydown = e => { if (e.key === "Enter") read.blur(); e.stopPropagation(); };
+      rows.push(() => {
+        dir.textContent = f.above ? "\u2265" : "\u2264";
+        slider.value = f.cut;
+        if (document.activeElement !== read) read.value = String(+f.cut.toFixed(3));
+        const off = f.above ? f.cut <= lo : f.cut >= hi;
+        dir.classList.toggle("on", !off);
+      });
+      box.append(el("div", { className: "row filter", title: name },
+                    el("span", { className: "dots-label" }, name), dir, slider, read));  // fmt: skip
+    }
+    box.append(count);
+    show();
   }
 
   async function setRepSelection(m, rep, text) {
@@ -2867,6 +2996,63 @@ export function setupUI(app) {
       app.message(`opened ${path}: ${out.added.length} model(s)`);
       return true;
     } catch (e) { app.message(e.message, true); return false; }
+  }
+  // A structure assembled from parts -- every pose of a docking run on one protein,
+  // say -- can record where each part came from, as a `source` atom property.  This
+  // opens that file: the whole complex the clicked molecule is a piece of.  It comes
+  // from its own run in its own frame, so it is put onto the model it came from.
+  //: which part Open Source of… acts on: the selected residue, else the one clicked
+  function sourceTarget(c) {
+    const R = c.m.topo.residues, of = c.m.topo.atoms.residue;
+    const named = k => `${R.name[of[k]]}${R.resid[of[k]]}`;
+    for (const [model, ids] of app.selection()) {
+      if (model !== c.m || !ids.length) continue;
+      const res = new Set();
+      for (const k of ids) res.add(of[k]);
+      if (res.size === 1) return { a: ids[0], name: named(ids[0]) };
+      return { a: null, name: `${res.size} selected residues` };
+    }
+    return { a: c.a, name: c.molName };
+  }
+
+  async function openSource(m, a) {
+    if (a === null || a === undefined) {
+      app.message("select one residue, or right-click the one you want", true);
+      return;
+    }
+    let path;
+    try {
+      path = (await app.getJSON(`api/atom?m=${m.index}&a=${a}`)).properties?.source;
+    } catch (e) { app.message(e.message, true); return; }
+    if (!path) { app.message("this atom records no source structure", true); return; }
+    // the same file asked for twice is the model already open, not a second copy:
+    // opening one a click piles up superposed copies of the same structure
+    const name = path.split("/").pop();
+    let opened = state.models.find(x => !x.closed && x !== m && x.name === name);
+    if (opened) {
+      app.message(`${name} is already open`);
+    } else {
+      const before = state.models.length;
+      if (!await openPath(path)) return;
+      opened = state.models[before];
+      try {
+        const out = await app.post("api/align", { m: opened.index, ref: m.index, method: "matchmaker" });
+        await app.reloadModel(opened, false);
+        app.message(`${name} onto ${m.name}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs`
+          + " \u00b7 its ligand is where the run ended, not where it started");  // fmt: skip
+      } catch (e) {  // it is open either way, in its own frame
+        app.message(`${name} is open, but not superposed: ${e.message}`, true);
+      }
+    }
+    // The complex alone.  solo would hide only the other files opened here and leave
+    // the model they came from drawn -- but that model has a protein of its own, and
+    // two proteins superposed, two cofactors, and this ligand lost among a thousand
+    // others is not a structure anybody can read.  The cloud comes back from its box
+    // in the model list.
+    for (const x of app.live()) x.shown = x === opened;
+    await app.show([opened]);
+    app.centerView();
+    app.message(`${opened.name} alone \u00b7 tick ${m.name} in the list to bring it back`);
   }
   async function savePath(path) {
     const m = actingModel();
