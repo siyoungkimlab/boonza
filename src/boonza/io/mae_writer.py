@@ -28,6 +28,28 @@ _GROUPS = [("grp_temperature", "ffio_grp_thermostat"), ("grp_energy", "ffio_grp_
            ("grp_frozen", "ffio_grp_frozen"), ("grp_bias", "ffio_grp_cm_moi"),
            ("grp_ligand", "ffio_grp_ligand")]  # fmt: skip
 
+#: atom properties the fixed m_atom columns already carry under their own names
+_WRITTEN = {"m_mmod_type", "segid", "m_grow_name", *(p for p, _ in _GROUPS)}
+#: properties Maestro keeps a column of its own for; anything else travels as
+#: ``<kind>_user_<name>``, Maestro's namespace for properties of one's own
+_CANON = {"bfactor": "r_m_pdb_tfactor", "occupancy": "r_m_pdb_occupancy"}
+_KINDS = {"int": "i", "float": "r", "str": "s"}
+
+
+def _extra_props(A):
+    """(property, m_atom column) for every scalar atom property the fixed
+    columns do not already carry.  Without these a write drops them silently:
+    a structure saved as MAE came back with no B-factors, no occupancies and
+    none of the properties put on it by hand.  A non-scalar property has no
+    column to go in and is skipped."""
+    for prop in A.props:
+        if prop in _WRITTEN:
+            continue
+        kind, shape, _ = A.spec(prop)
+        if shape or kind not in _KINDS:
+            continue
+        yield prop, _CANON.get(prop, f"{_KINDS[kind]}_user_{prop}")
+
 
 def _quote(s: str) -> str:
     if s == "":
@@ -228,6 +250,8 @@ def _ct_block(s, structure_only: bool) -> _Block:
             cols[f"i_{key}"] = A.column(prop)[real]
     if "segid" in A:
         cols["s_m_pdb_segment_name"] = A.column("segid")[real].astype(STR)
+    for prop, key in _extra_props(A):
+        cols[key] = A.column(prop)[real]
     ct.array("m_atom").add_rows(len(real), cols)
 
     bi, bj = mapping[s._bonds.column("i")], mapping[s._bonds.column("j")]

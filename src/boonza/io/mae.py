@@ -53,6 +53,19 @@ def _str(v, default: str = "") -> str:
     return v if isinstance(v, str) else default
 
 
+#: m_atom columns holding an atom property under a name of Maestro's own
+_EXTRA = {"m_pdb_tfactor": "bfactor", "m_pdb_occupancy": "occupancy"}
+_KIND_NAME = {"i": "int", "r": "float", "s": "str"}
+_KIND_DEFAULT = {"i": 0, "r": 0.0, "s": ""}
+
+
+def _extra_prop(key: str) -> str:
+    """The atom property an m_atom column carries, or "" for the fixed columns.
+    The parser has already taken the type prefix off, so a column written as
+    ``r_user_drifted`` arrives here as ``user_drifted``."""
+    return _EXTRA.get(key) or (key[5:] if key.startswith("user_") else "")
+
+
 def _column(arr, key: str, n: int, default, kind: str) -> np.ndarray:
     dtype = {"i": np.int64, "r": np.float64, "s": STR}[kind]
     if not isinstance(arr, MaeArray) or key not in arr:
@@ -263,6 +276,15 @@ def _read_particles(s: System, ct: dict):
     if "m_mmod_type" in m_atom:
         s._atoms.add_column("m_mmod_type", "int")
         s._atoms.set("m_mmod_type", both("m_mmod_type", "", 0, "i"), rows)
+    for key, kind in m_atom.kinds.items():  # B-factors and properties of one's own
+        prop = _extra_prop(key)
+        if not prop or kind not in _KIND_NAME or prop in s._atoms.builtin:
+            continue
+        try:  # add_column is a no-op once the column is there, which it is from
+            s._atoms.add_column(prop, _KIND_NAME[kind])  # the ct before this one
+        except ValueError:  # another ct wrote this name with a different type
+            continue
+        s._atoms.set(prop, both(key, "", _KIND_DEFAULT[kind], kind), rows)
 
     m_bond = ct.get("m_bond")
     if isinstance(m_bond, MaeArray) and m_bond.size:
