@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 import threading
 from collections.abc import Callable
@@ -426,11 +427,22 @@ def _rows(path, key: str) -> dict:
 
 
 def _number(v):
-    """CSV text as a number where it is one, for sorting the table."""
+    """CSV text as a number where it is one, for sorting the table.
+
+    A value that is not finite becomes None.  boonza triage leaves a metric it
+    could not measure as the text ``nan`` -- a run that detached has no dRMSD
+    against its own first frame -- and JSON has no NaN: ``json.dumps`` writes a
+    bare ``NaN`` token, which a browser's ``JSON.parse`` refuses.  It refuses
+    the whole body, so one such cell and not one model in the response loads.
+    None is ``null``, which the page shows as an empty cell, the same as the
+    blank cell this already skips.
+    """
     try:
         f = float(v)
     except (TypeError, ValueError):
         return v
+    if not math.isfinite(f):
+        return None
     return int(f) if f.is_integer() and "." not in str(v) else round(f, 3)
 
 

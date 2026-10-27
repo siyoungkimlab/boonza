@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import errno
 import json
+import math
 import secrets
 import threading
 import webbrowser
@@ -81,7 +82,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _json(self, obj, status: int = 200) -> None:
-        self._send(json.dumps(obj, separators=(",", ":")).encode(), "application/json", status)
+        self._send(_dumps(obj).encode(), "application/json", status)
 
     def _guard(self, handle) -> None:
         try:
@@ -269,6 +270,32 @@ def _viewer(what) -> Viewer:
     if isinstance(what, Session):
         return Viewer([Model(what.title or "model", lambda: what)], title=what.title)
     return Viewer([Model("model", lambda: Session(what))])
+
+
+def _finite(obj):
+    """``obj`` with every float that is not finite replaced by None."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _finite(v) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_finite(v) for v in obj]
+    return obj
+
+
+def _dumps(obj) -> str:
+    """JSON a browser will parse.
+
+    ``json.dumps`` writes NaN and Infinity as bare tokens, which ``JSON.parse``
+    rejects -- and it rejects the whole body, so one such number anywhere in a
+    response means nothing in it loads.  They go out as ``null`` instead, which
+    is what a number that is not a number is.  The first attempt costs nothing
+    when there is none, and only a response that has one is walked.
+    """
+    try:
+        return json.dumps(obj, separators=(",", ":"), allow_nan=False)
+    except ValueError:
+        return json.dumps(_finite(obj), separators=(",", ":"), allow_nan=False)
 
 
 LOCAL = ("127.0.0.1", "localhost", "::1")
