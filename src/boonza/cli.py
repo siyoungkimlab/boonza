@@ -601,8 +601,11 @@ def _cg_selections(args, system, workdirs) -> None:
 
 
 TRIAGE_FIELDS = ["run", "outcome", "frames", "from_start", "drifted", "from_start_max",
+                 "from_input", "drifted_input", "input_move",
                  "from_end", "from_pose", "pose_frame", "population", "n_poses",
-                 "late_population", "late_from_pose", "moved", "settled", "note"]  # fmt: skip
+                 "late_population", "late_from_pose", "moved", "polar_contacts",
+                 "apolar_contacts", "ionic_contacts", "contact_residues",
+                 "settled", "note"]  # fmt: skip
 
 
 def _triage(args) -> int:
@@ -640,8 +643,13 @@ def _triage(args) -> int:
         try:
             system = _load(here / "solvated.dms")
             traj = open_trajectory(here / "trajectory.dcd", system)
-            got = triage(system, traj, ligand=args.ligandsel, protein=args.proteinsel,
-                         pocket=args.pocketsel, cutoff=args.pose_cutoff,
+            # the pose as prepped, when the workdir kept it: measured against as
+            # well, so a run that left during equilibration is not read as stable
+            prepped = here / "input.prepped.mae"
+            ref = _load(prepped) if prepped.is_file() else None
+            got = triage(system, traj, reference=ref, ligand=args.ligandsel,
+                         protein=args.proteinsel, pocket=args.pocketsel,
+                         cutoff=args.pose_cutoff,
                          fingerprint=not args.no_fingerprint)  # fmt: skip
         except Exception as e:  # one unreadable run must not stop the other thousand
             rows.append({**row, "note": f"{type(e).__name__}: {e}"[:90]})

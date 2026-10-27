@@ -34,8 +34,20 @@ import numpy as np
 from .interactions import interaction_fingerprints
 from .pharmacophore import FAMILIES, ligand_features
 
-__all__ = ["Modes", "Triage", "frame_system", "modes", "pharmacophore_fingerprint",
-           "triage"]  # fmt: skip
+__all__ = ["Modes", "Triage", "contact_counts", "frame_system", "modes",
+           "pharmacophore_fingerprint", "triage"]  # fmt: skip
+
+#: A residue counts as touched when its softened proximity reaches this.  The
+#: fingerprint is softened around 4.0 A, so 0.5 is a group sitting at about that
+#: distance through most of the frames measured.
+CONTACT = 0.5
+
+#: the families each contact count is taken over, by the column it is written as
+CONTACT_GROUPS = {
+    "polar_contacts": ("Donor", "Acceptor"),
+    "apolar_contacts": ("Hydrophobe",),
+    "ionic_contacts": ("PosIonizable", "NegIonizable"),
+}
 
 #: Two poses nearer than this in cosine distance are one mode.  A guess that
 #: wants checking against :attr:`Modes.spread` on a real set, not a constant
@@ -83,6 +95,30 @@ def pharmacophore_fingerprint(system, positions=None, ligand="not (polymer or wa
     return Fingerprint(np.concatenate(rows, axis=1), base.residues, tuple(families))
 
 
+def contact_counts(vector, families=FAMILIES, threshold: float = CONTACT) -> dict:
+    """How many residues each kind of ligand group holds, from one fingerprint.
+
+    A fingerprint is one block of residues a family, in ``families`` order, so it
+    folds back into (families, residues) and a count is a row-wise test.  These
+    say what ``drifted`` cannot: a pose that stopped moving is not the same as a
+    pose making contacts, and the one worth keeping is the one doing both.  Taken
+    on :attr:`Triage.fingerprint`, which is the second half's mean, they are what
+    the ligand holds once the run has settled rather than at its starting pose.
+    """
+    v = np.asarray(vector, float)
+    n = len(families)
+    if not n or v.ndim != 1 or len(v) % n:
+        return {}
+    grid = v.reshape(n, -1) >= threshold
+    where = {f: k for k, f in enumerate(families)}
+    out = {}
+    for name, fams in CONTACT_GROUPS.items():
+        rows = [grid[where[f]] for f in fams if f in where]
+        out[name] = int(np.any(rows, axis=0).sum()) if rows else 0
+    out["contact_residues"] = int(grid.any(axis=0).sum())
+    return out
+
+
 def cosine_distance(a, b) -> float:
     """1 - cos(a, b), and 0 for two vectors that are both nothing."""
     na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
@@ -100,6 +136,14 @@ class Triage:
     from_start: float = float("nan")
     drifted: float = float("nan")
     from_start_max: float = float("nan")
+    #: and to the pose as prepped, before minimisation and equilibration: all of
+    #: it, its second half, and how far the first production frame already sits
+    #: from it.  A run can hold perfectly still through production -- a small
+    #: :attr:`drifted` -- having already left where it was put, and no number
+    #: measured against the first production frame can show that.
+    from_input: float = float("nan")
+    drifted_input: float = float("nan")
+    input_move: float = float("nan")
     #: and to the last frame, and to the run's own most populated pose
     from_end: float = float("nan")
     from_pose: float = float("nan")
@@ -111,6 +155,11 @@ class Triage:
     late_from_pose: float = float("nan")
     #: how far the contacts travelled, first half's mean against the second's
     moved: float = float("nan")
+    #: residues each kind of group holds in the second half (:func:`contact_counts`)
+    polar_contacts: int = 0
+    apolar_contacts: int = 0
+    ionic_contacts: int = 0
+    contact_residues: int = 0
     fingerprint: np.ndarray | None = None
     note: str = ""
 
@@ -197,7 +246,8 @@ def frame_system(system, positions, k: int, glue=None):
     return out
 
 
-def triage(system, positions, *, ligand="not (polymer or water or ions) and noh",
+def triage(system, positions, *, reference=None,
+           ligand="not (polymer or water or ions) and noh",
            protein="protein and noh", pocket="protein and name CA",
            cutoff: float = 1.5, fingerprint: bool = True) -> Triage:  # fmt: skip
     """Measure one run the way a thousand of them want measuring.
@@ -206,6 +256,12 @@ def triage(system, positions, *, ligand="not (polymer or water or ions) and noh"
     off has no pocket within reach of the last frame and dRMSD against *that*
     frame cannot be defined -- but the rest of the run still can be, and
     dropping it over one reference loses exactly the runs worth looking at.
+
+    ``reference`` is the pose before the run: the prepped structure a workdir
+    keeps, which minimisation and equilibration have not touched yet.  Measured
+    against it as well as against the first production frame, because those are
+    different questions -- did the ligand hold still, and is it still where it
+    was put -- and a run can answer the first well and the second badly.
     """
     from .glue import Glue
     from .symmetry import drmsd
@@ -238,6 +294,11 @@ def triage(system, positions, *, ligand="not (polymer or water or ions) and noh"
     if d0 is not None:
         out.from_start, out.drifted = float(d0.mean()), float(d0[half:].mean())
         out.from_start_max = float(d0.max())
+    if reference is not None:  # the pose as prepped, before the run moved it
+        di = against(reference)
+        if di is not None:
+            out.from_input, out.drifted_input = float(di.mean()), float(di[half:].mean())
+            out.input_move = float(di[0])  # what minimisation and equilibration did
     last = frame_system(system, positions, n - 1, glue)
     dl = against(last)
     if dl is not None:
@@ -268,6 +329,8 @@ def triage(system, positions, *, ligand="not (polymer or water or ions) and noh"
             fp = pharmacophore_fingerprint(system, positions, ligand=ligand, protein=protein)
             out.fingerprint = fp.values[half:].mean(0)
             out.moved = cosine_distance(fp.values[:half].mean(0), fp.values[half:].mean(0))
+            for name, count in contact_counts(out.fingerprint, fp.families).items():
+                setattr(out, name, count)
         except Exception as e:  # RDKit cannot type every ligand, and beads not at all
             out.note = f"no fingerprint: {type(e).__name__}: {e}"[:90]
     return out
