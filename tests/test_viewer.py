@@ -574,6 +574,40 @@ def test_functional_groups_and_molecules(served):
     assert post("api/edit", {"op": "attach", "atoms": [0], "value": "C"})[0] in (200, 400)
 
 
+def test_hydrogens_and_groups_on_a_structure_without_hydrogens(served):
+    """A PDB entry has no hydrogens: Add Hydrogens adds them all the same, and a group
+    goes on a heavy atom in place of the hydrogen it would have."""
+    bare = boonza.from_smiles("CC[NH3+]")
+    session = viewer.Session(bare.clone(np.flatnonzero(bare.atoms["anum"] > 1)))
+    # a changed atom gets its hydrogens, neutral: N+ made C is a methyl
+    out = session.edit("element", [2], "C")
+    s = session.system
+    assert s.atoms["formal_charge"][out["picked"][0]] == 0 and s.natoms == 3 + 3
+    s = boonza.from_smiles("c1ccccc1O")
+    s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
+    get, post = served(viewer.Session(s))
+    status, out = post("api/edit", {"op": "attach", "atoms": [0], "value": "Methyl"})
+    assert status == 200 and out["natoms"] == 7 + 4  # CH3, no other hydrogens
+    status, out = post("api/edit", {"op": "hydrogens", "atoms": list(range(8))})
+    assert status == 200 and out["natoms"] == 8 + 8  # C7H8O
+    topo = json.loads(get("api/topology")[2])
+    assert topo["atoms"]["element"].count("H") == 8
+    # a hydrogen made carbon grows a methyl at a C-C bond's length, with or
+    # without hydrogens adjusted after the edit
+    h = topo["atoms"]["element"].index("H")
+    status, out = post("api/edit", {"op": "element", "atoms": [h], "value": "C",
+                                    "hydrogens": False})  # fmt: skip
+    assert status == 200 and out["natoms"] == 16 + 3
+    c = out["picked"][0]
+    topo = json.loads(get("api/topology")[2])
+    pos = np.frombuffer(get("api/frame?i=0")[2], "<f4").reshape(-1, 3)
+    B = topo["bonds"]
+    bonded = [j if i == c else i for i, j in zip(B["i"], B["j"], strict=True) if c in (i, j)]
+    assert sorted(topo["atoms"]["element"][b] for b in bonded) == ["C", "H", "H", "H"]
+    heavy = next(b for b in bonded if topo["atoms"]["element"][b] == "C")
+    assert abs(np.linalg.norm(pos[c] - pos[heavy]) - 1.52) < 0.05
+
+
 def test_mutations_and_caps_stay_ff19sb():
     from boonza import gaff, viparr
     from boonza.md.config import DEFAULT_FORCEFIELDS
@@ -619,14 +653,18 @@ def test_geometry_edits_redo_and_constraints(served):
     assert np.allclose(session.system.positions[0], xyz[0])
     assert post("api/redo", {})[0] == 400  # nothing left to redo
 
-    # constraints: fixed atoms stay exactly, tethered heavy atoms barely move
+    # constraints: fixed heavy atoms stay exactly, tethered ones barely move; their
+    # hydrogens are never held
     p = viewer.Session(_peptide(), cg=False)
     before = p.system.positions.copy()
     fixed = p.system.select("resid 1").ids.tolist()
+    heavy = p.system.select("resid 1 and not hydrogen").ids.tolist()
     tethered = p.system.select("resid 3 and not hydrogen").ids.tolist()
     out = p.minimize(fixed=fixed, tethered=tethered)
-    assert out["mobile"] == "constraints" and out["fixed_atoms"] == len(fixed)
-    assert np.allclose(p.system.positions[fixed], before[fixed])
+    assert out["mobile"] == "constraints" and out["fixed_atoms"] == len(heavy) < len(fixed)
+    assert np.allclose(p.system.positions[heavy], before[heavy])
+    hs = sorted(set(fixed) - set(heavy))
+    assert not np.allclose(p.system.positions[hs], before[hs])
     assert out["energy_after"] < out["energy_before"]
 
 
@@ -1068,6 +1106,108 @@ def test_download_upload_copy_into_and_hbonds(served):
     chains = np.asarray(hho.system.residues["chain"])[np.asarray(hho.system.atoms["residue"])]
     pairs = hho.hbonds("@chains")["pairs"]
     assert pairs and all(chains[i] != chains[j] for i, j, _ in pairs)
+
+
+def test_series_of_designs(served, tmp_path):
+    """A ligand starts a series (its copy, with hydrogens when it had none); a member
+    makes the next design; the series saves as one SDF and opens as a series again."""
+    s = boonza.from_smiles("c1ccccc1O")
+    bare = s.clone(np.flatnonzero(s.atoms["anum"] > 1))  # a PDB entry's ligand
+    v = viewer.Viewer([viewer.Model("complex", lambda: viewer.Session(bare))], title="t")
+    get, post = served(v)
+    status, out = post("api/series", {"m": 0, "atoms": list(range(7))})
+    first = out["added"][0]
+    assert status == 200 and out["models"][first]["group"] == "series 1"
+    lig = v.session(first).system
+    assert lig.natoms == 7 + 6
+    np.testing.assert_allclose(lig.positions[:7], bare.positions, atol=1e-6)  # where it sat
+    status, out = post("api/series_add", {"m": first})
+    second = out["added"][0]
+    assert status == 200 and [m["name"] for m in out["models"][1:]] == ["LIG1", "LIG2"]
+    post("api/edit", {"m": second, "op": "element", "atoms": [6], "value": "N"})  # aniline
+    assert post("api/series", {"m": 0, "atoms": []})[0] == 400
+    # one SDF: a record per design, its name, series and SMILES
+    path = tmp_path / "designs.sdf"
+    status, out = post("api/series_save", {"group": "series 1", "path": str(path)})
+    assert status == 200
+    back = boonza.load(path)
+    assert back.ncts == 2 and [back.ct(c)["SMILES"] for c in range(2)] == ["Oc1ccccc1", "Nc1ccccc1"]
+    assert post("api/series_save", {"group": "series 1", "path": str(tmp_path / "x.pdb")})[0] == 400
+    # opened again: a series of its own, named so as not to merge into the open one
+    added = v.open(path)
+    assert [(v.models[k].name, v.models[k].group) for k in added] == [
+        ("LIG1", "series 2"), ("LIG2", "series 2")]  # fmt: skip
+    assert v.session(added[1]).system.natoms == 14
+    # a plain SDF is a model as before
+    boonza.save(boonza.from_smiles("CCO"), tmp_path / "plain.sdf")
+    assert [v.models[k].group for k in v.open(tmp_path / "plain.sdf")] == ["files"]
+
+
+@pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
+def test_a_design_in_its_receptor(served, tmp_path):
+    """A design's contacts and Minimize use its receptor (the model it came from, less
+    the ligand it was made from); only the design keeps its new positions.  Notes go
+    in the SDF.  Every minimization comes with its path, model by model."""
+    g = DATA / "gmx_amber"
+    pep = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    pep = pep.clone(pep.select("protein").ids)
+    lig = boonza.from_smiles("c1ccccc1O")
+    centre = pep.positions[pep.select("resid 2 and not hydrogen").ids].mean(0)
+    lig.positions = lig.positions - lig.positions.mean(0) + centre + [0, 0, 5]
+    n = pep.natoms
+    pep.append(lig)
+    v = viewer.Viewer([viewer.Model("complex", lambda: viewer.Session(pep, title="complex"))])
+    get, post = served(v)
+    status, out = post("api/series", {"m": 0, "atoms": list(range(n, pep.natoms))})
+    k = out["added"][0]
+    assert out["models"][k]["receptor"] == 0
+    r, keep, _ = v._receptor_atoms(k)
+    assert r == 0 and keep.tolist() == list(range(n))  # the phenol it came from is left out
+    contacts = json.loads(get(f"api/contacts?m={k}&i=0")[2])["contacts"]
+    assert contacts and all(c[3] == 0 and c[1] < n for c in contacts)
+    receptor = v.session(0).system.positions.copy()
+    for mode, moves in (("both", {k, 0}), ("ligand", {k}), ("pocket", {0})):
+        before = v.session(k).system.positions.copy()
+        status, out = post("api/minimize", {"m": k, "mode": mode, "path": True})
+        assert status == 200 and out["energy_after"] < out["energy_before"], out
+        path = out["path"]
+        assert moves <= {x["m"] for x in path["models"]}
+        assert all(len(x["frames"]) == len(path["iterations"]) for x in path["models"])
+        assert path["energy"][0][1] == out["energy_before"]
+        heavy = np.asarray(v.session(k).system.atoms["anum"]) > 1
+        moved = np.linalg.norm(v.session(k).system.positions - before, axis=1)[heavy].max()
+        assert (moved > 0.3) == (k in moves), (mode, moved)
+        # the last frame is where the design ended
+        for x in path["models"]:
+            if x["m"] == k:
+                last = np.reshape(x["frames"][-1], (-1, 3))
+                now = v.session(k).system.positions[x["atoms"]]
+                np.testing.assert_allclose(last, now, atol=2e-3)
+    np.testing.assert_array_equal(v.session(0).system.positions, receptor)
+    assert post("api/minimize", {"m": k, "mode": "all"})[0] == 400
+    # without a receptor a design is minimized alone; a receptor is not a design
+    assert post("api/series_receptor", {"group": "series 1", "receptor": k})[0] == 400
+    post("api/series_receptor", {"group": "series 1", "receptor": None})
+    assert "receptor" not in v.listing()["models"][k]
+    assert v.contacts(k) == []
+    post("api/series_receptor", {"group": "series 1", "receptor": 0})
+    # the next design: LIG2, the same receptor, a note kept in the SDF
+    second = post("api/series_add", {"m": k})[1]["added"][0]
+    assert v.models[second].name == "LIG2" and v.receptor(second) == 0
+    status, out = post("api/series_note", {"m": second, "note": "  O to  F "})
+    assert out["models"][second]["row"] == {"note": "O to F"}
+    path = tmp_path / "designs.sdf"
+    v.save_series("series 1", path)
+    back = boonza.load(path)
+    assert "note" not in back.ct(0).keys() and back.ct(1)["note"] == "O to F"
+    assert v.models[v.open(path)[1]].row == {"note": "O to F"}
+    # a plain model by mode: the ligand moves, the rest's heavy atoms barely do (springs)
+    before = v.session(0).system.positions.copy()
+    out = v.minimize(0, "ligand", path=True)
+    s = v.session(0).system
+    shift = np.linalg.norm(s.positions - before, axis=1)
+    rest = np.flatnonzero(np.asarray(s.atoms["anum"])[:n] > 1)
+    assert out["mobile"] == "ligand" and shift[n:].mean() > 3 * shift[rest].mean()
 
 
 def test_view_takes_a_pdb_id(monkeypatch, tmp_path):

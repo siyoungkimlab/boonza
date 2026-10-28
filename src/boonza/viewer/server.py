@@ -21,6 +21,14 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/build           {"smiles": ..., "centre": [x, y, z]} -> a new model of it
     POST /api/upload          a file's bytes (its name in X-Filename) -> opened
     POST /api/copy_into       {"m": from, "into": to, "atoms": [...]} -> appended there
+    POST /api/series          {"m": M, "atoms": [...], "frame": N} -> a new series of designs,
+                              its first member a copy of the atoms (a ligand)
+    POST /api/series_add      {"m": member} -> a new member of its series, a copy of it
+    POST /api/series_note     {"m": member, "note": text} -> its note ("" removes it)
+    POST /api/series_receptor {"group": series, "receptor": M or null} -> what its designs
+                              are made against: contacts and Minimize use it
+    POST /api/series_save     {"group": series, "path": file.sdf} -> every member, one SDF
+    POST /api/series_download {"group": series} -> the same SDF, as a file
     POST /api/hbonds          {"m": M, "a": sel, "b": sel or none, "frame": N} -> pairs
     POST /api/download        {"m": M, "fmt": pdb|cif|sdf|mae|dms|gro, "atoms": [...]} -> a file
     POST /api/python          {"code": ..., "m": current, "sel": [...]} -> output, actions
@@ -32,7 +40,11 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/dihedral        {"m": M, "atoms": [a, b, c, d]} -> angle, atoms that turn
     POST /api/set_dihedral    {"m": M, "atoms": [...], "angle": degrees}
     POST /api/dihedral_scan   {"m": M, "atoms": [...], "step": 10} -> energy profiles
-    POST /api/minimize        {"m": M, "mobile": sel, "restraint": kcal/mol/A^2}
+    POST /api/minimize        {"m": M, "mode": both|ligand|pocket, "path": bool, "rem":
+                              bool (soft nonbonded interactions first)} -> the
+                              energies, and with path how it went step by step; or
+                              {"m": M, "mobile": sel, "restraint": kcal/mol/A^2}; a
+                              design is minimized in its receptor
 
 Trajectories stay on the server and are read one frame at a time, so a
 viewer started on a cluster node shows long runs through an SSH tunnel
@@ -135,7 +147,7 @@ class _Handler(BaseHTTPRequestHandler):
             sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
             self._json({"molecules": self.viewer.session(arg("m")).smiles(sel)})
         elif url.path == "/api/contacts":
-            self._json({"contacts": self.viewer.session(arg("m")).contacts(arg("i"))})
+            self._json({"contacts": self.viewer.contacts(arg("m"), arg("i"))})
         else:
             self._static(url.path)
 
@@ -184,6 +196,34 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.viewer.copy_into(int(body["m"]), int(body["into"]),
                                              body.get("atoms") or None,
                                              int(body.get("frame", 0))))  # fmt: skip
+            return
+        if url.path == "/api/series":
+            added = self.viewer.create_series(int(body["m"]), body.get("atoms") or [],
+                                              int(body.get("frame", 0)))  # fmt: skip
+            self._json({"added": added, **self.viewer.listing()})
+            return
+        if url.path == "/api/series_add":
+            added = self.viewer.add_to_series(int(body["m"]))
+            self._json({"added": added, **self.viewer.listing()})
+            return
+        if url.path == "/api/series_note":
+            self.viewer.set_note(int(body["m"]), str(body.get("note", "")))
+            self._json(self.viewer.listing())
+            return
+        if url.path == "/api/series_receptor":
+            r = body.get("receptor")
+            self.viewer.set_receptor(str(body["group"]), None if r is None else int(r))
+            self._json(self.viewer.listing())
+            return
+        if url.path == "/api/series_save":
+            self._json({"path": self.viewer.save_series(str(body["group"]), body["path"])})
+            return
+        if url.path == "/api/series_download":
+            group = str(body["group"])
+            name = group.replace(" ", "_") + ".sdf"
+            saved = {"Content-Disposition": f'attachment; filename="{name}"'}
+            data = self.viewer.series_sdf(group).encode()
+            self._send(data, "application/octet-stream", headers=saved)
             return
         if url.path == "/api/close":
             self.viewer.close(int(body["m"]))
@@ -236,9 +276,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(session.dihedral_scan(body["atoms"], float(body.get("step", 10))))
         elif url.path == "/api/minimize":
             self._json(
-                session.minimize(
-                    body.get("mobile") or None,
-                    float(body.get("restraint", 10.0)),
+                self.viewer.minimize(
+                    int(body.get("m", 0)),
+                    body.get("mode"),
+                    path=bool(body.get("path")),
+                    rem=bool(body.get("rem")),
+                    mobile=body.get("mobile") or None,
+                    restraint=float(body.get("restraint", 10.0)),
                     fixed=body.get("fixed"),
                     tethered=body.get("tethered"),
                 )

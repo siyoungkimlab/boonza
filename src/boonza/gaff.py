@@ -113,16 +113,78 @@ def _run(cmd: list[str], cwd: Path, env: dict, output: str) -> str:
     return log
 
 
+#: where AM1-BCC charges are computed: "optimized", the molecule as given then optimized
+#: by sqm (AmberTools' default, minutes for a drug-sized one); "reference", one AM1
+#: calculation at a conformer built from the bonds alone (:func:`reference_conformer`):
+#: under a second, and a molecule has the same charges in every pose
+CHARGE_GEOMETRIES = ("optimized", "reference")
+#: sqm without its geometry optimization: the AM1 calculation alone
+SINGLE_POINT = "qm_theory='AM1', maxcyc=0, scfconv=1.d-8"
+#: run_gaff2's results at reference geometries, by molecule and settings
+_REFERENCE_RUNS: dict = {}
+
+
+def reference_conformer(s: System) -> System:
+    """``s`` at a conformer made from its bonds alone (RDKit ETKDG with a fixed
+    seed, then MMFF94 where it has parameters), atoms in order: the same for every
+    pose of the molecule.  Stereochemistry is read from ``s``'s coordinates.  When
+    RDKit cannot embed it, an error: falling back on ``s``'s own geometry would charge
+    whatever pose it is in (a backmapped one, at worst)."""
+    from rdkit.Chem import AllChem
+
+    from .chem import to_rdkit
+
+    mol = to_rdkit(s, sanitize=True, implicit_hydrogens=False)  # stereo from s's 3D
+    params = AllChem.ETKDGv3()
+    params.randomSeed = 20251027
+    if AllChem.EmbedMolecule(mol, params) != 0:
+        params.useRandomCoords = True  # large or strained molecules
+        if AllChem.EmbedMolecule(mol, params) != 0:
+            raise AmberToolsError(
+                f"RDKit could not build a reference conformer of {s.natoms} atoms for "
+                "its AM1-BCC charges; charge_geometry='optimized' charges it as it is"
+            )
+    if AllChem.MMFFHasAllMoleculeParams(mol):
+        AllChem.MMFFOptimizeMolecule(mol, maxIters=2000)
+    out = s.clone()
+    out.positions = mol.GetConformer().GetPositions()
+    return out
+
+
+def _graph_key(s: System, *settings) -> tuple:
+    """A molecule as its atoms (element, formal charge) and bonds, in order."""
+    bonds = sorted(zip(s.bonds["i"].tolist(), s.bonds["j"].tolist(), s.bonds["order"].tolist(),
+                       strict=True))  # fmt: skip
+    return (tuple(s.atoms["anum"].tolist()), tuple(s.atoms["formal_charge"].tolist()),
+            tuple(bonds), *settings)  # fmt: skip
+
+
 def run_gaff2(fragment: System, net_charge: int, *, gaff: str = "2.11",
-              charge_method: str = "bcc", amberhome=None, workdir=None) -> System:  # fmt: skip
+              charge_method: str = "bcc", charge_geometry: str = "optimized",
+              amberhome=None, workdir=None) -> System:  # fmt: skip
     """GAFF2 parameters for one molecule with all its hydrogens, from AmberTools.
 
     antechamber types the atoms and computes charges (``charge_method``,
-    AM1-BCC by default, for a molecule of ``net_charge``), parmchk2 writes
+    AM1-BCC by default, for a molecule of ``net_charge``, at the geometry
+    ``charge_geometry`` says: :data:`CHARGE_GEOMETRIES`), parmchk2 writes
     every parameter the molecule uses from the ``gaff`` release, and tleap
     builds the topology.  Returns the tleap prmtop read as a system, atoms
     in the order of ``fragment``.  ``workdir`` keeps the AmberTools files.
+    At reference geometries a molecule is run once (kept by its atoms and bonds).
     """
+    if charge_geometry not in CHARGE_GEOMETRIES:
+        raise ValueError(f"charge_geometry must be one of {CHARGE_GEOMETRIES}")
+    if charge_geometry == "reference":
+        key = _graph_key(fragment, int(net_charge), gaff, charge_method)
+        if key not in _REFERENCE_RUNS or workdir is not None:
+            at = reference_conformer(fragment)
+            _REFERENCE_RUNS[key] = _run_gaff2(at, net_charge, gaff, charge_method, SINGLE_POINT,
+                                              amberhome, workdir)  # fmt: skip
+        return _REFERENCE_RUNS[key].copy()
+    return _run_gaff2(fragment, net_charge, gaff, charge_method, None, amberhome, workdir)
+
+
+def _run_gaff2(fragment, net_charge, gaff, charge_method, sqm, amberhome, workdir) -> System:
     from .io.amber import load_prmtop
     from .io.sdf import save_sdf
 
@@ -138,7 +200,8 @@ def run_gaff2(fragment: System, net_charge: int, *, gaff: str = "2.11",
         bin_ = home / "bin"
         _run([str(bin_ / "antechamber"), "-i", "in.sdf", "-fi", "sdf", "-o", "out.mol2",
               "-fo", "mol2", "-at", "gaff2", "-c", charge_method, "-nc", str(int(net_charge)),
-              "-rn", "MOL", "-pf", "y", "-dr", "no"], d, env, "out.mol2")  # fmt: skip
+              "-rn", "MOL", "-pf", "y", "-dr", "no", *(["-ek", sqm] if sqm else [])],
+             d, env, "out.mol2")  # fmt: skip
         shutil.copy(parm, d / "gaff.dat")
         _run([str(bin_ / "parmchk2"), "-i", "out.mol2", "-f", "mol2", "-p", "gaff.dat",
               "-s", "2", "-a", "Y", "-o", "out.frcmod"], d, env, "out.frcmod")  # fmt: skip
@@ -166,7 +229,8 @@ def find_unmatched(system: System, forcefields, path=None) -> list[list[int]]:
 
 
 def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
-                gaff: str = "2.11", charge_method: str = "bcc", amberhome=None,
+                gaff: str = "2.11", charge_method: str = "bcc",
+                charge_geometry: str = "optimized", amberhome=None,
                 workdir=None, path=None, protein_extent: str = "matched",
                 draw=None, tag=None) -> ViparrForcefield:  # fmt: skip
     """A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
@@ -217,7 +281,8 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
         raise ValueError(f"protein_extent must be one of {PROTEIN_EXTENTS}")
     ffs = _load(forcefields, path)
     b = _Builder(system, ffs, charges or {}, parents or {},
-                 dict(gaff=gaff, charge_method=charge_method, amberhome=amberhome),
+                 dict(gaff=gaff, charge_method=charge_method, charge_geometry=charge_geometry,
+                      amberhome=amberhome),
                  None if workdir is None else Path(workdir), protein_extent,
                  None if draw is None else Path(draw))  # fmt: skip
     b.tag = None if tag is None else str(tag)

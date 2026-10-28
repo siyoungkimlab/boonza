@@ -98,6 +98,17 @@ def test_large_system_writes_v3000(tmp_path):
     assert back.atoms["anum"].tolist() == src.atoms["anum"].tolist()
 
 
+def test_header_says_3d(tmp_path):
+    """The program line marks positions 3D (columns 21-22), so RDKit keeps them 3D."""
+    Chem = pytest.importorskip("rdkit.Chem")
+    out = tmp_path / "x.sdf"
+    boonza.save(boonza.from_smiles("CCO"), out)
+    text = out.read_text()
+    assert text.splitlines()[1][20:22] == "3D"
+    assert Chem.MolFromMolBlock(text, removeHs=False).GetConformer().Is3D()
+    assert boonza.load(out).natoms == 9
+
+
 def test_charges_and_fields(tmp_path):
     s = boonza.load(msys_file("no-delim.sdf"))
     assert s.atoms["formal_charge"][[29, 30]].tolist() == [1, -1]

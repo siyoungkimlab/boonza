@@ -174,6 +174,7 @@ ligands included.
 | `*_report_interval_ns`, `checkpoint_interval_ns` | 0.01 / 1.0, 0.01 | checkpoints must divide the production report interval |
 | `performance_interval_ns` | 1.0 | rows of `performance.csv` |
 | `integration_fs`, `hmr` | 2, off | `hmr` repartitions hydrogens to 4 amu (water untouched) and makes the step 4 fs |
+| `rem` | off | minimize first with soft, bounded nonbonded interactions (REM, after mstool's): pair energy min(A cos²(πr/2σ), LJ) + C q_i q_j cos²(πr/2r_c), A = 100 and C = 50 kJ/mol, so atoms on atoms (a placed ligand, a mutation) slip apart instead of blowing up; then the usual minimization. Nothing holds chirality or cis/trans meanwhile (`boonza.rem.relax(..., torsions=...)` holds the ones named). Martini and SIRAH runs take it too. `boonza.rem` does it for any OpenMM system |
 | `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets); in Martini, the BB-BB-BB-BB torsions |
 | `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
 | `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |

@@ -161,7 +161,7 @@ def adjust_hydrogens(s, atoms) -> np.ndarray:
             add.append((a, want - len(hs)))
     index = np.arange(s.natoms)
     for a, n in add:
-        _add_hydrogens(s, a, n)
+        add_hydrogens(s, a, n)
     if remove:
         index = s.delete_atoms(sorted(set(remove)))
     return index
@@ -412,7 +412,8 @@ def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
             "alternates": dropped, "rebuilt": rebuilt}  # fmt: skip
 
 
-def _add_hydrogens(s, a: int, n: int) -> None:
+def add_hydrogens(s, a: int, n: int) -> None:
+    """``n`` new hydrogens on ``a``, appended at the end, where its bonds leave room."""
     pos = s.positions
     anum = int(s.atoms["anum"][a])
     length = H_BOND.get(anum, 1.0)
@@ -433,11 +434,13 @@ def _add_hydrogens(s, a: int, n: int) -> None:
 
 
 def set_element(s, atoms, element: str | int) -> None:
-    """Change the element of ``atoms`` (and a name that starts with the old one)."""
+    """Change the element of ``atoms`` (and a name that starts with the old one); a
+    new element starts neutral."""
     z = element if isinstance(element, int) else atomic_number(str(element))
     if z <= 0:
         raise ValueError(f"unknown element {element!r}")
     anum = np.asarray(s.atoms["anum"]).copy()
+    old_z = anum.copy()
     names = np.asarray(s.atoms["name"]).astype(object)
     mass = np.asarray(s.atoms["mass"], float).copy()
     for a in atoms:
@@ -455,6 +458,9 @@ def set_element(s, atoms, element: str | int) -> None:
     s.atoms["anum"] = anum
     s.atoms["name"] = names.astype(str)
     s.atoms["mass"] = mass
+    q = np.asarray(s.atoms["formal_charge"]).copy()
+    q[[a for a in atoms if old_z[a] != z]] = 0
+    s.atoms["formal_charge"] = q
 
 
 def set_charge(s, atoms, charge: int) -> None:
@@ -552,7 +558,8 @@ def pocket_selection(ligand: str, cutoff: float = 5.0) -> str:
 
 def parameterize(s, forcefields=None, log=print):
     """``s`` with the force fields ``boonza md`` uses; GAFF2 (AmberTools) for what
-    they have no template for.  Atom order follows ``s`` (column ``view_index``)."""
+    they have no template for, AM1-BCC charges at a reference conformer
+    (gaff.CHARGE_GEOMETRIES).  Atom order follows ``s`` (column ``view_index``)."""
     from .. import gaff, viparr
     from ..md.config import DEFAULT_FORCEFIELDS
 
@@ -565,8 +572,11 @@ def parameterize(s, forcefields=None, log=print):
             ff = viparr.merge_forcefields(ff, viparr.load_forcefield(p))
         ffs.append(ff)
     if gaff.find_unmatched(work, ffs):
-        log("GAFF2 templates (AM1-BCC charges) for what the force fields do not match")
-        patch = gaff.gaff2_patch(work, ffs)
+        log("GAFF2 templates (AM1-BCC charges at a reference conformer) for what the "
+            "force fields do not match")  # fmt: skip
+        # charges at a conformer made from the bonds: a second, not minutes, and the
+        # same in every pose (boonza md optimizes each molecule first)
+        patch = gaff.gaff2_patch(work, ffs, charge_geometry="reference")
         host = gaff.host_index(ffs)
         ffs[host] = viparr.merge_forcefields(ffs[host], patch)
     import warnings
@@ -659,15 +669,18 @@ def amber_charges(s, forcefields=None) -> tuple[np.ndarray, np.ndarray]:
 
 def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: float = 10.0,
              max_iterations: int = 0, parameterized=None, log=print, fixed=None,
-             tethered=None) -> dict:  # fmt: skip
+             tethered=None, path: bool = False, rem: bool = False) -> dict:  # fmt: skip
     """Minimize ``s`` in place: ``mobile`` atoms free, the heavy atoms of the rest held
     to where they are by ``restraint`` (kcal/mol/A^2) springs; hydrogens are free
     everywhere.  Vacuum with a reaction field outside
     12 A.  Or, as Constrain sets them: ``fixed`` atoms do not move at
-    all, ``tethered`` ones are held by the springs (their hydrogens excepted) and the
-    rest is free; ``mobile`` is then not needed.  ``tolerance`` in kJ/mol/nm.
+    all, ``tethered`` ones are held by the springs and the rest is free (hydrogens
+    neither fixed nor held); ``mobile`` is then not needed.  ``tolerance`` in kJ/mol/nm.
     Returns energies (kJ/mol), the RMSD and largest move of the mobile atoms and the
-    largest move of a held atom (A)."""
+    largest move of a held atom (A).  ``path``: also how it got there, as
+    :class:`MinimizationPath` records it (``report["path"]``).  ``rem``: first with
+    soft nonbonded interactions (boonza.rem), for a structure that clashes; then
+    with the force field."""
     import openmm
     import openmm.unit as u
 
@@ -680,6 +693,7 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
     if fixed is not None or tethered is not None:
         tether = np.zeros(s.natoms, bool)
         fix[np.asarray(fixed if fixed is not None else [], np.int64)] = True
+        fix &= heavy  # hydrogens are never held, frozen or restrained
         tether[np.asarray(tethered if tethered is not None else [], np.int64)] = True
         tether &= ~fix
         free = ~(fix | tether)
@@ -718,7 +732,31 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
     before = (
         context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(u.kilojoule_per_mole)
     )
-    openmm.LocalEnergyMinimizer.minimize(context, tolerance, max_iterations)
+    recorder = None
+    report = {}
+    if rem:  # soft first, with the same springs and fixed atoms
+        from .. import rem as soft
+
+        reporter = None
+        if path:
+            soft_start = soft.soften(omm_system)
+            probe = openmm.Context(soft_start, openmm.VerletIntegrator(0.001))
+            probe.setPositions(xyz * u.nanometer)
+            e0 = probe.getState(getEnergy=True).getPotentialEnergy()
+            recorder = reporter = MinimizationPath(order, start, e0.value_in_unit(
+                u.kilojoule_per_mole), stage="REM")  # fmt: skip
+            del probe
+        relaxed, report = soft.relax(omm_system, xyz, tolerance=tolerance,
+                                     max_iterations=max_iterations, reporter=reporter)  # fmt: skip
+        context.setPositions(relaxed * u.nanometer)
+        if recorder is not None:
+            e = context.getState(getEnergy=True).getPotentialEnergy()
+            recorder.next_stage("force field", e.value_in_unit(u.kilojoule_per_mole))
+    if path:
+        recorder = recorder or MinimizationPath(order, start, before)
+        openmm.LocalEnergyMinimizer.minimize(context, tolerance, max_iterations, recorder)
+    else:
+        openmm.LocalEnergyMinimizer.minimize(context, tolerance, max_iterations)
     state = context.getState(getEnergy=True, getPositions=True)
     after = state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole)
     out = np.asarray(state.getPositions(asNumpy=True).value_in_unit(u.nanometer)) * 10.0
@@ -728,7 +766,10 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
     moved = np.linalg.norm(new[free] - start[free], axis=1) if free.any() else np.zeros(1)
     shift = np.linalg.norm(new[held] - start[held], axis=1) if held.any() else np.zeros(1)
     rmsd = float(np.sqrt((moved**2).mean()))
+    if path:
+        report["path"] = recorder.result(new, after)
     return {
+        **report,
         "energy_before": round(before, 1),
         "energy_after": round(after, 1),
         "mobile_atoms": int(free.sum()),
@@ -738,6 +779,74 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
         "fixed_atoms": int(fix.sum()),
         "held_max": round(float(shift.max()), 3),
     }
+
+
+class MinimizationPath:
+    """How a minimization went, step by step, for the page to play back: the energy at
+    every iteration and the positions at up to ``FRAMES`` of them, evenly spread (the
+    stride doubles as they come)."""
+
+    FRAMES = 60
+    POINTS = 400  # energies kept for the plot
+
+    def __new__(cls, *args, **kwargs):
+        import openmm
+
+        # a subclass made here: openmm is imported only when minimizing
+        class Recorder(cls, openmm.MinimizationReporter):
+            pass
+
+        return super().__new__(Recorder)
+
+    def __init__(self, order, start, energy: float, stage: str = "force field"):
+        import openmm
+
+        openmm.MinimizationReporter.__init__(self)
+        self.order = order
+        self.energies = [(0, energy)]
+        self.frames = [(0, np.asarray(start, np.float32))]
+        self.stride = 1
+        self.offset = 0  # iterations of the stages before this one
+        self.stages = [(stage, 0)]
+
+    def next_stage(self, name: str, energy: float) -> None:
+        """The next minimization (REM's soft one done, the force field's): its
+        iterations follow on, its energy starts at ``energy``."""
+        self.offset = self.energies[-1][0] + 1
+        self.stages.append((name, self.offset))
+        self.energies.append((self.offset, energy))
+
+    def report(self, iteration, x, grad, args) -> bool:
+        k = self.offset + int(iteration) + 1  # the reporter counts from 0, after the first step
+        self.energies.append((k, float(args["system energy"])))
+        if k % self.stride == 0:
+            pos = np.empty_like(self.frames[0][1])
+            pos[self.order] = np.asarray(x, np.float32).reshape(-1, 3) * 10.0
+            self.frames.append((k, pos))
+            if len(self.frames) > self.FRAMES:  # every other one, and half as often
+                self.frames = self.frames[::2]
+                self.stride *= 2
+        return False  # never stop it early
+
+    def result(self, final, energy: float) -> dict:
+        """The atoms that moved (over 0.05 A: held ones barely do) and their positions
+        in each frame (the last one is where they ended), and the energy (kJ/mol) by
+        iteration."""
+        last = self.energies[-1][0] + 1
+        frames = [*self.frames, (last, np.asarray(final, np.float32))]
+        energies = [*self.energies, (last, energy)]
+        moved = np.flatnonzero(np.linalg.norm(frames[-1][1] - frames[0][1], axis=1) > 0.05)
+        step = max(1, len(energies) // self.POINTS)
+        starts = {k for _, k in self.stages}  # each stage's first energy stays
+        kept = [x for n, x in enumerate(energies[:-1]) if n % step == 0 or x[0] in starts]
+        kept += energies[-1:]
+        return {
+            "atoms": moved.tolist(),
+            "iterations": [k for k, _ in frames],
+            "frames": [np.round(f[moved], 3).ravel().tolist() for _, f in frames],
+            "energy": [[k, round(e, 1)] for k, e in kept],
+            "stages": [[name, k] for name, k in self.stages],
+        }
 
 
 # --- dihedrals ---------------------------------------------------------------------

@@ -65,6 +65,7 @@ def test_settings_precedence(tmp_path):
     m = parse_arguments(["x", "-f", "aa.amber.ff19SB", "-m", "aa.amber.phosaa19SB", "-f",
                          "water.tip3p"])  # fmt: skip
     assert m.forcefields == (("aa.amber.ff19SB", "aa.amber.phosaa19SB"), ("water.tip3p",))
+    assert parse_arguments(["x", "--rem"]).rem and not parse_arguments(["x"]).rem
     assert parse_arguments(["x", "--hmr"]).integration_fs == 4.0
     assert parse_arguments(["x", "--hmr", "--integration-fs", "3"]).integration_fs == 3.0
     x = parse_arguments(["x", "-f", "amber19/protein.ff19SB.xml", "-f", "amber19/opc.xml"])

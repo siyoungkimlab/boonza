@@ -424,3 +424,32 @@ def test_gaff_parameters_by_version(tmp_path):
         gaff.gaff_parameters(tmp_path, "2.11")
     if AMBERHOME is not None:  # the installed AmberTools has 2.11 under one name or the other
         assert gaff.gaff_parameters(AMBERHOME, "2.11").name in ("gaff211.dat", "gaff2.dat")
+
+
+@needs_amber
+def test_reference_charges_are_the_same_in_every_pose():
+    """charge_geometry="reference": AM1-BCC at a conformer made from the bonds, one AM1
+    calculation (no sqm optimization), so any pose of a molecule gets the same charges,
+    close to AmberTools' own; a molecule is run once."""
+    from rdkit.Chem import AllChem
+
+    from boonza.chem import to_rdkit
+
+    s = boonza.from_smiles("CC(=O)Nc1ccc(OCCN(C)C)cc1", name="LIG")
+    mol = to_rdkit(s, sanitize=True, implicit_hydrogens=False)
+    poses = []
+    for seed in (1, 2):
+        AllChem.EmbedMolecule(mol, randomSeed=seed)
+        pose = s.clone()
+        pose.positions = mol.GetConformer().GetPositions()
+        poses.append(pose)
+    assert np.abs(poses[0].positions - poses[1].positions).max() > 1.0
+    gaff._REFERENCE_RUNS.clear()
+    a, b = (gaff.run_gaff2(p, 0, charge_geometry="reference", amberhome=AMBERHOME) for p in poses)
+    assert len(gaff._REFERENCE_RUNS) == 1  # the second pose was not run again
+    np.testing.assert_array_equal(a.atoms["charge"], b.atoms["charge"])
+    full = gaff.run_gaff2(poses[0], 0, amberhome=AMBERHOME)
+    assert np.abs(np.asarray(a.atoms["charge"]) - np.asarray(full.atoms["charge"])).max() < 0.1
+    assert sum(a.atoms["charge"]) == pytest.approx(0, abs=1e-2)  # antechamber's rounding
+    with pytest.raises(ValueError, match="charge_geometry"):
+        gaff.run_gaff2(s, 0, charge_geometry="crystal", amberhome=AMBERHOME)
