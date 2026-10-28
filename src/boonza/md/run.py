@@ -386,6 +386,15 @@ def run_workflow(args, log=print) -> None:
             mon.check_saved(monitor, args, system.getNumParticles())
         commit_settings(args, paths.final_configuration)
     else:
+        if getattr(args, "rem", False):  # soft first, from where the system starts
+            from ..rem import relax
+
+            log("REM: minimizing with soft Lennard-Jones and Coulomb first...")
+            xyz = np.asarray(positions.value_in_unit(unit.nanometer), float)
+            xyz, report = relax(system, xyz, platform=simulation.context.getPlatform())
+            positions = xyz * unit.nanometer
+            log(f"REM: soft energy {report['rem_energy_before']:.4g} -> "
+                f"{report['rem_energy_after']:.4g} kJ/mol")  # fmt: skip
         simulation.context.setPositions(positions)
         if getattr(args, "model", "aa") == "aa":
             simulation.minimizeEnergy()

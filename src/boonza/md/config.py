@@ -169,6 +169,7 @@ DEFAULTS: dict = {
     "performance_interval_ns": 1.0,
     "integration_fs": 2.0,
     "hmr": False,
+    "rem": False,
     "strict_mapping": False,
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
@@ -270,8 +271,8 @@ _NUMBERS = {
     "shift_nm",
 }
 _INTEGERS = {"seed", "confirmation_checks"}
-_BOOLEANS = {"hmr", "early_stop", "elastic", "opm", "neutral_termini", "gromacs", "cofactors",
-             "cofactor_anchors", "cofactor_side_chains", "strict_mapping",
+_BOOLEANS = {"hmr", "rem", "early_stop", "elastic", "opm", "neutral_termini", "gromacs",
+             "cofactors", "cofactor_anchors", "cofactor_side_chains", "strict_mapping",
              "trust_connectivity"}  # fmt: skip
 _CHOICES = {
     "model": MODELS,
@@ -652,6 +653,14 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "--hmr",
         action=argparse.BooleanOptionalAction,
         help="hydrogen mass repartitioning to 4 amu, water untouched (default: off)",
+    )
+    run.add_argument(
+        "--rem",
+        action=argparse.BooleanOptionalAction,
+        help="minimize first with soft, bounded Lennard-Jones and Coulomb (REM, as "
+        "mstool's), then as usual: for a start that clashes (a placed ligand, a "
+        "mutation); nothing holds chirality or cis/trans while it is soft "
+        "(default: off)",
     )
     numbers(run, [
         ("--equilibration-report-interval-ns", "equilibration_report_interval_ns", "ns"),
@@ -1169,6 +1178,9 @@ performance_interval_ns = 1.0
 integration_fs = 2.0
 # Hydrogen mass repartitioning to 4 amu; integration_fs then defaults to 4.
 hmr = false
+# Minimize with soft, bounded Lennard-Jones and Coulomb first (REM), for a start
+# that clashes: atoms slip past each other (nothing holds chirality meanwhile).
+rem = false
 
 # Restrain backbone phi/psi to the input: none, bb, or ss (helices and sheets).
 dihedral_restraint = "none"

@@ -743,28 +743,120 @@ export function setupUI(app) {
     return { fixed, tethered };
   }
 
-  async function minimize({ ligandOnly = false, restraint = null } = {}) {
+  // what moves in each way to minimize; the rest is fixed
+  const MIN_MODES = [["both", "Pocket + ligand", "the ligand and its pocket free"],
+                     ["ligand", "Ligand", "the ligand free"],
+                     ["pocket", "Pocket", "the pocket free, the ligand fixed"]];
+  async function minimize({ mode = null, restraint = null } = {}) {
     const m = actingModel();
     if (!m) return;
     if (!m.topo?.editable) { app.message("this model cannot be minimized", true); return; }
-    const k = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
-    const c = m.state.constraint, body = { m: m.index, restraint: k };
-    if (ligandOnly) {
-      body.fixed = app.range(m.topo.natoms).filter(a => m.topo.atoms.class[a] !== 1);
-    } else if (c.some(x => x)) {
+    mode = mode || localStorage.getItem("boonza.minMode") || "both";
+    const c = m.state.constraint, body = { m: m.index, path: true, rem: localStorage.getItem("boonza.rem") === "1" };
+    if (c.some(x => x)) {  // Edit | Restraints: those, not a mode
+      body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
       body.fixed = app.range(c.length).filter(a => c[a] === 2);
       body.tethered = app.range(c.length).filter(a => c[a] === 1);
-    }
+    } else Object.assign(body, { mode, restraint: restraint ?? +(localStorage.getItem("boonza.restraint") || 10) });
     try {
       const out = await app.busy("minimizing (the first time sets up the force field)", () => app.post("api/minimize", body));
-      await app.reloadModel(m, false);
+      // a model without hydrogens got them first (the receptor, or this one): its atoms changed
+      const added = out.protonated && state.models[out.protonated.m];
+      if (added && added !== m) await app.reloadModel(added, true);
+      await app.reloadModel(m, added === m);
       const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
-        : out.mobile_atoms === 0 || out.mobile_rmsd === 0
-          ? `no ligand, so only hydrogens were free (${out.held_atoms} heavy atoms restrained): Edit | Restraints sets what moves`
-          : `the ligand and its pocket free, ${out.held_atoms} heavy atoms restrained`;
-      app.message(`Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol; ${how}`
+        : `${MIN_MODES.find(([k]) => k === out.mobile)?.[2] ?? out.mobile}, the rest's heavy atoms held `
+          + `(${body.restraint} kcal/mol/Å², moved at most ${out.held_max} Å)`
+          + (out.receptor ? ` in ${out.receptor} (whose positions stay: every design shares it)` : "");
+      const first = added ? `${out.protonated.hydrogens} hydrogens added to ${added.name} first (Edit | Undo takes them back)`
+        + (out.protonated.incomplete.length ? `, incomplete residues left as they are: ${out.protonated.incomplete.join(", ")}` : "") + ". " : "";
+      const rem = out.rem_energy_before !== undefined
+        ? ` (after REM: soft E ${out.rem_energy_before} → ${out.rem_energy_after})` : "";
+      app.message(`${first}Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol${rem}; ${how}`
         + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : ""));
+      if (out.path) showPath(out.path, m);
     } catch (e) { app.message(e.message, true); }
+  }
+
+  // --- a minimization played back: the atoms as they moved, the energy by iteration ----------
+  let playback = null;
+  function stopPath() {
+    if (!playback) return;
+    clearInterval(playback.timer);
+    playback.restore();
+    playback = null;
+  }
+  function showPath(path, m) {
+    stopPath();
+    const parts = path.models.map(x => ({ ...x, model: state.models[x.m] })).filter(x => x.model?.pos);
+    if (!parts.length || path.iterations.length < 2) return;
+    // where each model is now (after the minimization), and what playback last drew
+    const base = parts.map(x => x.model.pos), drawn = parts.map(x => x.model.pos);
+    const last = path.iterations.length - 1;
+    const E = path.energy, eMin = Math.min(...E.map(([, e]) => e)), eMax = Math.max(...E.map(([, e]) => e));
+    const energyAt = it => { let e = E[0][1]; for (const [k, v] of E) { if (k > it) break; e = v; } return e; };
+    const pb = { frame: last, timer: null };
+    pb.restore = () => {  // back to where they ended, unless something else moved them since
+      parts.forEach((x, k) => { if (x.model.pos === drawn[k]) x.model.pos = base[k]; });
+      app.rebuild();
+    };
+    playback = pb;
+    // the energy on a log scale above its lowest, so the long tail shows past the first drop
+    const W = 340, H = 170, L = 50, R = 8, T = 8, B = 22;
+    const itMax = path.iterations[last] || 1;
+    const x = it => L + it / itMax * (W - L - R);
+    const y = e => T + (1 - Math.log10(e - eMin + 1) / Math.log10(eMax - eMin + 1 || 10)) * (H - T - B);
+    const curve = E.map(([k, e], i) => `${i ? "L" : "M"}${x(k).toFixed(1)},${y(e).toFixed(1)}`).join("");
+    const div = el("div", { className: "plot" });
+    div.innerHTML = `<svg viewBox="0 0 ${W} ${H}"><text x="4" y="${T + 8}">${Math.round(eMax)}</text>`
+      + `<text x="4" y="${H - B}">${Math.round(eMin)}</text><text x="${W - R}" y="${H - 8}" text-anchor="end">${itMax}</text>`
+      + `<text x="${L}" y="${H - 8}">0</text><text x="${(L + W) / 2}" y="${H - 8}" text-anchor="middle">iteration</text>`
+      + (path.stages || []).slice(1).map(([name, k]) => `<line x1="${x(k)}" x2="${x(k)}" y1="${T}" y2="${H - B}" `
+        + `stroke="rgba(128,128,128,0.6)" stroke-dasharray="3,3"/><text x="${x(k) + 3}" y="${T + 18}">${name}</text>`).join("")
+      + ((path.stages || []).length > 1 ? `<text x="${L + 3}" y="${T + 18}">${path.stages[0][0]}</text>` : "")
+      + `<path d="${curve}" fill="none" stroke="#f08c00" stroke-width="1.8"/>`
+      + `<line class="now" y1="${T}" y2="${H - B}" stroke="#2e7d32" stroke-width="1.5"/></svg>`;
+    const svg = div.querySelector("svg"), now = svg.querySelector(".now");
+    const slider = el("input", { type: "range", min: 0, max: last, value: last, style: "width:240px" });
+    const label = el("span", {});
+    const play = button("▶ Play", () => {
+      if (pb.timer) { clearInterval(pb.timer); pb.timer = null; play.textContent = "▶ Play"; return; }
+      if (pb.frame >= last) show(0);
+      play.textContent = "❚❚ Pause";
+      pb.timer = setInterval(() => {
+        if (pb.frame >= last) { clearInterval(pb.timer); pb.timer = null; play.textContent = "▶ Play"; return; }
+        show(pb.frame + 1);
+      }, 80);
+    });
+    function show(f) {
+      pb.frame = f;
+      parts.forEach((x, k) => {
+        const out = base[k].slice(), xyz = x.frames[f];
+        x.atoms.forEach((a, i) => { out[3 * a] = xyz[3 * i]; out[3 * a + 1] = xyz[3 * i + 1]; out[3 * a + 2] = xyz[3 * i + 2]; });
+        x.model.pos = drawn[k] = out;
+      });
+      app.rebuild();
+      const it = path.iterations[f];
+      now.setAttribute("x1", x(it)); now.setAttribute("x2", x(it));
+      slider.value = f;
+      label.textContent = `iteration ${it} · E ${energyAt(it).toFixed(1)} kJ/mol`;
+    }
+    slider.oninput = () => show(+slider.value);
+    svg.onclick = e => {  // the frame nearest the iteration clicked
+      const r = svg.getBoundingClientRect(), it = ((e.clientX - r.left) / r.width * W - L) / (W - L - R) * itMax;
+      let f = 0;
+      path.iterations.forEach((k, i) => { if (Math.abs(k - it) < Math.abs(path.iterations[f] - it)) f = i; });
+      show(f);
+    };
+    const pn = panel("minpath", `Minimization of ${m.name}`, body => {
+      body.append(div, row(play, slider), row(label));
+      body.append(el("p", { className: "help" }, "Potential energy (kJ/mol, log scale above the lowest) by iteration "
+        + "of the minimizer; the atoms as they were at that point. Click the plot or drag the slider; "
+        + "closing this puts them where the minimization ended."
+        + ((path.stages || []).length > 1 ? " With REM the first stage's energy is the soft one, not the force field's." : "")));
+    });
+    pn.querySelector(".title button").addEventListener("click", stopPath);
+    show(last);
   }
 
   function measureMeter() {
@@ -834,7 +926,7 @@ export function setupUI(app) {
     Analyze: () => [
       { label: "Assign Force Field", run: assignForceField },
       { label: "Minimize…", run: minimizePanel },
-      { label: "Minimize Ligand Only", run: () => minimize({ ligandOnly: true }) },
+      { label: "Minimize Ligand Only", run: () => minimize({ mode: "ligand" }) },
       { label: "Torsion Profile…", run: () => profilePanel() },
       { label: "Ramachandran Plot…", run: () => ramaPanel() },
       "-",
@@ -966,6 +1058,7 @@ export function setupUI(app) {
       { label: "Copy Molecule Into", sub: copyIntoItems(c.m, c.molecule) },
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
       "-",
+      ...(c.m.topo.atoms.class[c.a] === 1 || isSeries(c.m) ? [...seriesItems(c.m, c.molecule), "-"] : []),
     ] : [])(clicked(hit)),
     { label: "Fit All", run: () => app.viewAll(), key: "W" },
     { label: "Center on Selection", run: () => app.centerView() },
@@ -982,9 +1075,104 @@ export function setupUI(app) {
     { label: "Models", sub: modelItems },
     "-",
     { label: "Copy SMILES", run: copySmiles },
+    { label: "Create Series from Selection", run: () => { const t = editTarget(); if (t) createSeries(...t); } },
     { label: "Rename Residue or Chain…", run: relabelPanel },
     { label: "Delete", run: deleteSelected },
   ], x, y);
+
+  // --- series: designs of a ligand, a model each, saved together as one SDF ----------------
+
+  const isSeries = m => m?.group?.startsWith("series");
+  // a molecule's popup items: start a series from it, or (a member) the series' own
+  function seriesItems(m, atoms) {
+    if (!isSeries(m)) return [{ label: "Create Series from It", run: () => createSeries(m, atoms) }];
+    return seriesMemberItems(m);
+  }
+  function seriesMemberItems(m) {
+    return [
+      { label: "New Analogue (a copy of this)", run: () => newAnalogue(m) },
+      { label: "Note…", run: () => notePanel(m) },
+      { label: "Receptor", sub: () => [
+        ...app.live().filter(o => !isSeries(o)).map(o => ({ label: o.name, checked: () => m.receptor === o.index,
+                                                             run: () => setReceptor(m.group, o.index) })),
+        "-",
+        { label: "None", checked: () => m.receptor === undefined, run: () => setReceptor(m.group, null) },
+      ] },
+      { label: `Save ${m.group} as SDF…`, run: () => saveSeriesPanel(m.group) },
+      { label: `Download ${m.group} (SDF)`, run: () => downloadSeries(m.group) },
+    ];
+  }
+  async function createSeries(m, atoms) {
+    try {
+      const out = await app.post("api/series", { m: m.index, atoms, frame: Math.min(state.frame, m.topo.nframes - 1) });
+      await addModels(out, false);
+      app.clearSelection();
+      const first = state.models[out.added[0]];
+      app.message(`${first.group}: ${first.name}, a copy of the ligand · change it with the Builder; `
+        + "right-click it for New Analogue and Save as SDF");
+    } catch (e) { app.message(e.message, true); }
+  }
+  async function newAnalogue(m) {
+    try {
+      const out = await app.post("api/series_add", { m: m.index });
+      for (const info of out.models.slice(state.models.length)) state.models.push(app.newModel(info, state.models.length));
+      const next = state.models[out.added[0]];
+      await app.solo(next);  // the new design alone of its series, over what it sits in
+      app.message(`${next.name}: a copy of ${m.name} · ← and → step through ${m.group}`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  // the page's models take the server's listing (receptors, notes) as it is now
+  function relist(out) {
+    out.models.forEach((info, k) => {
+      const m = state.models[k];
+      if (!m) return;
+      m.row = info.row;
+      if (info.receptor === undefined) delete m.receptor; else m.receptor = info.receptor;
+    });
+    app.onModels();
+  }
+  async function setReceptor(group, receptor) {
+    try {
+      relist(await app.post("api/series_receptor", { group, receptor }));
+      await app.refreshContacts();
+      app.rebuild();
+      app.message(receptor === null ? `${group}: no receptor` : `${group}: designs made against ${state.models[receptor].name} `
+        + "(contacts and Minimize use it)");
+    } catch (e) { app.message(e.message, true); }
+  }
+  function notePanel(m) {
+    panel("note", `Note on ${m.name}`, body => {
+      const input = el("input", { value: m.row?.note || "", style: "width:320px", spellcheck: true, placeholder: "what this design tries" });
+      const go = button("Keep", async () => {
+        try {
+          relist(await app.post("api/series_note", { m: m.index, note: input.value }));
+          panels.note?.remove(); delete panels.note;
+        } catch (e) { app.message(e.message, true); }
+      }, "blue");
+      input.onkeydown = e => { if (e.key === "Enter") go.click(); };
+      body.append(row(input, go), el("p", { className: "help" }, "Shown in the model list and saved with the series (SDF field note)."));
+      setTimeout(() => input.focus(), 0);
+    }, [innerWidth / 2 - 200, 90]);
+  }
+  function saveSeriesPanel(group) {
+    pathPanel("series", `Save ${group}`, `${group.replace(/\s+/g, "_")}.sdf`, async path => {
+      try {
+        const out = await app.post("api/series_save", { group, path });
+        app.message(`saved ${group}: ${out.path} (one record per design; File | Open brings it back as a series)`);
+        panels.series?.remove(); delete panels.series;
+      } catch (e) { app.message(e.message, true); }
+    });
+  }
+  async function downloadSeries(group) {
+    try {
+      const r = await fetch("api/series_download", { method: "POST", headers: { "Content-Type": "application/json", "X-Boonza-Token": app.TOKEN },
+        body: JSON.stringify({ group }) });
+      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "series.sdf";
+      el("a", { href: URL.createObjectURL(await r.blob()), download: name }).click();
+      app.message(`downloaded ${name}`);
+    } catch (e) { app.message(e.message, true); }
+  }
 
   // --- the view's own buttons, the status bar ---------------------------------------------------
 
@@ -1847,6 +2035,13 @@ export function setupUI(app) {
     body.append(g);
     const other = el("input", { placeholder: "other element (e.g. Se)", spellcheck: false });
     body.append(row(other, button("Pick", () => other.value.trim() && setTool({ kind: "element", value: other.value.trim(), label: other.value.trim() }))));
+    body.append(el("h3", {}, "Hydrogens, geometry"));
+    body.append(row(button("Add / Adjust H", () => hydrogens("add")), button("Delete H", () => hydrogens("delete")),
+                    button("Clean Up", cleanUp)));
+    body.append(row(button("Delete selected", deleteSelected), button("Undo", () => undo()), button("Redo", () => undo(true))));
+    const auto = el("input", { type: "checkbox", checked: autoH() });
+    auto.onchange = () => localStorage.setItem("boonza.autoH", auto.checked ? "1" : "0");
+    body.append(row(el("label", {}, auto, " adjust hydrogens after each edit")));
     body.append(el("h3", {}, "Bonds and charges"));
     body.append(row(...[["Single", 1], ["Double", 2], ["Triple", 3]].map(([l, v]) => toolButton(l, { kind: "bond", value: v, label: `${l} bond` }))));
     body.append(row(...[["−1", -1], ["0", 0], ["+1", 1]].map(([l, v]) => toolButton(l, { kind: "charge", value: v, label: l }))));
@@ -1876,13 +2071,6 @@ export function setupUI(app) {
     const add = button("Add", () => mol.value.trim() && newMolecule(mol.value.trim(), app.camera.center.slice(), fresh.checked));
     mol.onkeydown = e => { if (e.key === "Enter") add.click(); };
     body.append(row(mol, add), row(el("label", {}, fresh, " as a new model")));
-    body.append(el("h3", {}, "Hydrogens, geometry"));
-    body.append(row(button("Add / Adjust H", () => hydrogens("add")), button("Delete H", () => hydrogens("delete")),
-                    button("Clean Up", cleanUp)));
-    body.append(row(button("Delete selected", deleteSelected), button("Undo", () => undo()), button("Redo", () => undo(true))));
-    const auto = el("input", { type: "checkbox", checked: autoH() });
-    auto.onchange = () => localStorage.setItem("boonza.autoH", auto.checked ? "1" : "0");
-    body.append(row(el("label", {}, auto, " adjust hydrogens after each edit")));
     body.append(el("p", { className: "help" }, "Clean Up relaxes the selected molecules (else every small molecule) "
       + "with MMFF94, alone. Alt + middle drag moves the selected atoms, Alt + left drag turns a selected bond."));
   }
@@ -1977,16 +2165,39 @@ export function setupUI(app) {
       const c = constraintCounts(m);
       const k = el("input", { type: "number", value: localStorage.getItem("boonza.restraint") || 10, min: 0, step: 1, style: "width:60px" });
       k.onchange = () => localStorage.setItem("boonza.restraint", k.value);
-      const what = c.fixed || c.tethered
-        ? `Restraints: ${c.fixed} frozen, ${c.tethered} restrained (Edit | Restraints); the rest is free.`
-        : "No restraints: the ligand and its pocket move, the other heavy atoms are restrained. "
-          + "Edit | Restraints sets your own.";
-      body.append(el("p", { className: "help" }, what));
-      body.append(row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²")));
-      body.append(el("p", { className: "help" }, "Hydrogens are never held. Force field: Amber ff19SB, "
-        + "GAFF2/AM1-BCC for ligands; vacuum with a 12 Å reaction field."));
-      body.append(row(button("Minimize", () => minimize({ restraint: +k.value }), "blue"),
-                      button("Ligand only (Vac)", () => minimize({ ligandOnly: true, restraint: +k.value }))));
+      const spring = row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²"));
+      if (c.fixed || c.tethered) {
+        body.append(el("p", { className: "help" }, `Restraints: ${c.fixed} frozen, ${c.tethered} restrained `
+          + "(Edit | Restraints); the rest is free. Edit | Restraints | Free All goes back to the choices below."));
+        body.append(spring, row(button("Minimize", () => minimize({ restraint: +k.value }), "blue")));
+      } else {
+        let mode = localStorage.getItem("boonza.minMode") || "both";
+        const choices = MIN_MODES.map(([key, label]) => {
+          const b = button(label, () => {
+            mode = key;
+            localStorage.setItem("boonza.minMode", key);
+            choices.forEach(x => x.classList.toggle("armed", x === b));
+          });
+          b.classList.toggle("armed", key === mode);
+          return b;
+        });
+        body.append(el("p", { className: "help" }, "What moves. The heavy atoms of the rest are held by springs: they barely "
+          + "move, and a crystal structure's strain can relax (frozen, it stays, and so does an energy of 10⁵ kJ/mol). "
+          + "The pocket is the whole residues within 5 Å of the ligand."));
+        body.append(row(...choices), spring);
+        body.append(row(button("Minimize", () => minimize({ mode, restraint: +k.value }), "blue")));
+        if (m?.receptor !== undefined) body.append(el("p", { className: "help" }, "A design is minimized in its receptor "
+          + `(${state.models[m.receptor]?.name ?? "none"}); it keeps its new positions, the receptor its own.`));
+      }
+      const rem = el("input", { type: "checkbox", checked: localStorage.getItem("boonza.rem") === "1" });
+      rem.onchange = () => localStorage.setItem("boonza.rem", rem.checked ? "1" : "0");
+      body.append(row(el("label", { title: "for a structure that clashes: Lennard-Jones and Coulomb made soft and bounded "
+        + "(A 100, C 50 kJ/mol, as mstool's REM), then the force field; nothing holds chirality meanwhile" },
+        rem, " REM first (soft potentials, for clashes)")));
+      body.append(el("p", { className: "help" }, "Hydrogens are never held; a structure without any (or a design's receptor) "
+        + "gets them first, as Add / Adjust H adds them. Force field: Amber ff19SB, "
+        + "GAFF2 for ligands, AM1-BCC charges at a conformer built from the bonds (the same in every pose); "
+        + "vacuum with a 12 Å reaction field. The minimization plays back after."));
     });
   }
 
@@ -2412,6 +2623,7 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          ...(isSeries(m) ? [...seriesMemberItems(m), "-"] : []),
           { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },
           { label: "Copy Into", sub: copyIntoItems(m, []) },
           { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: async () => { await app.load(m); download(fmt, m, []); } })) },
@@ -2447,7 +2659,12 @@ export function setupUI(app) {
       }
       await app.show(members, box.checked);
     };
-    return el("label", { className: "mgroup" }, box, ` ${group} (${members.length})`);
+    const header = el("label", { className: "mgroup" }, box, ` ${group} (${members.length})`);
+    if (isSeries({ group }) && members.length) header.oncontextmenu = e => {
+      e.preventDefault();
+      menu(seriesMemberItems(members.find(m => m.index === state.current) || members[members.length - 1]), e.clientX, e.clientY);
+    };
+    return header;
   }
 
 

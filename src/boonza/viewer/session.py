@@ -520,6 +520,7 @@ class Session:
         """One edit (see boonza.viewer.edit): ``op`` is element, charge, bond, delete or
         hydrogens; ``hydrogens`` adjusts the touched atoms' hydrogens after it.  The
         result's ``picked`` is where ``atoms`` went (-1 for deleted ones)."""
+        from ..elements import atomic_number, symbol
         from . import edit
 
         s = self.system
@@ -570,7 +571,21 @@ class Session:
             touched = list(atoms)
             try:
                 if op == "element":
-                    edit.set_element(s, atoms, value)
+                    # a hydrogen made heavy grows from where it is (a C becomes CH3, at
+                    # a C-C bond's length), as clicking it with the tool does
+                    z = atomic_number(str(value))
+                    grow = [a for a in atoms if z > 1 and s.atoms["anum"][a] == 1
+                            and edit.neighbors(s, a)]  # fmt: skip
+                    edit.set_element(s, [a for a in atoms if a not in grow], value)
+                    for h in grow:
+                        now = int(np.flatnonzero(np.asarray(s.atoms["view_edit"]) == h + 1)[0])
+                        new = edit.attach(s, edit.neighbors(s, now)[0][0], now, symbol(z))
+                        mark = np.asarray(s.atoms["view_edit"]).copy()
+                        mark[new[0]] = h + 1  # the picked hydrogen is the new atom now
+                        s.atoms["view_edit"] = mark
+                    if grow:  # indices moved; the grown atoms have their hydrogens
+                        mark = np.asarray(s.atoms["view_edit"]).tolist()
+                        touched = [mark.index(a + 1) for a in atoms if a not in grow]
                 elif op == "charge":
                     edit.set_charge(s, atoms, int(value))
                 elif op == "bond":
@@ -589,8 +604,11 @@ class Session:
                         anchor, leaving = edit.neighbors(s, a)[0][0], a
                     else:
                         hs = [b for b, _ in edit.neighbors(s, a) if s.atoms["anum"][b] == 1]
+                        if not hs and edit.hydrogens_wanted(s, a):  # no hydrogens (a PDB
+                            edit.add_hydrogens(s, a, 1)  # entry): one where it would be
+                            hs = [s.natoms - 1]
                         if not hs:
-                            raise ValueError("select a hydrogen, or an atom that has one")
+                            raise ValueError("select a hydrogen, or an atom with room for one")
                         anchor, leaving = a, hs[0]
                     smiles = edit.GROUPS.get(str(value), str(value))
                     edit.attach(s, anchor, leaving, smiles)
@@ -620,8 +638,10 @@ class Session:
                     hydrogens = False
                 else:
                     raise ValueError(f"unknown edit {op!r}")
-                # a structure without hydrogens (most PDB entries) keeps none
-                if hydrogens and (np.asarray(s.atoms["anum"]) == 1).any():
+                # a new or changed atom gets its hydrogens, in a structure without
+                # any (a PDB entry) too; a deletion there leaves its neighbors bare
+                bare = not (np.asarray(s.atoms["anum"]) == 1).any()
+                if hydrogens and not (op == "delete" and bare):
                     edit.adjust_hydrogens(s, [a for a in touched if a < s.natoms])
             except Exception:
                 self.system = self._undo.pop()[0]
@@ -1105,14 +1125,34 @@ class Session:
                 "width": width, "height": height}  # fmt: skip
 
     def minimize(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
-                 tethered=None) -> dict:  # fmt: skip
+                 tethered=None, mode: str | None = None, path: bool = False,
+                 rem: bool = False) -> dict:  # fmt: skip
         """Relax ``mobile`` (default the ligand and its pocket), the other heavy atoms
         restrained; or, given ``fixed`` and ``tethered`` atoms (Constrain), those
-        held and the rest free.  Hydrogens are never restrained."""
+        held and the rest free; or by ``mode``, the rest's heavy atoms restrained: both
+        (the ligand and its pocket free), ligand (the ligand alone) or pocket (the pocket
+        alone).
+        Hydrogens are never restrained.  ``path``: how it went, step by step; ``rem``:
+        soft nonbonded interactions first (boonza.rem)."""
         from .edit import minimize, pocket_selection
 
         self._editable()
-        constrained = bool(fixed) or bool(tethered)
+        if mode is not None:
+            lig = f"same residue as ({self.ligand or LIGAND})"
+            pocket = f"({pocket_selection(lig)}) and not ({lig})"
+            what = {"both": f"({lig}) or ({pocket})", "ligand": lig, "pocket": pocket}.get(mode)
+            if what is None:
+                raise ValueError(f"mode is both, ligand or pocket, not {mode!r}")
+            free = self.system.select(what).ids
+            if not len(free):
+                raise ValueError("nothing to move: choose the ligand (right-click it, "
+                                 "Set as Ligand)")  # fmt: skip
+            # the rest's heavy atoms held by springs (frozen, a crystal structure's
+            # strain stays: energies of 1e5 kJ/mol); hydrogens are never held
+            heavy = np.flatnonzero(np.asarray(self.system.atoms["anum"]) > 1)
+            fixed, tethered = [], np.setdiff1d(heavy, free)
+        given = [x for x in (fixed, tethered) if x is not None]
+        constrained = mode is not None or any(len(x) for x in given)
         if not constrained:
             mobile = mobile or pocket_selection(self.ligand or LIGAND)
         with self._lock:
@@ -1122,9 +1162,10 @@ class Session:
                 report = minimize(self.system, None if constrained else mobile,
                                   restraint=restraint, parameterized=p,
                                   fixed=fixed if constrained else None,
-                                  tethered=tethered if constrained else None)  # fmt: skip
+                                  tethered=tethered if constrained else None,
+                                  path=path, rem=rem)  # fmt: skip
             except Exception:
                 self.system = self._undo.pop()[0]
                 raise
-            return {**self._changed(topology=False), **report,
-                    "mobile": "constraints" if constrained else mobile}  # fmt: skip
+            how = mode or ("constraints" if constrained else mobile)
+            return {**self._changed(topology=False), **report, "mobile": how}

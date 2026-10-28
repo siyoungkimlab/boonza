@@ -568,7 +568,11 @@ function modelItems(m) {
   const loose = new Uint8Array(n);
   for (let a = 0; a < n; a++) loose[a] = selected[a] && !drawn[a] && !traced[a] ? 1 : 0;
   const dashes = [];
-  if (state.contacts) for (const [i, j] of m.contacts || []) dashes.push([...xyz(m, i), ...xyz(m, j), ...CONTACT_COLOR]);
+  // a design's contacts end on its receptor's atoms (a model of their own, drawn or not)
+  if (state.contacts) for (const [i, j, , r] of m.contacts || []) {
+    const other = r === undefined ? m : state.models[r];
+    if (other?.pos && (other === m || other.shown)) dashes.push([...xyz(m, i), ...xyz(other, j), ...CONTACT_COLOR]);
+  }
   if (state.hbonds) for (const [i, j] of m.hbonds || []) dashes.push([...xyz(m, i), ...xyz(m, j), ...HBOND_COLOR]);
   for (const meter of state.meters) {
     if (meter.model !== m) continue;

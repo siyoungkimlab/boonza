@@ -71,6 +71,8 @@ class Model:
     # tied to frame i of another model, by name: {"model": name, "i": i} (a site and the
     # MD frame it was found in); showing this one shows that one at that frame
     frame: dict | None = None
+    # a design's receptor (a series member's): the model it is made against, by index
+    receptor: int | None = None
     closed: bool = False
     _session: Session | None = None
 
@@ -85,6 +87,8 @@ class Model:
             out["summary"] = self.summary
         if self.frame:
             out["frame"] = self.frame
+        if self.receptor is not None:
+            out["receptor"] = self.receptor
         return out
 
 
@@ -168,6 +172,7 @@ class Viewer:
                 traj = s.trajectory
                 entries.append({
                     "index": k, "name": m.name, "group": m.group, "shown": m.shown, "row": m.row,
+                    "receptor": self.receptor(k),
                     "label": m.label, "file": f"models/model{k}.dms", "title": s.title,
                     "trajectory": str(Path(traj.path).resolve()) if traj is not None else None,
                     "atoms": s.ids.tolist() if s.ids is not None else None,
@@ -194,9 +199,20 @@ class Viewer:
             self.page = {**opened.page, "offset": len(self.models)}
         start = len(self.models)
         self.models += new
+        for m in new:  # receptors by index in what was opened: now after what is here
+            if m.receptor is not None:
+                m.receptor += start
+        taken = {m.group for m in self.models[:start]}
+        renamed: dict[str, str] = {}
         for m in new:
             if self.title and m.group == "":
                 m.group = "files"
+            if m.group.startswith("series") and (m.group in taken or m.group in renamed):
+                if m.group not in renamed:  # a series of that name is open: the next one
+                    k = next(k for k in range(1, len(self.models) + 2)
+                             if f"series {k}" not in taken | set(renamed.values()))  # fmt: skip
+                    renamed[m.group] = f"series {k}"
+                m.group = renamed[m.group]
         return list(range(start, start + len(new)))
 
     def fetch(self, code: str, folder=None) -> list[int]:
@@ -255,12 +271,285 @@ class Viewer:
             new = b.system.append(piece)
             return {**b._changed(topology=True), "added": len(new)}
 
+    # --- series: ligand designs, a model each, saved together as one SDF ---------------
+
+    def series(self, group: str) -> list[int]:
+        """The open members of series ``group``, in order."""
+        out = [k for k, m in enumerate(self.models) if m.group == group and not m.closed]
+        if not group.startswith("series") or not out:
+            raise ValueError(f"no series {group!r}")
+        return out
+
+    def _member(self, s, group: str, name: str, receptor: int | None = None) -> int:
+        reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
+        session = Session(s, title=name, reps=reps)
+        self.models.append(Model(name, lambda: session, group=group, receptor=receptor,
+                                 _session=session))  # fmt: skip
+        return len(self.models) - 1
+
+    def create_series(self, src: int, atoms, frame: int = 0) -> list[int]:
+        """A series of designs from model ``src``'s ``atoms`` (a ligand, where it sits):
+        a group of its own whose first member is a copy of them, with hydrogens when it
+        had none, and ``src`` its receptor.  Members are edited on their own;
+        :meth:`save_series` writes them."""
+        from .edit import adjust_hydrogens
+
+        a = self.session(src)
+        atoms = [int(x) for x in atoms]
+        if not atoms:
+            raise ValueError("select the ligand first (double-click it)")
+        if a.cg or a.radii is not None:
+            raise ValueError("a series is of molecules with atoms, not beads or points")
+        piece = a.system.clone(atoms)
+        piece.positions = np.asarray(a.frame(frame)[0], float)[atoms]
+        anum = np.asarray(piece.atoms["anum"])
+        if not (anum == 1).any():  # a PDB entry's ligand: designs need its hydrogens
+            adjust_hydrogens(piece, np.flatnonzero(anum > 1).tolist())
+        taken = {m.group for m in self.models}
+        k = next(k for k in range(1, len(self.models) + 2) if f"series {k}" not in taken)
+        base = str(piece.residues["name"][0]).strip() or "design"
+        return [self._member(piece, f"series {k}", f"{base}1", receptor=src)]
+
+    def _base(self, m: int) -> str:
+        """What a member's name numbers: its residue name (LIG of LIG3), else the name
+        without its last digits."""
+        name = self.models[m].name
+        s = self.session(m).system
+        res = str(s.residues["name"][0]).strip() if s.nresidues else ""
+        if res and re.fullmatch(rf"{re.escape(res)}\d+", name):
+            return res
+        return re.sub(r"\d+$", "", name).strip() or "design"
+
+    def add_to_series(self, m: int) -> list[int]:
+        """A new member of model ``m``'s series: a copy of ``m``, to change into the next
+        design, against the same receptor."""
+        group = self.models[m].group
+        members = self.series(group)
+        base = self._base(members[0])
+        numbered = re.compile(rf"{re.escape(base)}(\d+)")
+        used = [int(x.group(1)) for k in members if (x := numbered.fullmatch(self.models[k].name))]
+        name = f"{base}{max(used, default=0) + 1}"
+        return [self._member(self.session(m).system.clone(), group, name, self.receptor(m))]
+
+    def set_note(self, m: int, note: str) -> None:
+        """A design's note: shown in the model list, saved in the series' SDF."""
+        note = " ".join(str(note).split())
+        if note:
+            self.models[m].row["note"] = note
+        else:
+            self.models[m].row.pop("note", None)
+
+    def receptor(self, m: int) -> int | None:
+        """The open model design ``m`` is made against, if any."""
+        r = self.models[m].receptor
+        if r is None or not 0 <= r < len(self.models) or self.models[r].closed:
+            return None
+        return r
+
+    def set_receptor(self, group: str, r: int | None) -> None:
+        """What every member of series ``group`` is made against (None: nothing)."""
+        if r is not None:
+            if not 0 <= r < len(self.models) or self.models[r].closed:
+                raise ValueError(f"no model {r + 1}")
+            if self.models[r].group.startswith("series"):
+                raise ValueError("a receptor is a structure, not a design")
+            s = self.session(r)
+            if s.cg or s.radii is not None:
+                raise ValueError("a receptor needs atoms, not beads or points")
+        for k in self.series(group):
+            self.models[k].receptor = r
+
+    def _receptor_atoms(self, m: int, frame: int = 0):
+        """Design ``m``'s receptor: its index, the atoms of it that count and their
+        positions.  The molecules the design sits on are left out: the ligand it was
+        made from, waters it displaces (any heavy atom within 1.5 A of one of its own)."""
+        r = self.receptor(m)
+        if r is None:
+            raise ValueError("this design has no receptor: right-click it, Receptor")
+        rec, design = self.session(r), self.session(m)
+        pos = np.asarray(rec.frame(min(frame, rec.nframes - 1))[0], float)
+        s = rec.system
+        keep = np.ones(s.natoms, bool)
+        small = s.select("not (protein or nucleic)").ids
+        small = small[np.asarray(s.atoms["anum"])[small] > 1]
+        mine = np.asarray(design.system.positions, float)
+        mine = mine[np.asarray(design.system.atoms["anum"]) > 1]
+        if len(small) and len(mine):
+            from scipy.spatial import cKDTree
+
+            near = small[[bool(x) for x in cKDTree(mine).query_ball_point(pos[small], 1.5)]]
+            frag = np.asarray(s.fragids)
+            keep[np.isin(frag, frag[near])] = False
+        return r, np.flatnonzero(keep), pos
+
+    def contacts(self, m: int, frame: int = 0) -> list:
+        """Model ``m``'s polar contacts; a design's with its receptor, as
+        ``[i, j, distance, receptor]`` (``j`` an atom of the receptor)."""
+        from .session import POLAR_CONTACT
+
+        if self.receptor(m) is None:
+            return self.session(m).contacts(frame)
+        design = self.session(m)
+        r, keep, pos = self._receptor_atoms(m, frame)
+        rec = self.session(r).system
+        on = np.isin(np.asarray(design.system.atoms["anum"]), (7, 8))
+        a = np.flatnonzero(on)
+        polar = np.isin(np.asarray(rec.atoms["anum"]), (7, 8))
+        polar[rec.select("water").ids] = False
+        b = keep[polar[keep]]
+        if not len(a) or not len(b):
+            return []
+        mine = np.asarray(design.system.positions, float)
+        d = np.linalg.norm(mine[a][:, None] - pos[b][None], axis=2)
+        i, j = np.nonzero(d <= POLAR_CONTACT)
+        return [[int(a[x]), int(b[y]), round(float(d[x, y]), 2), r]
+                for x, y in zip(i, j, strict=True)]  # fmt: skip
+
+    def minimize(self, m: int, mode: str | None = None, path: bool = False, rem: bool = False,
+                 **kw) -> dict:  # fmt: skip
+        """Minimize model ``m`` (see :meth:`Session.minimize`); a design with a receptor
+        in it (:meth:`minimize_design`) unless it is given its own restraints.  The
+        path's atoms are split by the model they are in."""
+        constrained = kw.get("fixed") is not None or kw.get("tethered") is not None
+        if self.receptor(m) is not None and not constrained:
+            return self.minimize_design(m, mode or "both", path=path,
+                                        restraint=kw.get("restraint", 10.0), rem=rem)  # fmt: skip
+        protonated = _protonate_if_bare(self.session(m), m)
+        out = self.session(m).minimize(mode=mode, path=path, rem=rem, **kw)
+        if protonated:
+            out["protonated"] = protonated
+        if "path" in out:
+            out["path"] = _split_path(out["path"], [(m, None)])
+        return out
+
+    def minimize_design(self, m: int, mode: str = "both", path: bool = False,
+                        restraint: float = 10.0, rem: bool = False) -> dict:  # fmt: skip
+        """Minimize design ``m`` in its receptor: ``mode`` both (it and its pocket free),
+        ligand (it alone) or pocket (the pocket alone); the heavy atoms of the rest
+        held by ``restraint`` (kcal/mol/A^2) springs; ``rem``: soft first (boonza.rem).
+        Only the design keeps its new positions: the receptor is every design's.  A
+        receptor without hydrogens (a PDB entry) gets them first, as Add / Adjust H adds
+        them: an edit of it, undone with Undo."""
+        from .edit import minimize, parameterize
+
+        design = self.session(m)
+        design._editable()
+        r = self.receptor(m)
+        protonated = _protonate_if_bare(self.session(r), r) if r is not None else None
+        r, keep, pos = self._receptor_atoms(m)
+        rec = self.session(r)
+        s = rec.system.clone(keep)
+        s.positions = pos[keep]
+        n0 = s.natoms
+        s.append(design.system.clone())
+        ligand = np.arange(n0, s.natoms)
+        lig = "index " + " ".join(map(str, ligand.tolist()))
+        pocket = s.select(f"(same residue as ((protein or nucleic) and within 5 of ({lig})))").ids
+        free = {"both": np.union1d(ligand, pocket), "ligand": ligand, "pocket": pocket}.get(mode)
+        if free is None:
+            raise ValueError(f"mode is both, ligand or pocket, not {mode!r}")
+        if not len(free):
+            raise ValueError("nothing to move: no pocket residues within 5 A of the design")
+        # the rest's heavy atoms held by springs; hydrogens are never held
+        held = np.setdiff1d(np.flatnonzero(np.asarray(s.atoms["anum"]) > 1), free)
+        key = (r, getattr(rec, "topo_version", 0), keep.tobytes(),
+               getattr(design, "topo_version", 0))  # fmt: skip
+        cached = getattr(design, "_in_receptor", None)
+        if cached is None or cached[0] != key:
+            design._in_receptor = (key, parameterize(s))
+        p = design._in_receptor[1]
+        p.positions = np.asarray(s.positions)[np.asarray(p.atoms["view_index"])]
+        with design._lock:
+            report = minimize(s, restraint=restraint, fixed=[], tethered=held, parameterized=p,
+                              path=path, rem=rem)  # fmt: skip
+            design._remember()
+            design.system.positions = np.asarray(s.positions)[n0:]
+            out = {**design._changed(topology=False), **report, "mobile": mode,
+                   "receptor": self.models[r].name}  # fmt: skip
+        if protonated:
+            out["protonated"] = protonated
+        if "path" in out:
+            out["path"] = _split_path(out["path"], [(m, n0), (r, keep)], n0)
+        return out
+
+    def series_sdf(self, group: str) -> str:
+        """Series ``group`` as SDF text: a record per member, titled with its name, with
+        the series, its SMILES and its note as fields."""
+        import tempfile
+
+        from ..io.sdf import save_sdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "series.sdf"
+            for n, k in enumerate(self.series(group)):
+                s = self.session(k).system.clone()
+                if not s.ncts:
+                    s.add_ct()
+                smiles = [x["smiles"] for x in self.session(k).smiles(range(s.natoms))]
+                fields = {"series": group, "SMILES": ".".join(x for x in smiles if x)}
+                if self.models[k].row.get("note"):
+                    fields["note"] = self.models[k].row["note"]
+                for c in range(s.ncts):
+                    s._ct_names[c] = self.models[k].name
+                    s._ct_props[c] = dict(fields)
+                save_sdf(s, path, append=n > 0)
+            return path.read_text()
+
+    def save_series(self, group: str, path) -> str:
+        path = Path(path).expanduser()
+        if path.suffix.lower() != ".sdf":
+            raise ValueError("a series is saved as SDF (a .sdf path)")
+        path.write_text(self.series_sdf(group))
+        return str(path)
+
     def close(self, m: int) -> None:
         """Close a model; indices stay as they are (the page keys models by them)."""
         if not 0 <= m < len(self.models):
             raise IndexError(f"model {m} of {len(self.models)}")
         self.models[m].closed = True
         self.models[m]._session = None
+
+
+def _protonate_if_bare(session: Session, m: int | None) -> dict | None:
+    """Hydrogens for a model without them (a PDB entry: its protein has none, though a
+    ligand placed in it may), before a minimization: as Add / Adjust H adds them
+    (Session.edit protonate), undone with Undo; what was done, for the page to reload
+    model ``m`` and say so."""
+    if m is None:
+        return None
+    s = session.system
+    polymer = s.select("protein or nucleic").ids
+    anum = np.asarray(s.atoms["anum"])
+    if (anum[polymer] == 1).any() if len(polymer) else (anum == 1).any():
+        return None
+    report = session.edit("protonate")
+    return {"m": m, "hydrogens": int(report.get("hydrogens", 0))
+            + int(report.get("ligand_hydrogens", 0)),
+            "incomplete": report.get("incomplete", [])}  # fmt: skip
+
+
+def _split_path(path: dict, parts, n0: int = 0) -> dict:
+    """A minimization's path (edit.MinimizationPath) by model: ``parts`` is
+    [(model, where)], where None (every atom is the model's), an int (the atoms from
+    there on, as the model's 0, 1 ...) or an array (atoms before ``n0``: the model's
+    atoms of that array)."""
+    atoms = np.asarray(path["atoms"], np.int64)
+    frames = [np.asarray(f, np.float32).reshape(-1, 3) for f in path["frames"]]
+    models = []
+    for m, where in parts:
+        if where is None:
+            take, ids = np.ones(len(atoms), bool), atoms
+        elif isinstance(where, int):
+            take = atoms >= where
+            ids = atoms[take] - where
+        else:
+            take = atoms < n0
+            ids = np.asarray(where)[atoms[take]]
+        if take.any():
+            models.append({"m": m, "atoms": ids.tolist(),
+                           "frames": [f[take].ravel().tolist() for f in frames]})  # fmt: skip
+    return {"iterations": path["iterations"], "energy": path["energy"],
+            "stages": path.get("stages", []), "models": models}  # fmt: skip
 
 
 # --- reading -------------------------------------------------------------------
@@ -372,6 +661,10 @@ def from_session(path) -> Viewer:
 
         models.append(Model(e["name"], load, group=e.get("group", ""), shown=e.get("shown", True),
                             row=e.get("row", {}), label=e.get("label", "")))  # fmt: skip
+    # a design's receptor, by its old index: now where that model is in the list
+    where = {e["index"]: k for k, e in enumerate(spec["models"])}
+    for m, e in zip(models, spec["models"], strict=True):
+        m.receptor = where.get(e.get("receptor"))
     v = Viewer(models, title=spec.get("title") or path.name, columns=spec.get("columns", ()))
     # the page keys its state by the models' old indices: now 0, 1, 2 ... in order
     page = spec.get("page") or {}
@@ -398,10 +691,34 @@ def from_paths(paths, **kwargs) -> Viewer:
             columns += [c for c in v.columns if c not in columns]
         elif not p.exists():
             raise FileNotFoundError(p)
+        elif members := _series_members(p):
+            models += members
         else:
             models.append(Model(p.name, lambda p=p: _session(p, **kwargs), group="files"))
     title = " + ".join(p.name for p in paths)
     return Viewer(models, title=title, columns=columns)
+
+
+def _series_members(path) -> list[Model]:
+    """An SDF a series was saved as (every record has its ``series`` field): a model
+    per record, in that series again; else none."""
+    if path.suffix.lower() != ".sdf":
+        return []
+    from ..io.sdf import load_sdf
+
+    s = load_sdf(path)
+    if not s.ncts or any("series" not in s.ct(c).keys() for c in range(s.ncts)):
+        return []
+    reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
+    out = []
+    for c in range(s.ncts):
+        name = s._ct_names[c] or f"design {c + 1}"
+        session = Session(s.clone(s.ct_atoms(c)), title=name, reps=reps)
+        props = s.ct(c)
+        row = {"note": str(props["note"])} if "note" in props.keys() else {}
+        out.append(Model(name, lambda x=session: x, group=str(props["series"]), row=row,
+                         _session=session))  # fmt: skip
+    return out
 
 
 def from_folder(d) -> Viewer:

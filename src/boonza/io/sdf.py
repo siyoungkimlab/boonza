@@ -449,7 +449,8 @@ def _format_ct(s: System, v3000: bool | None = None) -> str:
     if v3000 is None:
         v3000 = n > 999 or m > 999
     A, B = s._atoms, s._bonds
-    lines = [s._ct_names[0] if s.ncts else "", "", ""]
+    # the program line: positions are 3D (readers take a blank one for 2D)
+    lines = [s._ct_names[0] if s.ncts else "", f"  {'boonza':<8s}{'':10s}3D", ""]
     if v3000:
         lines += _format_v3000(s)
         for key, value in (s._ct_props[0] if s.ncts else {}).items():
