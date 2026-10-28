@@ -1,0 +1,401 @@
+"""boonza fep prep: from a receptor and posed ligands to hybrid systems to run.
+
+Ligands come from an SDF, posed in the receptor's frame.  Each is given GAFF2
+types and AM1-BCC charges once (at a reference conformer, so in any pose the
+same; boonza.gaff), and every pair the network chooses (boonza.fep.network)
+gets two legs: in the receptor (complex) and in water (solvent); without a
+receptor, in water and in vacuum (a relative hydration free energy).
+
+A leg is solvated with both ligands in place, so the waters avoid both; state
+A is that box without ligand B, state B without ligand A, and the two share
+every other atom in order -- what a hybrid topology needs.  The hybrid
+(boonza.fep.hybrid) is written beside the settings it runs with, and
+``commands.txt`` lists one ``boonza fep run`` per leg and repeat.
+
+Layout::
+
+    WORKDIR/ligands.csv          the ligands, their charges and SMILES
+    WORKDIR/edges.csv            the pairs, how many atoms map, their scores
+    WORKDIR/forcefield/          the GAFF2 patch (every ligand, any cofactor)
+    WORKDIR/edges/A~B/complex/   system.xml.gz, state.npz, leg.json
+    WORKDIR/edges/A~B/solvent/
+    WORKDIR/edges/A~B/vacuum/      (no receptor: hydration)
+    WORKDIR/commands.txt
+"""
+
+from __future__ import annotations
+
+import csv
+import gzip
+import json
+import warnings
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from .. import gaff, viparr
+from ..system import System
+from . import lambdas, network
+from .hybrid import _md
+
+#: the solvent leg's padding (openfe: 1.5 nm), the complex leg's is boonza md's
+SOLVENT_PADDING_NM = 1.5
+#: an alchemical water is at least this far from the solute (openfe: 0.8 nm)
+ALCHEMICAL_WATER_NM = 0.8
+#: a change of net charge scores this times LOMAP's score, so a network takes
+#: one only to join ligands of different charge
+CHARGE_CHANGE_PENALTY = 0.1
+#: and runs openfe's longer protocol (its industry benchmark's settings)
+CHARGE_WINDOWS = 22
+CHARGE_PRODUCTION_NS = 20.0
+
+
+def load_ligands(path) -> tuple[list, list[System], list[str]]:
+    """RDKit molecules, boonza systems (atoms in the same order) and names of the
+    ligands in an SDF, each with all its hydrogens and its pose."""
+    from rdkit import Chem
+
+    from ..io import load
+
+    mols = [m for m in Chem.SDMolSupplier(str(path), removeHs=False)]
+    if any(m is None for m in mols):
+        raise ValueError(f"{path}: RDKit cannot read every record")
+    if not all(any(a.GetAtomicNum() == 1 for a in m.GetAtoms()) for m in mols):
+        raise ValueError(f"{path}: the ligands need all their hydrogens")
+    s = load(path)
+    if s.ncts != len(mols):
+        raise ValueError(f"{path}: {s.ncts} records read as systems, {len(mols)} by RDKit")
+    systems, names = [], []
+    for k, m in enumerate(mols):
+        lig = s.clone(s.ct_atoms(k))
+        if lig.natoms != m.GetNumAtoms():
+            raise ValueError(f"{path}: record {k + 1} differs between readers")
+        lig.residues["name"] = [f"L{k:02d}"] * lig.nresidues  # one template each
+        systems.append(lig)
+        name = m.GetProp("_Name").strip() if m.HasProp("_Name") else ""
+        names.append(name or f"ligand{k + 1}")
+    if len(set(names)) != len(names):
+        raise ValueError(f"{path}: the ligands' names must differ: {names}")
+    return mols, systems, names
+
+
+def _parameterize(system: System, ff, hmr: bool) -> System:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", r"fragment \d+ \([A-Z][a-z]?\) was matched by multiple",
+                                viparr.ViparrWarning)  # fmt: skip
+        out = viparr.parameterize(system, ff)
+    if hmr:
+        from ..build import repartition_hydrogen_masses
+        from ..md.config import HYDROGEN_MASS_AMU
+
+        out = repartition_hydrogen_masses(out, "not water", HYDROGEN_MASS_AMU)
+    return out
+
+
+def _by_tag(s: System, n: int) -> np.ndarray:
+    """Where each tagged atom (fep_index 1..n) ended up after parameterizing."""
+    tag = np.asarray(s.atoms["fep_index"], dtype=np.int64)
+    where = np.full(n, -1, dtype=np.int64)
+    where[tag[tag > 0] - 1] = np.flatnonzero(tag > 0)
+    return where
+
+
+@dataclass
+class Leg:
+    """One leg's two end states (boonza systems and OpenMM systems) and their hybrid."""
+
+    hybrid: object
+    old: System
+    new: System
+    old_system: object
+    new_system: object
+    dropped: int  # atoms left out of the core because their constraints differ
+    alchemical_waters: list = None  # hybrid indices of the waters that become ions
+
+
+def build_leg(env: System | None, lig_a: System, lig_b: System, core: dict, ff, args,
+              padding_nm: float, log=print, charge_change: int = 0):  # fmt: skip
+    """The two end states of one leg and their hybrid: ``env`` (the receptor, or
+    None in water) with ligand A, and with ligand B; ``core`` maps A's atoms to
+    B's.  ``padding_nm`` None: in vacuum, no water and no cutoff.
+
+    ``charge_change``, B's net charge less A's, is balanced by as many waters
+    far from the solute becoming ions in B (openfe's, after perses): Cl- for a
+    gain, Na+ for a loss, so every state's box is neutral.  The water keeps its
+    atoms, masses and constraints; its oxygen takes the ion's charge and
+    Lennard-Jones, its hydrogens lose their charge."""
+    from ..build import neutralize, solvate
+    from ..omm import to_openmm
+    from .hybrid import build
+
+    parts = ([env] if env is not None else []) + [lig_a, lig_b]
+    combined = parts[0].copy()
+    for p in parts[1:]:
+        combined.append(p)
+    ne = env.natoms if env is not None else 0
+    na, nb = lig_a.natoms, lig_b.natoms
+    a_ids = np.arange(ne, ne + na)
+    b_ids = np.arange(ne + na, ne + na + nb)
+    # the counterions state A needs; B carries the same charge (network.edges)
+    solute_a = combined.clone(np.arange(ne + na))
+    charge = float(_parameterize(solute_a, ff, False).atoms["charge"].sum())
+    if padding_nm is None:  # in vacuum: the two ligands alone
+        box = combined.copy()
+    else:
+        box = solvate(combined, thickness=10.0 * padding_nm)
+        box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
+    box.atoms["fep_index"] = np.arange(1, box.natoms + 1)
+    old_ids = np.setdiff1d(np.arange(box.natoms), b_ids)  # in order: env, A, solvent
+    new_ids = np.setdiff1d(np.arange(box.natoms), a_ids)
+    old = _parameterize(box.clone(old_ids), ff, args.hmr)
+    new = _parameterize(box.clone(new_ids), ff, args.hmr)
+    where_old, where_new = _by_tag(old, box.natoms), _by_tag(new, box.natoms)
+    shared = np.setdiff1d(np.arange(box.natoms), np.concatenate([a_ids, b_ids]))
+    environment = {int(where_old[t]): int(where_new[t]) for t in shared}
+    core_idx = {int(where_old[ne + i]): int(where_new[ne + na + j]) for i, j in core.items()}
+    options = dict(nonbonded_method="PME" if padding_nm is not None else "NoCutoff",
+                   cutoff=10.0 * args.cutoff_nm, constraints=True,
+                   dispersion_correction=False)  # fmt: skip
+    _, sys_old, _ = to_openmm(old, **options)
+    _, sys_new, _ = to_openmm(new, **options)
+    core_idx, dropped = _constraint_fix(sys_old, sys_new, core_idx)
+    waters = []
+    if charge_change:
+        if padding_nm is None:
+            raise ValueError("a change of net charge needs water to put its ion in")
+        for res in _alchemical_waters(box, abs(charge_change)):
+            tags = np.flatnonzero(box.atoms["residue"] == res)
+            _water_to_ion(sys_new, where_new[tags], box.atoms["anum"][tags],
+                          _ion_parameters("Cl" if charge_change > 0 else "Na", ff))  # fmt: skip
+            for t in tags:
+                core_idx[int(where_old[t])] = environment.pop(int(where_old[t]))
+            waters.append(int(where_old[tags[box.atoms["anum"][tags] == 8][0]]))
+        log(f"  net charge {charge_change:+d}: {len(waters)} water(s) become "
+            f"{'Cl-' if charge_change > 0 else 'Na+'}")  # fmt: skip
+    hyb = build(sys_old, sys_new, np.asarray(old.positions) / 10.0,
+                np.asarray(new.positions) / 10.0, core_idx, environment)  # fmt: skip
+    return Leg(hyb, old, new, sys_old, sys_new, dropped, waters)
+
+
+def _alchemical_waters(box: System, n: int) -> list[int]:
+    """``n`` water residues of ``box`` to become ions: the farthest from the
+    solute (both ligands, the receptor: all but water and ions), at least ALCHEMICAL_WATER_NM
+    from it and 1 nm from each other."""
+    from ..spatial import min_dist2
+
+    oxygens = box.select("water and noh").ids
+    frag = np.asarray(box.fragids)
+    lone = np.bincount(frag)[frag] == 1  # ions
+    others = np.flatnonzero(~np.isin(np.arange(box.natoms), box.select("water").ids) & ~lone)
+    pos = np.asarray(box.positions, float)
+    reach = 30.0  # Å; farther counts as this far
+    d = np.sqrt(np.minimum(min_dist2(pos[oxygens], pos[others], reach, cell=box.cell), reach**2))
+    order = np.argsort(-d, kind="stable")
+    chosen = []
+    for k in order:
+        if d[k] < 10.0 * ALCHEMICAL_WATER_NM or len(chosen) == n:
+            break
+        if chosen and np.sqrt(min_dist2(pos[oxygens[[k]]], pos[oxygens[chosen]], 10.0,
+                                        cell=box.cell))[0] < 10.0:  # fmt: skip
+            continue
+        chosen.append(int(k))
+    if len(chosen) < n:
+        raise ValueError(f"no {n} waters {ALCHEMICAL_WATER_NM} nm from the solute (and 1 nm "
+                         "apart) to turn into ions: give the box more padding")  # fmt: skip
+    return [int(box.atoms["residue"][oxygens[k]]) for k in chosen]
+
+
+_ION_PARAMETERS: dict = {}
+
+
+def _ion_parameters(name: str, ff) -> tuple[float, float, float]:
+    """The charge (e), sigma (nm) and epsilon (kJ/mol) ``ff`` gives a lone ion."""
+    key = (name, id(ff))
+    if key not in _ION_PARAMETERS:
+        from ..build import _ion
+        from ..elements import MSYS_MASSES
+        from ..omm import to_openmm
+
+        x = _ion(name)
+        ion = System.from_arrays(np.zeros((1, 3)), names=[x["name"]], anum=[x["anum"]],
+                                 resnames=[""], resids=[1], chains=["ION"],
+                                 charge=[x["charge"]], formal_charge=[int(x["charge"])],
+                                 mass=[float(MSYS_MASSES[x["anum"]])])  # fmt: skip
+        _, s, _ = to_openmm(_parameterize(ion, ff, False), nonbonded_method="NoCutoff",
+                            dispersion_correction=False)  # fmt: skip
+        nb = next(f for f in s.getForces() if type(f).__name__ == "NonbondedForce")
+        _ION_PARAMETERS[key] = tuple(_md(v) for v in nb.getParticleParameters(0))
+    return _ION_PARAMETERS[key]
+
+
+def _water_to_ion(system, atoms, anum, ion) -> None:
+    """In ``system``, the water ``atoms`` (elements ``anum``) become the ion:
+    the oxygen takes its charge, sigma and epsilon; the hydrogens lose their charge."""
+    nb = next(f for f in system.getForces() if type(f).__name__ == "NonbondedForce")
+    if sorted(anum.tolist()) != [1, 1, 8]:
+        raise ValueError("an alchemical water must be three atoms (no virtual sites)")
+    for i, z in zip(atoms.tolist(), anum.tolist(), strict=True):
+        if z == 8:
+            nb.setParticleParameters(i, *ion)
+        else:
+            _, sigma, epsilon = nb.getParticleParameters(i)
+            nb.setParticleParameters(i, 0.0, sigma, epsilon)
+
+
+def _constraint_fix(sys_old, sys_new, core: dict) -> tuple[dict, int]:
+    """Leave out of the core any atom whose constrained bond differs between the
+    two states (in length, or constrained in one only): a hybrid holds one length."""
+
+    def constraints(s):
+        out = {}
+        for k in range(s.getNumConstraints()):
+            i, j, d = s.getConstraintParameters(k)
+            out[min(i, j), max(i, j)] = _md(d)
+        return out
+
+    co, cn = constraints(sys_old), constraints(sys_new)
+    core = dict(core)
+    dropped = 0
+    changed = True
+    while changed:
+        changed = False
+        for (i, j), d in list(co.items()):
+            if i in core and j in core:
+                key = (min(core[i], core[j]), max(core[i], core[j]))
+                if key not in cn or abs(cn[key] - d) > 1e-6:
+                    light = i if sys_old.getParticleMass(i) <= sys_old.getParticleMass(j) else j
+                    core.pop(light)
+                    dropped += 1
+                    changed = True
+        inv = {v: k for k, v in core.items()}
+        for i, j in list(cn):
+            if i in inv and j in inv:
+                key = (min(inv[i], inv[j]), max(inv[i], inv[j]))
+                if key not in co:
+                    light = inv[i] if sys_new.getParticleMass(i) <= sys_new.getParticleMass(j) \
+                        else inv[j]  # fmt: skip
+                    core.pop(light, None)
+                    dropped += 1
+                    changed = True
+                    inv = {v: k for k, v in core.items()}
+    return core, dropped
+
+
+def _finish(hyb, old: System, args, complex_leg: bool, log=print):
+    """What boonza md would add: the barostat, and (complex) its restraints."""
+    import openmm
+
+    if hyb.system.usesPeriodicBoundaryConditions():  # not in vacuum
+        hyb.system.addForce(openmm.MonteCarloBarostat(args.pressure, args.temperature, 25))
+    if complex_leg and args.dihedral_restraint != "none":
+        from ..md.restraints import add_dihedral_restraints
+
+        records, what = add_dihedral_restraints(
+            hyb.system, old, args.dihedral_restraint, args.dihedral_restraint_kJ,
+            getattr(args, "dihedral_restraint_selection", None), None,
+        )  # fmt: skip
+        log(f"  dihedral restraints: {len(records)} backbone torsions over {what}")
+
+
+def write_leg(directory: Path, hyb, old: System, meta: dict) -> None:
+    import openmm
+
+    directory.mkdir(parents=True, exist_ok=True)
+    with gzip.open(directory / "system.xml.gz", "wt") as fh:
+        fh.write(openmm.XmlSerializer.serialize(hyb.system))
+    np.savez(directory / "state.npz", positions=hyb.positions,
+             box=np.asarray(old.cell, float) / 10.0, core=np.asarray(hyb.core),
+             unique_old=np.asarray(hyb.unique_old),
+             unique_new=np.asarray(hyb.unique_new))  # fmt: skip
+    (directory / "leg.json").write_text(json.dumps(meta, indent=1))
+
+
+def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: float = 2.5,
+         cofactors=(), log=print, charge_windows: int = CHARGE_WINDOWS,
+         charge_production_ns: float = CHARGE_PRODUCTION_NS) -> list[Path]:  # fmt: skip
+    """Build every leg of every edge in ``args.workdir``; the run directories.
+    An edge that changes the net charge (only with a receptor) gets
+    ``charge_windows`` windows and ``charge_production_ns`` of production."""
+    from ..md.prepare import forcefields, load_input
+
+    work = Path(args.workdir)
+    work.mkdir(parents=True, exist_ok=True)
+    mols, ligs, names = load_ligands(ligands_path)
+    log(f"{len(ligs)} ligands from {ligands_path}")
+    receptor = load_input(args.input_structure, log) if args.input_structure else None
+    if cofactors and receptor is None:
+        raise ValueError("cofactors go with a receptor")
+    for k, path in enumerate(cofactors):  # each record its own template, as the ligands
+        _, extra, _ = load_ligands(path)
+        for j, c in enumerate(extra):
+            c.residues["name"] = [f"C{k}{j}"] * c.nresidues
+            receptor.append(c)
+        log(f"{len(extra)} cofactor(s) from {path} added to the receptor")
+    kind, ff = forcefields(args)
+    if kind != "viparr":
+        raise ValueError("boonza fep builds its systems with viparr force fields (-f "
+                         "aa.amber.ff19SB ...), not OpenMM XML")  # fmt: skip
+    # one GAFF2 patch for every ligand and cofactor, charged once
+    everything = receptor.copy() if receptor is not None else ligs[0].copy()
+    for lig in ligs if receptor is not None else ligs[1:]:
+        everything.append(lig)
+    log("GAFF2 templates, AM1-BCC charges at reference conformers")
+    patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges, parents=args.parents,
+                             protein_extent=args.protein_extent,
+                             charge_geometry="reference")  # fmt: skip
+    viparr.write_forcefield(patch, work / "forcefield")
+    host = gaff.host_index(ff)
+    ff[host] = viparr.merge_forcefields(ff[host], patch)
+    from rdkit import Chem
+
+    charges = [Chem.GetFormalCharge(m) for m in mols]
+    edges = network.edges(mols, charge_change=CHARGE_CHANGE_PENALTY if receptor is not None
+                          else 0.0)  # fmt: skip
+    log(f"Network: {len(edges)} edges over {len(ligs)} ligands")
+    with (work / "ligands.csv").open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["index", "name", "atoms", "charge", "smiles"])
+        for k, (m, n) in enumerate(zip(mols, names, strict=True)):
+            w.writerow([k, n, m.GetNumAtoms(), Chem.GetFormalCharge(m),
+                        Chem.MolToSmiles(Chem.RemoveHs(m))])  # fmt: skip
+    runs, rows = [], []
+    for e in edges:
+        a, b = names[e.a], names[e.b]
+        edge_dir = work / "edges" / f"{a}~{b}"
+        legs = (("complex", receptor, args.padding_nm), ("solvent", None, SOLVENT_PADDING_NM))
+        if receptor is None:  # a relative hydration free energy: water, and vacuum
+            legs = (("solvent", None, SOLVENT_PADDING_NM), ("vacuum", None, None))
+        dq = charges[e.b] - charges[e.a]
+        n_windows = charge_windows if dq else windows
+        production_ns = charge_production_ns if dq else args.production_ns
+        for leg, env, padding in legs:
+            log(f"{a} -> {b}: {leg}")
+            built = build_leg(env, ligs[e.a], ligs[e.b], e.mapping, ff, args, padding, log,
+                              charge_change=dq)  # fmt: skip
+            hyb, old, dropped = built.hybrid, built.old, built.dropped
+            _finish(hyb, old, args, leg == "complex", log)
+            meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "score": e.score,
+                    "lambdas": lambdas.windows(n_windows).tolist(), "charge_change": dq,
+                    "alchemical_waters": built.alchemical_waters,
+                    "temperature": args.temperature, "pressure": args.pressure,
+                    "timestep_fs": args.integration_fs, "iteration_ps": iteration_ps,
+                    "equilibration_ns": args.equilibration_ns,
+                    "production_ns": production_ns, "repeats": repeats,
+                    "core": len(hyb.core), "unique_old": len(hyb.unique_old),
+                    "unique_new": len(hyb.unique_new),
+                    "unmapped_by_constraints": dropped}  # fmt: skip
+            write_leg(edge_dir / leg, hyb, old, meta)
+            for r in range(1, repeats + 1):
+                runs.append((edge_dir / leg, r))
+            if dropped:
+                log(f"  {dropped} atoms left out of the core: their constrained bonds differ")
+        rows.append([a, b, len(e.mapping), round(e.score, 3), dq])
+    with (work / "edges.csv").open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["ligand_a", "ligand_b", "mapped_atoms", "score", "charge_change"])
+        w.writerows(rows)
+    lines = [f"boonza fep run {d.resolve()} --repeat {r}" for d, r in runs]
+    (work / "commands.txt").write_text("\n".join(lines) + "\n")
+    log(f"{len(runs)} runs listed in {work / 'commands.txt'}")
+    return [d for d, _ in runs]
