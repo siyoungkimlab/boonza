@@ -24,6 +24,7 @@ Layout::
     WORKDIR/edges/A~B/vacuum/      (no receptor: hydration)
     WORKDIR/edges/A~B/octanol/     (no receptor, --phase octanol: transfer)
     WORKDIR/octanol/box.dms      the equilibrated octanol box the octanol legs tile
+    WORKDIR/rem.csv, ligands_rem.sdf   (--rem) each pose relieved in the receptor
     WORKDIR/commands.txt
 """
 
@@ -431,6 +432,19 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     if not tail:
         log("  warning: CHARMM36 was parameterized force-switched from 1.0 to 1.2 nm; "
             "boonza fep's hybrids are cut plainly")  # fmt: skip
+    if receptor is not None:  # poses that clash: relieved with --rem, else named
+        from . import relief
+
+        if getattr(args, "rem", False):
+            log("REM: relieving each ligand's pose in the receptor (its heavy atoms held, "
+                "the ligands' stereochemistry held)")  # fmt: skip
+            relief.write(work, relief.relieve(receptor, ligs, mols, names, ff, args, log), mols)
+        else:
+            close = relief.clashes(receptor, ligs, names)
+            if close:
+                log(f"  warning: {len(close)} ligand(s) within {relief.CLASH_A} Å of the "
+                    "receptor (heavy atoms): " + ", ".join(f"{n} {d:.2f} Å" for n, d in close)
+                    + "; --rem relieves them first")  # fmt: skip
     solvent_box = None
     if phase != "vacuum":
         solvent_box = octanol.box(work, ff, args, wet=phase == "wet-octanol", path=octanol_box,
