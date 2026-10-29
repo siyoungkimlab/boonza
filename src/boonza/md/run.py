@@ -224,6 +224,17 @@ def _write_view(s, paths: RunPaths, log=print) -> None:
     log("Wrote view.dms and view.mae: what to open in a viewer, with its trajectory")
 
 
+def all_atom_nonbonded(args) -> dict:
+    """:func:`boonza.to_openmm`'s nonbonded options for an all-atom run: PME, and
+    Lennard-Jones as the force field was parameterized (config.LJ_CONVENTIONS,
+    resolved into ``args`` and recorded in final.toml)."""
+    return {"nonbonded_method": "PME", "cutoff": 10.0 * args.cutoff_nm,
+            "dispersion_correction": bool(args.dispersion_correction),
+            "lj_switch": args.lj_switch or "none",
+            "switch_distance": (10.0 * args.lj_switch_nm if args.lj_switch_nm is not None
+                                else None)}  # fmt: skip
+
+
 def _new_run(args, paths: RunPaths, src: Path, log):
     """Build a new run's system, OpenMM system and integrator, and write
     its files up to ``final.toml``."""
@@ -249,7 +260,7 @@ def _new_run(args, paths: RunPaths, src: Path, log):
 
         options = {**SIRAH_OPTIONS, "cutoff": 10.0 * args.cutoff_nm}
     elif getattr(args, "model", "aa") == "aa":
-        options = {"nonbonded_method": "PME", "cutoff": 10.0 * args.cutoff_nm}
+        options = all_atom_nonbonded(args)
     else:  # Martini: GROMACS's reaction field and shifted Lennard-Jones
         from ..martini import OPENMM_OPTIONS
 
