@@ -266,6 +266,61 @@ def test_triage_folder_is_fitted(tmp_path):
     assert np.sqrt(((first.positions[ca] - last.positions[ca]) ** 2).sum(1).mean()) < 1e-3
 
 
+def test_triage_folder_merged(tmp_path):
+    d = make_triage(tmp_path / "triage")
+    # a fourth run with no row in summary.csv: measured as nothing, it fails every cutoff
+    s = boonza.load(DATA / "1HHO.pdb")
+    boonza.save(_rotated(s, 1.3, [-8.0, 12.0, 1.0]), d / "structures" / "run_d_pose.pdb")
+    v = viewer.from_paths([d], merge=True)
+    assert [m.name for m in v.models] == ["all 4 poses"] and v.models[0].group == "poses"
+    m = v.session(0).system
+    heme = len(s.select("resname HEM").ids)
+    assert len(m.select("protein").ids) == len(s.select("protein").ids)  # one protein
+    lig = m.select("chain L")
+    assert len(lig.ids) == 4 * heme and set(m.residues["name"][m.atoms["residue"][lig.ids]]) == {
+        "POS"
+    }
+    pose = np.asarray(m.atoms["pose"])
+    parts = [np.flatnonzero(pose == k) for k in (1, 2, 3, 4)]
+    assert [len(p) for p in parts] == [heme] * 4
+    # each run is the same structure moved rigidly: fitted, every ligand lands on the first
+    for p in parts[1:]:
+        assert np.abs(m.positions[p] - m.positions[parts[0]]).max() < 1e-3
+    # summary.csv's columns on each part's atoms, as numbers the selection language reads
+    drifted = np.asarray(m.atoms["drifted"])
+    assert [drifted[p[0]] for p in parts[:3]] == [0.5, 1.5, 2.5] and np.isnan(drifted[parts[3][0]])
+    assert len(m.select("chain L and drifted < 2").ids) == 2 * heme
+    assert len(m.select("chain L and drifted < 100").ids) == 3 * heme  # not the unmeasured one
+    assert str(m.atoms["source"][parts[3][0]]).endswith("run_d_pose.pdb")
+    # what other tools read: drifted as the B-factor, settled as the occupancy (0 when unmeasured)
+    assert np.asarray(m.atoms["bfactor"])[parts[1][0]] == 1.5
+    assert np.asarray(m.atoms["occupancy"])[parts[3][0]] == 0.0
+
+
+def test_triage_merged_on_a_scaffold(tmp_path):
+    d = make_triage(tmp_path / "triage")
+    s = boonza.load(DATA / "1HHO.pdb")
+    scaffold = tmp_path / "apo.pdb"
+    moved = _rotated(s, -0.7, [5.0, 5.0, -10.0])
+    boonza.save(moved, scaffold)
+    v = viewer.from_paths([d], merge=True, fit="protein and chain A and name CA",
+                          scaffold=scaffold)  # fmt: skip
+    m = v.session(0).system
+    # the protein shown is the scaffold's, and every ligand is fitted onto it
+    ca = m.select("protein and name CA").ids
+    assert np.abs(m.positions[ca] - moved.positions[moved.select("protein and name CA").ids]).max() < 1e-3
+    first = np.flatnonzero(np.asarray(m.atoms["pose"]) == 1)
+    assert np.abs(m.positions[first] - moved.positions[moved.select("resname HEM").ids]).max() < 1e-3
+
+
+def test_cli_merge_arguments():
+    args = _parser().parse_args(["view", "triage", "--merge", "--merge-fit", "chain A and name CA",
+                                 "--merge-scaffold", "apo.pdb", "--no-browser"])  # fmt: skip
+    assert (args.merge, args.merge_fit, args.merge_scaffold) == (True, "chain A and name CA",
+                                                                 "apo.pdb")  # fmt: skip
+    assert not _parser().parse_args(["view", "triage"]).merge
+
+
 @pytest.mark.parametrize("old", [False, True])
 def test_cavity_folder(tmp_path, old):
     v = viewer.from_paths([make_cavity(tmp_path / "cavity", old=old)])
