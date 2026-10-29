@@ -474,7 +474,7 @@ class Viewer:
 
     def series_sdf(self, group: str) -> str:
         """Series ``group`` as SDF text: a record per member, titled with its name, with
-        the series, its SMILES and its note as fields."""
+        the series, its SMILES, the fields it was opened with and its note as fields."""
         import tempfile
 
         from ..io.sdf import save_sdf
@@ -487,6 +487,8 @@ class Viewer:
                     s.add_ct()
                 smiles = [x["smiles"] for x in self.session(k).smiles(range(s.natoms))]
                 fields = {"series": group, "SMILES": ".".join(x for x in smiles if x)}
+                fields |= {c: v for c, v in self.models[k].row.items()
+                           if c not in ("series", "SMILES", "note") and v is not None}  # fmt: skip
                 if self.models[k].row.get("note"):
                     fields["note"] = self.models[k].row["note"]
                 for c in range(s.ncts):
@@ -721,7 +723,10 @@ def _series_members(path, taken=()) -> list[Model]:
         name = s._ct_names[c] or f"design {c + 1}"
         session = Session(s.clone(s.ct_atoms(c)), title=name, reps=reps)
         props = s.ct(c)
-        row = {"note": str(props["note"])} if "note" in props.keys() else {}
+        # every data field, for the series' table (the series is the group itself)
+        row = {k: props[k] for k in props.keys() if k != "series"}
+        if "note" in row:
+            row["note"] = str(row["note"])
         out.append(Model(name, lambda x=session: x, group=group or str(props["series"]),
                          row=row, _session=session))  # fmt: skip
     return out

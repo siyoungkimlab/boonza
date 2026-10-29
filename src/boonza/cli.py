@@ -1791,10 +1791,17 @@ def _view(args) -> int:
     single = len(paths) == 1 and not os.path.isdir(paths[0]) and not paths[0].endswith(".bview")
     if len(paths) == 2 and is_trajectory(paths[1]) and not os.path.isdir(paths[0]):
         single = True
-    if not single:
-        if args.coordinates or args.selection or args.center or args.fit:
-            raise ValueError("-c, -s, --center and --fit go with one structure (and trajectory)")
+    flags = args.coordinates or args.selection or args.center or args.fit
+    if single and paths[0].lower().endswith(".sdf") and not flags:
+        # an SDF of several molecules is a series (a table of its fields), as it is
+        # when opened from the page; one molecule is a structure like any other
         what = viewer.from_paths(paths)
+        single = not what.models[0].group.startswith("series")
+    if not single:
+        if flags:
+            raise ValueError("-c, -s, --center and --fit go with one structure (and trajectory)")
+        if not paths[0].lower().endswith(".sdf") or len(paths) > 1:
+            what = viewer.from_paths(paths)
     else:
         structure, trajectory = paths[0], paths[1] if len(paths) == 2 else None
         if args.coordinates:
