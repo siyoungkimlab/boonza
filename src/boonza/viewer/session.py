@@ -11,6 +11,7 @@ the ligand, as boonza modes' PyMOL session shows a pose.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections import OrderedDict
 
@@ -220,6 +221,17 @@ class MemoryTrajectory:
         return Frames(idx, pos, self.boxes[idx], zeros, zeros.astype(np.int64))
 
 
+def _plain(v):
+    """A value JSON can hold: a numpy scalar as a Python one, and a float that is
+    not finite as None rather than a NaN a browser would choke on."""
+    if isinstance(v, np.floating | float):
+        f = float(v)
+        return f if math.isfinite(f) else None
+    if isinstance(v, np.integer | int):
+        return int(v)
+    return str(v)
+
+
 class Session:
     """A system, optionally a trajectory, and the Glue applied to its frames.
 
@@ -236,7 +248,12 @@ class Session:
     def __init__(self, system, trajectory=None, atoms=None, whole: bool | None = None,
                  center: str | None = None, fit: str | None = None, title: str = "",
                  ligand: str | None = None, carbon: str = "green", reps=None, radii=None,
-                 cg: bool | None = None, sizes: dict[str, float] | None = None):  # fmt: skip
+                 cg: bool | None = None, sizes: dict[str, float] | None = None,
+                 numbers=()):  # fmt: skip
+        #: per-atom numbers the page may filter on with a slider, by property name.
+        #: Named, not all of them: each is an array as long as the atoms, and a
+        #: structure made of many parts can carry a dozen.
+        self.numbers = tuple(numbers or ())
         self.sizes = dict(sizes or {})
         if atoms is None:
             self.ids = None
@@ -449,6 +466,9 @@ class Session:
             "ligand": self.ligand or (CG_LIGAND if self.cg else LIGAND),
             "carbon": self.carbon,  # the ligand's carbons' colour
             "solvent": f"resname {CG_SOLVENT}" if self.cg else "water or ions",
+            # a structure assembled from parts can say where each part came from
+            "sources": "source" in s.atoms.props,
+            "numbers": self._numbers(),
             "atoms": {
                 "name": [str(x) for x in A.column("name")],
                 "element": [symbol(int(z)) if z > 0 else "X" for z in anum.tolist()],
@@ -885,6 +905,29 @@ class Session:
         a, b, c = (int(x) for x in atoms)
         return self._geometry_edit(lambda s: {"value": round(set_angle(s, a, b, c, degrees), 3)})
 
+    def _numbers(self) -> dict:
+        """The atom properties named in ``numbers``, one value an atom, for the
+        page's sliders.
+
+        A value that is not finite goes out as null.  A filter has nothing to say
+        about an atom whose number was never measured, and the page leaves such an
+        atom as it was rather than hiding it -- so filtering a merged set of
+        ligands by what each one's run did does not take the protein with it.  A
+        string property is not a number and is left out.
+        """
+        out = {}
+        A = self.system.atoms
+        for name in self.numbers:
+            if name not in A.props:
+                continue
+            col = np.asarray(A[name])
+            if col.dtype.kind in "iub":
+                out[name] = [int(v) for v in col.tolist()]
+            elif col.dtype.kind == "f":
+                vals = np.round(col.astype(float), 3)
+                out[name] = [None if not np.isfinite(v) else v for v in vals.tolist()]
+        return out
+
     def align(self, reference, method: str = "matchmaker", sel: str | None = None,
               ref_sel: str | None = None, chain: str | None = None,
               ref_chain: str | None = None) -> dict:  # fmt: skip
@@ -950,6 +993,10 @@ class Session:
                "mass": round(float(s.atoms["mass"][a]), 3),
                "residue": f"{s.residues['name'][r]}{int(s.residues['resid'][r])}",
                "bonds": [[int(b), int(o)] for b, o in neighbors(s, a)]}  # fmt: skip
+        # whatever else the file put on the atom, so clicking one tells you
+        props = {p: _plain(s.atoms[p][a]) for p in s.atoms.props}
+        if props:
+            out["properties"] = props
         source, sys_, k = None, None, a
         if "nonbonded" in s.table_names:
             source, sys_ = "file", s

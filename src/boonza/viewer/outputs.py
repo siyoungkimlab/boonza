@@ -784,7 +784,7 @@ def from_manifest(path) -> Viewer:
         else:
 
             def load(f=f, m=m):
-                kw = {k: m[k] for k in ("ligand", "carbon", "reps") if m.get(k)}
+                kw = {k: m[k] for k in ("ligand", "carbon", "reps", "numbers") if m.get(k)}
                 traj = here / m["trajectory"] if m.get("trajectory") else None
                 coords = here / m["coordinates"] if m.get("coordinates") else None
                 return _session(f, traj, coords, **kw)
