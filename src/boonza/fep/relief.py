@@ -10,7 +10,10 @@ receptor's heavy atoms are held where they are, and only the ligand's new
 coordinates are kept, so every edge still meets one and the same receptor.  The
 ligand's own heavy atoms are tethered to where it was posed, so the atoms in a
 clash move out of it and the rest stays put: an edge's two ligands still sit on
-top of each other, which the mapping and the hybrid both read.  Soft
+top of each other, which the mapping and the hybrid both read.  Coulomb is
+left out (``C=0``): unscreened, in vacuum, a charged ligand would be drawn to
+the nearest charged side chain, and a clash is a matter of overlap, which the
+soft repulsion settles; the real electrostatics, in water, are the legs'.  Soft
 potentials let atoms pass through each other, a stereocentre's or a double
 bond's among them, so the ligand's stereocentres and non-aromatic double bonds
 are held as they were posed.  Each leg's own minimization, in water and with the
@@ -126,7 +129,7 @@ def relieve(receptor, ligs, mols, names, ff, args, log=print) -> list[dict]:
             tether.addParticle(int(i), xyz[i].tolist())
         system.addForce(tether)
         torsions = [tuple(int(lig_idx[k]) for k in t) for t in held_torsions(mol)]
-        new, report = relax(system, xyz, torsions=torsions, platform=platform)
+        new, report = relax(system, xyz, torsions=torsions, C=0.0, platform=platform)
         old = np.asarray(lig.positions, float)
         moved = new[lig_idx] * 10.0
         heavy = _heavy(lig)
