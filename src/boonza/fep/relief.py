@@ -16,8 +16,7 @@ In REM the side chains of residues within :data:`FREE_A` of a ligand are free,
 and the backbone, the side chains farther out and any cofactor are held to the
 posed receptor (:data:`HOLD_KJ`).  REM's own soft, bounded Coulomb stays: without
 it a hydrogen bond's or a salt bridge's atoms sit inside each other's
-Lennard-Jones radius with nothing holding them there (on 5HZN, Lys1030 and
-Glu1047 pulled 3 Å apart).  Soft potentials let atoms
+Lennard-Jones radius with nothing holding them there.  Soft potentials let atoms
 pass through each other, so the free residues' stereocentres (CA, and Ile's and
 Thr's CB) are held as they were.  EM then finishes with the force field's own
 Lennard-Jones and Coulomb on what REM was free to move: the free side chains,
@@ -36,8 +35,7 @@ import numpy as np
 
 #: ligand and receptor heavy atoms nearer than this (Å) are a clash
 CLASH_A = 2.2
-#: residues with a heavy atom this near a ligand's (Å): side chains free in REM (all
-#: within 6 Å on 5HZN let 24 move half an ångström or more, in no clash)
+#: residues with a heavy atom this near a ligand's (Å): side chains free in REM
 FREE_A = 3.0
 #: what holds the backbone, the side chains farther out and cofactors to the posed
 #: receptor in REM (kJ/mol/nm^2)
