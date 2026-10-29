@@ -27,6 +27,7 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/series_note     {"m": member, "note": text} -> its note ("" removes it)
     POST /api/series_receptor {"group": series, "receptor": M or null} -> what its designs
                               are made against: contacts and Minimize use it
+    POST /api/series_properties {"group": series} -> each member's MW, cLogP, TPSA, ...
     POST /api/series_save     {"group": series, "path": file.sdf} -> every member, one SDF
     POST /api/series_download {"group": series} -> the same SDF, as a file
     POST /api/hbonds          {"m": M, "a": sel, "b": sel or none, "frame": N} -> pairs
@@ -214,6 +215,9 @@ class _Handler(BaseHTTPRequestHandler):
             r = body.get("receptor")
             self.viewer.set_receptor(str(body["group"]), None if r is None else int(r))
             self._json(self.viewer.listing())
+            return
+        if url.path == "/api/series_properties":
+            self._json({"properties": self.viewer.series_properties(str(body["group"]))})
             return
         if url.path == "/api/series_save":
             self._json({"path": self.viewer.save_series(str(body["group"]), body["path"])})

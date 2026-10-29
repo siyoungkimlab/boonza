@@ -1170,6 +1170,29 @@ export function setupUI(app) {
   const focus = {};
   const lookAt = m => { focus[m.group] = m.index; app.solo(m); };
   const unfocus = group => { delete focus[group]; app.onModels(); };
+  // series -> each member's properties as RDKit computes them from its structure (MW,
+  // cLogP, ...), named apart from the SDF's own fields; not saved with the series
+  const computed = {}, computing = {};
+  const value = (m, c) => m.row?.[c] ?? computed[m.group]?.[m.index]?.[c];
+  async function compute(group) {
+    if (computing[group]) { computing[group] = "again"; return; }  // an edit while asking
+    computing[group] = true;
+    try {
+      const { properties } = await app.post("api/series_properties", { group });
+      const own = new Set(app.live().filter(m => m.group === group).flatMap(m => Object.keys(m.row || {})));
+      const named = {};
+      for (const [k, props] of Object.entries(properties)) {
+        named[k] = Object.fromEntries(Object.entries(props).map(([c, v]) => [own.has(c) ? `${c} (calc)` : c, v]));
+      }
+      if (JSON.stringify(named) !== JSON.stringify(computed[group])) {
+        computed[group] = named;
+        for (const kind of ["table", "plot", "histogram"]) panels[`${kind} ${group}`]?.redraw?.();
+      }
+    } catch (e) { app.message(e.message, true); }
+    const again = computing[group] === "again";
+    computing[group] = false;
+    if (again) compute(group);
+  }
   function seriesTablePanel(group) {
     const id = `table ${group}`;
     let column = null, descending = false, chosen = [];
@@ -1179,28 +1202,37 @@ export function setupUI(app) {
         if (!members.length) { p.remove(); delete panels[id]; return; }
         const ticked = picked[group] ??= new Set();
         for (const k of ticked) if (!members.some(m => m.index === k)) ticked.delete(k);  // closed
-        const fields = [];
+        compute(group);  // its computed columns, again if a member was edited
+        const fields = [], calc = [];
         for (const m of members) for (const k of Object.keys(m.row || {})) if (!fields.includes(k)) fields.push(k);
+        for (const m of members) for (const k of Object.keys(computed[group]?.[m.index] || {})) if (!calc.includes(k)) calc.push(k);
+        const columns = [...fields, ...calc];
         const rows = column ? [...members].sort(byColumn(column, descending)) : members;
-        // two columns of numbers against each other
-        const numeric = fields.filter(c => members.some(m => typeof m.row?.[c] === "number"));
+        // a column of numbers as a histogram, two against each other
+        const numeric = columns.filter(c => members.some(m => typeof value(m, c) === "number"));
         const tools = [];
+        const pick = k => {
+          const s = el("select");
+          for (const c of numeric) s.add(new Option(c, c));
+          s.value = numeric.includes(chosen[k]) ? chosen[k] : numeric[Math.min(k, numeric.length - 1)];
+          s.onchange = () => { chosen[k] = s.value; };
+          return s;
+        };
+        const which = el("span", { className: "help" }, ticked.size ? `${ticked.size} ticked` : "every member");
         if (numeric.length >= 2) {
-          const pick = k => {
-            const s = el("select");
-            for (const c of numeric) s.add(new Option(c, c));
-            s.value = numeric.includes(chosen[k]) ? chosen[k] : numeric[k];
-            s.onchange = () => { chosen[k] = s.value; };
-            return s;
-          };
           const xs = pick(0), ys = pick(1);
           tools.push(row(el("span", { className: "what" }, "plot"), ys, "against", xs,
-                         button("Plot", () => scatterPanel(group, xs.value, ys.value), "blue"),
-                         el("span", { className: "help" }, ticked.size ? `${ticked.size} ticked` : "every member")));
+                         button("Plot", () => scatterPanel(group, xs.value, ys.value), "blue"), which));
+        }
+        if (numeric.length) {
+          const hs = pick(2);
+          tools.push(row(el("span", { className: "what" }, "histogram"), hs,
+                         button("Histogram", () => histogramPanel(group, hs.value), "blue"),
+                         numeric.length < 2 ? which : ""));
         }
         const tick = (k, on) => {
           if (on) ticked.add(k); else ticked.delete(k);
-          draw(); panels[`plot ${group}`]?.redraw?.();
+          draw(); panels[`plot ${group}`]?.redraw?.(); panels[`histogram ${group}`]?.redraw?.();
         };
         const t = el("table", { className: "series-table" });
         const head = t.createTHead().insertRow();
@@ -1208,11 +1240,13 @@ export function setupUI(app) {
         all.indeterminate = ticked.size > 0 && ticked.size < members.length;
         all.onchange = () => {
           for (const m of members) if (all.checked) ticked.add(m.index); else ticked.delete(m.index);
-          draw(); panels[`plot ${group}`]?.redraw?.();
+          draw(); panels[`plot ${group}`]?.redraw?.(); panels[`histogram ${group}`]?.redraw?.();
         };
         head.append(el("th", { className: "tick" }, all));
-        for (const c of ["name", ...fields]) {
-          const th = el("th", { title: `sort by ${c}` }, c + (c === column ? (descending ? " ↓" : " ↑") : ""));
+        for (const c of ["name", ...columns]) {
+          const made = calc.includes(c);
+          const th = el("th", { className: made ? "calc" : "", title: `${made ? "computed by RDKit from the structure (not in the SDF) · " : ""}sort by ${c}` },
+                        c + (c === column ? (descending ? " ↓" : " ↑") : ""));
           th.onclick = () => { descending = c === column && !descending; column = c; draw(); };
           head.append(th);
         }
@@ -1224,7 +1258,7 @@ export function setupUI(app) {
           box.onclick = e => e.stopPropagation();  // a tick, not a look at it
           box.onchange = () => tick(m.index, box.checked);
           tr.insertCell().append(box);
-          for (const v of [m.name, ...fields.map(c => m.row?.[c])]) {
+          for (const v of [m.name, ...columns.map(c => value(m, c))]) {
             const td = tr.insertCell();
             td.textContent = cell(v);
             td.title = td.textContent;
@@ -1266,38 +1300,23 @@ export function setupUI(app) {
       const draw = () => {
         const ticked = picked[group]?.size ? picked[group] : null;
         const have = app.live().filter(m => m.group === group && (!ticked || ticked.has(m.index)))
-          .filter(m => Number.isFinite(m.row?.[xc]) && Number.isFinite(m.row?.[yc]));
+          .filter(m => Number.isFinite(value(m, xc)) && Number.isFinite(value(m, yc)));
         // a log axis has no place for zero or below
-        const pts = have.filter(m => (!log.x || m.row[xc] > 0) && (!log.y || m.row[yc] > 0));
+        const pts = have.filter(m => (!log.x || value(m, xc) > 0) && (!log.y || value(m, yc) > 0));
         const left = have.length - pts.length;
         const some = `${ticked ? "ticked " : ""}members`;
         const dropped = left ? ` · ${left} left out (not positive, on a log axis)` : "";
         fitNote.textContent = "";
         if (pts.length < 2) { head.textContent = `fewer than two ${some} have both ${xc} and ${yc}${dropped}`; box.innerHTML = ""; return; }
         const f = axis => log[axis] ? Math.log10 : v => v;  // value -> where it is plotted
-        const X = pts.map(m => f("x")(m.row[xc])), Y = pts.map(m => f("y")(m.row[yc]));
+        const X = pts.map(m => f("x")(value(m, xc))), Y = pts.map(m => f("y")(value(m, yc)));
         const span = v => { const lo = Math.min(...v), hi = Math.max(...v), pad = (hi - lo || Math.abs(lo) || 1) * 0.06; return [lo - pad, hi + pad]; };
         const [x0, x1] = span(X), [y0, y1] = span(Y);
         const x = v => L + (v - x0) / (x1 - x0) * (W - L - R0), y = v => T0 + (y1 - v) / (y1 - y0) * (H - T0 - B);
-        const linear = (lo, hi) => {
-          const step = 10 ** Math.floor(Math.log10((hi - lo) / 4)), s = [1, 2, 5, 10].map(k => k * step).find(k => (hi - lo) / k <= 5);
-          const out = [];
-          for (let v = Math.ceil(lo / s) * s; v <= hi; v += s) out.push(+v.toPrecision(12));
-          return out.map(v => [v, cell(v)]);
-        };
-        // on a log axis: the decades, with 2 and 5 between them when it spans few
-        const decades = (lo, hi) => {
-          const at = m => { const out = []; for (let d = Math.floor(lo); d <= Math.ceil(hi); d++) for (const k of m) { const t = Math.log10(k) + d; if (t >= lo && t <= hi) out.push(t); } return out; };
-          const ts = hi - lo < 2 ? at([1, 2, 5]) : at([1]);
-          if (ts.length >= 2) return ts.map(t => [t, cell(+(10 ** t).toPrecision(3))]);
-          // within a decade: plain steps of the values, where they fall on the log axis
-          return linear(10 ** lo, 10 ** hi).filter(([v]) => v > 0).map(([v, s]) => [Math.log10(v), s]);
-        };
-        const ticks = (axis, lo, hi) => (log[axis] ? decades : linear)(lo, hi);
+        const ticks = (axis, lo, hi) => axisTicks(log[axis], lo, hi);
         const grid = ticks("x", x0, x1).map(([v, s]) => `<line x1="${x(v)}" x2="${x(v)}" y1="${T0}" y2="${H - B}" class="grid"/><text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${s}</text>`).join("")
           + ticks("y", y0, y1).map(([v, s]) => `<line x1="${L}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 5}" y="${y(v) + 4}" text-anchor="end">${s}</text>`).join("");
-        const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-        const dots = pts.map((m, k) => `<circle cx="${x(X[k]).toFixed(1)}" cy="${y(Y[k]).toFixed(1)}" r="${m.index === focus[group] ? 6.5 : 4.5}" class="${m.index === focus[group] ? "on" : ""}" data-k="${k}"><title>${esc(m.name)}: ${esc(xc)} ${cell(m.row[xc])}, ${esc(yc)} ${cell(m.row[yc])}</title></circle>`).join("");
+        const dots = pts.map((m, k) => `<circle cx="${x(X[k]).toFixed(1)}" cy="${y(Y[k]).toFixed(1)}" r="${m.index === focus[group] ? 6.5 : 4.5}" class="${m.index === focus[group] ? "on" : ""}" data-k="${k}"><title>${esc(m.name)}: ${esc(xc)} ${cell(value(m, xc))}, ${esc(yc)} ${cell(value(m, yc))}</title></circle>`).join("");
         // the fit, in what is drawn (the logs, on a log axis); it needs more points than terms
         let curve = "";
         const fit = degree && pts.length > degree ? polyfit(X, Y, degree) : null;
@@ -1328,6 +1347,80 @@ export function setupUI(app) {
     Object.assign(panels[id].style, { width: "560px" });
     panels[id].classList.add("resizable");
   }
+  // one column of a series as a histogram: how many members (the ticked ones, if any
+  // are) fall in each bin, with their names on hovering a bar; the clicked member is a
+  // dot under its bin
+  function histogramPanel(group, c) {
+    const id = `histogram ${group}`;
+    const W = 480, H = 380, L = 48, B = 40, T0 = 10, R0 = 12;
+    let logx = false, bins = 0, white = false;  // bins 0: Sturges' rule, log2 n + 1
+    panel(id, `${group}: ${c}`, (body, p) => {
+      const head = el("div", { className: "help", style: "margin:0 0 6px" });
+      const box = el("div", { className: "plot scatter" });
+      const lx = el("input", { type: "checkbox" });
+      lx.onchange = () => { logx = lx.checked; draw(); };
+      const nb = el("input", { type: "number", min: 0, max: 200, step: 1, value: bins, style: "width:48px",
+                               title: "how many bins (0: Sturges' rule, log2 n + 1)" });
+      nb.onchange = () => { bins = Math.max(0, Math.min(200, Math.round(+nb.value) || 0)); nb.value = bins; draw(); };
+      const paper = el("input", { type: "checkbox", checked: white });
+      paper.onchange = () => { white = paper.checked; box.classList.toggle("white", white); };
+      const file = `${group}_${c}_histogram`.replace(/[^\w.-]+/g, "_");
+      body.append(head, box, row(el("label", {}, lx, " log x"), el("label", {}, "bins ", nb),
+        el("label", { title: "for a white page: black text and lines (else white, for a black one); saved with a clear background either way" }, paper, " white"),
+        el("span", { style: "flex:1" }),
+        button("SVG", () => savePlot(box, file, "svg", white)), button("PNG", () => savePlot(box, file, "png", white))));
+      const draw = () => {
+        const ticked = picked[group]?.size ? picked[group] : null;
+        const have = app.live().filter(m => m.group === group && (!ticked || ticked.has(m.index)) && Number.isFinite(value(m, c)));
+        const pts = have.filter(m => !logx || value(m, c) > 0);
+        const some = `${ticked ? "ticked " : ""}members`;
+        const dropped = have.length > pts.length ? ` · ${have.length - pts.length} left out (not positive, on a log axis)` : "";
+        if (!pts.length) { head.textContent = `no ${some} have ${c}${dropped}`; box.innerHTML = ""; return; }
+        const V = pts.map(m => value(m, c)), X = V.map(v => logx ? Math.log10(v) : v);
+        const n = bins || Math.ceil(Math.log2(X.length)) + 1;
+        let lo = Math.min(...X), hi = Math.max(...X);
+        if (hi === lo) { lo -= 0.5; hi += 0.5; }
+        const w = (hi - lo) / n, counts = new Array(n).fill(0), names = Array.from({ length: n }, () => []);
+        const binOf = v => Math.min(n - 1, Math.floor((v - lo) / w));
+        X.forEach((v, k) => { counts[binOf(v)]++; names[binOf(v)].push(pts[k].name); });
+        const top = Math.max(...counts) * 1.08;
+        const x = v => L + (v - lo) / (hi - lo) * (W - L - R0), y = v => T0 + (1 - v / top) * (H - T0 - B);
+        const grid = axisTicks(logx, lo, hi).map(([v, s]) => `<text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${s}</text>`).join("")
+          + axisTicks(false, 0, top).filter(([v]) => Number.isInteger(v)).map(([v, s]) => `<line x1="${L}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 5}" y="${y(v) + 4}" text-anchor="end">${s}</text>`).join("");
+        const edge = k => { const v = lo + k * w; return cell(logx ? +(10 ** v).toPrecision(3) : +v.toPrecision(4)); };
+        const bars = counts.map((k, i) => k ? `<rect class="bar" x="${x(lo + i * w).toFixed(1)}" y="${y(k).toFixed(1)}" width="${(x(lo + w) - x(lo)).toFixed(1)}" height="${(y(0) - y(k)).toFixed(1)}"><title>${esc(c)} ${edge(i)} to ${edge(i + 1)}: ${k}\n${esc(names[i].slice(0, 20).join(", "))}${names[i].length > 20 ? ", ..." : ""}</title></rect>` : "").join("");
+        const f = pts.find(m => m.index === focus[group]);
+        const mark = f ? `<circle class="on" r="6" cx="${x(logx ? Math.log10(value(f, c)) : value(f, c)).toFixed(1)}" cy="${(y(0) - 7).toFixed(1)}"><title>${esc(f.name)}: ${esc(c)} ${cell(value(f, c))}</title></circle>` : "";
+        box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${grid}${bars}<line x1="${L}" x2="${W - R0}" y1="${y(0)}" y2="${y(0)}" class="grid"/><text x="${(L + W - R0) / 2}" y="${H - 6}" text-anchor="middle">${esc(c)}</text><text transform="translate(14 ${(T0 + H - B) / 2}) rotate(-90)" text-anchor="middle">members</text>${mark}</svg>`;
+        const dot = box.querySelector("circle.on");
+        if (dot) dot.onclick = () => unfocus(group);
+        const sorted = [...V].sort((a, b) => a - b), mid = sorted.length / 2;
+        const median = sorted.length % 2 ? sorted[Math.floor(mid)] : (sorted[mid - 1] + sorted[mid]) / 2;
+        const mean = V.reduce((s, v) => s + v, 0) / V.length;
+        head.textContent = `${pts.length} ${some} · ${n} bins${logx ? " (in log)" : ""} · median ${cell(+median.toPrecision(4))} · mean ${cell(+mean.toPrecision(4))} · range ${cell(sorted[0])} to ${cell(sorted[sorted.length - 1])}${dropped}`;
+      };
+      p.redraw = draw;
+      draw();
+    });
+    Object.assign(panels[id].style, { width: "560px" });
+    panels[id].classList.add("resizable");
+  }
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  // an axis's ticks, [where, label]: plain steps; on a log axis (lo and hi in log10) the
+  // decades, with 2 and 5 between them when it spans few, or plain steps within a decade
+  function axisTicks(log, lo, hi) {
+    const linear = (lo, hi) => {
+      const step = 10 ** Math.floor(Math.log10((hi - lo) / 4)), s = [1, 2, 5, 10].map(k => k * step).find(k => (hi - lo) / k <= 5);
+      const out = [];
+      for (let v = Math.ceil(lo / s) * s; v <= hi; v += s) out.push(+v.toPrecision(12));
+      return out.map(v => [v, cell(v)]);
+    };
+    if (!log) return linear(lo, hi);
+    const at = m => { const out = []; for (let d = Math.floor(lo); d <= Math.ceil(hi); d++) for (const k of m) { const t = Math.log10(k) + d; if (t >= lo && t <= hi) out.push(t); } return out; };
+    const ts = hi - lo < 2 ? at([1, 2, 5]) : at([1]);
+    if (ts.length >= 2) return ts.map(t => [t, cell(+(10 ** t).toPrecision(3))]);
+    return linear(10 ** lo, 10 ** hi).filter(([v]) => v > 0).map(([v, s]) => [Math.log10(v), s]);
+  }
   // a plot as a file, on a clear background: its SVG with the page's styles written into
   // it (Arial; black text and lines for a white page, white for a black one), editable in
   // Illustrator; or that drawn 4x as a PNG
@@ -1340,6 +1433,7 @@ export function setupUI(app) {
     for (const t of out.querySelectorAll("text")) Object.assign(t.style, { font: "12px Arial, sans-serif", fill: ink });
     for (const g of out.querySelectorAll(".grid")) Object.assign(g.style, { stroke: rule, strokeWidth: "0.6" });
     for (const f of out.querySelectorAll(".fit")) Object.assign(f.style, { fill: "none", stroke: ink, strokeWidth: "1.2" });
+    for (const r of out.querySelectorAll(".bar")) Object.assign(r.style, { fill: "#5b8def", stroke: "rgba(0,0,0,0.45)", strokeWidth: "0.5" });
     for (const c of out.querySelectorAll("circle")) {
       Object.assign(c.style, { fill: c.classList.contains("on") ? "#ff73d9" : "#5b8def", stroke: "rgba(0,0,0,0.45)", strokeWidth: "0.5" });
     }
@@ -3045,7 +3139,7 @@ export function setupUI(app) {
   }
   // models in order of a column of their rows; those without it last
   function byColumn(column, descending) {
-    const key = m => column === "name" ? m.name : m.row?.[column];
+    const key = m => column === "name" ? m.name : value(m, column);
     return (a, b) => {
       const x = key(a), y = key(b);
       if (x === y) return a.index - b.index;
