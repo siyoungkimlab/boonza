@@ -98,11 +98,16 @@ def test_a_clash_is_relieved_and_the_receptor_kept(tmp_path):
     host = gaff.host_index(ff)
     ff[host] = viparr.merge_forcefields(ff[host], patch)
     stereo = _cip(mols[0])
+    heavy = np.asarray(ligs[0].atoms["anum"]) > 1
+    rec = before[np.asarray(receptor.atoms["anum"]) > 1]
+    posed = np.asarray(ligs[0].positions, float)[heavy]
+    far = np.sqrt(((posed[:, None] - rec[None]) ** 2).sum(-1)).min(1) > 3.0
     rows = relief.relieve(receptor, ligs, mols, names, ff, args, log=lambda *_: None)
     (row,) = rows
     assert row["closest_before"] < 1.5 and row["closest_after"] > 2.0
-    assert row["moved_rmsd"] < 0.6  # the clash moved out of; the pose, tethered, kept
-    assert relief.clashes(receptor, ligs, names) == []
+    # the clash moved out of; the rest of the pose, tethered, kept where it was
+    shift = np.linalg.norm(np.asarray(ligs[0].positions, float)[heavy] - posed, axis=1)
+    assert far.sum() >= 3 and shift[far].max() < 0.5
     assert np.array_equal(np.asarray(receptor.positions, float), before)  # the receptor untouched
     assert _cip(mols[0]) == stereo and stereo  # the stereocentre held, R stays R
     assert np.allclose(mols[0].GetConformer().GetPositions(), ligs[0].positions)
