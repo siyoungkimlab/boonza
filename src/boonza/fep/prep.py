@@ -17,6 +17,7 @@ every other atom in order -- what a hybrid topology needs.  The hybrid
 Layout::
 
     WORKDIR/ligands.csv          the ligands, their charges and SMILES
+    WORKDIR/ligands.sdf          the ligands as given, every field kept (result adds its own)
     WORKDIR/edges.csv            the pairs, how many atoms map, their scores
     WORKDIR/forcefield/          the GAFF2 patch (every ligand, any cofactor)
     WORKDIR/edges/A~B/complex/   system.xml.gz, state.npz, leg.json
@@ -26,6 +27,14 @@ Layout::
     WORKDIR/octanol/box.dms      the equilibrated octanol box the octanol legs tile
     WORKDIR/receptor_rem.pdb, rem.csv, rem_residues.csv   (--rem) the receptor relaxed
     WORKDIR/commands.txt
+    WORKDIR/commands_new.txt     (--extend) the runs of the edges just added
+
+With ``extend``, ligands are added to a work directory prepared before: the SDF
+holds the first prep's ligands (the same molecules in the same poses) and the
+new ones, and only edges that join the new ones are built, in the receptor the
+first edges were built in (receptor_rem.pdb, if --rem made one), with the first
+prep's templates and charges kept; its settings must be the same.  Every edge
+already run is reused, and result analyzes them all as one network.
 """
 
 from __future__ import annotations
@@ -85,6 +94,115 @@ def load_ligands(path) -> tuple[list, list[System], list[str]]:
     if len(set(names)) != len(names):
         raise ValueError(f"{path}: the ligands' names must differ: {names}")
     return mols, systems, names
+
+
+@dataclass
+class Previous:
+    """What a work directory prepared before holds (boonza fep prep --extend)."""
+
+    names: list  # the ligands, in their order (their indices in leg.json)
+    pairs: list  # (a, b) of every edge
+    rows: list  # edges.csv
+    commands: list  # commands.txt
+    metas: list  # every leg.json
+    receptor: Path | None  # receptor_rem.pdb, if --rem relaxed the receptor
+
+
+def previous(work: Path, mols, names) -> Previous:
+    """The prep already in ``work``, checked against the ligands now given: each of
+    its ligands must be among them, the same molecule (SMILES) in the same pose
+    (ligands.sdf, which prep keeps)."""
+    from rdkit import Chem
+
+    work = Path(work)
+    if not (work / "ligands.csv").exists() or not (work / "edges").is_dir():
+        raise ValueError(f"--extend adds to a prep already in --workdir: {work} has none")
+    table = list(csv.DictReader((work / "ligands.csv").open()))
+    old = [r["name"] for r in table]
+    missing = [n for n in old if n not in names]
+    if missing:
+        raise ValueError(f"--extend needs the first prep's ligands in the SDF too; missing: "
+                         f"{', '.join(missing)}")  # fmt: skip
+    by_name = dict(zip(names, mols, strict=True))
+    for r in table:
+        smiles = Chem.MolToSmiles(Chem.RemoveHs(by_name[r["name"]]))
+        if smiles != r["smiles"]:
+            raise ValueError(f"{r['name']} is not the molecule the first prep had: {smiles}, "
+                             f"not {r['smiles']}")  # fmt: skip
+    kept = work / "ligands.sdf"
+    if kept.exists():
+        for m in Chem.SDMolSupplier(str(kept), removeHs=False):
+            name = m.GetProp("_Name").strip()
+            now = by_name[name].GetConformer().GetPositions()
+            was = m.GetConformer().GetPositions()
+            if now.shape != was.shape or np.abs(now - was).max() > 1e-3:
+                raise ValueError(f"{name} is not in the pose the first prep had (ligands.sdf)")
+    with (work / "edges.csv").open() as fh:
+        rows = [r for r in csv.reader(fh)][1:]
+    index = {n: k for k, n in enumerate(old)}
+    pairs = [(index[r[0]], index[r[1]]) for r in rows]
+    commands = (work / "commands.txt").read_text().splitlines()
+    metas = [json.loads(p.read_text()) for p in sorted((work / "edges").glob("*/*/leg.json"))]
+    if not metas:
+        raise ValueError(f"{work}: no legs to add to")
+    rem = work / "receptor_rem.pdb"
+    return Previous(old, pairs, rows, [c for c in commands if c.strip()], metas,
+                    rem if rem.exists() else None)  # fmt: skip
+
+
+def same_settings(before: Previous, args, repeats, windows, iteration_ps, phase,
+                  charge_windows, charge_production_ns) -> None:  # fmt: skip
+    """Raise unless the new edges would be built as the first prep's were."""
+    differ = []
+    for meta in before.metas:
+        charged = bool(meta.get("charge_change"))
+        want = {"repeats": repeats, "iteration_ps": iteration_ps, "phase": phase,
+                "temperature": args.temperature, "pressure": args.pressure,
+                "timestep_fs": args.integration_fs,
+                "equilibration_ns": args.equilibration_ns,
+                "production_ns": charge_production_ns if charged else args.production_ns,
+                "windows": charge_windows if charged else windows}  # fmt: skip
+        had = dict(meta, windows=len(meta["lambdas"]))
+        for k, v in want.items():
+            if k not in had:
+                continue
+            same = had[k] == v if isinstance(v, str) else np.isclose(float(had[k]), float(v))
+            if not same:
+                differ.append(f"{k} {had[k]} (now {v})")
+    if differ:
+        raise ValueError("--extend builds the new edges as the first ones were; the first "
+                         "prep had " + ", ".join(sorted(set(differ))))  # fmt: skip
+
+
+def _not_kept(patch, kept):
+    """``patch`` without the parameter rows ``kept`` has already, whichever way round
+    their types are written (two GAFF2 runs write one improper ha-ca-ca-ca and
+    ca-ca-ca-ha, which viparr then matches twice): the first prep's rows stay."""
+
+    def keys(t: str) -> tuple[tuple, tuple]:
+        mode = ""
+        if t.startswith("__mode__"):  # a row's mode, written before its types
+            mode, _, t = t.partition(" ")
+        words = tuple(t.split())
+        return (mode, words), (mode, words[::-1])
+
+    out = patch.copy()
+    out.templates = list(patch.templates)
+    for table, rows in patch.params.items():
+        have = {keys(r.type)[0] for r in kept.params.get(table, [])}
+        out.params[table] = [r for r in rows if not set(keys(r.type)) & have]
+    return out
+
+
+def write_ligands(path: Path, mols, names) -> None:
+    """The ligands as an SDF, each named and with every field it came with."""
+    from rdkit import Chem
+
+    with Chem.SDWriter(str(path)) as w:
+        for m, n in zip(mols, names, strict=True):
+            m = Chem.Mol(m)
+            m.SetProp("_Name", n)
+            w.write(m)
 
 
 def _parameterize(system: System, ff, hmr: bool) -> System:
@@ -378,19 +496,36 @@ def write_leg(directory: Path, hyb, old: System, meta: dict) -> None:
 def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: float = 2.5,
          cofactors=(), log=print, charge_windows: int = CHARGE_WINDOWS,
          charge_production_ns: float = CHARGE_PRODUCTION_NS, phase: str = "vacuum",
-         octanol_box=None) -> list[Path]:  # fmt: skip
+         octanol_box=None, extend: bool = False) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
     ``charge_windows`` windows and ``charge_production_ns`` of production.
     ``phase``, without a receptor, what the water leg is set against: vacuum
     (hydration), octanol or wet-octanol (transfer); ``octanol_box`` a box built
-    before (boonza.fep.octanol.box), else one is built in the work directory."""
+    before (boonza.fep.octanol.box), else one is built in the work directory.
+    ``extend``: add ligands to the prep already in the work directory (the module
+    docstring)."""
     from ..md.prepare import forcefields, load_input
 
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
     mols, ligs, names = load_ligands(ligands_path)
     log(f"{len(ligs)} ligands from {ligands_path}")
+    before, new = None, []
+    if extend:  # the first prep's ligands keep their indices; the new ones follow
+        before = previous(work, mols, names)
+        order = ([names.index(n) for n in before.names]
+                 + [k for k, n in enumerate(names) if n not in before.names])  # fmt: skip
+        mols, ligs, names = ([x[k] for k in order] for x in (mols, ligs, names))
+        for k, lig in enumerate(ligs):
+            lig.residues["name"] = [f"L{k:02d}"] * lig.nresidues
+        new = list(range(len(before.names), len(names)))
+        if not new:
+            raise ValueError("--extend: every ligand in the SDF is in the first prep already")
+        log(f"  adding {len(new)} to the {len(before.names)} of the first prep: "
+            + ", ".join(names[k] for k in new))  # fmt: skip
+        same_settings(before, args, repeats, windows, iteration_ps, phase, charge_windows,
+                      charge_production_ns)  # fmt: skip
     if phase not in PHASES:
         raise ValueError(f"--phase is one of {', '.join(PHASES)}, not {phase!r}")
     if phase != "vacuum" and args.input_structure:
@@ -405,6 +540,15 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             c.residues["name"] = [f"C{k}{j}"] * c.nresidues
             receptor.append(c)
         log(f"{len(extra)} cofactor(s) from {path} added to the receptor")
+    if before is not None and before.receptor is not None:  # what the first edges met
+        from ..io import load
+
+        relaxed = load(before.receptor)
+        if (relaxed.natoms != receptor.natoms
+                or list(relaxed.atoms["name"]) != list(receptor.atoms["name"])):  # fmt: skip
+            raise ValueError(f"{before.receptor} is not this receptor (with its cofactors)")
+        receptor.positions = np.asarray(relaxed.positions, float)
+        log(f"the receptor as the first prep relaxed it ({before.receptor})")
     kind, ff = forcefields(args)
     if kind != "viparr":
         raise ValueError("boonza fep builds its systems with viparr force fields (-f "
@@ -417,12 +561,22 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         from . import octanol
 
         everything.append(octanol.molecule())
-    log("GAFF2 templates, AM1-BCC charges at reference conformers")
+    host = gaff.host_index(ff)
+    kept = None
+    if before is not None:  # the first prep's templates as they were: only the new charged
+        kept = viparr.load_forcefield(str(work / "forcefield"), require_rules=False)
+        ff[host] = viparr.merge_forcefields(ff[host], kept)
+        log("GAFF2 templates of the first prep kept; the new ligands' AM1-BCC charges at "
+            "reference conformers")  # fmt: skip
+    else:
+        log("GAFF2 templates, AM1-BCC charges at reference conformers")
     patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges, parents=args.parents,
                              protein_extent=args.protein_extent,
                              charge_geometry="reference")  # fmt: skip
-    viparr.write_forcefield(patch, work / "forcefield")
-    host = gaff.host_index(ff)
+    if kept is not None:
+        patch = _not_kept(patch, kept)
+    viparr.write_forcefield(patch if kept is None else viparr.merge_forcefields(kept, patch),
+                            work / "forcefield")  # fmt: skip
     ff[host] = viparr.merge_forcefields(ff[host], patch)
     # Amber's (and GAFF2's) Lennard-Jones has a long-range dispersion correction,
     # which the hybrid cannot carry: each leg's end states' difference is kept
@@ -435,7 +589,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     if receptor is not None:  # poses that clash: relieved with --rem, else named
         from . import relief
 
-        if getattr(args, "rem", False):
+        if getattr(args, "rem", False) and before is None:
             log("REM, then EM: the receptor relaxed around every ligand's pose (the "
                 "ligands held as posed, the side chains that reach a ligand free)")  # fmt: skip
             relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log))
@@ -444,7 +598,8 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             if close:
                 log(f"  warning: {len(close)} ligand(s) within {relief.CLASH_A} Å of the "
                     "receptor (heavy atoms): " + ", ".join(f"{n} {d:.2f} Å" for n, d in close)
-                    + "; --rem relieves them first")  # fmt: skip
+                    + ("; --rem relieves them first" if before is None else "; the receptor "
+                       "stays the one the first prep's edges were built in"))  # fmt: skip
     solvent_box = None
     if phase != "vacuum":
         solvent_box = octanol.box(work, ff, args, wet=phase == "wet-octanol", path=octanol_box,
@@ -456,9 +611,14 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     set_kind = ("binding" if receptor is not None else
                 "hydration" if phase == "vacuum" else "transfer")  # fmt: skip
     charges = [Chem.GetFormalCharge(m) for m in mols]
-    edges = network.edges(mols, charge_change=CHARGE_CHANGE_PENALTY if receptor is not None
-                          else 0.0)  # fmt: skip
-    log(f"Network: {len(edges)} edges over {len(ligs)} ligands")
+    penalty = CHARGE_CHANGE_PENALTY if receptor is not None else 0.0
+    if before is None:
+        edges = network.edges(mols, charge_change=penalty)
+        log(f"Network: {len(edges)} edges over {len(ligs)} ligands")
+    else:
+        edges = network.extend(mols, before.pairs, new, charge_change=penalty)
+        log(f"Network: {len(edges)} new edges, beside the {len(before.pairs)} of the first "
+            f"prep, over {len(ligs)} ligands")  # fmt: skip
     with (work / "ligands.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["index", "name", "atoms", "charge", "smiles", "exp_dG", "exp_field"])
@@ -469,6 +629,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                         Chem.MolToSmiles(Chem.RemoveHs(m)),
                         "" if got is None else round(got[0], 4),
                         "" if got is None else got[1]])  # fmt: skip
+    write_ligands(work / "ligands.sdf", mols, names)
     runs, rows = [], []
     for e in edges:
         a, b = names[e.a], names[e.b]
@@ -511,8 +672,14 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     with (work / "edges.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["ligand_a", "ligand_b", "mapped_atoms", "score", "charge_change"])
-        w.writerows(rows)
+        w.writerows((before.rows if before else []) + rows)
     lines = [f"boonza fep run {d.resolve()} --repeat {r}" for d, r in runs]
-    (work / "commands.txt").write_text("\n".join(lines) + "\n")
-    log(f"{len(runs)} runs listed in {work / 'commands.txt'}")
+    (work / "commands.txt").write_text("\n".join((before.commands if before else []) + lines)
+                                       + "\n")  # fmt: skip
+    if before is not None:
+        (work / "commands_new.txt").write_text("\n".join(lines) + "\n")
+        log(f"{len(runs)} new runs listed in {work / 'commands_new.txt'}; commands.txt "
+            "lists every run")  # fmt: skip
+    else:
+        log(f"{len(runs)} runs listed in {work / 'commands.txt'}")
     return [d for d, _ in runs]

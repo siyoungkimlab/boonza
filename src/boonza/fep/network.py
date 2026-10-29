@@ -71,6 +71,54 @@ def edges(ligands, redundant: bool = True, max_distance: float = 0.95,
     return [scored[e] for e in sorted(chosen)]
 
 
+def extend(ligands, existing, new, redundant: bool = True, max_distance: float = 0.95,
+           charge_change: float = 0.0) -> list[Edge]:  # fmt: skip
+    """The edges that join ligands ``new`` (indices) to a network already run:
+    ``existing`` its (a, b) pairs, kept as they are.  Only pairs with a new ligand
+    are mapped; a minimal spanning tree over them, the existing edges free, joins
+    every new ligand through the easiest changes, and with ``redundant`` each new
+    ligand left on one edge gets its next best too, as :func:`edges` does."""
+    import networkx as nx
+
+    n, new = len(ligands), sorted(set(new))
+    if not new:
+        raise ValueError("no new ligands to add")
+    scored = {}
+    for j in new:
+        for i in range(n):
+            if i == j or (i in new and i > j):
+                continue
+            a, b = min(i, j), max(i, j)
+            m = map_atoms(ligands[a], ligands[b], max_distance=max_distance)
+            s = score(ligands[a], ligands[b], m, charge_change) if m else 0.0
+            if s > 0:
+                scored[a, b] = Edge(a, b, m, s)
+    have = {tuple(sorted(p)) for p in existing}
+    g = nx.Graph()
+    g.add_nodes_from(range(n))
+    g.add_edges_from(have, weight=0.0)
+    for (i, j), e in scored.items():
+        g.add_edge(i, j, weight=1.0 - e.score)
+    if not nx.is_connected(g):
+        alone = [sorted(c) for c in nx.connected_components(g) if set(c) <= set(new)]
+        raise ValueError(f"no mapping joins these new ligands to the network: {alone}")
+    tree = nx.minimum_spanning_tree(g)
+    chosen = {tuple(sorted(e)) for e in tree.edges} - have
+    if redundant:
+        degree = {k: 0 for k in new}
+        for a, b in have | chosen:
+            for k in (a, b):
+                if k in degree:
+                    degree[k] += 1
+        for node in new:
+            if degree[node] == 1:
+                spare = sorted((1.0 - scored[p].score, p) for p in scored
+                               if node in p and p not in chosen)  # fmt: skip
+                if spare:
+                    chosen.add(spare[0][1])
+    return [scored[e] for e in sorted(chosen)]
+
+
 def estimate(n: int, results, reference: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """ΔG of each of ``n`` ligands from ``results`` [(a, b, ΔΔG_ab, error)], by
     weighted least squares; relative to ligand ``reference``, else to their mean.

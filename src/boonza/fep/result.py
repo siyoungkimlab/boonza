@@ -9,6 +9,14 @@ whose change of log P (``dlogP``, B's less A's) is -ΔΔG / (RT ln 10).
 Ligands' values come from the network's least squares
 (boonza.fep.network.estimate), relative to their mean.
 
+``results_ligands.sdf`` is the ligands' SDF (the one prep kept, or ``ligands``
+for a work directory prepared before prep kept one), every field kept, with
+FEP_dG and FEP_dG_error (kcal/mol, relative to the ligands' mean) added; where
+ligands were measured, FEP_dG_shifted too (on the measured scale, the
+correlation plot's), and for binding FEP_KD_nM from it; for transfer,
+FEP_logP_rel.  Ligands without a measured value are predictions: shifted with
+the rest, in the SDF and the CSV, and dashed lines on the correlation plot.
+
 ΔΔG is as openfe reports it, without a long-range dispersion correction (a
 hybrid cannot carry one).  Beside it, ``disp`` is what the correction would add
 -- each periodic leg's end states' difference dK (leg.json, from prep) over the
@@ -64,14 +72,16 @@ def _leg(directory: Path) -> dict | None:
             "forward_reverse": max(x["forward_reverse"] for x in out), "meta": meta}  # fmt: skip
 
 
-def results(workdir, log=print, experimental=None) -> dict:
+def results(workdir, log=print, experimental=None, ligands=None) -> dict:
     """Analyze every leg under ``workdir``; print one table, write edges and ligands
-    CSVs, and, where ligands have measured values -- from ligands.csv (prep), or an
-    ``experimental`` SDF instead -- the correlation plots (boonza.fep.experiment)."""
+    CSVs and the ligands' SDF with the results (the module docstring), and, where
+    ligands have measured values -- from ligands.csv (prep), or an ``experimental``
+    SDF instead -- the correlation plots (boonza.fep.experiment).  ``ligands``: the
+    SDF to add the results to, if prep kept none in ``workdir``."""
     work = Path(workdir)
     table = list(csv.DictReader((work / "ligands.csv").open()))
     names = [row["name"] for row in table]
-    rows, fits = [], []
+    rows, fits, temperature = [], [], None
     for edge in sorted((work / "edges").iterdir()):
         legs = {leg: _leg(edge / leg) for leg in ("complex", "solvent", "vacuum", "octanol")
                 if (edge / leg).is_dir()}  # fmt: skip
@@ -79,6 +89,7 @@ def results(workdir, log=print, experimental=None) -> dict:
             rows.append({"edge": edge.name, "status": "not run"})
             continue
         meta = next(iter(legs.values()))["meta"]
+        temperature = meta["temperature"]
         a, b = meta["ligands"]
         solv, comp, vac = legs.get("solvent"), legs.get("complex"), legs.get("vacuum")
         octanol = legs.get("octanol")
@@ -142,7 +153,46 @@ def results(workdir, log=print, experimental=None) -> dict:
     measured = _measured(work, table, rows, experimental)
     if measured:
         out["experiment"] = _compare(work, names, rows, out.get("ligands"), measured, log)
+    if out.get("ligands"):
+        kind = next((r["kind"] for r in rows if "kind" in r), "binding")
+        _write_sdf(work, out["ligands"], kind, temperature, ligands, log)
     return out
+
+
+def _write_sdf(work: Path, ligs, kind: str, temperature: float, source, log) -> Path | None:
+    """``results_ligands.sdf``: the ligands' SDF with the results as fields."""
+    from rdkit import Chem
+
+    source = Path(source) if source is not None else work / "ligands.sdf"
+    if not source.exists():
+        log(f"no ligands' SDF to add the results to ({source}; prep keeps one from now on, "
+            "or give it with --ligands)")  # fmt: skip
+        return None
+    by_name = {x["ligand"]: x for x in ligs}
+    rt = KB_KCAL * temperature
+    path, written = work / "results_ligands.sdf", 0
+    with Chem.SDWriter(str(path)) as w:
+        for m in Chem.SDMolSupplier(str(source), removeHs=False):
+            if m is None:
+                continue
+            name = m.GetProp("_Name").strip() if m.HasProp("_Name") else ""
+            for p in list(m.GetPropNames()):  # a results SDF given again: its old values go
+                if p.startswith("FEP_"):
+                    m.ClearProp(p)
+            x = by_name.get(name)
+            if x is not None:
+                m.SetProp("FEP_dG", f"{x['dG']:.3f}")
+                m.SetProp("FEP_dG_error", f"{x['error']:.3f}")
+                if "dG_shifted" in x:
+                    m.SetProp("FEP_dG_shifted", f"{x['dG_shifted']:.3f}")
+                    if kind == "binding":
+                        m.SetProp("FEP_KD_nM", f"{np.exp(x['dG_shifted'] / rt) * 1e9:.4g}")
+                if kind == "transfer":
+                    m.SetProp("FEP_logP_rel", f"{-x['dG'] / (rt * np.log(10.0)):.3f}")
+                written += 1
+            w.write(m)
+    log(f"{path}: {written} of {len(ligs)} ligands with FEP_ fields")
+    return path
 
 
 def _measured(work: Path, table, rows, experimental) -> dict:
@@ -186,16 +236,24 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
         if len(have) >= 2:
             exp = np.array([measured[x["ligand"]][0] for x in have])
             calc = np.array([x["dG"] for x in have])
-            calc = calc - calc.mean() + exp.mean()  # relative: one constant is free
+            shift = float(exp.mean() - calc.mean())  # relative: one constant is free
+            calc = calc + shift
             stats = statistics(calc, exp)
-            for x, c, e in zip(have, calc, exp, strict=True):
-                x["dG_shifted"], x["exp_dG"] = float(c), float(e)
-                x["exp_field"] = measured[x["ligand"]][1]
+            for x in ligs:  # the predictions too, on the same scale
+                x["dG_shifted"] = float(x["dG"] + shift)
+            for x, e in zip(have, exp, strict=True):
+                x["exp_dG"], x["exp_field"] = float(e), measured[x["ligand"]][1]
             _write(work / "results_ligands.csv", ligs)
             log(f"ligands, {quantity} shifted to the measured mean: " + "; ".join(describe(stats)))
+            predicted = [(x["ligand"], x["dG_shifted"]) for x in ligs
+                         if x["ligand"] not in measured]  # fmt: skip
+            if predicted:
+                log(f"  {len(predicted)} without a measured value, predicted: "
+                    + ", ".join(f"{n} {v:.2f}" for n, v in predicted))  # fmt: skip
             files = correlation_plot(work / "plots" / "dG", calc, exp,
                                      calc_err=[x["error"] for x in have], quantity=quantity,
-                                     stats=stats, log=log)  # fmt: skip
+                                     stats=stats, log=log, names=[x["ligand"] for x in have],
+                                     predicted=predicted)  # fmt: skip
             out["ligands"] = stats
             if files:
                 log(f"  {', '.join(str(f) for f in files)}")
@@ -210,7 +268,8 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
         log(f"edges, Δ{quantity}: " + "; ".join(describe(stats)))
         errors = [r["error"] if np.isfinite(r["error"]) else r["mbar_error"] for r in pairs]
         files = correlation_plot(work / "plots" / "ddG", calc, exp, calc_err=errors,
-                                 quantity=f"Δ{quantity}", stats=stats, log=log)  # fmt: skip
+                                 quantity=f"Δ{quantity}", stats=stats, log=log,
+                                 names=[r["edge"] for r in pairs])  # fmt: skip
         out["edges"] = stats
         if files:
             log(f"  {', '.join(str(f) for f in files)}")
