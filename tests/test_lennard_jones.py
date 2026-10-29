@@ -36,15 +36,21 @@ def _pair(tmp_path, r):
     (tmp_path / "t.top").write_text(PAIR)
     (tmp_path / "t.gro").write_text(
         f"t\n2\n    1B        C    1   0.000   0.000   0.000\n"
-        f"    2B        C    2{r:8.3f}   0.000   0.000\n   5.00000   5.00000   5.00000\n")
+        f"    2B        C    2{r:8.3f}   0.000   0.000\n   5.00000   5.00000   5.00000\n"
+    )
     return load_top(tmp_path / "t.top", tmp_path / "t.gro")
 
 
 def _lj_energy(tmp_path, r, **kw) -> float:
     """Lennard-Jones energy (kJ/mol) of the pair at ``r`` nm, every force but none
     else carrying it (the beads are uncharged)."""
-    _, system, pos = boonza.to_openmm(_pair(tmp_path, r), nonbonded_method="CutoffPeriodic",
-                                      cutoff=10.0 * ROFF, dispersion_correction=False, **kw)
+    _, system, pos = boonza.to_openmm(
+        _pair(tmp_path, r),
+        nonbonded_method="CutoffPeriodic",
+        cutoff=10.0 * ROFF,
+        dispersion_correction=False,
+        **kw,
+    )
     ctx = mm.Context(system, mm.VerletIntegrator(0.001), mm.Platform.getPlatformByName("Reference"))
     ctx.setPositions(pos)
     return ctx.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
@@ -119,11 +125,19 @@ def _quiet(argv):
 
 def test_conventions():
     a = _quiet(["x"])
-    assert (a.dispersion_correction, a.lj_switch, a.lj_switch_nm, a.cutoff_nm) == (True, "none",
-                                                                                   None, 0.9)
+    assert (a.dispersion_correction, a.lj_switch, a.lj_switch_nm, a.cutoff_nm) == (
+        True,
+        "none",
+        None,
+        0.9,
+    )
     c = _quiet(CHARMM)
-    assert (c.dispersion_correction, c.lj_switch, c.lj_switch_nm, c.cutoff_nm) == (False, "force",
-                                                                                   1.0, 1.2)
+    assert (c.dispersion_correction, c.lj_switch, c.lj_switch_nm, c.cutoff_nm) == (
+        False,
+        "force",
+        1.0,
+        1.2,
+    )
     x = _quiet(["x", "-f", "charmm36_2024.xml", "-f", "charmm36_2024/water.xml"])
     assert (x.dispersion_correction, x.lj_switch) == (False, "force")
     for model in ("martini3", "sirah"):
@@ -184,5 +198,7 @@ def test_final_toml_records_it(tmp_path):
             continue  # a coarse-grained final.toml is read back by a restart, not --config
         # and an all-atom one is a settings file still: --config reads it back
         again = parse_arguments(["x", "--config", str(path)])
-        assert (again.lj_switch, again.dispersion_correction) == (args.lj_switch,
-                                                                  args.dispersion_correction)
+        assert (again.lj_switch, again.dispersion_correction) == (
+            args.lj_switch,
+            args.dispersion_correction,
+        )
