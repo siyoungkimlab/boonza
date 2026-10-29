@@ -15,7 +15,10 @@ different charge.  Without a receptor, each edge is a relative hydration free
 energy (a leg in water, one in vacuum), and the charge cannot change; with
 --phase octanol or wet-octanol, a relative transfer free energy from water to
 1-octanol (a leg in water, one in an octanol box built once in the work
-directory), whose change of log P result reports beside it.
+directory), whose change of log P result reports beside it.  With a receptor,
+--rem first relaxes the receptor around every ligand's pose, the ligands held
+as posed: a soft minimization (REM), then one with the force field (EM), so
+every edge still meets one and the same receptor (boonza.fep.relief).
 """
 
 from __future__ import annotations
