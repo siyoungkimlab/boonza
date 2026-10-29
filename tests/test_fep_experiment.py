@@ -63,4 +63,7 @@ def test_plot(tmp_path):
     assert [f.name for f in files] == ["dG_white.pdf", "dG_black.pdf"]
     for f in files:
         data = f.read_bytes()
-        assert data.startswith(b"%PDF") and b"TrueType" in data  # text kept as text
+        # text kept as text: TrueType (whole, or as a composite CIDFontType2 for Δ, τ and
+        # ±), never Type 3, which Illustrator and Affinity cannot edit
+        assert data.startswith(b"%PDF") and b"/Type3" not in data
+        assert b"/TrueType" in data or b"/CIDFontType2" in data
