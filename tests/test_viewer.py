@@ -308,9 +308,11 @@ def test_triage_merged_on_a_scaffold(tmp_path):
     m = v.session(0).system
     # the protein shown is the scaffold's, and every ligand is fitted onto it
     ca = m.select("protein and name CA").ids
-    assert np.abs(m.positions[ca] - moved.positions[moved.select("protein and name CA").ids]).max() < 1e-3
+    on = moved.select("protein and name CA").ids
+    assert np.abs(m.positions[ca] - moved.positions[on]).max() < 1e-3
     first = np.flatnonzero(np.asarray(m.atoms["pose"]) == 1)
-    assert np.abs(m.positions[first] - moved.positions[moved.select("resname HEM").ids]).max() < 1e-3
+    heme = moved.select("resname HEM").ids
+    assert np.abs(m.positions[first] - moved.positions[heme]).max() < 1e-3
 
 
 def test_cli_merge_arguments():
