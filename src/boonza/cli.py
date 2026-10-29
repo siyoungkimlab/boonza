@@ -1801,7 +1801,8 @@ def _view(args) -> int:
         if flags:
             raise ValueError("-c, -s, --center and --fit go with one structure (and trajectory)")
         if not paths[0].lower().endswith(".sdf") or len(paths) > 1:
-            what = viewer.from_paths(paths)
+            what = viewer.from_paths(paths, merge=args.merge, fit=args.merge_fit,
+                                     scaffold=args.merge_scaffold or None)  # fmt: skip
     else:
         structure, trajectory = paths[0], paths[1] if len(paths) == 2 else None
         if args.coordinates:
@@ -1845,6 +1846,22 @@ def _parser() -> argparse.ArgumentParser:
                    "prmtop), e.g. a .gro; a Martini .top gives bead sizes")  # fmt: skip
     q.add_argument("-s", "--selection", help="view only these atoms (e.g. 'not water' for "
                    "large solvated runs)")  # fmt: skip
+    q.add_argument("--merge", action="store_true",
+                   help="the output folder of boonza triage as one model holding every "
+                        "run's ligand, rather than a model a run: the only way to look "
+                        "at a thousand of them at once, and each ligand carries what its "
+                        "run did, so the set can be narrowed by it with a slider")  # fmt: skip
+    q.add_argument("--merge-fit", default="",
+                   help="--merge: the atoms every run is superposed on (default: the "
+                        "protein's alpha carbons).  Give the domain on a protein of "
+                        "several: the whole chain fits the domains against each other "
+                        "and the one holding the ligand lands somewhere different for "
+                        "every run, which looks like scattered ligands")  # fmt: skip
+    q.add_argument("--merge-scaffold", default="",
+                   help="--merge: the protein to show the ligands on, an apo structure "
+                        "say (default: the first run's own).  Predictions of a protein "
+                        "of several domains disagree over the whole chain however well "
+                        "the domain fits, so the first one is otherwise arbitrary")  # fmt: skip
     q.add_argument("--center", help="wrap the box around these atoms")
     q.add_argument("--fit", help="superpose every frame onto the first on these atoms")
     q.add_argument("--no-whole", action="store_true", help="leave molecules split across "

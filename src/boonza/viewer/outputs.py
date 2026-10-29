@@ -36,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .session import Session
+from .session import LIGAND, POLAR, Session
 
 #: what poses are fitted on: alpha carbons, or a coarse-grained protein's
 #: backbone beads (Martini BB, SIRAH GC), as boonza modes fits its medoids
@@ -693,18 +693,18 @@ def from_session(path) -> Viewer:
     return v
 
 
-def from_paths(paths, **kwargs) -> Viewer:
+def from_paths(paths, merge: bool = False, fit: str = "", scaffold=None, **kwargs) -> Viewer:
     """Files (a model each), folders (see the module docstring) and saved sessions
     (.bview), in order."""
     paths = [Path(p) for p in paths]
     if len(paths) == 1 and paths[0].suffix == ".bview":
         return from_session(paths[0])
     if len(paths) == 1 and paths[0].is_dir():
-        return from_folder(paths[0])
+        return from_folder(paths[0], merge=merge, fit=fit, scaffold=scaffold)
     models, columns = [], []
     for p in paths:
         if p.is_dir():
-            v = from_folder(p)
+            v = from_folder(p, merge=merge, fit=fit, scaffold=scaffold)
             for m in v.models:
                 m.group = m.group or p.name
             models += v.models
@@ -768,7 +768,7 @@ def _series_members(path, taken=()) -> list[Model]:
     return out
 
 
-def from_folder(d) -> Viewer:
+def from_folder(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
     """What a folder holds: a view.json, or the output of modes, triage or cavity."""
     d = Path(d)
     if (d / "view.json").is_file():
@@ -776,7 +776,7 @@ def from_folder(d) -> Viewer:
     if (d / "modes.csv").is_file() and (d / "structures").is_dir():
         return from_modes(d)
     if (d / "summary.csv").is_file() and (d / "structures").is_dir():
-        return from_triage(d)
+        return from_triage(d, merge=merge, fit=fit, scaffold=scaffold)
     if (d / "pockets.csv").is_file() and (d / "sites.pqr").is_file():
         return from_cavity(d)
     raise ValueError(f"{d}: not a folder boonza view knows (a view.json, or the output of "
@@ -881,8 +881,99 @@ def _triage_ligand(d) -> str | None:
     return json.loads(f.read_text()).get("ligandsel") if f.is_file() else None
 
 
-def from_triage(d) -> Viewer:
-    """boonza triage: each run's pose, in summary order, fitted on the first."""
+#: how a merged part is named, so a residue reads POS36 rather than the ligand's
+#: own name run together with the number (LIG2 + 36 reads "LIG236")
+MERGED_RESNAME = "POS"
+
+
+def merge_poses(files, ligand: str, rows=None, names=None, fit: str = "protein and name CA",
+                scaffold=None):  # fmt: skip
+    """One System holding every file's ligand on the first file's protein.
+
+    A set of runs of one system is a model each, and a page loads them one at a
+    time: fine for a handful, hopeless for a thousand.  Merged, the whole set
+    arrives in one request -- and because every column of ``rows`` is written on
+    to that part's atoms as a property, and the selection language resolves any
+    scalar atom property as a keyword, the set can then be narrowed by what each
+    run did: ``(chain L) and drifted < 1.5``.
+
+    Each file is superposed on the first by alpha carbons, paired in order: the
+    runs of one system have the same topology, which makes the pairing exact and
+    avoids the pruning that sequence matching with a cutoff can fail at.  Only
+    the ligand is kept, as one residue named :data:`MERGED_RESNAME` numbered by
+    position, so ``pose 36`` and the residue POS36 are the same thing.  Every
+    part also records where it came from in a ``source`` property, which the
+    page offers to open.
+
+    ``rows`` maps a file to its metrics; a value that is not a finite number
+    becomes nan, which fails every comparison, so a part that was not measured
+    stays out of a cutoff rather than passing it as zero.
+
+    ``fit`` is what the superposition pairs, and the whole protein is the wrong
+    answer for a protein of several domains: the domains are fitted against each
+    other and the one holding the ligand lands somewhere different for every
+    part.  On 504 SHP1 predictions a whole-chain fit put the catalytic cysteine
+    up to 27 A apart between poses, which looks exactly like ligands scattered
+    over the protein; fitting the PTP domain alone (0.4-0.8 A backbone RMSD)
+    brought 99% of them within 10 A of it.  Give the domain.
+
+    ``scaffold`` is the protein to show the parts on, an experimental apo
+    structure for instance.  Without it the first part's own protein is used,
+    which is only sound when every part predicts the same protein -- those 504
+    predictions differ by 16-20 A over the whole chain however well the domain
+    fits, so the protein on screen is otherwise one arbitrary prediction.
+    """
+    from .. import load, superpose
+
+    files = list(files)
+    if not files:
+        raise ValueError("no files to merge")
+    rows = rows or {}
+    names = list(names or [str(f) for f in files])
+    metrics = sorted({k for r in rows.values() for k in r})
+
+    base = load(str(scaffold)) if scaffold else load(str(files[0]))
+    out = base.clone(f"not ({ligand}) and not water")
+    spans = []
+    for k, f in enumerate(files):
+        s = base if (k == 0 and not scaffold) else load(str(f))
+        if k or scaffold:  # with a scaffold of its own, no part is already in its frame
+            superpose(s, base, sel=fit, match="order", cutoff=None)
+        part = s.clone(ligand)
+        for ch in part.chains:
+            ch.name = "L"
+        for r in part.residues:
+            r.name = MERGED_RESNAME
+            r.resid = k + 1
+        start = out.natoms
+        out.append(part)
+        spans.append((start, out.natoms, rows.get(names[k]), str(f)))
+
+    cols = {c: np.full(out.natoms, np.nan) for c in (*metrics, "pose")}
+    source = np.full(out.natoms, "", dtype=object)
+    for k, (lo, hi, row, path) in enumerate(spans, start=1):
+        cols["pose"][lo:hi] = k
+        source[lo:hi] = path
+        for c in metrics:
+            v = _number((row or {}).get(c, ""))
+            cols[c][lo:hi] = v if isinstance(v, (int, float)) and v is not None else np.nan
+    for c, v in cols.items():
+        out.atoms[c] = v
+    out.atoms["source"] = np.array([str(x) for x in source])
+    # the page serialises bfactor into its topology, where a nan would be a bare
+    # NaN token; these two carry a metric under names every other tool knows
+    for prop, c in (("bfactor", "drifted"), ("occupancy", "settled")):
+        if c in cols:
+            out.atoms[prop] = np.nan_to_num(cols[c], nan=0.0)
+    return out, metrics
+
+
+def from_triage(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
+    """boonza triage: each run's pose, in summary order, fitted on the first.
+
+    ``merge``: one model holding every run's ligand instead of a model a run,
+    which is the only way to look at a thousand of them at once.
+    """
     d = Path(d)
     rows = _rows(d / "summary.csv", "run")
     ligand = _triage_ligand(d)
@@ -894,6 +985,25 @@ def from_triage(d) -> Viewer:
     order = [r for r in rows if r in poses] + sorted(r for r in poses if r not in rows)
     if not order:
         raise ValueError(f"{d / 'structures'}: no *_pose files")
+    if merge:
+        sel = ligand or LIGAND
+
+        def one(order=order, sel=sel):
+            system, metrics = merge_poses([poses[r] for r in order], sel,
+                                          rows={str(poses[r]): rows.get(r, {}) for r in order},
+                                          names=[str(poses[r]) for r in order],
+                                          fit=fit or "protein and name CA",
+                                          scaffold=scaffold)  # fmt: skip
+            numbers = [c for c in ("drifted", *RUN_COLUMNS, "pose") if c in system.atoms.props]
+            # dicts, as a manifest gives them: a Session keeps `reps` as it is and
+            # only the default path builds them out of tuples
+            return Session(system, ligand=sel, numbers=numbers, reps=[
+                {"sel": "protein or nucleic", "style": "cartoon", "color": "white"},
+                {"sel": f"({sel}) and {POLAR}", "style": "sticks", "color": "element/green"},
+            ])  # fmt: skip
+
+        model = Model(f"all {len(order)} poses", one, group="poses", shown=True)
+        return Viewer([model], title=f"{d.name}: {len(order)} runs merged", columns=["pose"])
     models = []
     for k, run in enumerate(order):
         r = rows.get(run, {})
