@@ -311,6 +311,9 @@ body.dark .label.meter { color: #ffd34d; }
 .scatter.white text { fill: #000; }
 .scatter.white .grid { stroke: #c8c8c8; }
 .scatter.white .fit { stroke: #000; }
+.scatter rect.bar { fill: #5b8def; stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.5; }
+.scatter rect.bar:hover { fill: #7aa3f5; }
+.series-table th.calc { font-style: italic; color: var(--muted); }
 .scatter circle:hover { stroke: var(--text); stroke-width: 1.2; }
 .key { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 2px 0 6px; }
 

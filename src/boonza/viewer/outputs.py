@@ -105,6 +105,7 @@ class Viewer:
         # [{"label": ..., "value": ..., "title": what it is}]
         self.summary: list[dict] = []
         self._lock = threading.RLock()
+        self._properties: dict[int, tuple] = {}  # series_properties, by member
 
     def __len__(self) -> int:
         return len(self.models)
@@ -330,6 +331,23 @@ class Viewer:
         used = [int(x.group(1)) for k in members if (x := numbered.fullmatch(self.models[k].name))]
         name = f"{base}{max(used, default=0) + 1}"
         return [self._member(self.session(m).system.clone(), group, name, self.receptor(m))]
+
+    def series_properties(self, group: str) -> dict[int, dict]:
+        """What RDKit computes from each member of series ``group``'s structure: MW,
+        heavy atoms, cLogP (Crippen), TPSA, H-bond donors and acceptors (Lipinski) and
+        rotatable bonds, by member.  A member RDKit cannot read has none.  Kept by each
+        member's atoms, bonds and charges, so only an edited one is computed again."""
+        out = {}
+        for k in self.series(group):
+            s = self.session(k).system
+            key = (s.natoms, *(np.asarray(x).tobytes() for x in (
+                s.atoms["anum"], s.atoms["formal_charge"], s.bonds["i"], s.bonds["j"],
+                s.bonds["order"])))  # fmt: skip
+            cached = self._properties.get(k)
+            if cached is None or cached[0] != key:
+                self._properties[k] = cached = (key, _properties(s))
+            out[k] = cached[1]
+        return out
 
     def set_note(self, m: int, note: str) -> None:
         """A design's note: shown in the model list, saved in the series' SDF."""
@@ -699,6 +717,24 @@ def from_paths(paths, **kwargs) -> Viewer:
             models.append(Model(p.name, lambda p=p: _session(p, **kwargs), group="files"))
     title = " + ".join(p.name for p in paths)
     return Viewer(models, title=title, columns=columns)
+
+
+def _properties(system) -> dict:
+    """A molecule's properties as RDKit computes them (Viewer.series_properties)."""
+    from rdkit import Chem
+    from rdkit.Chem import Crippen, Descriptors, Lipinski, rdMolDescriptors
+
+    from ..chem import to_rdkit
+
+    try:  # hydrogens implicit, as the descriptors count them (a C-OH is not rotatable)
+        mol = Chem.RemoveHs(to_rdkit(system, sanitize=True, implicit_hydrogens=True))
+    except Exception:  # a valence RDKit rejects: a half-built design, a metal
+        return {}
+    return {"MW": round(Descriptors.MolWt(mol), 2), "heavy atoms": mol.GetNumHeavyAtoms(),
+            "cLogP": round(Crippen.MolLogP(mol), 2),
+            "TPSA": round(rdMolDescriptors.CalcTPSA(mol), 1),
+            "HBD": Lipinski.NumHDonors(mol), "HBA": Lipinski.NumHAcceptors(mol),
+            "rotatable bonds": rdMolDescriptors.CalcNumRotatableBonds(mol)}  # fmt: skip
 
 
 def _series_members(path, taken=()) -> list[Model]:
