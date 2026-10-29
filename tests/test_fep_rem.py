@@ -45,8 +45,10 @@ def test_held_torsions():
     assert relief.held_torsions(_mol("c1ccccc1", "benzene")) == []  # nothing to hold
 
 
-def _clashing(tmp_path, mols):
-    """A charged-termini tripeptide sunk into the ligands, their SDF, and its PDB."""
+def _clashing(tmp_path, mols, depth=1.2):
+    """A charged-termini tripeptide slid against the first ligand until their closest
+    heavy atoms are ``depth`` Å apart (a substituent into a side chain), the
+    ligands' SDF, and the peptide's PDB."""
     from boonza.viewer.edit import protonate
 
     sdf = tmp_path / "ligands.sdf"
@@ -56,9 +58,17 @@ def _clashing(tmp_path, mols):
     s = boonza.peptide("GAG")
     s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
     protonate(s)
-    pos = np.asarray(s.positions)
-    centre = mols[0].GetConformer().GetPositions().mean(0)
-    s.positions = pos - pos.mean(0) + centre + np.array([1.0, 0.0, 0.0])
+    pos = np.asarray(s.positions) - np.asarray(s.positions).mean(0)
+    lig = mols[0].GetConformer().GetPositions()
+    lig = lig[[a.GetAtomicNum() > 1 for a in mols[0].GetAtoms()]]
+    heavy = np.asarray(s.atoms["anum"]) > 1
+    far, near = 20.0, 0.0  # along x from the ligand's centre: closest-distance bisection
+    for _ in range(40):
+        mid = 0.5 * (far + near)
+        at = pos + lig.mean(0) + np.array([mid, 0.0, 0.0])
+        d = np.sqrt(((at[heavy][:, None] - lig[None]) ** 2).sum(-1)).min()
+        far, near = (mid, near) if d > depth else (far, mid)
+    s.positions = pos + lig.mean(0) + np.array([far, 0.0, 0.0])
     boonza.save(s, tmp_path / "receptor.pdb")
     return sdf, tmp_path / "receptor.pdb"
 
@@ -91,6 +101,7 @@ def test_a_clash_is_relieved_and_the_receptor_kept(tmp_path):
     rows = relief.relieve(receptor, ligs, mols, names, ff, args, log=lambda *_: None)
     (row,) = rows
     assert row["closest_before"] < 1.5 and row["closest_after"] > 2.0
+    assert row["moved_rmsd"] < 0.6  # the clash moved out of; the pose, tethered, kept
     assert relief.clashes(receptor, ligs, names) == []
     assert np.array_equal(np.asarray(receptor.positions, float), before)  # the receptor untouched
     assert _cip(mols[0]) == stereo and stereo  # the stereocentre held, R stays R

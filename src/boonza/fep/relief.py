@@ -7,7 +7,10 @@ heavy atoms a fraction of an ångström apart, which a leg's minimization takes
 huge, damaging steps from.  With ``--rem`` each ligand is put into the receptor
 and minimized with soft nonbonded interactions (:mod:`boonza.rem`) while the
 receptor's heavy atoms are held where they are, and only the ligand's new
-coordinates are kept, so every edge still meets one and the same receptor.  Soft
+coordinates are kept, so every edge still meets one and the same receptor.  The
+ligand's own heavy atoms are tethered to where it was posed, so the atoms in a
+clash move out of it and the rest stays put: an edge's two ligands still sit on
+top of each other, which the mapping and the hybrid both read.  Soft
 potentials let atoms pass through each other, a stereocentre's or a double
 bond's among them, so the ligand's stereocentres and non-aromatic double bonds
 are held as they were posed.  Each leg's own minimization, in water and with the
@@ -25,6 +28,10 @@ import numpy as np
 CLASH_A = 2.2
 #: what holds the receptor's heavy atoms in place while the ligand moves (kJ/mol/nm^2)
 RECEPTOR_HOLD_KJ = 1.0e5
+#: what tethers the ligand's heavy atoms to their pose (kJ/mol/nm^2): 0.2 nm costs 10
+#: kJ/mol an atom, less than the soft repulsion's 100, so a clashing atom gets out of
+#: it, while the whole ligand moving costs that over every atom and does not happen
+TETHER_KJ = 500.0
 
 
 def closest(lig_xyz, rec_xyz) -> float:
@@ -111,6 +118,13 @@ def relieve(receptor, ligs, mols, names, ff, args, log=print) -> list[dict]:
             hold.addParticle(int(i), xyz[i].tolist())
         system.addForce(hold)
         lig_idx = where[n_rec + np.arange(lig.natoms)]
+        tether = openmm.CustomExternalForce("0.5*k_lig*((x-x0)^2 + (y-y0)^2 + (z-z0)^2)")
+        tether.addGlobalParameter("k_lig", TETHER_KJ)
+        for p in ("x0", "y0", "z0"):
+            tether.addPerParticleParameter(p)
+        for i in lig_idx[_heavy(lig)]:
+            tether.addParticle(int(i), xyz[i].tolist())
+        system.addForce(tether)
         torsions = [tuple(int(lig_idx[k]) for k in t) for t in held_torsions(mol)]
         new, report = relax(system, xyz, torsions=torsions, platform=platform)
         old = np.asarray(lig.positions, float)
