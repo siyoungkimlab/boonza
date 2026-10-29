@@ -24,7 +24,7 @@ Layout::
     WORKDIR/edges/A~B/vacuum/      (no receptor: hydration)
     WORKDIR/edges/A~B/octanol/     (no receptor, --phase octanol: transfer)
     WORKDIR/octanol/box.dms      the equilibrated octanol box the octanol legs tile
-    WORKDIR/rem.csv, ligands_rem.sdf   (--rem) each pose relieved in the receptor
+    WORKDIR/receptor_rem.pdb, rem.csv, rem_residues.csv   (--rem) the receptor relaxed
     WORKDIR/commands.txt
 """
 
@@ -436,9 +436,9 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         from . import relief
 
         if getattr(args, "rem", False):
-            log("REM: relieving each ligand's pose in the receptor (its heavy atoms held, "
-                "the ligands' stereochemistry held)")  # fmt: skip
-            relief.write(work, relief.relieve(receptor, ligs, mols, names, ff, args, log), mols)
+            log("REM, then EM: the receptor relaxed around every ligand's pose (the "
+                "ligands held as posed, the pocket's side chains free)")  # fmt: skip
+            relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log))
         else:
             close = relief.clashes(receptor, ligs, names)
             if close:

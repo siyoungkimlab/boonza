@@ -1,25 +1,29 @@
-"""Ligand poses that clash with the receptor, relieved before a network is built
+"""A receptor relaxed around every ligand's pose before a network is built
 (boonza fep prep --rem).
 
 A series is often posed by placing every ligand onto one receptor, and the
 larger ones then reach into side chains that would have had to move for them:
 heavy atoms a fraction of an ångström apart, which a leg's minimization takes
-huge, damaging steps from.  With ``--rem`` each ligand is put into the receptor
-and minimized with soft nonbonded interactions (:mod:`boonza.rem`) while the
-receptor's heavy atoms are held where they are, and only the ligand's new
-coordinates are kept, so every edge still meets one and the same receptor.  The
-ligand's heavy atoms in the clash (within :data:`FREE_A` of the receptor's) are
-left free to move out of it, and the rest are tethered firmly to where they were
-posed, so the scaffold stays put and only what reached into a side chain moves:
-an edge's two ligands still sit on top of each other, which the mapping (atoms
-within 0.95 Å) and the hybrid (B's own atoms where B has them) both read.  Coulomb is
-left out (``C=0``): unscreened, in vacuum, a charged ligand would be drawn to
-the nearest charged side chain, and a clash is a matter of overlap, which the
-soft repulsion settles; the real electrostatics, in water, are the legs'.  Soft
-potentials let atoms pass through each other, a stereocentre's or a double
-bond's among them, so the ligand's stereocentres and non-aromatic double bonds
-are held as they were posed.  Each leg's own minimization, in water and with the
-real force field, finishes what this leaves.
+huge, damaging steps from.  The poses are what is known, so with ``--rem`` they
+stay exactly where they are and the receptor makes room: every ligand is put
+into it at once, blind to the others (no ligand-ligand terms, they overlap one
+another by design), and held fixed, while the receptor is minimized first with
+soft nonbonded interactions (REM, :mod:`boonza.rem`) and then with the real force
+field (EM).  One receptor comes out, room made in it for every ligand, so every
+edge still meets one and the same receptor.
+
+In REM the side chains of residues within :data:`POCKET_A` of a ligand are free,
+and the backbone, the side chains farther out and any cofactor are held to the
+posed receptor (:data:`HOLD_KJ`); Coulomb is left out (``C=0``): unscreened, in
+vacuum, charged side chains would be drawn to each other, and a clash is a
+matter of overlap, which the soft repulsion settles.  Soft potentials let atoms
+pass through each other, so the free residues' stereocentres (CA, and Ile's and
+Thr's CB) are held as they were.  EM then finishes with the force field's own
+Lennard-Jones and Coulomb on what REM was free to move: the pocket's side
+chains, held to where REM left them (:data:`EM_HOLD_KJ`), and every hydrogen;
+the rest of the receptor stays fixed, since in vacuum, unscreened, its charges
+would pull at each other.  Each leg's own minimization and equilibration,
+in water, follow.
 """
 
 from __future__ import annotations
@@ -31,16 +35,20 @@ import numpy as np
 
 #: ligand and receptor heavy atoms nearer than this (Å) are a clash
 CLASH_A = 2.2
-#: what holds the receptor's heavy atoms in place while the ligand moves (kJ/mol/nm^2)
-RECEPTOR_HOLD_KJ = 1.0e5
-#: ligand heavy atoms this near the receptor's (Å) are free to move out of a clash:
-#: the clashing ones themselves (all within 3 Å set most of a small ligand free)
-FREE_A = CLASH_A
-#: what tethers the rest of the ligand's heavy atoms to their pose (kJ/mol/nm^2): one
-#: tether over every atom either holds the pose and leaves the clash, or relieves the
-#: clash and shifts the whole ligand (500 moved a phenylethanol 1.9 Å, 20000 left its
-#: 1.2 Å clash at 1.5); free near the receptor and firm elsewhere does neither
-TETHER_KJ = 20000.0
+#: residues with a heavy atom this near a ligand's (Å): side chains free in REM
+POCKET_A = 6.0
+#: what holds the backbone, the side chains farther out and cofactors to the posed
+#: receptor in REM (kJ/mol/nm^2)
+HOLD_KJ = 1.0e4
+#: what holds the pocket's side-chain heavy atoms to where REM left them in EM
+#: (kJ/mol/nm^2); the rest of the receptor is fixed there (1000 let a terminus move
+#: 2.8 Å toward another, in vacuum)
+EM_HOLD_KJ = 1.0e4
+#: residues whose heavy atoms moved at least this (Å) are listed in rem_residues.csv
+MOVED_A = 0.1
+_BACKBONE = ("N", "CA", "C", "O", "OXT")
+#: stereocentres other than CA: (centre, its neighbours as the improper reads them)
+_CENTRES = {"ILE": ("CB", ("CA", "CG1", "CG2")), "THR": ("CB", ("CA", "OG1", "CG2"))}
 
 
 def closest(lig_xyz, rec_xyz) -> float:
@@ -68,37 +76,99 @@ def clashes(receptor, ligs, names) -> list[tuple[str, float]]:
     return sorted(out, key=lambda x: x[1])
 
 
-def held_torsions(mol) -> list[tuple[int, int, int, int]]:
-    """Torsions (atom indices of ``mol``) that keep its stereochemistry: one about
-    each stereocentre, whose sign is its handedness, and one across each double
-    bond outside a ring and an aromatic system, whose angle is cis or trans."""
-    from rdkit import Chem
+def pocket(receptor, ligs, within: float = POCKET_A) -> np.ndarray:
+    """The receptor's protein residues (indices) with a heavy atom within ``within``
+    Å of any ligand's."""
+    from scipy.spatial import cKDTree
 
+    heavy = _heavy(receptor)
+    protein = np.zeros(receptor.natoms, bool)
+    protein[receptor.select("protein").ids] = True
+    heavy = heavy[protein[heavy]]
+    lig = np.concatenate([np.asarray(g.positions, float)[_heavy(g)] for g in ligs])
+    near = cKDTree(lig).query(np.asarray(receptor.positions, float)[heavy])[0] <= within
+    return np.unique(np.asarray(receptor.atoms["residue"])[heavy[near]])
+
+
+def free_atoms(receptor, residues) -> np.ndarray:
+    """The side-chain atoms (hydrogens too) of ``residues``: what REM leaves free."""
+    res = np.asarray(receptor.atoms["residue"])
+    name = np.asarray(receptor.atoms["name"])
+    return np.flatnonzero(np.isin(res, residues) & ~np.isin(name, _BACKBONE)
+                          & (name != "H") & (name != "HA"))  # fmt: skip
+
+
+def held_torsions(receptor, residues) -> list[tuple[int, int, int, int]]:
+    """Impropers (receptor atom indices) whose sign is the handedness of each of
+    ``residues``' stereocentres: CA (N, CA, C, CB) and Ile's and Thr's CB."""
+    res = np.asarray(receptor.atoms["residue"])
+    name = np.asarray(receptor.atoms["name"])
+    resname = np.asarray(receptor.residues["name"])
     out = []
-    centres = Chem.FindMolChiralCenters(mol, includeUnassigned=True,
-                                        useLegacyImplementation=False)  # fmt: skip
-    for c, _ in centres:
-        nbrs = [a.GetIdx() for a in mol.GetAtomWithIdx(c).GetNeighbors()]
-        if len(nbrs) >= 3:
-            out.append((nbrs[0], c, nbrs[1], nbrs[2]))
-    for bond in mol.GetBonds():
-        if (bond.GetBondType() != Chem.BondType.DOUBLE or bond.GetIsAromatic()
-                or bond.IsInRing()):  # fmt: skip
-            continue
-        b, c = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        a = [n.GetIdx() for n in mol.GetAtomWithIdx(b).GetNeighbors() if n.GetIdx() != c]
-        d = [n.GetIdx() for n in mol.GetAtomWithIdx(c).GetNeighbors() if n.GetIdx() != b]
-        if a and d:
-            out.append((a[0], b, c, d[0]))
+    for r in residues:
+        atoms = {str(name[i]): int(i) for i in np.flatnonzero(res == r)}
+        if all(a in atoms for a in ("N", "CA", "C", "CB")):
+            out.append((atoms["N"], atoms["CA"], atoms["C"], atoms["CB"]))
+        centre = _CENTRES.get(str(resname[r]))
+        if centre and all(a in atoms for a in (centre[0], *centre[1])):
+            a, c, d = centre[1]
+            out.append((atoms[a], atoms[centre[0]], atoms[c], atoms[d]))
     return out
 
 
-def relieve(receptor, ligs, mols, names, ff, args, log=print) -> list[dict]:
-    """Each ligand's pose relieved in ``receptor`` (the module docstring), in
-    place: ``ligs`` (boonza systems) and ``mols`` (their RDKit molecules, the
-    same atoms in the same order) get the new coordinates.  One row per ligand:
-    its closest heavy atom to the receptor before and after (Å), and how far its
-    heavy atoms moved (RMSD and most, Å)."""
+def _blind(system, groups) -> None:
+    """No nonbonded terms between atoms of different ``groups`` (lists of particle
+    indices) of an OpenMM ``system``."""
+    import openmm as mm
+
+    pairs = [(int(i), int(j)) for a in range(len(groups)) for b in range(a + 1, len(groups))
+             for i in groups[a] for j in groups[b]]  # fmt: skip
+    for f in system.getForces():
+        if isinstance(f, mm.NonbondedForce):
+            for i, j in pairs:
+                f.addException(i, j, 0.0, 0.1, 0.0)
+        elif isinstance(f, mm.CustomNonbondedForce):
+            for i, j in pairs:
+                f.addExclusion(i, j)
+
+
+def _hold(system, atoms, xyz_nm, k: float, name: str) -> None:
+    import openmm as mm
+
+    f = mm.CustomExternalForce(f"0.5*{name}*((x-x0)^2 + (y-y0)^2 + (z-z0)^2)")
+    f.addGlobalParameter(name, float(k))
+    for p in ("x0", "y0", "z0"):
+        f.addPerParticleParameter(p)
+    for i in atoms:
+        f.addParticle(int(i), xyz_nm[i].tolist())
+    system.addForce(f)
+
+
+def _minimize(system, xyz_nm, platform) -> tuple[np.ndarray, float, float]:
+    import openmm as mm
+    import openmm.unit as u
+
+    integrator = mm.VerletIntegrator(0.001)
+    context = (mm.Context(system, integrator, platform) if platform is not None
+               else mm.Context(system, integrator))  # fmt: skip
+    context.setPositions(xyz_nm * u.nanometer)
+
+    def energy():
+        e = context.getState(getEnergy=True).getPotentialEnergy()
+        return round(e.value_in_unit(u.kilojoule_per_mole), 1)
+
+    before = energy()
+    mm.LocalEnergyMinimizer.minimize(context, 10.0, 0)
+    after = energy()
+    state = context.getState(getPositions=True)
+    return np.asarray(state.getPositions(asNumpy=True).value_in_unit(u.nanometer)), before, after
+
+
+def relieve(receptor, ligs, names, ff, args, log=print) -> tuple[list[dict], list[dict]]:
+    """``receptor`` relaxed around every one of ``ligs`` (the module docstring), in
+    place; the ligands are not moved.  Rows per ligand (its closest heavy atom to
+    the receptor before and after, Å) and per residue that moved (its heavy atoms'
+    most, after REM and after EM, Å)."""
     import openmm
 
     from ..omm import to_openmm
@@ -106,70 +176,92 @@ def relieve(receptor, ligs, mols, names, ff, args, log=print) -> list[dict]:
     from .prep import _by_tag, _parameterize
 
     platform = openmm.Platform.getPlatformByName(args.platform) if args.platform else None
-    rec_heavy = _heavy(receptor)
-    rec_xyz = np.asarray(receptor.positions, float)[rec_heavy]
     n_rec = receptor.natoms
-    rows = []
-    for lig, mol, name in zip(ligs, mols, names, strict=True):
-        both = receptor.copy()
+    posed = np.asarray(receptor.positions, float).copy()
+    both = receptor.copy()
+    for lig in ligs:
         both.append(lig)
-        both.atoms["fep_index"] = np.arange(1, both.natoms + 1)
-        param = _parameterize(both, ff, False)
-        where = _by_tag(param, both.natoms)
-        _, system, _ = to_openmm(param, nonbonded_method="NoCutoff", constraints=False,
-                                 dispersion_correction=False)  # fmt: skip
-        hold = openmm.CustomExternalForce("0.5*k_rec*((x-x0)^2 + (y-y0)^2 + (z-z0)^2)")
-        hold.addGlobalParameter("k_rec", RECEPTOR_HOLD_KJ)
-        for p in ("x0", "y0", "z0"):
-            hold.addPerParticleParameter(p)
-        xyz = np.asarray(param.positions, float) / 10.0  # nm
-        for i in where[rec_heavy]:
-            hold.addParticle(int(i), xyz[i].tolist())
-        system.addForce(hold)
-        lig_idx = where[n_rec + np.arange(lig.natoms)]
-        tether = openmm.CustomExternalForce("0.5*k_lig*((x-x0)^2 + (y-y0)^2 + (z-z0)^2)")
-        tether.addGlobalParameter("k_lig", TETHER_KJ)
-        for p in ("x0", "y0", "z0"):
-            tether.addPerParticleParameter(p)
-        from scipy.spatial import cKDTree
+    both.atoms["fep_index"] = np.arange(1, both.natoms + 1)
+    param = _parameterize(both, ff, False)
+    where = _by_tag(param, both.natoms)
+    _, system, _ = to_openmm(param, nonbonded_method="NoCutoff", constraints=False,
+                             dispersion_correction=False)  # fmt: skip
+    xyz = np.asarray(param.positions, float) / 10.0  # nm
+    rec = where[:n_rec]
+    starts = np.cumsum([n_rec] + [g.natoms for g in ligs])
+    groups = [where[a:b] for a, b in zip(starts[:-1], starts[1:], strict=True)]
+    for g in groups:  # held fixed: neither minimizer moves a massless particle
+        for i in g:
+            system.setParticleMass(int(i), 0.0)
+    _blind(system, groups)
 
-        heavy = _heavy(lig)
-        near = cKDTree(rec_xyz).query(np.asarray(lig.positions, float)[heavy])[0] < FREE_A
-        for i in lig_idx[heavy[~near]]:
-            tether.addParticle(int(i), xyz[i].tolist())
-        system.addForce(tether)
-        torsions = [tuple(int(lig_idx[k]) for k in t) for t in held_torsions(mol)]
-        new, report = relax(system, xyz, torsions=torsions, C=0.0, platform=platform)
-        old = np.asarray(lig.positions, float)
-        moved = new[lig_idx] * 10.0
-        heavy = _heavy(lig)
-        shift = np.linalg.norm(moved[heavy] - old[heavy], axis=1)
-        row = {"ligand": name,
-               "closest_before": round(closest(old[heavy], rec_xyz), 3),
-               "closest_after": round(closest(moved[heavy], rec_xyz), 3),
-               "moved_rmsd": round(float(np.sqrt(np.mean(shift**2))), 3),
-               "moved_most": round(float(shift.max()), 3), **report}  # fmt: skip
-        lig.positions = moved
-        conf = mol.GetConformer()
-        for k, p in enumerate(moved):
-            conf.SetAtomPosition(k, p.tolist())
+    residues = pocket(receptor, ligs)
+    free = np.zeros(n_rec, bool)
+    free[free_atoms(receptor, residues)] = True
+    heavy = _heavy(receptor)
+    log(f"  {len(residues)} residues within {POCKET_A:g} Å of a ligand: side chains free")
+    soft = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(system))
+    _hold(soft, rec[heavy[~free[heavy]]], xyz, HOLD_KJ, "k_receptor")
+    torsions = [tuple(int(rec[k]) for k in t) for t in held_torsions(receptor, residues)]
+    after_rem, report = relax(soft, xyz, torsions=torsions, C=0.0, platform=platform)
+    lig_atoms = np.concatenate(groups)
+    after_rem[lig_atoms] = xyz[lig_atoms]  # as posed, to the last digit
+    hydrogen = np.ones(n_rec, bool)
+    hydrogen[heavy] = False
+    for i in rec[~(free | hydrogen)]:  # outside the pocket: fixed where REM left it
+        system.setParticleMass(int(i), 0.0)
+    _hold(system, rec[heavy[free[heavy]]], after_rem, EM_HOLD_KJ, "k_em")
+    final, em_before, em_after = _minimize(system, after_rem, platform)
+    final[lig_atoms] = xyz[lig_atoms]
+    report.update(em_energy_before=em_before, em_energy_after=em_after)
+    log(f"  REM energy {report['rem_energy_before']:.1f} -> {report['rem_energy_after']:.1f}, "
+        f"EM {em_before:.1f} -> {em_after:.1f} kJ/mol")  # fmt: skip
+    receptor.positions = final[rec] * 10.0
+
+    new = np.asarray(receptor.positions, float)
+    rem_xyz = after_rem[rec] * 10.0
+    lig_rows = []
+    for lig, name in zip(ligs, names, strict=True):
+        at = np.asarray(lig.positions, float)[_heavy(lig)]
+        row = {"ligand": name, "closest_before": round(closest(at, posed[heavy]), 3),
+               "closest_after": round(closest(at, new[heavy]), 3)}  # fmt: skip
         note = f"  -- still within {CLASH_A} Å" if row["closest_after"] < CLASH_A else ""
-        log(f"  {name}: closest heavy atom {row['closest_before']:.2f} -> "
-            f"{row['closest_after']:.2f} Å, moved {row['moved_rmsd']:.2f} Å "
-            f"(most {row['moved_most']:.2f}){note}")  # fmt: skip
-        rows.append(row)
-    return rows
+        log(f"  {name}: closest receptor heavy atom {row['closest_before']:.2f} -> "
+            f"{row['closest_after']:.2f} Å{note}")  # fmt: skip
+        lig_rows.append(row)
+    res = np.asarray(receptor.atoms["residue"])[heavy]
+    moved_rem = np.linalg.norm(rem_xyz[heavy] - posed[heavy], axis=1)
+    moved = np.linalg.norm(new[heavy] - posed[heavy], axis=1)
+    chains = np.asarray(receptor.chains["name"])
+    res_rows = []
+    for r in np.unique(res):
+        most = float(moved[res == r].max())
+        if most < MOVED_A:
+            continue
+        res_rows.append({"chain": str(chains[receptor.residues["chain"][r]]),
+                         "resid": int(receptor.residues["resid"][r]),
+                         "resname": str(receptor.residues["name"][r]),
+                         "moved_rem": round(float(moved_rem[res == r].max()), 3),
+                         "moved": round(most, 3)})  # fmt: skip
+    res_rows.sort(key=lambda x: -x["moved"])
+    top = ", ".join(f"{x['resname']}{x['resid']} {x['moved']:.2f}" for x in res_rows[:5])
+    log(f"  {len(res_rows)} residues moved at least {MOVED_A:g} Å" + (f" (most: {top} Å)"
+        if top else ""))  # fmt: skip
+    return lig_rows, res_rows
 
 
-def write(work: Path, rows, mols) -> None:
-    """``rem.csv`` (a row per ligand) and ``ligands_rem.sdf`` (the relieved poses,
-    with every field the ligands came with) in ``work``."""
-    from rdkit import Chem
+def write(work: Path, receptor, lig_rows, res_rows) -> None:
+    """``receptor_rem.pdb`` (the relaxed receptor), ``rem.csv`` (a row per ligand)
+    and ``rem_residues.csv`` (a row per residue that moved) in ``work``."""
+    import boonza
 
-    with (Path(work) / "rem.csv").open("w", newline="") as fh:
-        w = csv.DictWriter(fh, list(rows[0]))
-        w.writeheader()
-        w.writerows(rows)
-    with Chem.SDWriter(str(Path(work) / "ligands_rem.sdf")) as w:
-        for m in mols:
-            w.write(m)
+    work = Path(work)
+    boonza.save(receptor, work / "receptor_rem.pdb")
+    for path, rows, head in ((work / "rem.csv", lig_rows, ["ligand", "closest_before",
+                              "closest_after"]),
+                             (work / "rem_residues.csv", res_rows, ["chain", "resid", "resname",
+                              "moved_rem", "moved"])):  # fmt: skip
+        with path.open("w", newline="") as fh:
+            w = csv.DictWriter(fh, head)
+            w.writeheader()
+            w.writerows(rows)

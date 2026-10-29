@@ -1,6 +1,7 @@
-"""boonza fep prep --rem: a ligand pose that clashes with the receptor, relieved
-by a soft minimization of the ligand alone, its stereochemistry held and the
-receptor left exactly as it was (boonza.fep.relief)."""
+"""boonza fep prep --rem: a receptor relaxed around ligand poses that clash with
+it, the poses held exactly, a soft minimization (REM) and then the force
+field's (EM), the pocket's side chains free and their stereocentres held
+(boonza.fep.relief)."""
 
 import csv
 
@@ -26,63 +27,63 @@ def _mol(smiles, name, seed=7):
     return m
 
 
-def _cip(m) -> dict:
-    m = Chem.Mol(m)
-    Chem.AssignStereochemistryFrom3D(m)
-    return {a.GetIdx(): a.GetProp("_CIPCode") for a in m.GetAtoms() if a.HasProp("_CIPCode")}
+def _improper(xyz, t) -> float:
+    a, b, c, d = (np.asarray(xyz[i], float) for i in t)
+    n1, n2 = np.cross(b - a, c - b), np.cross(c - b, d - c)
+    return float(np.degrees(np.arctan2(np.dot(np.cross(n1, n2), (c - b) / np.linalg.norm(c - b)),
+                                       np.dot(n1, n2))))  # fmt: skip
 
 
-def test_held_torsions():
-    m = _mol("C/C=C/[C@H](F)Cl", "x")
-    torsions = relief.held_torsions(m)
-    centre = next(a.GetIdx() for a in m.GetAtoms() if a.GetSymbol() == "C" and a.GetDegree() == 4
-                  and any(n.GetSymbol() == "F" for n in a.GetNeighbors()))  # fmt: skip
-    double = next(b for b in m.GetBonds() if b.GetBondType() == Chem.BondType.DOUBLE)
-    assert len(torsions) == 2
-    assert any(t[1] == centre for t in torsions)  # about the stereocentre
-    pair = {double.GetBeginAtomIdx(), double.GetEndAtomIdx()}
-    assert any({t[1], t[2]} == pair for t in torsions)  # across the double bond
-    assert relief.held_torsions(_mol("c1ccccc1", "benzene")) == []  # nothing to hold
+def test_held_torsions_and_the_pocket():
+    s = boonza.peptide("GIT")
+    torsions = relief.held_torsions(s, [0, 1, 2])
+    name = np.asarray(s.atoms["name"])
+    assert len(torsions) == 4  # Gly none; Ile and Thr each CA and CB
+    assert sorted(str(name[t[1]]) for t in torsions) == ["CA", "CA", "CB", "CB"]
+    free = name[relief.free_atoms(s, [1])]
+    assert "CB" in free and "CD1" in free and not set(free) & {"N", "CA", "C", "O"}
 
 
 def _clashing(tmp_path, mols, depth=1.2):
-    """A charged-termini tripeptide slid against the first ligand until their closest
-    heavy atoms are ``depth`` Å apart (a substituent into a side chain), the
-    ligands' SDF, and the peptide's PDB."""
+    """A charged-termini Ala-Lys-Ala slid, Lys's NZ first, against the first ligand
+    until their closest heavy atoms are ``depth`` Å apart (a side chain where a
+    ligand was placed), the ligands' SDF, and the peptide's PDB."""
     from boonza.viewer.edit import protonate
 
     sdf = tmp_path / "ligands.sdf"
     with Chem.SDWriter(str(sdf)) as w:
         for m in mols:
             w.write(m)
-    s = boonza.peptide("GAG")
+    s = boonza.peptide("AKA")
     s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
     protonate(s)
     pos = np.asarray(s.positions) - np.asarray(s.positions).mean(0)
+    tip = pos[int(np.flatnonzero(np.asarray(s.atoms["name"]) == "NZ")[0])]
+    lead = -tip / np.linalg.norm(tip)  # from NZ back to the peptide's centre
     lig = mols[0].GetConformer().GetPositions()
     lig = lig[[a.GetAtomicNum() > 1 for a in mols[0].GetAtoms()]]
     heavy = np.asarray(s.atoms["anum"]) > 1
-    far, near = 20.0, 0.0  # along x from the ligand's centre: closest-distance bisection
+    far, near = 20.0, 0.0  # NZ toward the ligand's centre: closest-distance bisection
     for _ in range(40):
         mid = 0.5 * (far + near)
-        at = pos + lig.mean(0) + np.array([mid, 0.0, 0.0])
+        at = pos + lig.mean(0) + mid * lead
         d = np.sqrt(((at[heavy][:, None] - lig[None]) ** 2).sum(-1)).min()
         far, near = (mid, near) if d > depth else (far, mid)
-    s.positions = pos + lig.mean(0) + np.array([far, 0.0, 0.0])
+    s.positions = pos + lig.mean(0) + far * lead
     boonza.save(s, tmp_path / "receptor.pdb")
     return sdf, tmp_path / "receptor.pdb"
 
 
 @needs_amber
-def test_a_clash_is_relieved_and_the_receptor_kept(tmp_path):
+def test_the_receptor_makes_room_and_the_pose_is_kept(tmp_path):
     from boonza import gaff, viparr
     from boonza.fep import prep as fep_prep
     from boonza.fep.cli import FEP_DEFAULTS
     from boonza.md.config import build_parser, parse_arguments
     from boonza.md.prepare import forcefields, load_input
 
-    mol = _mol("C[C@H](O)c1ccccc1", "phenylethanol")
-    sdf, pdb = _clashing(tmp_path, [mol])
+    mols = [_mol("C[C@H](O)c1ccccc1", "phenylethanol"), _mol("Cc1ccccc1", "toluene")]
+    sdf, pdb = _clashing(tmp_path, mols)
     args = parse_arguments([str(pdb), "--workdir", str(tmp_path / "w"), "--platform", "CPU"],
                            build_parser("boonza fep prep"))  # fmt: skip
     for k, v in FEP_DEFAULTS.items():
@@ -90,27 +91,28 @@ def test_a_clash_is_relieved_and_the_receptor_kept(tmp_path):
     mols, ligs, names = fep_prep.load_ligands(sdf)
     receptor = load_input(str(pdb), lambda *_: None)
     before = np.asarray(receptor.positions, float).copy()
+    poses = [np.asarray(g.positions, float).copy() for g in ligs]
     assert relief.clashes(receptor, ligs, names)[0][1] < 1.5  # heavy atoms all but on top
     _, ff = forcefields(args)
     both = receptor.copy()
-    both.append(ligs[0])
+    for g in ligs:
+        both.append(g)
     patch = gaff.gaff2_patch(both, ff, charge_geometry="reference")
     host = gaff.host_index(ff)
     ff[host] = viparr.merge_forcefields(ff[host], patch)
-    stereo = _cip(mols[0])
-    heavy = np.asarray(ligs[0].atoms["anum"]) > 1
-    rec = before[np.asarray(receptor.atoms["anum"]) > 1]
-    posed = np.asarray(ligs[0].positions, float)[heavy]
-    far = np.sqrt(((posed[:, None] - rec[None]) ** 2).sum(-1)).min(1) > 3.0
-    rows = relief.relieve(receptor, ligs, mols, names, ff, args, log=lambda *_: None)
-    (row,) = rows
-    assert row["closest_before"] < 1.5 and row["closest_after"] > 2.0
-    # the clash moved out of; the rest of the pose, tethered, kept where it was
-    shift = np.linalg.norm(np.asarray(ligs[0].positions, float)[heavy] - posed, axis=1)
-    assert far.sum() >= 3 and shift[far].max() < 0.5
-    assert np.array_equal(np.asarray(receptor.positions, float), before)  # the receptor untouched
-    assert _cip(mols[0]) == stereo and stereo  # the stereocentre held, R stays R
-    assert np.allclose(mols[0].GetConformer().GetPositions(), ligs[0].positions)
+    residues = relief.pocket(receptor, ligs)
+    torsions = relief.held_torsions(receptor, residues)
+    lig_rows, res_rows = relief.relieve(receptor, ligs, names, ff, args, log=lambda *_: None)
+    after = np.asarray(receptor.positions, float)
+    assert lig_rows[0]["closest_before"] < 1.5 and lig_rows[0]["closest_after"] > 2.0
+    for g, p in zip(ligs, poses, strict=True):  # the poses exactly as they were
+        assert np.array_equal(np.asarray(g.positions, float), p)
+    name = np.asarray(receptor.atoms["name"])
+    backbone = np.isin(name, ("N", "CA", "C", "O"))
+    assert np.linalg.norm(after[backbone] - before[backbone], axis=1).max() < 0.5
+    assert res_rows[0]["resname"] == "LYS" and res_rows[0]["moved"] > 0.5  # room made
+    for t in torsions:  # every stereocentre's handedness kept
+        assert np.sign(_improper(after, t)) == np.sign(_improper(before, t))
 
 
 @needs_amber
@@ -128,10 +130,12 @@ def test_prep_rem_writes_what_it_did(tmp_path, capsys):
     assert cli.main(["prep", str(pdb), "--ligands", str(sdf), "--workdir", str(work), "--rem",
                      *common]) == 0  # fmt: skip
     out = capsys.readouterr().out
-    assert "REM: relieving each ligand's pose" in out and "benzene: closest heavy atom" in out
+    assert "REM, then EM" in out and "benzene: closest receptor heavy atom" in out
     rows = list(csv.DictReader((work / "rem.csv").open()))
     assert [r["ligand"] for r in rows] == ["benzene", "toluene"]
     assert all(float(r["closest_after"]) > float(r["closest_before"]) for r in rows)
-    relieved = list(Chem.SDMolSupplier(str(work / "ligands_rem.sdf"), removeHs=False))
-    assert [m.GetProp("_Name") for m in relieved] == ["benzene", "toluene"]
+    moved = list(csv.DictReader((work / "rem_residues.csv").open()))
+    assert moved and moved[0]["resname"] == "LYS"
+    relaxed = boonza.load(work / "receptor_rem.pdb")
+    assert relaxed.natoms == boonza.load(pdb).natoms
     assert (work / "edges").is_dir() and (work / "commands.txt").exists()

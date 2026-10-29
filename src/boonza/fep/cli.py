@@ -16,9 +16,9 @@ energy (a leg in water, one in vacuum), and the charge cannot change; with
 --phase octanol or wet-octanol, a relative transfer free energy from water to
 1-octanol (a leg in water, one in an octanol box built once in the work
 directory), whose change of log P result reports beside it.  With a receptor,
---rem first relieves each ligand's pose where it clashes with the receptor:
-a soft minimization of the ligand alone, the receptor held, so every edge
-still meets the same receptor (boonza.fep.relief).
+--rem first relaxes the receptor around every ligand's pose, the ligands held
+as posed: a soft minimization (REM), then one with the force field (EM), so
+every edge still meets one and the same receptor (boonza.fep.relief).
 """
 
 from __future__ import annotations
