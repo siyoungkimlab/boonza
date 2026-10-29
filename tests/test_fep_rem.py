@@ -13,7 +13,7 @@ import boonza
 from boonza.fep import cli, relief
 
 openmm = pytest.importorskip("openmm")
-from test_fep_pipeline import _amber_tools  # noqa: E402
+from test_fep_pipeline import DATA, _amber_tools  # noqa: E402
 
 needs_amber = pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
 
@@ -99,13 +99,10 @@ def test_a_clash_is_relieved_and_the_receptor_kept(tmp_path):
 
 @needs_amber
 def test_prep_rem_writes_what_it_did(tmp_path, capsys):
-    mols = [_mol("c1ccccc1", "benzene"), _mol("Cc1ccccc1", "toluene")]
-    # toluene in benzene's place, as a series is posed
-    ref = mols[0].GetConformer().GetPositions()
-    conf = mols[1].GetConformer()
-    shift = ref.mean(0) - conf.GetPositions().mean(0)
-    for k in range(mols[1].GetNumAtoms()):
-        conf.SetAtomPosition(k, (conf.GetPositions()[k] + shift).tolist())
+    # posed on top of each other, as a series is (the mapping reads their poses)
+    supplier = Chem.SDMolSupplier(str(DATA / "benzene_modifications.sdf"), removeHs=False)
+    by_name = {m.GetProp("_Name"): m for m in supplier}
+    mols = [by_name["benzene"], by_name["toluene"]]
     sdf, pdb = _clashing(tmp_path, mols)
     work = tmp_path / "work"
     common = ["--windows", "3", "--repeats", "1", "--platform", "CPU"]
