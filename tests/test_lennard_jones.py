@@ -180,7 +180,9 @@ def test_final_toml_records_it(tmp_path):
         assert f"# Lennard-Jones as run: {line}" in text
         assert f'lj_switch = "{args.lj_switch}"' in text
         assert f"dispersion_correction = {str(args.dispersion_correction).lower()}" in text
-        # and the file is a settings file still: a restart (or --config) reads it back
+        if args.model != "aa":
+            continue  # a coarse-grained final.toml is read back by a restart, not --config
+        # and an all-atom one is a settings file still: --config reads it back
         again = parse_arguments(["x", "--config", str(path)])
         assert (again.lj_switch, again.dispersion_correction) == (args.lj_switch,
                                                                   args.dispersion_correction)
