@@ -1138,9 +1138,16 @@ def test_series_of_designs(served, tmp_path):
     assert [(v.models[k].name, v.models[k].group) for k in added] == [
         ("LIG1", "series 2"), ("LIG2", "series 2")]  # fmt: skip
     assert v.session(added[1]).system.natoms == 14
-    # a plain SDF is a model as before
+    # an SDF of one molecule is a model as before
     boonza.save(boonza.from_smiles("CCO"), tmp_path / "plain.sdf")
     assert [v.models[k].group for k in v.open(tmp_path / "plain.sdf")] == ["files"]
+    # any other SDF of several is a series: a member per record, by its title
+    added = v.open(Path(__file__).parent / "data" / "fep" / "benzene_modifications.sdf")
+    assert len(added) == 7 and {v.models[k].group for k in added} == {"series 3"}
+    assert [v.models[k].name for k in added[:3]] == ["benzene", "toluene", "phenol"]
+    assert v.session(added[1]).system.natoms == 15  # toluene alone
+    v.add_to_series(added[0])  # and grows like any other
+    assert v.models[-1].group == "series 3"
 
 
 @pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
