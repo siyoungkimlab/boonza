@@ -19,6 +19,14 @@ directory), whose change of log P result reports beside it.  With a receptor,
 --rem first relaxes the receptor around every ligand's pose, the ligands held
 as posed: a soft minimization (REM), then one with the force field (EM), so
 every edge still meets one and the same receptor (boonza.fep.relief).
+
+    boonza fep prep receptor.pdb --ligands more.sdf --workdir boonza_fep --extend
+
+adds ligands to a prep: the SDF holds its ligands as they were and the new
+ones; only the edges that join the new ones are built (commands_new.txt), and
+every edge already run is reused.  result writes the ligands' SDF back with
+the results as fields (results_ligands.sdf), and beside each correlation plot
+its data and plot_correlation.py, which redraws it without boonza.
 """
 
 from __future__ import annotations
@@ -61,6 +69,10 @@ def _prep(argv) -> int:
     g.add_argument("--octanol-box", dest="octanol_box", metavar="DMS",
                    help="an octanol box built before (WORKDIR/octanol/box.dms of another "
                         "prep), instead of packing and equilibrating one")  # fmt: skip
+    g.add_argument("--extend", action="store_true",
+                   help="add ligands to the prep already in --workdir: --ligands holds its "
+                        "ligands (as they were) and the new ones; only edges that join the new "
+                        "ones are built, and every edge already run is reused")  # fmt: skip
     args = parse_arguments(argv, parser)
     for k, v in FEP_DEFAULTS.items():
         if k not in args.specified and not (k == "integration_fs" and "hmr" in args.specified
@@ -77,7 +89,8 @@ def _prep(argv) -> int:
              cofactors=x.get("cofactor_sdf") or (),
              charge_windows=x.get("charge_windows", CHARGE_WINDOWS),
              charge_production_ns=x.get("charge_production_ns", CHARGE_PRODUCTION_NS),
-             phase=x.get("phase") or "vacuum", octanol_box=x.get("octanol_box"))  # fmt: skip
+             phase=x.get("phase") or "vacuum", octanol_box=x.get("octanol_box"),
+             extend=bool(x.get("extend")))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)
         return 1
@@ -111,9 +124,13 @@ def _result(argv) -> int:
                    help="measured values to compare with, by ligand name: one of dG "
                         "(kcal/mol), KD_nM, KD_uM or pIC50 per record (default: those the "
                         "ligands' SDF gave prep)")  # fmt: skip
+    p.add_argument("--ligands", metavar="SDF",
+                   help="the SDF to write back with the results as fields, for a work "
+                        "directory prepared before prep kept one (default: "
+                        "WORKDIR/ligands.sdf)")  # fmt: skip
     a = p.parse_args(argv)
     try:
-        results(a.workdir, experimental=a.experimental)
+        results(a.workdir, experimental=a.experimental, ligands=a.ligands)
     except (ValueError, FileNotFoundError) as e:
         print(f"boonza fep result: error: {e}", file=sys.stderr)
         return 1

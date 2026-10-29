@@ -44,3 +44,19 @@ def test_the_estimate_recovers_true_values_and_cycles_close():
 def test_unconnected_ligands_are_refused():
     with pytest.raises(ValueError, match="connect"):
         network.estimate(3, [(0, 1, 1.0, 0.1)])
+
+
+def test_ligands_added_later_join_the_network_without_touching_it():
+    import networkx as nx
+
+    ligs = list(Chem.SDMolSupplier(str(DATA / "benzene_modifications.sdf"), removeHs=False))
+    first = network.edges(ligs[:4])
+    existing = [(e.a, e.b) for e in first]
+    added = network.extend(ligs, existing, [4, 5, 6])
+    assert added and all({e.a, e.b} & {4, 5, 6} for e in added)  # only pairs with a new one
+    assert not {(e.a, e.b) for e in added} & set(existing)
+    g = nx.Graph(existing + [(e.a, e.b) for e in added])
+    assert nx.is_connected(g) and g.number_of_nodes() == len(ligs)
+    assert all(g.degree[k] >= 2 for k in (4, 5, 6))  # every new ligand in a cycle
+    with pytest.raises(ValueError, match="no new"):
+        network.extend(ligs, existing, [])

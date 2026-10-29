@@ -8,15 +8,15 @@ left out, which a relative comparison mostly does not see), a ΔG as it is.
 
 Relative free energies fix every ligand's ΔG but for one constant, so the
 calculated ΔGs are shifted to the measured ones' mean over the ligands that have
-both; an edge's ΔΔG needs no shift.  Each plot is written twice, for a white and
-a black background (``*_white.pdf`` in black ink, ``*_black.pdf`` in white),
-transparent, with its text kept as text.
+both; an edge's ΔΔG needs no shift, and a ligand without a measured value is
+shifted with the rest and drawn as a dashed line at its prediction.  The plots
+are drawn by :mod:`boonza.fep.plot_correlation`, which result copies beside
+their data so they can be redrawn and tailored without boonza.
 """
 
 from __future__ import annotations
 
 import math
-import warnings
 
 import numpy as np
 
@@ -139,93 +139,35 @@ def describe(stats: dict) -> list[str]:
 
 # --- plots -------------------------------------------------------------------------------------
 
-#: the user's figure style: Arial, 14 pt ticks and 16 pt labels, transparent,
-#: text kept editable (TrueType); one file per background, ink to match
-THEMES = {"white": "black", "black": "white"}
-FONT = "Arial"
-
-
-def _style(ink: str) -> dict:
-    return {"font.family": FONT, "font.size": 14, "axes.labelsize": 16, "axes.titlesize": 16,
-            "xtick.labelsize": 14, "ytick.labelsize": 14, "legend.fontsize": 14,
-            "pdf.fonttype": 42, "ps.fonttype": 42, "svg.fonttype": "none",
-            "text.usetex": False, "mathtext.default": "regular",
-            "figure.facecolor": "none", "axes.facecolor": "none", "savefig.facecolor": "none",
-            "savefig.edgecolor": "none", "savefig.transparent": True, "legend.framealpha": 0,
-            "text.color": ink, "axes.edgecolor": ink, "axes.labelcolor": ink,
-            "xtick.color": ink, "ytick.color": ink, "legend.edgecolor": ink,
-            "errorbar.capsize": 3, "lines.linewidth": 1.5, "axes.linewidth": 1.0,
-            "savefig.bbox": "tight"}  # fmt: skip
-
-
-def _font_ready(log) -> bool:
-    from matplotlib import font_manager
-
-    try:
-        font_manager.findfont(FONT, fallback_to_default=False)
-        return True
-    except ValueError:
-        pass
-    import os
-    import sys
-    from pathlib import Path
-
-    for folder in (Path(os.environ.get("CONDA_PREFIX", sys.prefix)) / "fonts",
-                   Path.home() / ".fonts", Path.home() / ".local/share/fonts"):  # fmt: skip
-        for p in sorted(folder.glob("[Aa]rial*.ttf")):
-            font_manager.fontManager.addfont(str(p))
-    try:
-        font_manager.findfont(FONT, fallback_to_default=False)
-        return True
-    except ValueError:
-        log(f"  warning: {FONT} is not installed, so the plots use matplotlib's own font; "
-            "'conda install -c conda-forge mscorefonts' puts it in this env")  # fmt: skip
-        return False
-
 
 def correlation_plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG",
-                     stats=None, log=print) -> list:  # fmt: skip
-    """Calculated against measured, with y = x and a ±1 kcal/mol band, written as
-    ``<path_stem>_white.pdf`` and ``_black.pdf``; the files, or [] without matplotlib."""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib as mpl
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return []
+                     stats=None, log=print, names=None, predicted=()) -> list:  # fmt: skip
+    """Calculated against measured, with y = x and a ±1 kcal/mol band, and each of
+    ``predicted`` [(name, ΔG)] -- calculated, not measured -- a dashed horizontal
+    line; written as ``<path_stem>_white.pdf`` and ``_black.pdf``, the data beside
+    them (``<path_stem>.csv``, ``.json``) and the script that drew them
+    (``plot_correlation.py``, to redraw and tailor); the files, or [] without
+    matplotlib."""
+    import filecmp
+    import shutil
     from pathlib import Path
 
+    from . import plot_correlation
+
     stem = Path(path_stem)
-    stem.parent.mkdir(parents=True, exist_ok=True)
-    calc, exp = np.asarray(calc, float), np.asarray(exp, float)
-    lo = float(min(calc.min(), exp.min())) - 1.0
-    hi = float(max(calc.max(), exp.max())) + 1.0
-    font = _font_ready(log)
-    written = []
-    for background, ink in THEMES.items():
-        style = _style(ink)
-        if not font:
-            style.pop("font.family")
-        with mpl.rc_context(style), warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)  # a missing glyph, named above
-            fig, ax = plt.subplots(figsize=(4.5, 4.5))
-            line = np.array([lo, hi])
-            ax.fill_between(line, line - 1.0, line + 1.0, color=ink, alpha=0.12, lw=0)
-            ax.plot(line, line, color=ink, lw=1.0)
-            ax.errorbar(exp, calc, xerr=exp_err, yerr=calc_err, fmt="o", color="tab:blue",
-                        ecolor="tab:blue", ms=6, mew=0)  # fmt: skip
-            ax.set_xlim(lo, hi)
-            ax.set_ylim(lo, hi)
-            ax.set_aspect("equal")
-            ax.set_xlabel(f"experimental {quantity} (kcal/mol)")
-            ax.set_ylabel(f"calculated {quantity} (kcal/mol)")
-            if stats:
-                ax.text(0.04, 0.96, "\n".join(describe(stats)), transform=ax.transAxes,
-                        va="top", ha="left", fontsize=12)  # fmt: skip
-            path = stem.with_name(f"{stem.name}_{background}.pdf")
-            fig.savefig(path, format="pdf", transparent=True)
-            plt.close(fig)
-            written.append(path)
-    return written
+    names = list(names) if names is not None else [str(k + 1) for k in range(len(calc))]
+    lines = describe(stats) if stats else []
+    plot_correlation.write_data(stem, names, calc, exp, calc_err, exp_err, quantity, lines,
+                                predicted)  # fmt: skip
+    script, copy = Path(plot_correlation.__file__), stem.parent / "plot_correlation.py"
+    if not copy.exists():
+        shutil.copyfile(script, copy)
+    elif not filecmp.cmp(script, copy, shallow=False):
+        log(f"  {copy} differs from boonza's (edited?): left as it is")
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError:
+        return []
+    return plot_correlation.plot(stem, calc, exp, calc_err=calc_err, exp_err=exp_err,
+                                 quantity=quantity, lines=lines, predicted=predicted,
+                                 log=log)  # fmt: skip
