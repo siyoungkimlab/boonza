@@ -437,7 +437,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
 
         if getattr(args, "rem", False):
             log("REM, then EM: the receptor relaxed around every ligand's pose (the "
-                "ligands held as posed, the pocket's side chains free)")  # fmt: skip
+                "ligands held as posed, the side chains that reach a ligand free)")  # fmt: skip
             relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log))
         else:
             close = relief.clashes(receptor, ligs, names)

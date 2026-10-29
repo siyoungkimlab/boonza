@@ -12,15 +12,16 @@ soft nonbonded interactions (REM, :mod:`boonza.rem`) and then with the real forc
 field (EM).  One receptor comes out, room made in it for every ligand, so every
 edge still meets one and the same receptor.
 
-In REM the side chains of residues within :data:`POCKET_A` of a ligand are free,
+In REM the side chains of residues within :data:`FREE_A` of a ligand are free,
 and the backbone, the side chains farther out and any cofactor are held to the
-posed receptor (:data:`HOLD_KJ`); Coulomb is left out (``C=0``): unscreened, in
-vacuum, charged side chains would be drawn to each other, and a clash is a
-matter of overlap, which the soft repulsion settles.  Soft potentials let atoms
+posed receptor (:data:`HOLD_KJ`).  REM's own soft, bounded Coulomb stays: without
+it a hydrogen bond's or a salt bridge's atoms sit inside each other's
+Lennard-Jones radius with nothing holding them there (on 5HZN, Lys1030 and
+Glu1047 pulled 3 Å apart).  Soft potentials let atoms
 pass through each other, so the free residues' stereocentres (CA, and Ile's and
 Thr's CB) are held as they were.  EM then finishes with the force field's own
-Lennard-Jones and Coulomb on what REM was free to move: the pocket's side
-chains, held to where REM left them (:data:`EM_HOLD_KJ`), and every hydrogen;
+Lennard-Jones and Coulomb on what REM was free to move: the free side chains,
+held firmly to where REM left them (:data:`EM_HOLD_KJ`), and every hydrogen;
 the rest of the receptor stays fixed, since in vacuum, unscreened, its charges
 would pull at each other.  Each leg's own minimization and equilibration,
 in water, follow.
@@ -35,15 +36,17 @@ import numpy as np
 
 #: ligand and receptor heavy atoms nearer than this (Å) are a clash
 CLASH_A = 2.2
-#: residues with a heavy atom this near a ligand's (Å): side chains free in REM
-POCKET_A = 6.0
+#: residues with a heavy atom this near a ligand's (Å): side chains free in REM (all
+#: within 6 Å on 5HZN let 24 move half an ångström or more, in no clash)
+FREE_A = 3.0
 #: what holds the backbone, the side chains farther out and cofactors to the posed
 #: receptor in REM (kJ/mol/nm^2)
 HOLD_KJ = 1.0e4
-#: what holds the pocket's side-chain heavy atoms to where REM left them in EM
-#: (kJ/mol/nm^2); the rest of the receptor is fixed there (1000 let a terminus move
-#: 2.8 Å toward another, in vacuum)
-EM_HOLD_KJ = 1.0e4
+#: what holds the free side chains' heavy atoms to where REM left them in EM
+#: (kJ/mol/nm^2), the rest of the receptor fixed there: in vacuum, unscreened,
+#: charges pull (1000 let a terminus move 2.8 Å toward another, 10000 an Asp 2.4 Å);
+#: an overlap REM left pushes far harder
+EM_HOLD_KJ = 1.0e5
 #: residues whose heavy atoms moved at least this (Å) are listed in rem_residues.csv
 MOVED_A = 0.1
 _BACKBONE = ("N", "CA", "C", "O", "OXT")
@@ -76,7 +79,7 @@ def clashes(receptor, ligs, names) -> list[tuple[str, float]]:
     return sorted(out, key=lambda x: x[1])
 
 
-def pocket(receptor, ligs, within: float = POCKET_A) -> np.ndarray:
+def pocket(receptor, ligs, within: float = FREE_A) -> np.ndarray:
     """The receptor's protein residues (indices) with a heavy atom within ``within``
     Å of any ligand's."""
     from scipy.spatial import cKDTree
@@ -199,11 +202,11 @@ def relieve(receptor, ligs, names, ff, args, log=print) -> tuple[list[dict], lis
     free = np.zeros(n_rec, bool)
     free[free_atoms(receptor, residues)] = True
     heavy = _heavy(receptor)
-    log(f"  {len(residues)} residues within {POCKET_A:g} Å of a ligand: side chains free")
+    log(f"  {len(residues)} residues within {FREE_A:g} Å of a ligand: side chains free")
     soft = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(system))
     _hold(soft, rec[heavy[~free[heavy]]], xyz, HOLD_KJ, "k_receptor")
     torsions = [tuple(int(rec[k]) for k in t) for t in held_torsions(receptor, residues)]
-    after_rem, report = relax(soft, xyz, torsions=torsions, C=0.0, platform=platform)
+    after_rem, report = relax(soft, xyz, torsions=torsions, platform=platform)
     lig_atoms = np.concatenate(groups)
     after_rem[lig_atoms] = xyz[lig_atoms]  # as posed, to the last digit
     hydrogen = np.ones(n_rec, bool)
