@@ -62,7 +62,8 @@ def _omm():
 def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
               constraints: bool = True, dispersion_correction: bool = True,
               ewald_tolerance: float = 5e-4, epsilon_r: float = 1.0,
-              epsilon_rf: float | None = None, lj_shift: bool = False):  # fmt: skip
+              epsilon_rf: float | None = None, lj_shift: bool = False,
+              lj_switch: str = "none", switch_distance: float | None = None):  # fmt: skip
     """(Topology, System, positions) for OpenMM; cutoff in Å.
 
     ``nonbonded_method`` is an OpenMM NonbondedForce method name (NoCutoff,
@@ -78,9 +79,30 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
     ``lj_shift`` shifts every Lennard-Jones pair to zero at the cutoff.  Martini
     uses all three: ``epsilon_r=15, epsilon_rf=0, lj_shift=True``, cutoff 11 Å,
     and no dispersion correction.
+
+    ``lj_switch`` brings Lennard-Jones to zero between ``switch_distance`` (Å)
+    and the cutoff: ``"force"`` is CHARMM's force switch (Steinbach & Brooks
+    1994, CHARMM's vfswitch and GROMACS's force-switch), which tapers the force
+    and so shifts the energy below the switch by a constant; ``"potential"`` is
+    OpenMM's own switch, which tapers the energy (OpenFF's).  A force switch
+    leaves nothing past the cutoff for a dispersion correction to stand for, so
+    the two together are refused.
     """
     if epsilon_r <= 0:
         raise ValueError(f"epsilon_r must be positive, not {epsilon_r}")
+    if lj_switch not in ("none", "force", "potential"):
+        raise ValueError(f"lj_switch is 'none', 'force' or 'potential', not {lj_switch!r}")
+    if lj_switch != "none":
+        if lj_shift:
+            raise ValueError("Lennard-Jones is shifted or switched, not both")
+        if nonbonded_method == "NoCutoff":
+            raise ValueError("a switch works up to a cutoff, which NoCutoff does not have")
+        if switch_distance is None or not 0 < switch_distance < cutoff:
+            raise ValueError(f"the switch has to start inside the cutoff ({cutoff} Å), "
+                             f"not at {switch_distance}")  # fmt: skip
+        if lj_switch == "force" and dispersion_correction:
+            raise ValueError("a force switch takes no dispersion correction: CHARMM runs "
+                             "it without one")  # fmt: skip
     if epsilon_rf is not None and nonbonded_method not in ("CutoffPeriodic",
                                                             "CutoffNonPeriodic"):  # fmt: skip
         raise ValueError("epsilon_rf is a reaction field, which needs a cutoff method")
@@ -180,7 +202,8 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
         _add_constraints(s, omm)
     _add_virtual_sites(s, omm, mm)
     _add_nonbonded(s, omm, mm, add, nonbonded_method, cutoff, dispersion_correction,
-                   ewald_tolerance, epsilon_r, epsilon_rf, lj_shift)  # fmt: skip
+                   ewald_tolerance, epsilon_r, epsilon_rf, lj_shift, lj_switch,
+                   switch_distance)  # fmt: skip
     if "posre_harm" in tables:
         t = tables["posre_harm"]
         f = mm.CustomExternalForce("0.5*(fcx*(x-x0)^2 + fcy*(y-y0)^2 + fcz*(z-z0)^2)")
@@ -412,8 +435,25 @@ def _reaction_field(epsilon_r: float, epsilon_rf: float, cutoff_nm: float):
     return inner, k, c
 
 
+def _force_switch(ron: float, roff: float) -> str:
+    """CHARMM's force-switched Lennard-Jones (Steinbach & Brooks 1994), in OpenMM's
+    expression language, over acoef/bcoef tables; ``ron`` and ``roff`` in nm.
+
+    The force goes smoothly from Lennard-Jones's at ``ron`` to zero at ``roff``;
+    integrated, the energy is A/r^12 - B/r^6 shifted by a constant below ``ron``,
+    and a tapered square between, both continuous at ``ron`` and zero at ``roff``.
+    """
+    k12, k6 = 1 / (ron**6 * roff**6), 1 / (ron**3 * roff**3)
+    c12, c6 = roff**6 / (roff**6 - ron**6), roff**3 / (roff**3 - ron**3)
+    return (f"step({ron!r} - r)*(a*(1/r^12 - {k12!r}) - b*(1/r^6 - {k6!r})) "
+            f"+ step(r - {ron!r})*(a*{c12!r}*(1/r^6 - {1 / roff**6!r})^2 "
+            f"- b*{c6!r}*(1/r^3 - {1 / roff**3!r})^2); "
+            "a = acoef(t1, t2); b = bcoef(t1, t2)")  # fmt: skip
+
+
 def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsilon_r=1.0,
-                   epsilon_rf=None, lj_shift=False):  # fmt: skip
+                   epsilon_rf=None, lj_shift=False, lj_switch="none",
+                   switch_distance=None):  # fmt: skip
     n = s.natoms
     nb = s.tables.get("nonbonded")
     sigma, eps, ptype = np.zeros(n), np.zeros(n), np.zeros(n, np.int64)
@@ -427,7 +467,8 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
         atoms = nb.atoms[:, 0]
         sigma[atoms], eps[atoms] = nb.values("sigma"), nb.values("epsilon")
         ptype[atoms] = nb.param_ids
-    custom = nb is not None and (rule == "geometric" or len(nb.overrides) > 0 or lj_shift)
+    custom = nb is not None and (rule == "geometric" or len(nb.overrides) > 0 or lj_shift
+                                 or lj_switch == "force")  # fmt: skip
     f = mm.NonbondedForce()
     methods = {"NoCutoff": f.NoCutoff, "CutoffNonPeriodic": f.CutoffNonPeriodic,
                "CutoffPeriodic": f.CutoffPeriodic, "Ewald": f.Ewald, "PME": f.PME,
@@ -438,6 +479,9 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
     f.setCutoffDistance(cutoff * NM)
     f.setEwaldErrorTolerance(tolerance)
     f.setUseDispersionCorrection(dispersion and not custom)
+    if lj_switch == "potential":
+        f.setUseSwitchingFunction(True)
+        f.setSwitchingDistance(switch_distance * NM)
     if epsilon_rf is not None:
         inner, k_rf, c_rf = _reaction_field(epsilon_r, epsilon_rf, cutoff * NM)
         f.setReactionFieldDielectric(inner)
@@ -475,6 +519,8 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
             rc = cutoff * NM
             lj = mm.CustomNonbondedForce(f"acoef(t1, t2)*(1/r^12 - {1 / rc**12!r}) "
                                          f"- bcoef(t1, t2)*(1/r^6 - {1 / rc**6!r})")  # fmt: skip
+        elif lj_switch == "force":
+            lj = mm.CustomNonbondedForce(_force_switch(switch_distance * NM, cutoff * NM))
         else:
             lj = mm.CustomNonbondedForce("acoef(t1, t2)/r^12 - bcoef(t1, t2)/r^6")
         lj.addTabulatedFunction("acoef", mm.Discrete2DFunction(types, types, acoef))
@@ -491,6 +537,9 @@ def _add_nonbonded(s, omm, mm, add, method, cutoff, dispersion, tolerance, epsil
         else:
             lj.setNonbondedMethod(lj.CutoffPeriodic)
         lj.setCutoffDistance(cutoff * NM)
+        if lj_switch == "potential":
+            lj.setUseSwitchingFunction(True)
+            lj.setSwitchingDistance(switch_distance * NM)
         lj.setUseLongRangeCorrection(dispersion and method != "NoCutoff")
         add(lj, "nonbonded_vdw")
     if extra:

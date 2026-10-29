@@ -41,6 +41,24 @@ SOLVATE_MODES = ("box", "fill", "membrane", "none")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
 PROTEIN_EXTENTS = ("matched", "cb")
+#: How Lennard-Jones ends at the cutoff: cut (none), CHARMM's force switch, the
+#: potential switch OpenMM builds in (OpenFF's), or GROMACS's potential shift
+#: (Martini, SIRAH).  The first three are all-atom choices; the shift is what a
+#: coarse-grained topology fixes, and is recorded as such.
+LJ_SWITCHES = ("none", "force", "potential", "shift")
+#: Lennard-Jones as each all-atom family was parameterized: Amber's (and GAFF2's
+#: and OPLS's) cut at 0.9 nm with a long-range dispersion correction, as pmemd
+#: runs by default; CHARMM36's force-switched from 1.0 to 1.2 nm with none, as
+#: CHARMM-GUI writes it for OpenMM -- its lipids' area per lipid was fitted so.
+LJ_CONVENTIONS = {
+    "amber": {"dispersion_correction": True, "lj_switch": "none", "lj_switch_nm": None,
+              "cutoff_nm": 0.9},
+    "charmm": {"dispersion_correction": False, "lj_switch": "force", "lj_switch_nm": 1.0,
+               "cutoff_nm": 1.2},
+}  # fmt: skip
+#: and the coarse-grained models', fixed by their topologies (GROMACS's
+#: potential-shifted Lennard-Jones, no correction: boonza.martini, boonza.sirah)
+CG_LJ = {"dispersion_correction": False, "lj_switch": "shift", "lj_switch_nm": None}
 HYDROGEN_MASS_AMU = 4.0
 HMR_INTEGRATION_FS = 4.0
 
@@ -156,6 +174,9 @@ DEFAULTS: dict = {
     "padding_nm": 1.0,
     "box_nm": None,
     "cutoff_nm": None,
+    "dispersion_correction": None,
+    "lj_switch": None,
+    "lj_switch_nm": None,
     "saltM": 0.15,
     "temperature": TEMPERATURE,
     "pressure": 1.0,
@@ -232,6 +253,7 @@ _NUMBERS = {
     "padding_nm",
     "box_nm",
     "cutoff_nm",
+    "lj_switch_nm",
     "saltM",
     "temperature",
     "pressure",
@@ -272,6 +294,7 @@ _NUMBERS = {
 }
 _INTEGERS = {"seed", "confirmation_checks"}
 _BOOLEANS = {"hmr", "rem", "early_stop", "elastic", "opm", "neutral_termini", "gromacs",
+             "dispersion_correction",
              "cofactors", "cofactor_anchors", "cofactor_side_chains", "strict_mapping",
              "trust_connectivity"}  # fmt: skip
 _CHOICES = {
@@ -286,6 +309,7 @@ _CHOICES = {
     "platform": PLATFORMS,
     "barostat": BAROSTATS,
     "solvate": SOLVATE_MODES,
+    "lj_switch": LJ_SWITCHES,
 }
 MONITOR_SELECTORS = ("monitor_ligand", "monitor_chain", "monitor_component", "monitor_selection")
 #: Settings a restart takes from ``final.toml`` unless they are given again.
@@ -631,6 +655,20 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         ("--saltM", "saltM", "NaCl added beyond neutralizing (mol/L, counted against waters)"),
         ("--cutoff-nm", "cutoff_nm", "nonbonded cutoff (nm; 0.9 Amber, 1.2 CHARMM)"),
     ])  # fmt: skip
+    box.add_argument("--dispersion-correction", dest="dispersion_correction",
+                     action=argparse.BooleanOptionalAction,
+                     help="the long-range dispersion correction to energy and pressure "
+                          "(default: as the force field was parameterized: on for Amber, "
+                          "GAFF2 and OPLS, off for CHARMM36; off under Martini and "
+                          "SIRAH)")  # fmt: skip
+    box.add_argument("--lj-switch", dest="lj_switch", choices=LJ_SWITCHES[:3],
+                     help="how Lennard-Jones ends at the cutoff: none (cut), force (CHARMM's "
+                          "force switch) or potential (OpenMM's potential switch); default: "
+                          "the force field's, none for Amber and force for CHARMM36")  # fmt: skip
+    numbers(box, [
+        ("--lj-switch-nm", "lj_switch_nm", "where the switch starts (nm; default: 1.0 for "
+                                           "CHARMM36, else 0.2 inside the cutoff)"),
+    ])  # fmt: skip
 
     run = p.add_argument_group("the simulation")
     numbers(run, [
@@ -972,6 +1010,7 @@ def finish(args) -> None:
             args.size_nm = [float(v) for v in size]
     if args.cutoff_nm is None:
         args.cutoff_nm = default_cutoff_nm(args)
+    resolve_lennard_jones(args, given)
     if args.hmr and "integration_fs" not in args.specified:
         args.integration_fs = HMR_INTEGRATION_FS
     if args.model == "sirah":
@@ -1053,10 +1092,79 @@ def go_options(args) -> dict:
             "go_res_dist": int(args.go_res_dist)}  # fmt: skip
 
 
+def forcefield_family(args) -> str:
+    """The Lennard-Jones convention of an all-atom run's force fields
+    (LJ_CONVENTIONS): CHARMM's when any of them is CHARMM, else Amber's.
+
+    A system has one Lennard-Jones treatment, so it is the bulk's -- protein,
+    water, lipids -- and a ligand's force field (GAFF2) follows it: a few dozen
+    ligand atoms bear another convention far better than a bilayer does."""
+    names = [n.lower() for entry in args.forcefields for n in entry]
+    return "charmm" if any("charmm" in n for n in names) else "amber"
+
+
 def default_cutoff_nm(args) -> float:
     """0.9 nm for Amber force fields and 1.2 nm for CHARMM, as ommflow."""
-    names = [n.lower() for entry in args.forcefields for n in entry]
-    return 1.2 if any("charmm" in n for n in names) else 0.9
+    return LJ_CONVENTIONS[forcefield_family(args)]["cutoff_nm"]
+
+
+def resolve_lennard_jones(args, given=()) -> None:
+    """Fill the dispersion correction and the switch from the force field's
+    convention (LJ_CONVENTIONS) where they are not given, and warn where a run
+    departs from it.  A coarse-grained model's are fixed by its topology."""
+    if args.model != "aa":
+        for key, value in CG_LJ.items():
+            if key in given and getattr(args, key) != value:
+                shown = toml_value(value) if value is not None else "unset"
+                raise ValueError(f"{args.model} runs Lennard-Jones as its topology does "
+                                 f"({key} = {shown})")  # fmt: skip
+            setattr(args, key, value)
+        return
+    family = forcefield_family(args)
+    conv = LJ_CONVENTIONS[family]
+    if args.lj_switch == "shift":
+        raise ValueError("lj_switch = 'shift' is the coarse-grained models'; an all-atom run "
+                         "takes 'none', 'force' or 'potential'")  # fmt: skip
+    if args.lj_switch is None:
+        args.lj_switch = conv["lj_switch"]
+    if args.dispersion_correction is None:  # a force switch leaves no tail to correct for
+        args.dispersion_correction = conv["dispersion_correction"] and args.lj_switch != "force"
+    if args.lj_switch == "none":
+        if args.lj_switch_nm is not None:
+            raise ValueError("'lj_switch_nm' is where a switch starts: give lj_switch = "
+                             "'force' or 'potential' with it")  # fmt: skip
+    else:
+        if args.lj_switch_nm is None:
+            start = conv["lj_switch_nm"] if args.lj_switch == conv["lj_switch"] else None
+            if start is None or start >= args.cutoff_nm:
+                start = round(args.cutoff_nm - 0.2, 6)
+            args.lj_switch_nm = start
+        if not 0 < args.lj_switch_nm < args.cutoff_nm:
+            raise ValueError(f"the switch has to start inside the cutoff: lj_switch_nm = "
+                             f"{args.lj_switch_nm!r}, cutoff_nm = {args.cutoff_nm!r}")  # fmt: skip
+    if args.lj_switch == "force" and args.dispersion_correction:
+        raise ValueError("a force switch takes no dispersion correction (CHARMM runs it "
+                         "without one): give --no-dispersion-correction, or another "
+                         "switch")  # fmt: skip
+    name = {"amber": "Amber, GAFF2 and OPLS were", "charmm": "CHARMM36 was"}[family]
+    departs = []
+    if args.dispersion_correction != conv["dispersion_correction"]:
+        departs.append(f"dispersion_correction = {toml_value(args.dispersion_correction)}")
+    if args.lj_switch != conv["lj_switch"]:
+        departs.append(f"lj_switch = {toml_value(args.lj_switch)}")
+    elif conv["lj_switch_nm"] is not None and args.lj_switch_nm != conv["lj_switch_nm"]:
+        departs.append(f"lj_switch_nm = {args.lj_switch_nm!r}")
+    if family == "charmm" and args.cutoff_nm != conv["cutoff_nm"]:
+        departs.append(f"cutoff_nm = {args.cutoff_nm!r}")
+    if family == "amber" and args.cutoff_nm < 0.8:
+        departs.append(f"cutoff_nm = {args.cutoff_nm!r} (under 0.8)")
+    if departs:
+        how = (f"{'with' if conv['dispersion_correction'] else 'without'} a dispersion "
+               f"correction, " + ("cut at the cutoff" if conv["lj_switch"] == "none" else
+                                 f"{conv['lj_switch']}-switched from {conv['lj_switch_nm']} nm")
+               + f", cutoff {conv['cutoff_nm']} nm")  # fmt: skip
+        warnings.warn(f"{', '.join(departs)}: {name} parameterized {how}", UserWarning,
+                      stacklevel=2)  # fmt: skip
 
 
 def toml_value(v) -> str:
@@ -1090,8 +1198,27 @@ def write_settings(path, settings: dict) -> None:
     def worth(v) -> bool:
         return v is not None and not (isinstance(v, list | tuple) and not v)
 
-    lines += [f"{k} = {toml_value(settings[k])}" for k in DEFAULTS if worth(settings.get(k))]
+    for k in DEFAULTS:
+        if not worth(settings.get(k)):
+            continue
+        if k == "dispersion_correction":
+            lines.append(f"# Lennard-Jones as run: {lennard_jones_summary(settings)}")
+        lines.append(f"{k} = {toml_value(settings[k])}")
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def lennard_jones_summary(settings: dict) -> str:
+    """One line on how a run treats Lennard-Jones beyond and at the cutoff."""
+    switch = settings.get("lj_switch")
+    rc = settings.get("cutoff_nm")
+    start = settings.get("lj_switch_nm")
+    ways = {"none": f"cut at {rc} nm",
+            "force": f"force-switched from {start} to {rc} nm",
+            "potential": f"potential-switched from {start} to {rc} nm",
+            "shift": f"potential-shifted to zero at {rc} nm"}  # fmt: skip
+    how = ways.get(switch, f"cutoff {rc} nm")
+    tail = "with" if settings.get("dispersion_correction") else "without"
+    return f"{how}, {tail} a long-range dispersion correction"
 
 
 def restore_settings(args, path) -> None:
@@ -1160,6 +1287,13 @@ solvate = "box"
 padding_nm = 1.0
 # cutoff_nm defaults to 0.9 for Amber and 1.2 for CHARMM.
 # cutoff_nm = 0.9
+# Lennard-Jones at and beyond the cutoff follows the force field unless given:
+# Amber, GAFF2 and OPLS are cut with a long-range dispersion correction; CHARMM36
+# is force-switched from 1.0 nm with none.  lj_switch is "none", "force" or
+# "potential"; final.toml records what a run used.
+# dispersion_correction = true
+# lj_switch = "none"
+# lj_switch_nm = 1.0
 # NaCl beyond neutralizing, counted against the number of waters (msys).
 saltM = 0.15
 temperature = 298.0
