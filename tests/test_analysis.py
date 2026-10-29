@@ -123,3 +123,55 @@ def test_sasa_matches_mdtraj(lysozyme):
 def test_rg_matches_mdtraj(lysozyme):
     s, ref = lysozyme
     assert radius_of_gyration(s, weights=None)[0] == pytest.approx(ref["rg"] * 10, rel=1e-5)
+
+
+def test_contact_counts_fold_a_fingerprint_back_into_families():
+    """A fingerprint is one block of residues a family, in FAMILIES order, so the
+    counts are a row-wise test on that grid."""
+    from boonza.pharmacophore import FAMILIES
+    from boonza.triage import CONTACT, contact_counts
+
+    n = len(FAMILIES)
+    grid = np.zeros((n, 5))
+    fam = {f: k for k, f in enumerate(FAMILIES)}
+    grid[fam["Donor"], [0, 1]] = 1.0  # two residues held by a donor
+    grid[fam["Acceptor"], [1, 2]] = 1.0  # one of them also by an acceptor, plus one more
+    grid[fam["Hydrophobe"], [4]] = 1.0
+    grid[fam["PosIonizable"], [3]] = CONTACT  # exactly at the threshold: counted
+
+    got = contact_counts(grid.reshape(-1), FAMILIES)
+    assert got["polar_contacts"] == 3  # residues 0, 1, 2, counted once each
+    assert got["apolar_contacts"] == 1
+    assert got["ionic_contacts"] == 1
+    assert got["contact_residues"] == 5
+
+
+def test_contact_counts_ignore_what_is_below_the_threshold():
+    from boonza.pharmacophore import FAMILIES
+    from boonza.triage import contact_counts
+
+    weak = np.full(len(FAMILIES) * 4, 0.49)
+    assert contact_counts(weak, FAMILIES) == {
+        "polar_contacts": 0, "apolar_contacts": 0,
+        "ionic_contacts": 0, "contact_residues": 0,
+    }  # fmt: skip
+    # a vector that is not a whole number of blocks says nothing rather than guessing
+    assert contact_counts(np.zeros(len(FAMILIES) * 4 + 1), FAMILIES) == {}
+
+
+def test_triage_measures_against_the_prepped_pose_too():
+    """Both references, because they answer different questions: did the ligand
+    hold still through production, and is it still where it was put.  Without a
+    reference the three columns stay undefined rather than reading as zero."""
+    import inspect
+
+    from boonza.cli import TRIAGE_FIELDS
+    from boonza.triage import Triage, triage
+
+    assert "reference" in inspect.signature(triage).parameters
+    blank = Triage()
+    for c in ("from_input", "drifted_input", "input_move"):
+        assert getattr(blank, c) != getattr(blank, c)  # nan: never measured
+        assert c in TRIAGE_FIELDS
+    # and they sit beside the ones against the first production frame
+    assert TRIAGE_FIELDS.index("from_input") == TRIAGE_FIELDS.index("from_start_max") + 1

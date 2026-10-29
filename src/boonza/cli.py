@@ -601,8 +601,11 @@ def _cg_selections(args, system, workdirs) -> None:
 
 
 TRIAGE_FIELDS = ["run", "outcome", "frames", "from_start", "drifted", "from_start_max",
+                 "from_input", "drifted_input", "input_move",
                  "from_end", "from_pose", "pose_frame", "population", "n_poses",
-                 "late_population", "late_from_pose", "moved", "settled", "note"]  # fmt: skip
+                 "late_population", "late_from_pose", "moved", "polar_contacts",
+                 "apolar_contacts", "ionic_contacts", "contact_residues",
+                 "settled", "note"]  # fmt: skip
 
 
 def _triage(args) -> int:
@@ -640,8 +643,21 @@ def _triage(args) -> int:
         try:
             system = _load(here / "solvated.dms")
             traj = open_trajectory(here / "trajectory.dcd", system)
-            got = triage(system, traj, ligand=args.ligandsel, protein=args.proteinsel,
-                         pocket=args.pocketsel, cutoff=args.pose_cutoff,
+            # the pose as prepped, when the workdir kept it: measured against as
+            # well, so a run that left during equilibration is not read as stable.
+            # boonza md copies its input in as `input` plus the original's
+            # suffixes, so the name varies with what was handed to it
+            # (input.prepped.mae, input.mae); final.toml names it outright.
+            ref = None
+            for f in sorted(here.glob("input*.mae")) + sorted(here.glob("input*.mae.gz")):
+                try:
+                    ref = _load(f)
+                    break
+                except Exception:  # not readable: measure the rest of the run anyway
+                    continue
+            got = triage(system, traj, reference=ref, ligand=args.ligandsel,
+                         protein=args.proteinsel, pocket=args.pocketsel,
+                         cutoff=args.pose_cutoff,
                          fingerprint=not args.no_fingerprint)  # fmt: skip
         except Exception as e:  # one unreadable run must not stop the other thousand
             rows.append({**row, "note": f"{type(e).__name__}: {e}"[:90]})
