@@ -691,7 +691,7 @@ def from_paths(paths, **kwargs) -> Viewer:
             columns += [c for c in v.columns if c not in columns]
         elif not p.exists():
             raise FileNotFoundError(p)
-        elif members := _series_members(p):
+        elif members := _series_members(p, {m.group for m in models}):
             models += members
         else:
             models.append(Model(p.name, lambda p=p: _session(p, **kwargs), group="files"))
@@ -699,16 +699,22 @@ def from_paths(paths, **kwargs) -> Viewer:
     return Viewer(models, title=title, columns=columns)
 
 
-def _series_members(path) -> list[Model]:
-    """An SDF a series was saved as (every record has its ``series`` field): a model
-    per record, in that series again; else none."""
+def _series_members(path, taken=()) -> list[Model]:
+    """An SDF of more than one molecule: a model per record, as a series.  One a
+    series was saved as (every record has its ``series`` field) is that series
+    again; any other is the next series not in ``taken``.  One record: none."""
     if path.suffix.lower() != ".sdf":
         return []
     from ..io.sdf import load_sdf
 
     s = load_sdf(path)
-    if not s.ncts or any("series" not in s.ct(c).keys() for c in range(s.ncts)):
+    saved = s.ncts > 0 and all("series" in s.ct(c).keys() for c in range(s.ncts))
+    if not saved and s.ncts < 2:
         return []
+    group = None
+    if not saved:
+        group = next(f"series {k}" for k in range(1, len(taken) + 2)
+                     if f"series {k}" not in taken)  # fmt: skip
     reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
     out = []
     for c in range(s.ncts):
@@ -716,8 +722,8 @@ def _series_members(path) -> list[Model]:
         session = Session(s.clone(s.ct_atoms(c)), title=name, reps=reps)
         props = s.ct(c)
         row = {"note": str(props["note"])} if "note" in props.keys() else {}
-        out.append(Model(name, lambda x=session: x, group=str(props["series"]), row=row,
-                         _session=session))  # fmt: skip
+        out.append(Model(name, lambda x=session: x, group=group or str(props["series"]),
+                         row=row, _session=session))  # fmt: skip
     return out
 
 
