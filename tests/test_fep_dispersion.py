@@ -40,8 +40,11 @@ Y {nb}
 
 def _fluid(tmp_path, na, nb, edge=4.0):
     rng = np.random.default_rng(0)
-    rows = [f"{k + 1:5d}{'X' if k < na else 'Y':<5s}{'A' if k < na else 'B':>5s}{k + 1:5d}"
-            + "".join(f"{v:8.3f}" for v in rng.uniform(0, edge, 3)) for k in range(na + nb)]
+    rows = [
+        f"{k + 1:5d}{'X' if k < na else 'Y':<5s}{'A' if k < na else 'B':>5s}{k + 1:5d}"
+        + "".join(f"{v:8.3f}" for v in rng.uniform(0, edge, 3))
+        for k in range(na + nb)
+    ]
     (tmp_path / "t.top").write_text(TOP.format(na=na, nb=nb))
     (tmp_path / "t.gro").write_text(f"t\n{na + nb}\n" + "\n".join(rows)
                                     + f"\n{edge:10.5f}{edge:10.5f}{edge:10.5f}\n")  # fmt: skip
@@ -84,8 +87,11 @@ def test_against_openmm(tmp_path):
         ctx = mm.Context(system, mm.VerletIntegrator(0.001),
                          mm.Platform.getPlatformByName("Reference"))  # fmt: skip
         ctx.setPositions(pos)
-        return ctx.getState(getEnergy=True).getPotentialEnergy().value_in_unit(
-            unit.kilocalorie_per_mole)
+        return (
+            ctx.getState(getEnergy=True)
+            .getPotentialEnergy()
+            .value_in_unit(unit.kilocalorie_per_mole)
+        )
 
     volume = 40.0**3  # Å^3
     openmm_k = (energy(True) - energy(False)) * volume
@@ -147,6 +153,7 @@ def test_a_real_leg_against_openmm(tmp_path):
     def tail(system, s):
         """OpenMM's dispersion correction of an end state (kcal/mol): its energy
         with the correction on less with it off, everything else the same."""
+
         def energy(on):
             for f in system.getForces():
                 if isinstance(f, mm.NonbondedForce):
@@ -157,8 +164,12 @@ def test_a_real_leg_against_openmm(tmp_path):
                              mm.Platform.getPlatformByName("Reference"))  # fmt: skip
             ctx.setPeriodicBoxVectors(*(np.asarray(s.cell) / 10.0 * unit.nanometer))
             ctx.setPositions(np.asarray(s.positions) / 10.0 * unit.nanometer)
-            return ctx.getState(getEnergy=True).getPotentialEnergy().value_in_unit(
-                unit.kilocalorie_per_mole)
+            return (
+                ctx.getState(getEnergy=True)
+                .getPotentialEnergy()
+                .value_in_unit(unit.kilocalorie_per_mole)
+            )
+
         return energy(True) - energy(False)
 
     volume = abs(np.linalg.det(np.asarray(leg.old.cell, float)))  # Å^3, both states' box

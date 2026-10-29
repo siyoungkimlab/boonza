@@ -87,8 +87,10 @@ def _xyz(s: System, path: Path) -> None:
     from ..elements import msys_symbol
 
     lines = [str(s.natoms), s.name or "molecule"]
-    lines += [f"{msys_symbol(int(z))} {x:.4f} {y:.4f} {w:.4f}"
-              for z, (x, y, w) in zip(s.atoms["anum"], np.asarray(s.positions), strict=True)]
+    lines += [
+        f"{msys_symbol(int(z))} {x:.4f} {y:.4f} {w:.4f}"
+        for z, (x, y, w) in zip(s.atoms["anum"], np.asarray(s.positions), strict=True)
+    ]
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -124,7 +126,7 @@ def pack(octanol: System, water: System, n_octanol: int, n_water: int, seed: int
         for _ in range(n):
             copy = template.copy()
             k = 0 if box is None else box.natoms
-            copy.positions = xyz[k:k + copy.natoms]
+            copy.positions = xyz[k : k + copy.natoms]
             if box is None:
                 box = copy
             else:
@@ -192,7 +194,7 @@ def equilibrate(box: System, ff, args, ns: float = EQUILIBRATION_NS,
     cell = state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(u.nanometer)
     out.cell = np.asarray(cell) * 10.0
     _wrap(out)
-    return out, float(np.mean(densities[chunks // 2:]))
+    return out, float(np.mean(densities[chunks // 2 :]))
 
 
 def box(work: Path, ff, args, wet: bool, path=None, log=print) -> System:

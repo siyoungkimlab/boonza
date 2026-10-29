@@ -115,8 +115,10 @@ def results(workdir, log=print, experimental=None) -> dict:
     _print_edges(rows, log)
     for r in rows:
         if r.get("kind") == "transfer":
-            log(f"{r['ligand_a']} -> {r['ligand_b']}: log P {r['dlogP']:+.2f} "
-                f"± {r['dlogP_error']:.2f} (water to octanol)")
+            log(
+                f"{r['ligand_a']} -> {r['ligand_b']}: log P {r['dlogP']:+.2f} "
+                f"± {r['dlogP_error']:.2f} (water to octanol)"
+            )
     out = {"edges": rows}
     connected = len({i for f in fits for i in f[:2]}) == len(names)
     if fits and connected:
@@ -174,8 +176,10 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
     quantity = {"binding": "ΔG", "hydration": "ΔG_hyd", "transfer": "ΔG_transfer"}[kind]
     fields = sorted({f for _, f in measured.values()})
     log("")
-    log(f"measured: {len(measured)} of {len(names)} ligands ({', '.join(fields)})"
-        + ("; pIC50 taken for a dissociation constant" if "pIC50" in fields else ""))
+    log(
+        f"measured: {len(measured)} of {len(names)} ligands ({', '.join(fields)})"
+        + ("; pIC50 taken for a dissociation constant" if "pIC50" in fields else "")
+    )
     out = {}
     if ligs:
         have = [x for x in ligs if x["ligand"] in measured]

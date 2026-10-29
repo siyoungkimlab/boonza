@@ -124,8 +124,10 @@ def test_transfer_prep_run_result(tmp_path, monkeypatch, capsys):
     assert {n: float(kept[n]["exp_dG"]) for n in measured} == measured
     assert "measured: 2 of 2 ligands (dG)" in out
     assert float(row["exp_ddG"]) == pytest.approx(measured["toluene"] - measured["benzene"])
-    assert all((work / "plots" / f).exists() for f in ("dG_white.pdf", "dG_black.pdf",
-                                                      "ddG_white.pdf", "ddG_black.pdf"))
+    assert all(
+        (work / "plots" / f).exists()
+        for f in ("dG_white.pdf", "dG_black.pdf", "ddG_white.pdf", "ddG_black.pdf")
+    )
     # a binding constant is refused for a transfer set, from an SDF given to result as well
     other = tmp_path / "kd.sdf"
     with Chem.SDWriter(str(other)) as w:
