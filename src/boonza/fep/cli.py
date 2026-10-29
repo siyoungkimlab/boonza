@@ -12,7 +12,10 @@ repartitioning with a 4 fs step.  An edge that changes the net charge turns a
 water far from the solute into Na+ or Cl- alongside, and runs openfe's longer
 protocol (22 windows, 20 ns); the network takes one only to join ligands of
 different charge.  Without a receptor, each edge is a relative hydration free
-energy (a leg in water, one in vacuum), and the charge cannot change.
+energy (a leg in water, one in vacuum), and the charge cannot change; with
+--phase octanol or wet-octanol, a relative transfer free energy from water to
+1-octanol (a leg in water, one in an octanol box built once in the work
+directory), whose change of log P result reports beside it.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ FEP_DEFAULTS = {"equilibration_ns": 1.0, "production_ns": 5.0, "hmr": True,
 def _prep(argv) -> int:
     from .. import viparr
     from ..md.config import build_parser, parse_arguments
-    from .prep import CHARGE_PRODUCTION_NS, CHARGE_WINDOWS, prep
+    from .prep import CHARGE_PRODUCTION_NS, CHARGE_WINDOWS, PHASES, prep
 
     parser = build_parser("boonza fep prep")
     g = parser.add_argument_group("fep")
@@ -47,6 +50,14 @@ def _prep(argv) -> int:
     g.add_argument("--charge-production-ns", dest="charge_production_ns", type=float,
                    help="production of an edge that changes the net charge, per window "
                         "(default: 20)")  # fmt: skip
+    g.add_argument("--phase", choices=PHASES,
+                   help="without a receptor, the leg set against the water leg: vacuum (a "
+                        "hydration free energy), or 1-octanol, dry or water-saturated as a "
+                        "shake-flask log P is measured (a water-to-octanol transfer free "
+                        "energy); neutral ligands only (default: vacuum)")  # fmt: skip
+    g.add_argument("--octanol-box", dest="octanol_box", metavar="DMS",
+                   help="an octanol box built before (WORKDIR/octanol/box.dms of another "
+                        "prep), instead of packing and equilibrating one")  # fmt: skip
     args = parse_arguments(argv, parser)
     for k, v in FEP_DEFAULTS.items():
         if k not in args.specified and not (k == "integration_fs" and "hmr" in args.specified
@@ -62,7 +73,8 @@ def _prep(argv) -> int:
              iteration_ps=x.get("iteration_ps", 2.5),
              cofactors=x.get("cofactor_sdf") or (),
              charge_windows=x.get("charge_windows", CHARGE_WINDOWS),
-             charge_production_ns=x.get("charge_production_ns", CHARGE_PRODUCTION_NS))  # fmt: skip
+             charge_production_ns=x.get("charge_production_ns", CHARGE_PRODUCTION_NS),
+             phase=x.get("phase") or "vacuum", octanol_box=x.get("octanol_box"))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)
         return 1
@@ -92,9 +104,13 @@ def _result(argv) -> int:
     p = argparse.ArgumentParser(prog="boonza fep result",
                                 description="every edge's ΔΔG and every ligand's ΔG")  # fmt: skip
     p.add_argument("workdir", nargs="?", default="boonza_fep")
+    p.add_argument("--experimental", metavar="SDF",
+                   help="measured values to compare with, by ligand name: one of dG "
+                        "(kcal/mol), KD_nM, KD_uM or pIC50 per record (default: those the "
+                        "ligands' SDF gave prep)")  # fmt: skip
     a = p.parse_args(argv)
     try:
-        results(a.workdir)
+        results(a.workdir, experimental=a.experimental)
     except (ValueError, FileNotFoundError) as e:
         print(f"boonza fep result: error: {e}", file=sys.stderr)
         return 1

@@ -4,7 +4,9 @@ Ligands come from an SDF, posed in the receptor's frame.  Each is given GAFF2
 types and AM1-BCC charges once (at a reference conformer, so in any pose the
 same; boonza.gaff), and every pair the network chooses (boonza.fep.network)
 gets two legs: in the receptor (complex) and in water (solvent); without a
-receptor, in water and in vacuum (a relative hydration free energy).
+receptor, in water and in vacuum (a relative hydration free energy), or in
+water and in 1-octanol, dry or wet (a relative water-to-octanol transfer free
+energy, boonza.fep.octanol).
 
 A leg is solvated with both ligands in place, so the waters avoid both; state
 A is that box without ligand B, state B without ligand A, and the two share
@@ -20,6 +22,8 @@ Layout::
     WORKDIR/edges/A~B/complex/   system.xml.gz, state.npz, leg.json
     WORKDIR/edges/A~B/solvent/
     WORKDIR/edges/A~B/vacuum/      (no receptor: hydration)
+    WORKDIR/edges/A~B/octanol/     (no receptor, --phase octanol: transfer)
+    WORKDIR/octanol/box.dms      the equilibrated octanol box the octanol legs tile
     WORKDIR/commands.txt
 """
 
@@ -49,6 +53,8 @@ CHARGE_CHANGE_PENALTY = 0.1
 #: and runs openfe's longer protocol (its industry benchmark's settings)
 CHARGE_WINDOWS = 22
 CHARGE_PRODUCTION_NS = 20.0
+#: without a receptor, what the water leg is set against (boonza fep prep --phase)
+PHASES = ("vacuum", "octanol", "wet-octanol")
 
 
 def load_ligands(path) -> tuple[list, list[System], list[str]]:
@@ -112,13 +118,19 @@ class Leg:
     new_system: object
     dropped: int  # atoms left out of the core because their constraints differ
     alchemical_waters: list = None  # hybrid indices of the waters that become ions
+    #: B's long-range dispersion coefficient less A's (dispersion_coefficient), for
+    #: a periodic leg; the hybrid runs without one, so result adds it back
+    dispersion_dK: float = 0.0
 
 
 def build_leg(env: System | None, lig_a: System, lig_b: System, core: dict, ff, args,
-              padding_nm: float, log=print, charge_change: int = 0):  # fmt: skip
+              padding_nm: float, log=print, charge_change: int = 0,
+              solvent: System | None = None):  # fmt: skip
     """The two end states of one leg and their hybrid: ``env`` (the receptor, or
     None in water) with ligand A, and with ligand B; ``core`` maps A's atoms to
-    B's.  ``padding_nm`` None: in vacuum, no water and no cutoff.
+    B's.  ``padding_nm`` None: in vacuum, no water and no cutoff.  ``solvent``:
+    a periodic box (octanol) to tile in whole copies instead of TIP3P, with no
+    ions, cleared where its heavy atoms come near the ligands.
 
     ``charge_change``, B's net charge less A's, is balanced by as many waters
     far from the solute becoming ions in B (openfe's, after perses): Cl- for a
@@ -142,6 +154,24 @@ def build_leg(env: System | None, lig_a: System, lig_b: System, core: dict, ff, 
     charge = float(_parameterize(solute_a, ff, False).atoms["charge"].sum())
     if padding_nm is None:  # in vacuum: the two ligands alone
         box = combined.copy()
+    elif solvent is not None:  # octanol: a box of whole copies, so no seam
+        from .octanol import OCTANOL_RADIUS
+
+        if charge_change or abs(charge) > 1e-3:
+            raise ValueError("an octanol leg takes neutral ligands: it has no ions to "
+                             "balance a charge")  # fmt: skip
+        from ..build import _tiled
+
+        edge = np.diag(np.asarray(solvent.cell, float))
+        pos = np.asarray(combined.positions, float)
+        need = float((pos.max(0) - pos.min(0)).max()) + 2 * 10.0 * padding_nm
+        need = max(need, 2 * 10.0 * args.cutoff_nm * 1.05)  # PME: wider than two cutoffs
+        # the copies tiled first, so the box is exactly as wide as they are
+        n = np.ceil(need / edge).astype(int)
+        cells = _tiled(solvent, n, np.zeros(3), edge)
+        cells.cell = np.diag(n * edge)
+        box = solvate(combined, solvent=cells, box=np.diag(cells.cell),
+                      solvent_selection="noh", min_solute_dist=OCTANOL_RADIUS)  # fmt: skip
     else:
         box = solvate(combined, thickness=10.0 * padding_nm)
         box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
@@ -175,7 +205,40 @@ def build_leg(env: System | None, lig_a: System, lig_b: System, core: dict, ff, 
             f"{'Cl-' if charge_change > 0 else 'Na+'}")  # fmt: skip
     hyb = build(sys_old, sys_new, np.asarray(old.positions) / 10.0,
                 np.asarray(new.positions) / 10.0, core_idx, environment)  # fmt: skip
-    return Leg(hyb, old, new, sys_old, sys_new, dropped, waters)
+    dk = 0.0
+    if padding_nm is not None:
+        rc = 10.0 * args.cutoff_nm
+        dk = dispersion_coefficient(new, rc) - dispersion_coefficient(old, rc)
+    return Leg(hyb, old, new, sys_old, sys_new, dropped, waters, dk)
+
+
+def dispersion_coefficient(s: System, cutoff: float) -> float:
+    """K of a periodic system's long-range dispersion correction, E = K / V
+    (K in kcal/mol Å^3, V in Å^3): the homogeneous Lennard-Jones tail past
+    ``cutoff`` (Å), 4π over every pair of A/(9 rc^9) - B/(3 rc^3), summed by
+    atom type, every pair once and no atom with itself.  OpenMM's
+    NonbondedForce counts an atom with itself too, which moves K by 1/N of
+    itself; between a leg's two end states, which share every atom but the
+    ligands', that offset all but cancels, so the difference agrees to 1/N.
+    A hybrid cannot carry the correction, so a leg's two end states' K are
+    taken here and their difference reported by result."""
+    from ..omm import _combine
+
+    nb = s.tables.get("nonbonded")
+    if nb is None or not len(nb.params):
+        return 0.0
+    rule = s.nonbonded_info.vdw_rule.lower() or "arithmetic/geometric"
+    ps = np.asarray(nb.params["sigma"], float)
+    pe = np.asarray(nb.params["epsilon"], float)
+    ss, ee = _combine(rule, ps[:, None], pe[:, None], ps[None, :], pe[None, :])
+    ss, ee = np.array(ss, float), np.array(ee, float)
+    for (p, q), vals in nb.overrides.items():
+        ss[p, q] = ss[q, p] = vals["sigma"]
+        ee[p, q] = ee[q, p] = vals["epsilon"]
+    t = 4 * ee * ss**12 / (9 * cutoff**9) - 4 * ee * ss**6 / (3 * cutoff**3)
+    n = np.bincount(np.asarray(nb.param_ids), minlength=len(ps)).astype(float)
+    pairs = 0.5 * (n @ t @ n - n @ np.diag(t))  # i < j: every pair once, no atom with itself
+    return float(4 * np.pi * pairs)
 
 
 def _alchemical_waters(box: System, n: int) -> list[int]:
@@ -313,16 +376,25 @@ def write_leg(directory: Path, hyb, old: System, meta: dict) -> None:
 
 def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: float = 2.5,
          cofactors=(), log=print, charge_windows: int = CHARGE_WINDOWS,
-         charge_production_ns: float = CHARGE_PRODUCTION_NS) -> list[Path]:  # fmt: skip
+         charge_production_ns: float = CHARGE_PRODUCTION_NS, phase: str = "vacuum",
+         octanol_box=None) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
-    ``charge_windows`` windows and ``charge_production_ns`` of production."""
+    ``charge_windows`` windows and ``charge_production_ns`` of production.
+    ``phase``, without a receptor, what the water leg is set against: vacuum
+    (hydration), octanol or wet-octanol (transfer); ``octanol_box`` a box built
+    before (boonza.fep.octanol.box), else one is built in the work directory."""
     from ..md.prepare import forcefields, load_input
 
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
     mols, ligs, names = load_ligands(ligands_path)
     log(f"{len(ligs)} ligands from {ligands_path}")
+    if phase not in PHASES:
+        raise ValueError(f"--phase is one of {', '.join(PHASES)}, not {phase!r}")
+    if phase != "vacuum" and args.input_structure:
+        raise ValueError("--phase sets the leg a water leg is compared with, without a "
+                         "receptor; with one the legs are complex and solvent")  # fmt: skip
     receptor = load_input(args.input_structure, log) if args.input_structure else None
     if cofactors and receptor is None:
         raise ValueError("cofactors go with a receptor")
@@ -340,6 +412,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     everything = receptor.copy() if receptor is not None else ligs[0].copy()
     for lig in ligs if receptor is not None else ligs[1:]:
         everything.append(lig)
+    if phase != "vacuum":  # and octanol, one template for every molecule of the box
+        from . import octanol
+
+        everything.append(octanol.molecule())
     log("GAFF2 templates, AM1-BCC charges at reference conformers")
     patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges, parents=args.parents,
                              protein_extent=args.protein_extent,
@@ -347,18 +423,38 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     viparr.write_forcefield(patch, work / "forcefield")
     host = gaff.host_index(ff)
     ff[host] = viparr.merge_forcefields(ff[host], patch)
+    # Amber's (and GAFF2's) Lennard-Jones has a long-range dispersion correction,
+    # which the hybrid cannot carry: each leg's end states' difference is kept
+    # for result.  CHARMM36 has none, but a force switch boonza fep does not build.
+    ff_names = [n.lower() for entry in args.forcefields for n in entry]
+    tail = not any("charmm" in n for n in ff_names)
+    if not tail:
+        log("  warning: CHARMM36 was parameterized force-switched from 1.0 to 1.2 nm; "
+            "boonza fep's hybrids are cut plainly")  # fmt: skip
+    solvent_box = None
+    if phase != "vacuum":
+        solvent_box = octanol.box(work, ff, args, wet=phase == "wet-octanol", path=octanol_box,
+                                  log=log)  # fmt: skip
     from rdkit import Chem
 
+    from .experiment import experimental_dG
+
+    set_kind = ("binding" if receptor is not None else
+                "hydration" if phase == "vacuum" else "transfer")  # fmt: skip
     charges = [Chem.GetFormalCharge(m) for m in mols]
     edges = network.edges(mols, charge_change=CHARGE_CHANGE_PENALTY if receptor is not None
                           else 0.0)  # fmt: skip
     log(f"Network: {len(edges)} edges over {len(ligs)} ligands")
     with (work / "ligands.csv").open("w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["index", "name", "atoms", "charge", "smiles"])
+        w.writerow(["index", "name", "atoms", "charge", "smiles", "exp_dG", "exp_field"])
         for k, (m, n) in enumerate(zip(mols, names, strict=True)):
+            # a measured value, if the record has one (boonza.fep.experiment)
+            got = experimental_dG(m.GetPropsAsDict(), n, args.temperature, set_kind)
             w.writerow([k, n, m.GetNumAtoms(), Chem.GetFormalCharge(m),
-                        Chem.MolToSmiles(Chem.RemoveHs(m))])  # fmt: skip
+                        Chem.MolToSmiles(Chem.RemoveHs(m)),
+                        "" if got is None else round(got[0], 4),
+                        "" if got is None else got[1]])  # fmt: skip
     runs, rows = [], []
     for e in edges:
         a, b = names[e.a], names[e.b]
@@ -366,16 +462,20 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         legs = (("complex", receptor, args.padding_nm), ("solvent", None, SOLVENT_PADDING_NM))
         if receptor is None:  # a relative hydration free energy: water, and vacuum
             legs = (("solvent", None, SOLVENT_PADDING_NM), ("vacuum", None, None))
+        if solvent_box is not None:  # a relative transfer free energy: water, and octanol
+            legs = (("solvent", None, SOLVENT_PADDING_NM), ("octanol", None, SOLVENT_PADDING_NM))
         dq = charges[e.b] - charges[e.a]
         n_windows = charge_windows if dq else windows
         production_ns = charge_production_ns if dq else args.production_ns
         for leg, env, padding in legs:
             log(f"{a} -> {b}: {leg}")
             built = build_leg(env, ligs[e.a], ligs[e.b], e.mapping, ff, args, padding, log,
-                              charge_change=dq)  # fmt: skip
+                              charge_change=dq,
+                              solvent=solvent_box if leg == "octanol" else None)  # fmt: skip
             hyb, old, dropped = built.hybrid, built.old, built.dropped
             _finish(hyb, old, args, leg == "complex", log)
-            meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "score": e.score,
+            meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "phase": phase,
+                    "score": e.score,
                     "lambdas": lambdas.windows(n_windows).tolist(), "charge_change": dq,
                     "alchemical_waters": built.alchemical_waters,
                     "temperature": args.temperature, "pressure": args.pressure,
@@ -385,6 +485,9 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                     "core": len(hyb.core), "unique_old": len(hyb.unique_old),
                     "unique_new": len(hyb.unique_new),
                     "unmapped_by_constraints": dropped}  # fmt: skip
+            if tail and built.dispersion_dK:
+                # kcal/mol Å^3: result adds dK / <V> to this leg's ΔG
+                meta["dispersion_dK"] = built.dispersion_dK
             write_leg(edge_dir / leg, hyb, old, meta)
             for r in range(1, repeats + 1):
                 runs.append((edge_dir / leg, r))
