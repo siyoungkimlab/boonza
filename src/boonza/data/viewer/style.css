@@ -285,6 +285,33 @@ body.dark .label.meter { color: #ffd34d; }
 .rama circle.pro, .key.pro { fill: #e8a33c; background: #e8a33c; }
 .rama circle.on { fill: #ff73d9; stroke: var(--text); stroke-width: 1; }
 .rama circle:hover { stroke: var(--text); stroke-width: 1.2; }
+.mgroup .table-btn { margin-left: 8px; text-transform: none; padding: 0 6px; font-size: 10px; line-height: 15px;
+  color: var(--text); background: var(--button); border: 1px solid var(--line); border-radius: 5px; }
+.mgroup .table-btn:hover { background: var(--hover); }
+.series-scroll { max-height: 70vh; max-width: 80vw; overflow: auto; }
+/* a table or plot window: drag its bottom-right corner to resize it */
+.panel.resizable { resize: both; max-height: none; min-height: 160px; }
+.panel.resizable .series-scroll { max-height: none; max-width: none; flex: 1; }
+.panel.resizable .body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.series-table { border-collapse: collapse; font-size: 13px; color: var(--text); background: var(--panel); }
+.series-table th { position: sticky; top: 0; color: var(--text); background: var(--panel); text-align: left; padding: 5px 10px;
+  border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; user-select: none; }
+.series-table td { color: var(--text); padding: 4px 10px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.series-table tbody tr { cursor: pointer; }
+.series-table .tick, .series-table td:first-child { width: 18px; padding-right: 0; }
+.series-table tbody tr:hover { background: var(--accent-soft); }
+.series-table tr.current { background: var(--accent-soft); font-weight: 600; }
+.scatter svg { display: block; width: 100%; height: auto; cursor: default; }
+.scatter text { font-size: 12px; }
+.scatter .grid { stroke: var(--line); stroke-width: 0.6; }
+.scatter circle { fill: #5b8def; stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.5; cursor: pointer; }
+.scatter circle.on { fill: #ff73d9; stroke: var(--text); stroke-width: 1; }
+.scatter .fit { fill: none; stroke: var(--text); stroke-width: 1.4; }
+.scatter.white svg { background: #fff; border-radius: 4px; }
+.scatter.white text { fill: #000; }
+.scatter.white .grid { stroke: #c8c8c8; }
+.scatter.white .fit { stroke: #000; }
+.scatter circle:hover { stroke: var(--text); stroke-width: 1.2; }
 .key { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 2px 0 6px; }
 
 /* --- the Python console, along the bottom of the view ---------------------------------- */
