@@ -1104,6 +1104,7 @@ export function setupUI(app) {
         "-",
         { label: "None", checked: () => m.receptor === undefined, run: () => setReceptor(m.group, null) },
       ] },
+      { label: `${m.group} as a Table`, run: () => seriesTablePanel(m.group) },
       { label: `Save ${m.group} as SDF…`, run: () => saveSeriesPanel(m.group) },
       { label: `Download ${m.group} (SDF)`, run: () => downloadSeries(m.group) },
     ];
@@ -1159,6 +1160,330 @@ export function setupUI(app) {
       body.append(row(input, go), el("p", { className: "help" }, "Shown in the model list and saved with the series (SDF field note)."));
       setTimeout(() => input.focus(), 0);
     }, [innerWidth / 2 - 200, 90]);
+  }
+  // a series as a table: a row per member, a column per SDF field.  Click a row to
+  // look at that member alone, a column's header to sort by it (again: the other way);
+  // tick rows to plot only those (none ticked: every member)
+  const picked = {};  // series -> the indices of its ticked members
+  // series -> the member last clicked in its table or plot, marked in both until it is
+  // clicked again or the plot's background is
+  const focus = {};
+  const lookAt = m => { focus[m.group] = m.index; app.solo(m); };
+  const unfocus = group => { delete focus[group]; app.onModels(); };
+  // series -> each member's properties as RDKit computes them from its structure (MW,
+  // cLogP, ...), named apart from the SDF's own fields; not saved with the series
+  const computed = {}, computing = {};
+  const value = (m, c) => m.row?.[c] ?? computed[m.group]?.[m.index]?.[c];
+  async function compute(group) {
+    if (computing[group]) { computing[group] = "again"; return; }  // an edit while asking
+    computing[group] = true;
+    try {
+      const { properties } = await app.post("api/series_properties", { group });
+      const own = new Set(app.live().filter(m => m.group === group).flatMap(m => Object.keys(m.row || {})));
+      const named = {};
+      for (const [k, props] of Object.entries(properties)) {
+        named[k] = Object.fromEntries(Object.entries(props).map(([c, v]) => [own.has(c) ? `${c} (calc)` : c, v]));
+      }
+      if (JSON.stringify(named) !== JSON.stringify(computed[group])) {
+        computed[group] = named;
+        for (const kind of ["table", "plot", "histogram"]) panels[`${kind} ${group}`]?.redraw?.();
+      }
+    } catch (e) { app.message(e.message, true); }
+    const again = computing[group] === "again";
+    computing[group] = false;
+    if (again) compute(group);
+  }
+  function seriesTablePanel(group) {
+    const id = `table ${group}`;
+    let column = null, descending = false, chosen = [];
+    panel(id, group, (body, p) => {
+      const draw = () => {
+        const members = app.live().filter(m => m.group === group);
+        if (!members.length) { p.remove(); delete panels[id]; return; }
+        const ticked = picked[group] ??= new Set();
+        for (const k of ticked) if (!members.some(m => m.index === k)) ticked.delete(k);  // closed
+        compute(group);  // its computed columns, again if a member was edited
+        const fields = [], calc = [];
+        for (const m of members) for (const k of Object.keys(m.row || {})) if (!fields.includes(k)) fields.push(k);
+        for (const m of members) for (const k of Object.keys(computed[group]?.[m.index] || {})) if (!calc.includes(k)) calc.push(k);
+        const columns = [...fields, ...calc];
+        const rows = column ? [...members].sort(byColumn(column, descending)) : members;
+        // a column of numbers as a histogram, two against each other
+        const numeric = columns.filter(c => members.some(m => typeof value(m, c) === "number"));
+        const tools = [];
+        const pick = k => {
+          const s = el("select");
+          for (const c of numeric) s.add(new Option(c, c));
+          s.value = numeric.includes(chosen[k]) ? chosen[k] : numeric[Math.min(k, numeric.length - 1)];
+          s.onchange = () => { chosen[k] = s.value; };
+          return s;
+        };
+        const which = el("span", { className: "help" }, ticked.size ? `${ticked.size} ticked` : "every member");
+        if (numeric.length >= 2) {
+          const xs = pick(0), ys = pick(1);
+          tools.push(row(el("span", { className: "what" }, "plot"), ys, "against", xs,
+                         button("Plot", () => scatterPanel(group, xs.value, ys.value), "blue"), which));
+        }
+        if (numeric.length) {
+          const hs = pick(2);
+          tools.push(row(el("span", { className: "what" }, "histogram"), hs,
+                         button("Histogram", () => histogramPanel(group, hs.value), "blue"),
+                         numeric.length < 2 ? which : ""));
+        }
+        const tick = (k, on) => {
+          if (on) ticked.add(k); else ticked.delete(k);
+          draw(); panels[`plot ${group}`]?.redraw?.(); panels[`histogram ${group}`]?.redraw?.();
+        };
+        const t = el("table", { className: "series-table" });
+        const head = t.createTHead().insertRow();
+        const all = el("input", { type: "checkbox", title: "tick or untick every row", checked: ticked.size === members.length });
+        all.indeterminate = ticked.size > 0 && ticked.size < members.length;
+        all.onchange = () => {
+          for (const m of members) if (all.checked) ticked.add(m.index); else ticked.delete(m.index);
+          draw(); panels[`plot ${group}`]?.redraw?.(); panels[`histogram ${group}`]?.redraw?.();
+        };
+        head.append(el("th", { className: "tick" }, all));
+        for (const c of ["name", ...columns]) {
+          const made = calc.includes(c);
+          const th = el("th", { className: made ? "calc" : "", title: `${made ? "computed by RDKit from the structure (not in the SDF) · " : ""}sort by ${c}` },
+                        c + (c === column ? (descending ? " ↓" : " ↑") : ""));
+          th.onclick = () => { descending = c === column && !descending; column = c; draw(); };
+          head.append(th);
+        }
+        const tbody = t.createTBody();
+        for (const m of rows) {
+          const tr = tbody.insertRow();
+          if (m.index === focus[group]) tr.className = "current";
+          const box = el("input", { type: "checkbox", checked: ticked.has(m.index), title: "plot this one" });
+          box.onclick = e => e.stopPropagation();  // a tick, not a look at it
+          box.onchange = () => tick(m.index, box.checked);
+          tr.insertCell().append(box);
+          for (const v of [m.name, ...columns.map(c => value(m, c))]) {
+            const td = tr.insertCell();
+            td.textContent = cell(v);
+            td.title = td.textContent;
+          }
+          tr.onclick = () => m.index === focus[group] ? unfocus(group) : lookAt(m);
+        }
+        body.replaceChildren(...tools, el("div", { className: "series-scroll" }, t));
+      };
+      p.redraw = draw;
+      draw();
+    }).classList.add("resizable");
+  }
+  // one column of a series against another: a point per member that has both (the
+  // ticked ones, if any are; click a point to look at that member), with Pearson's r
+  // and Spearman's rho
+  function scatterPanel(group, xc, yc) {
+    const id = `plot ${group}`;
+    const W = 480, H = 420, L = 56, B = 40, T0 = 10, R0 = 12;
+    const log = { x: false, y: false };
+    let degree = 1;  // of the least-squares polynomial drawn through the points; 0: none
+    let white = false;  // drawn for a white page (black text) or a black one (white text)
+    panel(id, `${group}: ${yc} against ${xc}`, (body, p) => {
+      const head = el("div", { className: "help", style: "margin:0 0 6px" });
+      const box = el("div", { className: "plot scatter" });
+      const scale = axis => {
+        const b = el("input", { type: "checkbox" });
+        b.onchange = () => { log[axis] = b.checked; draw(); };
+        return el("label", {}, b, ` log ${axis}`);
+      };
+      const file = `${group}_${yc}_vs_${xc}`.replace(/[^\w.-]+/g, "_");
+      const order = el("input", { type: "number", min: 0, max: 6, step: 1, value: degree, style: "width:42px",
+                                  title: "the fitted polynomial's degree (1: a straight line; 0: no line)" });
+      order.onchange = () => { degree = Math.max(0, Math.min(6, Math.round(+order.value) || 0)); order.value = degree; draw(); };
+      const fitNote = el("div", { className: "help" });
+      const paper = el("input", { type: "checkbox", checked: white });
+      paper.onchange = () => { white = paper.checked; box.classList.toggle("white", white); };
+      body.append(head, box, fitNote, row(scale("x"), scale("y"), el("label", {}, "fit degree ", order), el("label", { title: "for a white page: black text and lines (else white, for a black one); saved with a clear background either way" }, paper, " white"), el("span", { style: "flex:1" }),
+        button("SVG", () => savePlot(box, file, "svg", white)), button("PNG", () => savePlot(box, file, "png", white))));
+      const draw = () => {
+        const ticked = picked[group]?.size ? picked[group] : null;
+        const have = app.live().filter(m => m.group === group && (!ticked || ticked.has(m.index)))
+          .filter(m => Number.isFinite(value(m, xc)) && Number.isFinite(value(m, yc)));
+        // a log axis has no place for zero or below
+        const pts = have.filter(m => (!log.x || value(m, xc) > 0) && (!log.y || value(m, yc) > 0));
+        const left = have.length - pts.length;
+        const some = `${ticked ? "ticked " : ""}members`;
+        const dropped = left ? ` · ${left} left out (not positive, on a log axis)` : "";
+        fitNote.textContent = "";
+        if (pts.length < 2) { head.textContent = `fewer than two ${some} have both ${xc} and ${yc}${dropped}`; box.innerHTML = ""; return; }
+        const f = axis => log[axis] ? Math.log10 : v => v;  // value -> where it is plotted
+        const X = pts.map(m => f("x")(value(m, xc))), Y = pts.map(m => f("y")(value(m, yc)));
+        const span = v => { const lo = Math.min(...v), hi = Math.max(...v), pad = (hi - lo || Math.abs(lo) || 1) * 0.06; return [lo - pad, hi + pad]; };
+        const [x0, x1] = span(X), [y0, y1] = span(Y);
+        const x = v => L + (v - x0) / (x1 - x0) * (W - L - R0), y = v => T0 + (y1 - v) / (y1 - y0) * (H - T0 - B);
+        const ticks = (axis, lo, hi) => axisTicks(log[axis], lo, hi);
+        const grid = ticks("x", x0, x1).map(([v, s]) => `<line x1="${x(v)}" x2="${x(v)}" y1="${T0}" y2="${H - B}" class="grid"/><text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${s}</text>`).join("")
+          + ticks("y", y0, y1).map(([v, s]) => `<line x1="${L}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 5}" y="${y(v) + 4}" text-anchor="end">${s}</text>`).join("");
+        const dots = pts.map((m, k) => `<circle cx="${x(X[k]).toFixed(1)}" cy="${y(Y[k]).toFixed(1)}" r="${m.index === focus[group] ? 6.5 : 4.5}" class="${m.index === focus[group] ? "on" : ""}" data-k="${k}"><title>${esc(m.name)}: ${esc(xc)} ${cell(value(m, xc))}, ${esc(yc)} ${cell(value(m, yc))}</title></circle>`).join("");
+        // the fit, in what is drawn (the logs, on a log axis); it needs more points than terms
+        let curve = "";
+        const fit = degree && pts.length > degree ? polyfit(X, Y, degree) : null;
+        if (fit) {
+          const at = v => fit.reduce((s, c, k) => s + c * v ** k, 0);
+          const path = Array.from({ length: 121 }, (_, k) => x0 + (x1 - x0) * k / 120)
+            .map((v, k) => `${k ? "L" : "M"}${x(v).toFixed(1)} ${y(at(v)).toFixed(1)}`).join("");
+          curve = `<clipPath id="fitclip${++plotClips}"><rect x="${L}" y="${T0}" width="${W - L - R0}" height="${H - T0 - B}"/></clipPath><path d="${path}" class="fit" clip-path="url(#fitclip${plotClips})"/>`;
+          const fy = Y.map((_, k) => at(X[k])), my = Y.reduce((s, v) => s + v, 0) / Y.length;
+          const r2 = 1 - Y.reduce((s, v, k) => s + (v - fy[k]) ** 2, 0) / Y.reduce((s, v) => s + (v - my) ** 2, 0);
+          const vx = log.x ? `log ${xc}` : xc, vy = log.y ? `log ${yc}` : yc, num = c => +c.toPrecision(4);
+          const terms = fit.map((c, k) => k === 0 ? `${num(c)}` : `${c < 0 ? "−" : "+"} ${Math.abs(num(c))}·x${k > 1 ? "^" + k : ""}`);
+          fitNote.textContent = `fit: y = ${terms.join(" ")} (y: ${vy}, x: ${vx}) · R² ${r2.toFixed(3)}`;
+        } else if (degree) fitNote.textContent = `a degree ${degree} fit needs more than ${degree} points`;
+        box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${grid}${curve}<text x="${(L + W - R0) / 2}" y="${H - 6}" text-anchor="middle">${esc(xc)}</text><text transform="translate(14 ${(T0 + H - B) / 2}) rotate(-90)" text-anchor="middle">${esc(yc)}</text>${dots}</svg>`;
+        for (const c of box.querySelectorAll("circle")) {
+          c.onclick = e => { e.stopPropagation(); const m = pts[+c.dataset.k]; m.index === focus[group] ? unfocus(group) : lookAt(m); };
+        }
+        box.querySelector("svg").onclick = () => { if (group in focus) unfocus(group); };
+        // r of what is drawn (the logs, on a log axis); rho is the same either way
+        head.textContent = `${pts.length} ${some} · Pearson r ${pearson(X, Y).toFixed(2)}${log.x || log.y ? " (as plotted)" : ""}`
+          + ` · Spearman ρ ${pearson(ranks(X), ranks(Y)).toFixed(2)}${dropped}`;
+      };
+      p.redraw = draw;
+      draw();
+    });
+    // a window to drag larger by its corner: the plot fills its width
+    Object.assign(panels[id].style, { width: "560px" });
+    panels[id].classList.add("resizable");
+  }
+  // one column of a series as a histogram: how many members (the ticked ones, if any
+  // are) fall in each bin, with their names on hovering a bar; the clicked member is a
+  // dot under its bin
+  function histogramPanel(group, c) {
+    const id = `histogram ${group}`;
+    const W = 480, H = 380, L = 48, B = 40, T0 = 10, R0 = 12;
+    let logx = false, bins = 0, white = false;  // bins 0: Sturges' rule, log2 n + 1
+    panel(id, `${group}: ${c}`, (body, p) => {
+      const head = el("div", { className: "help", style: "margin:0 0 6px" });
+      const box = el("div", { className: "plot scatter" });
+      const lx = el("input", { type: "checkbox" });
+      lx.onchange = () => { logx = lx.checked; draw(); };
+      const nb = el("input", { type: "number", min: 0, max: 200, step: 1, value: bins, style: "width:48px",
+                               title: "how many bins (0: Sturges' rule, log2 n + 1)" });
+      nb.onchange = () => { bins = Math.max(0, Math.min(200, Math.round(+nb.value) || 0)); nb.value = bins; draw(); };
+      const paper = el("input", { type: "checkbox", checked: white });
+      paper.onchange = () => { white = paper.checked; box.classList.toggle("white", white); };
+      const file = `${group}_${c}_histogram`.replace(/[^\w.-]+/g, "_");
+      body.append(head, box, row(el("label", {}, lx, " log x"), el("label", {}, "bins ", nb),
+        el("label", { title: "for a white page: black text and lines (else white, for a black one); saved with a clear background either way" }, paper, " white"),
+        el("span", { style: "flex:1" }),
+        button("SVG", () => savePlot(box, file, "svg", white)), button("PNG", () => savePlot(box, file, "png", white))));
+      const draw = () => {
+        const ticked = picked[group]?.size ? picked[group] : null;
+        const have = app.live().filter(m => m.group === group && (!ticked || ticked.has(m.index)) && Number.isFinite(value(m, c)));
+        const pts = have.filter(m => !logx || value(m, c) > 0);
+        const some = `${ticked ? "ticked " : ""}members`;
+        const dropped = have.length > pts.length ? ` · ${have.length - pts.length} left out (not positive, on a log axis)` : "";
+        if (!pts.length) { head.textContent = `no ${some} have ${c}${dropped}`; box.innerHTML = ""; return; }
+        const V = pts.map(m => value(m, c)), X = V.map(v => logx ? Math.log10(v) : v);
+        const n = bins || Math.ceil(Math.log2(X.length)) + 1;
+        let lo = Math.min(...X), hi = Math.max(...X);
+        if (hi === lo) { lo -= 0.5; hi += 0.5; }
+        const w = (hi - lo) / n, counts = new Array(n).fill(0), names = Array.from({ length: n }, () => []);
+        const binOf = v => Math.min(n - 1, Math.floor((v - lo) / w));
+        X.forEach((v, k) => { counts[binOf(v)]++; names[binOf(v)].push(pts[k].name); });
+        const top = Math.max(...counts) * 1.08;
+        const x = v => L + (v - lo) / (hi - lo) * (W - L - R0), y = v => T0 + (1 - v / top) * (H - T0 - B);
+        const grid = axisTicks(logx, lo, hi).map(([v, s]) => `<text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${s}</text>`).join("")
+          + axisTicks(false, 0, top).filter(([v]) => Number.isInteger(v)).map(([v, s]) => `<line x1="${L}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 5}" y="${y(v) + 4}" text-anchor="end">${s}</text>`).join("");
+        const edge = k => { const v = lo + k * w; return cell(logx ? +(10 ** v).toPrecision(3) : +v.toPrecision(4)); };
+        const bars = counts.map((k, i) => k ? `<rect class="bar" x="${x(lo + i * w).toFixed(1)}" y="${y(k).toFixed(1)}" width="${(x(lo + w) - x(lo)).toFixed(1)}" height="${(y(0) - y(k)).toFixed(1)}"><title>${esc(c)} ${edge(i)} to ${edge(i + 1)}: ${k}\n${esc(names[i].slice(0, 20).join(", "))}${names[i].length > 20 ? ", ..." : ""}</title></rect>` : "").join("");
+        const f = pts.find(m => m.index === focus[group]);
+        const mark = f ? `<circle class="on" r="6" cx="${x(logx ? Math.log10(value(f, c)) : value(f, c)).toFixed(1)}" cy="${(y(0) - 7).toFixed(1)}"><title>${esc(f.name)}: ${esc(c)} ${cell(value(f, c))}</title></circle>` : "";
+        box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${grid}${bars}<line x1="${L}" x2="${W - R0}" y1="${y(0)}" y2="${y(0)}" class="grid"/><text x="${(L + W - R0) / 2}" y="${H - 6}" text-anchor="middle">${esc(c)}</text><text transform="translate(14 ${(T0 + H - B) / 2}) rotate(-90)" text-anchor="middle">members</text>${mark}</svg>`;
+        const dot = box.querySelector("circle.on");
+        if (dot) dot.onclick = () => unfocus(group);
+        const sorted = [...V].sort((a, b) => a - b), mid = sorted.length / 2;
+        const median = sorted.length % 2 ? sorted[Math.floor(mid)] : (sorted[mid - 1] + sorted[mid]) / 2;
+        const mean = V.reduce((s, v) => s + v, 0) / V.length;
+        head.textContent = `${pts.length} ${some} · ${n} bins${logx ? " (in log)" : ""} · median ${cell(+median.toPrecision(4))} · mean ${cell(+mean.toPrecision(4))} · range ${cell(sorted[0])} to ${cell(sorted[sorted.length - 1])}${dropped}`;
+      };
+      p.redraw = draw;
+      draw();
+    });
+    Object.assign(panels[id].style, { width: "560px" });
+    panels[id].classList.add("resizable");
+  }
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  // an axis's ticks, [where, label]: plain steps; on a log axis (lo and hi in log10) the
+  // decades, with 2 and 5 between them when it spans few, or plain steps within a decade
+  function axisTicks(log, lo, hi) {
+    const linear = (lo, hi) => {
+      const step = 10 ** Math.floor(Math.log10((hi - lo) / 4)), s = [1, 2, 5, 10].map(k => k * step).find(k => (hi - lo) / k <= 5);
+      const out = [];
+      for (let v = Math.ceil(lo / s) * s; v <= hi; v += s) out.push(+v.toPrecision(12));
+      return out.map(v => [v, cell(v)]);
+    };
+    if (!log) return linear(lo, hi);
+    const at = m => { const out = []; for (let d = Math.floor(lo); d <= Math.ceil(hi); d++) for (const k of m) { const t = Math.log10(k) + d; if (t >= lo && t <= hi) out.push(t); } return out; };
+    const ts = hi - lo < 2 ? at([1, 2, 5]) : at([1]);
+    if (ts.length >= 2) return ts.map(t => [t, cell(+(10 ** t).toPrecision(3))]);
+    return linear(10 ** lo, 10 ** hi).filter(([v]) => v > 0).map(([v, s]) => [Math.log10(v), s]);
+  }
+  // a plot as a file, on a clear background: its SVG with the page's styles written into
+  // it (Arial; black text and lines for a white page, white for a black one), editable in
+  // Illustrator; or that drawn 4x as a PNG
+  function savePlot(box, name, fmt, white = false) {
+    const ink = white ? "#000" : "#fff", rule = white ? "#c8c8c8" : "#555";
+    const svg = box.querySelector("svg");
+    if (!svg) return;
+    const out = svg.cloneNode(true);
+    out.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    for (const t of out.querySelectorAll("text")) Object.assign(t.style, { font: "12px Arial, sans-serif", fill: ink });
+    for (const g of out.querySelectorAll(".grid")) Object.assign(g.style, { stroke: rule, strokeWidth: "0.6" });
+    for (const f of out.querySelectorAll(".fit")) Object.assign(f.style, { fill: "none", stroke: ink, strokeWidth: "1.2" });
+    for (const r of out.querySelectorAll(".bar")) Object.assign(r.style, { fill: "#5b8def", stroke: "rgba(0,0,0,0.45)", strokeWidth: "0.5" });
+    for (const c of out.querySelectorAll("circle")) {
+      Object.assign(c.style, { fill: c.classList.contains("on") ? "#ff73d9" : "#5b8def", stroke: "rgba(0,0,0,0.45)", strokeWidth: "0.5" });
+    }
+    const text = new XMLSerializer().serializeToString(out);
+    const save = (blob, ext) => el("a", { href: URL.createObjectURL(blob), download: `${name}.${ext}` }).click();
+    if (fmt === "svg") { save(new Blob([text], { type: "image/svg+xml" }), "svg"); return; }
+    const img = new Image(), k = 4, w = +svg.getAttribute("width"), h = +svg.getAttribute("height");
+    img.onload = () => {
+      const c = el("canvas", { width: w * k, height: h * k });
+      c.getContext("2d").drawImage(img, 0, 0, w * k, h * k);
+      c.toBlob(b => save(b, "png"), "image/png");
+    };
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(text);
+  }
+  // the least-squares polynomial of ``degree`` through (x, y): its coefficients, constant
+  // first.  Solved on x centred and scaled, then expanded back, so high degrees stay sound
+  let plotClips = 0;  // each drawn fit's clip, its own id
+  function polyfit(x, y, degree) {
+    const n = degree + 1, mx = x.reduce((s, v) => s + v, 0) / x.length;
+    const sx = Math.max(...x.map(v => Math.abs(v - mx))) || 1, u = x.map(v => (v - mx) / sx);
+    const A = Array.from({ length: n }, (_, i) => Array.from({ length: n + 1 }, (_, j) =>
+      j < n ? u.reduce((s, v) => s + v ** (i + j), 0) : u.reduce((s, v, k) => s + y[k] * v ** i, 0)));
+    for (let i = 0; i < n; i++) {  // Gauss-Jordan with partial pivoting
+      const p = A.slice(i).reduce((b, r, k) => Math.abs(r[i]) > Math.abs(A[b][i]) ? i + k : b, i);
+      [A[i], A[p]] = [A[p], A[i]];
+      if (!A[i][i]) return null;
+      for (let k = 0; k < n; k++) if (k !== i) { const f = A[k][i] / A[i][i]; for (let j = i; j <= n; j++) A[k][j] -= f * A[i][j]; }
+    }
+    const b = A.map((r, i) => r[n] / r[i]);  // in u = (x - mx) / sx; expand to x
+    const out = new Array(n).fill(0);
+    const binom = (m, k) => { let c = 1; for (let t = 1; t <= k; t++) c = c * (m - t + 1) / t; return c; };
+    for (let m = 0; m < n; m++) for (let k = 0; k <= m; k++) out[k] += b[m] / sx ** m * binom(m, k) * (-mx) ** (m - k);
+    return out;
+  }
+  function pearson(a, b) {
+    const n = a.length, ma = a.reduce((s, v) => s + v, 0) / n, mb = b.reduce((s, v) => s + v, 0) / n;
+    let sab = 0, saa = 0, sbb = 0;
+    for (let k = 0; k < n; k++) { sab += (a[k] - ma) * (b[k] - mb); saa += (a[k] - ma) ** 2; sbb += (b[k] - mb) ** 2; }
+    return saa && sbb ? sab / Math.sqrt(saa * sbb) : NaN;
+  }
+  // ranks from 1, ties sharing their mean rank
+  function ranks(v) {
+    const order = v.map((x, k) => k).sort((i, j) => v[i] - v[j]), out = new Array(v.length);
+    for (let i = 0; i < order.length;) {
+      let j = i;
+      while (j + 1 < order.length && v[order[j + 1]] === v[order[i]]) j++;
+      for (let k = i; k <= j; k++) out[order[k]] = (i + j) / 2 + 1;
+      i = j + 1;
+    }
+    return out;
   }
   function saveSeriesPanel(group) {
     pathPanel("series", `Save ${group}`, `${group.replace(/\s+/g, "_")}.sdf`, async path => {
@@ -2761,7 +3086,7 @@ export function setupUI(app) {
           { label: "Close", run: () => closeModel(m) },
         ], e.clientX, e.clientY);
       };
-      const data = Object.entries(m.row || {}).filter(([k]) => k !== "name");
+      const data = Object.entries(m.row || {}).filter(([k]) => k !== "name" && k !== "SMILES");  // a series' SMILES: in its table
       if (data.length) row.append(el("div", { className: "data", title: data.map(([k, v]) => `${k} ${cell(v)}`).join("\n") },
         data.map(([k, v]) => `${k} ${cell(v)}`).join(" · ")));
       list.append(row);
@@ -2774,7 +3099,10 @@ export function setupUI(app) {
   };
   $("rdock-all").onclick = () => app.show(app.live(), true);
   $("rdock-none").onclick = () => app.show(app.live().filter(m => m.index !== state.current), false);
-  app.onModels = () => { modelsDock(); repsPanel(); };
+  app.onModels = () => {
+    modelsDock(); repsPanel();
+    for (const p of Object.values(panels)) p.redraw?.();  // a series' table
+  };
   // a group's header: its box shows or hides every model in it (all the pockets, say)
   function groupHeader(group) {
     const members = state.models.filter(m => m.group === group && !m.closed);
@@ -2789,6 +3117,11 @@ export function setupUI(app) {
       await app.show(members, box.checked);
     };
     const header = el("label", { className: "mgroup" }, box, ` ${group} (${members.length})`);
+    if (isSeries({ group }) && members.length) {  // its table: a row per member, a column per field
+      const t = el("button", { className: "table-btn", title: `${group} as a table: its SDF fields, sortable, to plot` }, "table");
+      t.onclick = e => { e.preventDefault(); e.stopPropagation(); seriesTablePanel(group); };
+      header.append(t);
+    }
     if (isSeries({ group }) && members.length) header.oncontextmenu = e => {
       e.preventDefault();
       menu(seriesMemberItems(members.find(m => m.index === state.current) || members[members.length - 1]), e.clientX, e.clientY);
@@ -2802,15 +3135,19 @@ export function setupUI(app) {
     const list = app.live();
     const { column, descending } = state.sort || {};
     if (!column) return list;
-    const key = m => column === "name" ? m.name : m.row?.[column];
-    return [...list].sort((a, b) => {
+    return [...list].sort(byColumn(column, descending));
+  }
+  // models in order of a column of their rows; those without it last
+  function byColumn(column, descending) {
+    const key = m => column === "name" ? m.name : value(m, column);
+    return (a, b) => {
       const x = key(a), y = key(b);
       if (x === y) return a.index - b.index;
-      if (x === undefined) return 1;
-      if (y === undefined) return -1;
+      if (x === undefined || x === null) return 1;
+      if (y === undefined || y === null) return -1;
       const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
       return descending ? -c : c;
-    });
+    };
   }
   function stepModel(by) {
     const now = app.currentModel();

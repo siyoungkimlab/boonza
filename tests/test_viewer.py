@@ -1205,6 +1205,26 @@ def test_series_of_designs(served, tmp_path):
     assert v.session(added[1]).system.natoms == 15  # toluene alone
     v.add_to_series(added[0])  # and grows like any other
     assert v.models[-1].group == "series 3"
+    # its data fields are each member's row (the series' table), and saved again
+    scored = tmp_path / "scored.sdf"
+    for k, (smi, score) in enumerate([("CCO", -6.5), ("CCN", -7.25)]):
+        m = boonza.from_smiles(smi)
+        m._ct_props[0] = {"score": score, "ID": f"d{k}"}
+        boonza.save(m, scored, append=k > 0)
+    added = v.open(scored)
+    assert [v.models[k].row for k in added] == [
+        {"score": -6.5, "ID": "d0"}, {"score": -7.25, "ID": "d1"}]  # fmt: skip
+    group = v.models[added[0]].group
+    # what RDKit computes from each structure: by member, not saved with the series
+    props = v.series_properties(group)
+    assert props[added[0]] == {"MW": 46.07, "heavy atoms": 3, "cLogP": -0.0, "TPSA": 20.2,
+                               "HBD": 1, "HBA": 1, "rotatable bonds": 0}  # fmt: skip
+    assert props[added[1]]["MW"] == 45.08 and props[added[1]]["HBD"] == 1
+    status, out = post("api/series_properties", {"group": group})
+    assert status == 200 and out["properties"][str(added[0])]["MW"] == 46.07
+    back = boonza.load(Path(v.save_series(group, tmp_path / "again.sdf")))
+    assert [(back.ct(c)["score"], back.ct(c)["ID"]) for c in range(2)] == [
+        (-6.5, "d0"), (-7.25, "d1")]  # fmt: skip
 
 
 @pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")

@@ -105,6 +105,7 @@ class Viewer:
         # [{"label": ..., "value": ..., "title": what it is}]
         self.summary: list[dict] = []
         self._lock = threading.RLock()
+        self._properties: dict[int, tuple] = {}  # series_properties, by member
 
     def __len__(self) -> int:
         return len(self.models)
@@ -331,6 +332,23 @@ class Viewer:
         name = f"{base}{max(used, default=0) + 1}"
         return [self._member(self.session(m).system.clone(), group, name, self.receptor(m))]
 
+    def series_properties(self, group: str) -> dict[int, dict]:
+        """What RDKit computes from each member of series ``group``'s structure: MW,
+        heavy atoms, cLogP (Crippen), TPSA, H-bond donors and acceptors (Lipinski) and
+        rotatable bonds, by member.  A member RDKit cannot read has none.  Kept by each
+        member's atoms, bonds and charges, so only an edited one is computed again."""
+        out = {}
+        for k in self.series(group):
+            s = self.session(k).system
+            key = (s.natoms, *(np.asarray(x).tobytes() for x in (
+                s.atoms["anum"], s.atoms["formal_charge"], s.bonds["i"], s.bonds["j"],
+                s.bonds["order"])))  # fmt: skip
+            cached = self._properties.get(k)
+            if cached is None or cached[0] != key:
+                self._properties[k] = cached = (key, _properties(s))
+            out[k] = cached[1]
+        return out
+
     def set_note(self, m: int, note: str) -> None:
         """A design's note: shown in the model list, saved in the series' SDF."""
         note = " ".join(str(note).split())
@@ -474,7 +492,7 @@ class Viewer:
 
     def series_sdf(self, group: str) -> str:
         """Series ``group`` as SDF text: a record per member, titled with its name, with
-        the series, its SMILES and its note as fields."""
+        the series, its SMILES, the fields it was opened with and its note as fields."""
         import tempfile
 
         from ..io.sdf import save_sdf
@@ -487,6 +505,8 @@ class Viewer:
                     s.add_ct()
                 smiles = [x["smiles"] for x in self.session(k).smiles(range(s.natoms))]
                 fields = {"series": group, "SMILES": ".".join(x for x in smiles if x)}
+                fields |= {c: v for c, v in self.models[k].row.items()
+                           if c not in ("series", "SMILES", "note") and v is not None}  # fmt: skip
                 if self.models[k].row.get("note"):
                     fields["note"] = self.models[k].row["note"]
                 for c in range(s.ncts):
@@ -699,6 +719,24 @@ def from_paths(paths, merge: bool = False, fit: str = "", scaffold=None, **kwarg
     return Viewer(models, title=title, columns=columns)
 
 
+def _properties(system) -> dict:
+    """A molecule's properties as RDKit computes them (Viewer.series_properties)."""
+    from rdkit import Chem
+    from rdkit.Chem import Crippen, Descriptors, Lipinski, rdMolDescriptors
+
+    from ..chem import to_rdkit
+
+    try:  # hydrogens implicit, as the descriptors count them (a C-OH is not rotatable)
+        mol = Chem.RemoveHs(to_rdkit(system, sanitize=True, implicit_hydrogens=True))
+    except Exception:  # a valence RDKit rejects: a half-built design, a metal
+        return {}
+    return {"MW": round(Descriptors.MolWt(mol), 2), "heavy atoms": mol.GetNumHeavyAtoms(),
+            "cLogP": round(Crippen.MolLogP(mol), 2),
+            "TPSA": round(rdMolDescriptors.CalcTPSA(mol), 1),
+            "HBD": Lipinski.NumHDonors(mol), "HBA": Lipinski.NumHAcceptors(mol),
+            "rotatable bonds": rdMolDescriptors.CalcNumRotatableBonds(mol)}  # fmt: skip
+
+
 def _series_members(path, taken=()) -> list[Model]:
     """An SDF of more than one molecule: a model per record, as a series.  One a
     series was saved as (every record has its ``series`` field) is that series
@@ -721,7 +759,10 @@ def _series_members(path, taken=()) -> list[Model]:
         name = s._ct_names[c] or f"design {c + 1}"
         session = Session(s.clone(s.ct_atoms(c)), title=name, reps=reps)
         props = s.ct(c)
-        row = {"note": str(props["note"])} if "note" in props.keys() else {}
+        # every data field, for the series' table (the series is the group itself)
+        row = {k: props[k] for k in props.keys() if k != "series"}
+        if "note" in row:
+            row["note"] = str(row["note"])
         out.append(Model(name, lambda x=session: x, group=group or str(props["series"]),
                          row=row, _session=session))  # fmt: skip
     return out
