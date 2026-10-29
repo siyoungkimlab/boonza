@@ -8,9 +8,11 @@ huge, damaging steps from.  With ``--rem`` each ligand is put into the receptor
 and minimized with soft nonbonded interactions (:mod:`boonza.rem`) while the
 receptor's heavy atoms are held where they are, and only the ligand's new
 coordinates are kept, so every edge still meets one and the same receptor.  The
-ligand's own heavy atoms are tethered to where it was posed, so the atoms in a
-clash move out of it and the rest stays put: an edge's two ligands still sit on
-top of each other, which the mapping and the hybrid both read.  Coulomb is
+ligand's heavy atoms in the clash (within :data:`FREE_A` of the receptor's) are
+left free to move out of it, and the rest are tethered firmly to where they were
+posed, so the scaffold stays put and only what reached into a side chain moves:
+an edge's two ligands still sit on top of each other, which the mapping (atoms
+within 0.95 Å) and the hybrid (B's own atoms where B has them) both read.  Coulomb is
 left out (``C=0``): unscreened, in vacuum, a charged ligand would be drawn to
 the nearest charged side chain, and a clash is a matter of overlap, which the
 soft repulsion settles; the real electrostatics, in water, are the legs'.  Soft
@@ -31,10 +33,14 @@ import numpy as np
 CLASH_A = 2.2
 #: what holds the receptor's heavy atoms in place while the ligand moves (kJ/mol/nm^2)
 RECEPTOR_HOLD_KJ = 1.0e5
-#: what tethers the ligand's heavy atoms to their pose (kJ/mol/nm^2): 0.2 nm costs 10
-#: kJ/mol an atom, less than the soft repulsion's 100, so a clashing atom gets out of
-#: it, while the whole ligand moving costs that over every atom and does not happen
-TETHER_KJ = 500.0
+#: ligand heavy atoms this near the receptor's (Å) are free to move out of a clash:
+#: the clashing ones themselves (all within 3 Å set most of a small ligand free)
+FREE_A = CLASH_A
+#: what tethers the rest of the ligand's heavy atoms to their pose (kJ/mol/nm^2): one
+#: tether over every atom either holds the pose and leaves the clash, or relieves the
+#: clash and shifts the whole ligand (500 moved a phenylethanol 1.9 Å, 20000 left its
+#: 1.2 Å clash at 1.5); free near the receptor and firm elsewhere does neither
+TETHER_KJ = 20000.0
 
 
 def closest(lig_xyz, rec_xyz) -> float:
@@ -125,7 +131,11 @@ def relieve(receptor, ligs, mols, names, ff, args, log=print) -> list[dict]:
         tether.addGlobalParameter("k_lig", TETHER_KJ)
         for p in ("x0", "y0", "z0"):
             tether.addPerParticleParameter(p)
-        for i in lig_idx[_heavy(lig)]:
+        from scipy.spatial import cKDTree
+
+        heavy = _heavy(lig)
+        near = cKDTree(rec_xyz).query(np.asarray(lig.positions, float)[heavy])[0] < FREE_A
+        for i in lig_idx[heavy[~near]]:
             tether.addParticle(int(i), xyz[i].tolist())
         system.addForce(tether)
         torsions = [tuple(int(lig_idx[k]) for k in t) for t in held_torsions(mol)]
