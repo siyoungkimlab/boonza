@@ -1819,6 +1819,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
     sub.add_parser("swim", help="ligands swimming around a protein, many simulations "
                    "(boonza swim --help)")  # fmt: skip
+    sub.add_parser("fep", help="relative binding free energies: boonza fep prep, run, "
+                   "result (boonza fep prep --help)")  # fmt: skip
     sub.add_parser("pockets", help="fpocket on coarse-grained proteins, one structure or a "
                    "trajectory (boonza pockets --help)")  # fmt: skip
     sub.add_parser("cavity", help="cavities on coarse-grained proteins (a SiteMap-style "
@@ -2327,6 +2329,10 @@ def main(argv=None) -> int:
         from .md.swim import main as swim_main
 
         return swim_main(argv[1:])
+    if argv and argv[0] == "fep":
+        from .fep.cli import main as fep_main
+
+        return fep_main(argv[1:])
     if argv and argv[0] == "pockets":  # its own parser: run, traj, flags, and fpocket's flags
         from .pockets.cli import main as pockets_main
 
