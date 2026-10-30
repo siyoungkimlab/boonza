@@ -73,3 +73,49 @@ def test_a_large_change_gets_the_dense_schedule():
     assert len(schedule(11, 5, False, 11, 22)) == 23  # a benzyl ring that goes
     assert len(schedule(11, 5, True, 11, 22)) == 22  # a change of charge: its own
     assert len(schedule(11, 5, False, 11, 22, large_change_atoms=0)) == 11
+
+
+def _benzenes():
+    return list(Chem.SDMolSupplier(str(DATA / "benzene_modifications.sdf"), removeHs=False))
+
+
+def _graph(edges):
+    import networkx as nx
+
+    return nx.Graph([(e.a, e.b) for e in edges])
+
+
+def test_no_hubs_small_edges_first_and_a_reference():
+    import networkx as nx
+
+    ligs = _benzenes()
+    names = [m.GetProp("_Name") for m in ligs]
+    free = network.edges(ligs, max_degree=0, max_change=0)  # LOMAP's tree, unconstrained
+    hub = max(dict(_graph(free).degree).values())
+    assert hub > 2  # benzene, the parent, joins most of the others
+    capped = network.edges(ligs, max_degree=2, max_change=0)
+    g = _graph(capped)
+    assert nx.is_connected(g) and g.number_of_nodes() == len(ligs)
+    assert max(dict(g.degree).values()) <= 2  # a chain, no hub
+    # an edge that changes more than one heavy atom only where no smaller route joins
+    small = network.edges(ligs, max_degree=0, max_change=1, redundant=False)
+    big = [e for e in small if e.changed > 1]
+    g = _graph([e for e in small if e.changed <= 1])
+    g.add_nodes_from(range(len(ligs)))
+    for e in big:
+        assert not nx.has_path(g, e.a, e.b)
+    # a reference: preferred, and free of the cap
+    ref = names.index("toluene")
+    anchored = network.edges(ligs, max_degree=2, reference=ref)
+    deg = dict(_graph(anchored).degree)
+    assert deg[ref] == max(deg.values()) and deg[ref] > 2
+
+
+def test_a_network_from_the_graphs_alone():
+    ligs = _benzenes()
+    two_d = network.edges(ligs, method="2d")
+    g = _graph(two_d)
+    assert g.number_of_nodes() == len(ligs) and min(dict(g.degree).values()) >= 2
+    assert all(e.mapping and e.score > 0 for e in two_d)  # built from the 3D mapping
+    with pytest.raises(ValueError, match="3d or 2d"):
+        network.edges(ligs, method="4d")

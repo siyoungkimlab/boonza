@@ -1,9 +1,25 @@
 """Which ligand pairs to run, and from their ΔΔG, a value for every ligand.
 
-Edges: every pair is mapped and scored (boonza.fep.mapping); a minimal
-spanning tree on 1 - score joins all ligands through the easiest changes, and
-each ligand left on one edge gets its next best too, so every ligand sits in a
-cycle and a bad edge shows as a cycle that does not close.
+Edges: every pair is scored as LOMAP does, exp(-0.1 x heavy atoms that change),
+on its 3D atom mapping (boonza.fep.mapping: atoms that sit on top of each other
+in the poses), or with ``method="2d"`` on the two graphs' maximum common
+substructure (MCS), which leaves the poses out of the choice.  A spanning tree
+over 1 - score then joins every ligand through the easiest changes, with three
+rules:
+
+* an edge where more than ``max_change`` heavy atoms change is taken only where
+  no route through smaller ones joins its ligands (a whole substituent grown in
+  one edge samples poorly);
+* no ligand gets more than ``max_degree`` edges, the redundant ones included,
+  unless it can be joined no other way without a large edge (said in the log):
+  no hubs, whose one ligand's error every spoke inherits -- but a hub of small
+  changes before a large change;
+* a ``reference`` ligand (the one with a crystal pose) is preferred, and free of
+  the cap, so the network grows out from the pose that is known.
+
+Each ligand left on one edge then gets its next best within the rules, so every
+ligand sits in a cycle and a bad edge shows as a cycle that does not close.
+Whatever scored the pairs, an edge is built from its 3D mapping.
 
 Values: the ΔG of each ligand (relative to their mean, or to a reference) by
 weighted least squares over the edges' ΔΔG -- the maximum likelihood estimate
@@ -18,6 +34,15 @@ import numpy as np
 
 from .mapping import map_atoms, score
 
+#: heavy atoms an edge may change before it is taken only where no smaller route is
+MAX_CHANGE = 8
+#: edges a ligand may have (its redundant one included)
+MAX_DEGREE = 4
+#: what a reference ligand's edges are preferred by (1 - score)
+REFERENCE_BONUS = 0.15
+#: a 3D mapping this many heavy atoms smaller than the MCS is warned about
+MAPPING_SHORTFALL = 2
+
 
 @dataclass
 class Edge:
@@ -25,61 +50,174 @@ class Edge:
     b: int
     mapping: dict  # atom of a -> atom of b
     score: float
+    changed: int = 0  # heavy atoms that change (unmapped on either side, or swapped)
+
+
+def changed_heavy(a, b, mapping: dict) -> int:
+    """Heavy atoms of A and of B left out of ``mapping``, plus mapped ones that
+    change element: what LOMAP's score counts."""
+    za = np.array([x.GetAtomicNum() for x in a.GetAtoms()])
+    zb = np.array([x.GetAtomicNum() for x in b.GetAtoms()])
+    mapped = [(i, j) for i, j in mapping.items() if za[i] > 1]
+    swapped = sum(int(za[i] != zb[j]) for i, j in mapped)
+    return int((za > 1).sum() + (zb > 1).sum() - 2 * len(mapped) + swapped)
+
+
+def mcs_heavy(a, b, timeout: int = 10) -> int:
+    """Heavy atoms of the two graphs' maximum common substructure (rings whole,
+    elements matched)."""
+    from rdkit import Chem
+    from rdkit.Chem import rdFMCS
+
+    ha, hb = Chem.RemoveHs(a), Chem.RemoveHs(b)
+    res = rdFMCS.FindMCS([ha, hb], ringMatchesRingOnly=True, completeRingsOnly=True,
+                         atomCompare=rdFMCS.AtomCompare.CompareElements,
+                         bondCompare=rdFMCS.BondCompare.CompareOrder, timeout=timeout)  # fmt: skip
+    return int(res.numAtoms)
+
+
+def _pair(a, b, i, j, method, max_distance, charge_change, log) -> Edge | None:
+    """The scored edge between ligands ``a`` (index i) and ``b`` (j), or None."""
+    from rdkit import Chem
+
+    m = map_atoms(a, b, max_distance=max_distance)
+    if not m:
+        return None
+    s = score(a, b, m, charge_change)
+    changed = changed_heavy(a, b, m)
+    if method == "2d":
+        common = mcs_heavy(a, b)
+        heavy = sum(x.GetAtomicNum() > 1 for x in a.GetAtoms())
+        heavy += sum(x.GetAtomicNum() > 1 for x in b.GetAtoms())
+        mapped3d = (heavy - changed) // 2
+        factor = charge_change if Chem.GetFormalCharge(a) != Chem.GetFormalCharge(b) else 1.0
+        changed = heavy - 2 * common
+        s = float(factor * np.exp(-0.1 * changed))
+        if s > 0 and mapped3d < common - MAPPING_SHORTFALL and log:
+            log(f"  warning: ligands {i} and {j} share {common} heavy atoms as graphs, "
+                f"but only {mapped3d} sit on top of each other in their poses")  # fmt: skip
+    return Edge(i, j, m, s, changed) if s > 0 else None
+
+
+def _weight(e: Edge, max_change: int, reference) -> float:
+    w = 1.0 - e.score
+    if max_change and e.changed > max_change:
+        w += 1.0  # after every small edge: taken only where nothing smaller joins
+    if reference is not None and reference in (e.a, e.b):
+        w -= REFERENCE_BONUS
+    return w
+
+
+def _choose(n, scored: dict, fixed=(), redundant=True, max_change=MAX_CHANGE,
+            max_degree=MAX_DEGREE, reference=None, free=None, log=None) -> set:  # fmt: skip
+    """The pairs to add to ``fixed`` (pairs kept as they are): a spanning tree under
+    the module's rules, then the redundant edges of the ligands ``free`` (default:
+    all) left on one."""
+    parent = list(range(n))
+
+    def root(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    degree = [0] * n
+    for a, b in fixed:
+        parent[root(a)] = root(b)
+        degree[a] += 1
+        degree[b] += 1
+
+    def capped(k):
+        return bool(max_degree) and k != reference and degree[k] >= max_degree
+
+    order = sorted(scored, key=lambda p: (_weight(scored[p], max_change, reference), p))
+
+    def large(p):
+        return bool(max_change) and scored[p].changed > max_change
+
+    chosen = set()
+    # small edges within the cap; small ones past it; only then large ones: a hub of
+    # small changes is better than a large change
+    for allow_large, strict in ((False, True), (False, False), (True, True), (True, False)):
+        for a, b in order:
+            if root(a) == root(b) or (large((a, b)) and not allow_large):
+                continue
+            if strict and (capped(a) or capped(b)):
+                continue
+            if not strict and log:
+                over = [k for k in (a, b) if capped(k)]
+                if over:
+                    log(f"  ligand(s) {over} past {max_degree} edges: no other edge joins them")
+            parent[root(a)] = root(b)
+            chosen.add((a, b))
+            degree[a] += 1
+            degree[b] += 1
+    if redundant:
+        for node in sorted(free if free is not None else range(n)):
+            if degree[node] != 1:
+                continue
+            for p in order:
+                if node not in p or p in chosen or p in fixed:
+                    continue
+                other = p[0] if p[1] == node else p[1]
+                if capped(other) or (max_change and scored[p].changed > max_change):
+                    continue
+                chosen.add(p)
+                degree[node] += 1
+                degree[other] += 1
+                break
+    return chosen
+
+
+def _unjoined(n, pairs) -> list[list[int]]:
+    import networkx as nx
+
+    g = nx.Graph()
+    g.add_nodes_from(range(n))
+    g.add_edges_from(pairs)
+    return [sorted(c) for c in nx.connected_components(g)]
 
 
 def edges(ligands, redundant: bool = True, max_distance: float = 0.95,
-          charge_change: float = 0.0) -> list[Edge]:  # fmt: skip
-    """The edges to run between posed ``ligands`` (RDKit molecules with hydrogens).
-    A change of net charge scores ``charge_change`` times LOMAP's score
-    (boonza.fep.mapping.score): 0 never takes one.  Pairs that cannot be joined
-    (score 0) are never chosen; ligands they leave alone raise an error."""
-    import networkx as nx
+          charge_change: float = 0.0, method: str = "3d", max_change: int = MAX_CHANGE,
+          max_degree: int = MAX_DEGREE, reference: int | None = None,
+          log=None) -> list[Edge]:  # fmt: skip
+    """The edges to run between posed ``ligands`` (RDKit molecules with hydrogens),
+    under the module's rules.  A change of net charge scores ``charge_change``
+    times LOMAP's score (boonza.fep.mapping.score): 0 never takes one.  Pairs that
+    cannot be joined (score 0) are never chosen; ligands they leave alone raise an
+    error.  ``max_change`` or ``max_degree`` 0: no such rule."""
     from rdkit import Chem
 
     n = len(ligands)
     if n < 2:
         raise ValueError("a network needs at least two ligands")
+    if method not in ("3d", "2d"):
+        raise ValueError(f"method is 3d or 2d, not {method!r}")
     scored = {}
     for i in range(n):
         for j in range(i + 1, n):
-            m = map_atoms(ligands[i], ligands[j], max_distance=max_distance)
-            s = score(ligands[i], ligands[j], m, charge_change) if m else 0.0
-            if s > 0:
-                scored[i, j] = Edge(i, j, m, s)
-    g = nx.Graph()
-    g.add_nodes_from(range(n))
-    for (i, j), e in scored.items():
-        g.add_edge(i, j, weight=1.0 - e.score)
-    if not nx.is_connected(g):
-        alone = [sorted(c) for c in nx.connected_components(g)]
+            e = _pair(ligands[i], ligands[j], i, j, method, max_distance, charge_change, log)
+            if e is not None:
+                scored[i, j] = e
+    parts = _unjoined(n, scored)
+    if len(parts) > 1:
         charges = {Chem.GetFormalCharge(m) for m in ligands}
         why = (" (their net charges differ, and a change of charge needs a receptor: "
                "relative hydration free energies keep the charge)"
                if len(charges) > 1 and not charge_change else "")  # fmt: skip
-        raise ValueError(f"the ligands fall apart into groups no mapping joins: {alone}{why}")
-    tree = nx.minimum_spanning_tree(g)
-    chosen = {tuple(sorted(e)) for e in tree.edges}
-    if redundant:
-        for node in range(n):
-            if tree.degree(node) == 1:
-                pairs = [tuple(sorted((node, k))) for k in g[node]]
-                spare = sorted((g[node][k]["weight"], pair)
-                               for k, pair in zip(g[node], pairs, strict=True)
-                               if pair not in chosen)  # fmt: skip
-                if spare:
-                    chosen.add(spare[0][1])
+        raise ValueError(f"the ligands fall apart into groups no mapping joins: {parts}{why}")
+    chosen = _choose(n, scored, (), redundant, max_change, max_degree, reference, log=log)
     return [scored[e] for e in sorted(chosen)]
 
 
 def extend(ligands, existing, new, redundant: bool = True, max_distance: float = 0.95,
-           charge_change: float = 0.0) -> list[Edge]:  # fmt: skip
+           charge_change: float = 0.0, method: str = "3d", max_change: int = MAX_CHANGE,
+           max_degree: int = MAX_DEGREE, reference: int | None = None,
+           log=None) -> list[Edge]:  # fmt: skip
     """The edges that join ligands ``new`` (indices) to a network already run:
-    ``existing`` its (a, b) pairs, kept as they are.  Only pairs with a new ligand
-    are mapped; a minimal spanning tree over them, the existing edges free, joins
-    every new ligand through the easiest changes, and with ``redundant`` each new
-    ligand left on one edge gets its next best too, as :func:`edges` does."""
-    import networkx as nx
-
+    ``existing`` its (a, b) pairs, kept as they are and counted against the cap.
+    Only pairs with a new ligand are scored; the rest as :func:`edges` does."""
     n, new = len(ligands), sorted(set(new))
     if not new:
         raise ValueError("no new ligands to add")
@@ -89,33 +227,16 @@ def extend(ligands, existing, new, redundant: bool = True, max_distance: float =
             if i == j or (i in new and i > j):
                 continue
             a, b = min(i, j), max(i, j)
-            m = map_atoms(ligands[a], ligands[b], max_distance=max_distance)
-            s = score(ligands[a], ligands[b], m, charge_change) if m else 0.0
-            if s > 0:
-                scored[a, b] = Edge(a, b, m, s)
+            e = _pair(ligands[a], ligands[b], a, b, method, max_distance, charge_change, log)
+            if e is not None:
+                scored[a, b] = e
     have = {tuple(sorted(p)) for p in existing}
-    g = nx.Graph()
-    g.add_nodes_from(range(n))
-    g.add_edges_from(have, weight=0.0)
-    for (i, j), e in scored.items():
-        g.add_edge(i, j, weight=1.0 - e.score)
-    if not nx.is_connected(g):
-        alone = [sorted(c) for c in nx.connected_components(g) if set(c) <= set(new)]
+    parts = _unjoined(n, list(have) + list(scored))
+    if len(parts) > 1:
+        alone = [c for c in parts if set(c) <= set(new)]
         raise ValueError(f"no mapping joins these new ligands to the network: {alone}")
-    tree = nx.minimum_spanning_tree(g)
-    chosen = {tuple(sorted(e)) for e in tree.edges} - have
-    if redundant:
-        degree = {k: 0 for k in new}
-        for a, b in have | chosen:
-            for k in (a, b):
-                if k in degree:
-                    degree[k] += 1
-        for node in new:
-            if degree[node] == 1:
-                spare = sorted((1.0 - scored[p].score, p) for p in scored
-                               if node in p and p not in chosen)  # fmt: skip
-                if spare:
-                    chosen.add(spare[0][1])
+    chosen = _choose(n, scored, have, redundant, max_change, max_degree, reference,
+                     free=new, log=log)  # fmt: skip
     return [scored[e] for e in sorted(chosen)]
 
 

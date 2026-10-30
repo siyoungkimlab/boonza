@@ -66,8 +66,9 @@ CHARGE_CHANGE_PENALTY = 0.1
 #: and runs openfe's longer protocol (its industry benchmark's settings)
 CHARGE_WINDOWS = 22
 CHARGE_PRODUCTION_NS = 20.0
-#: an edge where either ligand has at least this many atoms of its own (not mapped
-#: to the other's) runs boonza.fep.lambdas.dense(); 0 never
+#: an edge where either ligand has at least this many heavy atoms of its own (not
+#: mapped to the other's) runs boonza.fep.lambdas.dense(); 0 never.  The network
+#: avoids such edges (boonza.fep.network.MAX_CHANGE), so it is the few it cannot
 LARGE_CHANGE_ATOMS = 8
 #: without a receptor, what the water leg is set against (boonza fep prep --phase)
 PHASES = ("vacuum", "octanol", "wet-octanol")
@@ -169,8 +170,8 @@ def previous(work: Path, mols, names) -> Previous:
 
 def schedule(n_old: int, n_new: int, charged: bool, windows: int, charge_windows: int,
              large_change_atoms: int = LARGE_CHANGE_ATOMS) -> np.ndarray:  # fmt: skip
-    """The master lambdas of an edge whose ligands have ``n_old`` and ``n_new`` atoms
-    of their own: ``charge_windows`` for a change of charge, the dense schedule for
+    """The master lambdas of an edge whose ligands have ``n_old`` and ``n_new`` heavy
+    atoms of their own: ``charge_windows`` for a change of charge, the dense schedule for
     a large group (``large_change_atoms``), else ``windows`` evenly spaced."""
     if charged:
         return lambdas.windows(charge_windows)
@@ -186,8 +187,11 @@ def same_settings(before: Previous, args, repeats, windows, iteration_ps, phase,
     differ = []
     for meta in before.metas:
         charged = bool(meta.get("charge_change"))
-        own = meta.get("unique_old", 0), meta.get("unique_new", 0)
-        want_windows = len(schedule(*own, charged, windows, charge_windows, large_change_atoms))
+        own = meta.get("unique_old_heavy"), meta.get("unique_new_heavy")
+        want_windows = len(meta["lambdas"])  # a prep from before the rule: as it was
+        if None not in own:
+            want_windows = len(schedule(*own, charged, windows, charge_windows,
+                                        large_change_atoms))  # fmt: skip
         want = {"repeats": repeats, "iteration_ps": iteration_ps, "phase": phase,
                 "temperature": args.temperature, "pressure": args.pressure,
                 "timestep_fs": args.integration_fs,
@@ -529,12 +533,16 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
          cofactors=(), log=print, charge_windows: int = CHARGE_WINDOWS,
          charge_production_ns: float = CHARGE_PRODUCTION_NS, phase: str = "vacuum",
          octanol_box=None, extend: bool = False,
-         large_change_atoms: int = LARGE_CHANGE_ATOMS) -> list[Path]:  # fmt: skip
+         large_change_atoms: int = LARGE_CHANGE_ATOMS, network_method: str = "3d",
+         max_change: int = network.MAX_CHANGE, max_degree: int = network.MAX_DEGREE,
+         reference: str | None = None) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
     ``charge_windows`` windows and ``charge_production_ns`` of production; one
     where either ligand has ``large_change_atoms`` or more atoms of its own, the
-    dense schedule (boonza.fep.lambdas.dense; 0 never).
+    dense schedule (boonza.fep.lambdas.dense; 0 never).  ``network_method``,
+    ``max_change``, ``max_degree`` and ``reference`` (a ligand's name) choose the
+    edges (boonza.fep.network).
     ``phase``, without a receptor, what the water leg is set against: vacuum
     (hydration), octanol or wet-octanol (transfer); ``octanol_box`` a box built
     before (boonza.fep.octanol.box), else one is built in the work directory.
@@ -648,11 +656,16 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 "hydration" if phase == "vacuum" else "transfer")  # fmt: skip
     charges = [Chem.GetFormalCharge(m) for m in mols]
     penalty = CHARGE_CHANGE_PENALTY if receptor is not None else 0.0
+    if reference is not None and reference not in names:
+        raise ValueError(f"--reference {reference}: no ligand of that name")
+    rules = {"charge_change": penalty, "method": network_method, "max_change": max_change,
+             "max_degree": max_degree, "log": log,
+             "reference": names.index(reference) if reference is not None else None}  # fmt: skip
     if before is None:
-        edges = network.edges(mols, charge_change=penalty)
+        edges = network.edges(mols, **rules)
         log(f"Network: {len(edges)} edges over {len(ligs)} ligands")
     else:
-        edges = network.extend(mols, before.pairs, new, charge_change=penalty)
+        edges = network.extend(mols, before.pairs, new, **rules)
         log(f"Network: {len(edges)} new edges, beside the {len(before.pairs)} of the first "
             f"prep, over {len(ligs)} ligands")  # fmt: skip
     with (work / "ligands.csv").open("w", newline="") as fh:
@@ -681,18 +694,23 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             legs = (("solvent", None, SOLVENT_PADDING_NM), ("octanol", None, SOLVENT_PADDING_NM))
         dq = charges[e.b] - charges[e.a]
         production_ns = charge_production_ns if dq else args.production_ns
+        heavy_old = sum(1 for at in mols[e.a].GetAtoms()
+                        if at.GetAtomicNum() > 1 and at.GetIdx() not in e.mapping)  # fmt: skip
+        taken = set(e.mapping.values())
+        heavy_new = sum(1 for at in mols[e.b].GetAtoms()
+                        if at.GetAtomicNum() > 1 and at.GetIdx() not in taken)  # fmt: skip
+        schedule_ = schedule(heavy_old, heavy_new, bool(dq), windows, charge_windows,
+                             large_change_atoms)  # fmt: skip
+        if len(schedule_) != (charge_windows if dq else windows):
+            log(f"{a} -> {b}: {max(heavy_old, heavy_new)} heavy atoms of one ligand's "
+                f"own: {len(schedule_)} windows, dense where their Lennard-Jones is "
+                "switched")  # fmt: skip
         for leg, env, padding in legs:
             log(f"{a} -> {b}: {leg}")
             built = build_leg(env, ligs[e.a], ligs[e.b], e.mapping, ff, args, padding, log,
                               charge_change=dq,
                               solvent=solvent_box if leg == "octanol" else None)  # fmt: skip
             hyb, old, dropped = built.hybrid, built.old, built.dropped
-            n_old, n_new = len(hyb.unique_old), len(hyb.unique_new)
-            schedule_ = schedule(n_old, n_new, bool(dq), windows, charge_windows,
-                                 large_change_atoms)  # fmt: skip
-            if len(schedule_) != (charge_windows if dq else windows):
-                log(f"  {max(n_old, n_new)} atoms of one ligand's own: {len(schedule_)} "
-                    "windows, dense where their Lennard-Jones is switched")  # fmt: skip
             _finish(hyb, old, args, leg == "complex", log)
             meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "phase": phase,
                     "score": e.score,
@@ -704,6 +722,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                     "production_ns": production_ns, "repeats": repeats,
                     "core": len(hyb.core), "unique_old": len(hyb.unique_old),
                     "unique_new": len(hyb.unique_new),
+                    "unique_old_heavy": heavy_old, "unique_new_heavy": heavy_new,
                     "unmapped_by_constraints": dropped}  # fmt: skip
             if tail and built.dispersion_dK:
                 # kcal/mol Å^3: result adds dK / <V> to this leg's ΔG
