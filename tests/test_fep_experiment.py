@@ -83,8 +83,8 @@ def test_plot_with_predictions_and_the_script_that_redraws_it(tmp_path):
                                         predicted=[("new1", -10.2), ("new2", -13.5)])  # fmt: skip
     assert [f.name for f in files] == ["dG_white.pdf", "dG_black.pdf"]
     rows = (plots / "dG.csv").read_text().splitlines()
-    assert rows[0] == "name,calc,exp,calc_err,exp_err" and len(rows) == 1 + 4 + 2
-    assert rows[-1] == "new2,-13.5000,,,"  # a prediction: no measured value
+    assert rows[0] == "name,calc,exp,calc_err,exp_err,null" and len(rows) == 1 + 4 + 2
+    assert rows[-1] == "new2,-13.5000,,,,"  # a prediction: no measured value
     script = plots / "plot_correlation.py"
     text = script.read_text()
     assert "import boonza" not in text and "from boonza" not in text  # stands alone
@@ -98,3 +98,29 @@ def test_plot_with_predictions_and_the_script_that_redraws_it(tmp_path):
     notes = []
     experiment.correlation_plot(plots / "dG", calc, exp, log=notes.append)
     assert script.read_text().endswith("# tailored\n") and any("left as it is" in n for n in notes)
+
+
+def test_the_null_model_and_axes_alike(tmp_path):
+    import json
+
+    pytest.importorskip("matplotlib")
+    from boonza.fep import plot_correlation
+
+    lmw = experiment.log_mw(["c1ccccc1", "Cc1ccccc1", "CCc1ccccc1", "CCCc1ccccc1"])
+    assert np.all(np.diff(lmw) > 0)
+    exp = -3.0 * lmw + 5.0
+    slope, intercept = experiment.null_fit(lmw, exp)
+    assert slope == pytest.approx(-3.0) and intercept == pytest.approx(5.0)
+    calc = exp + np.array([0.5, -0.4, 0.3, -0.2])
+    null = slope * lmw + intercept
+    plots = tmp_path / "plots"
+    experiment.correlation_plot(plots / "dG", calc, exp, stats=statistics(calc, exp),
+                                null=null, null_stats=statistics(null, exp),
+                                log=lambda *_: None)  # fmt: skip
+    rows = (plots / "dG.csv").read_text().splitlines()
+    assert all(r.split(",")[-1] for r in rows[1:])  # every measured point has its null
+    lines = json.loads((plots / "dG.json").read_text())["lines"]
+    assert lines[-1].startswith("log MW: RMSE 0.00")
+    at = plot_correlation.ticks(-12.3, -7.9)  # the ticks both axes are given
+    assert at == sorted(at) and -12.3 <= at[0] and at[-1] <= -7.9 and len(at) >= 3
+    assert len({round(b - a, 9) for a, b in zip(at, at[1:], strict=False)}) == 1  # evenly spaced

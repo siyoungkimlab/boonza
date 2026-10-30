@@ -1,6 +1,6 @@
 """boonza fep prep --rem: a receptor relaxed around ligand poses that clash with
 it, the poses held exactly, a soft minimization (REM) and then the force
-field's (EM), the pocket's side chains free and their stereocentres held
+field's (EM), the pocket's residues free, backbone too, and their stereocentres held
 (boonza.fep.relief)."""
 
 import csv
@@ -41,7 +41,8 @@ def test_held_torsions_and_the_pocket():
     assert len(torsions) == 4  # Gly none; Ile and Thr each CA and CB
     assert sorted(str(name[t[1]]) for t in torsions) == ["CA", "CA", "CB", "CB"]
     free = name[relief.free_atoms(s, [1])]
-    assert "CB" in free and "CD1" in free and not set(free) & {"N", "CA", "C", "O"}
+    assert {"N", "CA", "C", "O", "CB", "CD1"} <= set(free)  # the whole residue
+    assert len(free) == np.sum(np.asarray(s.atoms["residue"]) == 1)
 
 
 def _clashing(tmp_path, mols, depth=1.2):
@@ -109,7 +110,8 @@ def test_the_receptor_makes_room_and_the_pose_is_kept(tmp_path):
         assert np.array_equal(np.asarray(g.positions, float), p)
     name = np.asarray(receptor.atoms["name"])
     backbone = np.isin(name, ("N", "CA", "C", "O"))
-    assert np.linalg.norm(after[backbone] - before[backbone], axis=1).max() < 0.5
+    shift = np.linalg.norm(after[backbone] - before[backbone], axis=1).max()
+    assert 0.1 < shift < 1.5  # free within 5 Å: the backbone gives too, a little
     assert res_rows[0]["resname"] == "LYS" and res_rows[0]["moved"] > 0.5  # room made
     for t in torsions:  # every stereocentre's handedness kept
         assert np.sign(_improper(after, t)) == np.sign(_improper(before, t))
@@ -136,6 +138,12 @@ def test_prep_rem_writes_what_it_did(tmp_path, capsys):
     assert all(float(r["closest_after"]) > float(r["closest_before"]) for r in rows)
     moved = list(csv.DictReader((work / "rem_residues.csv").open()))
     assert moved and moved[0]["resname"] == "LYS"
-    relaxed = boonza.load(work / "receptor_rem.pdb")
+    relaxed = boonza.load(work / "receptor_rem.pdb")  # the input's format
     assert relaxed.natoms == boonza.load(pdb).natoms
+    assert np.allclose(boonza.load(work / "receptor.pdb").positions, relaxed.positions,
+                       atol=1e-3)  # what the legs were built in, for boonza view  # fmt: skip
+    from boonza.fep import prep as fep_prep
+
+    assert fep_prep.receptor_format("x.dms") == ".dms"
+    assert fep_prep.receptor_format("x.maegz") == fep_prep.receptor_format("x.gro") == ".mae"
     assert (work / "edges").is_dir() and (work / "commands.txt").exists()

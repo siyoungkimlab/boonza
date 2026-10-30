@@ -18,6 +18,9 @@ Layout::
 
     WORKDIR/ligands.csv          the ligands, their charges and SMILES
     WORKDIR/ligands.sdf          the ligands as given, every field kept (result adds its own)
+    WORKDIR/receptor.EXT         the receptor the complex legs are built in (boonza view
+                                 WORKDIR); EXT the input's: mae, dms, cif or pdb (mae
+                                 for any other, which keeps bond orders)
     WORKDIR/edges.csv            the pairs, how many atoms map, their scores
     WORKDIR/forcefield/          the GAFF2 patch (every ligand, any cofactor)
     WORKDIR/edges/A~B/complex/   system.xml.gz, state.npz, leg.json
@@ -25,14 +28,14 @@ Layout::
     WORKDIR/edges/A~B/vacuum/      (no receptor: hydration)
     WORKDIR/edges/A~B/octanol/     (no receptor, --phase octanol: transfer)
     WORKDIR/octanol/box.dms      the equilibrated octanol box the octanol legs tile
-    WORKDIR/receptor_rem.pdb, rem.csv, rem_residues.csv   (--rem) the receptor relaxed
+    WORKDIR/receptor_rem.EXT, rem.csv, rem_residues.csv   (--rem) the receptor relaxed
     WORKDIR/commands.txt
     WORKDIR/commands_new.txt     (--extend) the runs of the edges just added
 
 With ``extend``, ligands are added to a work directory prepared before: the SDF
 holds the first prep's ligands (the same molecules in the same poses) and the
 new ones, and only edges that join the new ones are built, in the receptor the
-first edges were built in (receptor_rem.pdb, if --rem made one), with the first
+first edges were built in (receptor_rem.EXT, if --rem made one), with the first
 prep's templates and charges kept; its settings must be the same.  Every edge
 already run is reused, and result analyzes them all as one network.
 """
@@ -65,6 +68,17 @@ CHARGE_WINDOWS = 22
 CHARGE_PRODUCTION_NS = 20.0
 #: without a receptor, what the water leg is set against (boonza fep prep --phase)
 PHASES = ("vacuum", "octanol", "wet-octanol")
+#: what the receptor is written as (receptor.EXT, receptor_rem.EXT): the input's
+#: format if one of these, else the first, which keeps bond orders as PDB does not
+RECEPTOR_FORMATS = (".mae", ".dms", ".cif", ".pdb")
+
+
+def receptor_format(path) -> str:
+    """The extension to write a receptor read from ``path`` with (RECEPTOR_FORMATS)."""
+    from ..io import _format
+
+    fmt = {".cms": ".mae", ".mmcif": ".cif"}.get(_format(path, None), _format(path, None))
+    return fmt if fmt in RECEPTOR_FORMATS else RECEPTOR_FORMATS[0]
 
 
 def load_ligands(path) -> tuple[list, list[System], list[str]]:
@@ -105,7 +119,7 @@ class Previous:
     rows: list  # edges.csv
     commands: list  # commands.txt
     metas: list  # every leg.json
-    receptor: Path | None  # receptor_rem.pdb, if --rem relaxed the receptor
+    receptor: Path | None  # receptor_rem.EXT, if --rem relaxed the receptor
 
 
 def previous(work: Path, mols, names) -> Previous:
@@ -145,9 +159,9 @@ def previous(work: Path, mols, names) -> Previous:
     metas = [json.loads(p.read_text()) for p in sorted((work / "edges").glob("*/*/leg.json"))]
     if not metas:
         raise ValueError(f"{work}: no legs to add to")
-    rem = work / "receptor_rem.pdb"
-    return Previous(old, pairs, rows, [c for c in commands if c.strip()], metas,
-                    rem if rem.exists() else None)  # fmt: skip
+    rem = next((work / f"receptor_rem{s}" for s in RECEPTOR_FORMATS
+                if (work / f"receptor_rem{s}").is_file()), None)  # fmt: skip
+    return Previous(old, pairs, rows, [c for c in commands if c.strip()], metas, rem)
 
 
 def same_settings(before: Previous, args, repeats, windows, iteration_ps, phase,
@@ -591,8 +605,9 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
 
         if getattr(args, "rem", False) and before is None:
             log("REM, then EM: the receptor relaxed around every ligand's pose (the "
-                "ligands held as posed, the side chains that reach a ligand free)")  # fmt: skip
-            relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log))
+                "ligands held as posed, the residues within 5 Å of one free)")  # fmt: skip
+            relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log),
+                         suffix=receptor_format(args.input_structure))  # fmt: skip
         else:
             close = relief.clashes(receptor, ligs, names)
             if close:
@@ -630,6 +645,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                         "" if got is None else round(got[0], 4),
                         "" if got is None else got[1]])  # fmt: skip
     write_ligands(work / "ligands.sdf", mols, names)
+    if receptor is not None:
+        from ..io import save
+
+        save(receptor, work / f"receptor{receptor_format(args.input_structure)}")
     runs, rows = [], []
     for e in edges:
         a, b = names[e.a], names[e.b]
