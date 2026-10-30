@@ -68,7 +68,7 @@ def _prep(argv) -> int:
                    help="score ligand pairs on their atom mapping in the poses (3d), or on "
                         "their graphs' maximum common substructure, leaving the poses out of "
                         "the choice (2d); either way an edge is built from its 3D mapping "
-                        "(default: 3d)")  # fmt: skip
+                        "(default: 3d, or the first prep's with --extend)")  # fmt: skip
     g.add_argument("--max-change", dest="max_change", type=int,
                    help="an edge that changes more heavy atoms is taken only where no route "
                         "through smaller ones exists; 0 no limit "
@@ -113,9 +113,8 @@ def _prep(argv) -> int:
              phase=x.get("phase") or "vacuum", octanol_box=x.get("octanol_box"),
              extend=bool(x.get("extend")),
              large_change_atoms=x.get("large_change_atoms", LARGE_CHANGE_ATOMS),
-             network_method=x.get("network") or "3d",
-             max_change=x.get("max_change", MAX_CHANGE),
-             max_degree=x.get("max_degree", MAX_DEGREE),
+             network_method=x.get("network"), max_change=x.get("max_change"),
+             max_degree=x.get("max_degree"),
              reference=x.get("reference"))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)

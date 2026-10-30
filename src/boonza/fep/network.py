@@ -51,6 +51,7 @@ class Edge:
     mapping: dict  # atom of a -> atom of b
     score: float
     changed: int = 0  # heavy atoms that change (unmapped on either side, or swapped)
+    role: str = "tree"  # or "redundant": added so a ligand on one edge sits in a cycle
 
 
 def changed_heavy(a, b, mapping: dict) -> int:
@@ -109,10 +110,10 @@ def _weight(e: Edge, max_change: int, reference) -> float:
 
 
 def _choose(n, scored: dict, fixed=(), redundant=True, max_change=MAX_CHANGE,
-            max_degree=MAX_DEGREE, reference=None, free=None, log=None) -> set:  # fmt: skip
-    """The pairs to add to ``fixed`` (pairs kept as they are): a spanning tree under
-    the module's rules, then the redundant edges of the ligands ``free`` (default:
-    all) left on one."""
+            max_degree=MAX_DEGREE, reference=None, free=None, log=None) -> dict:  # fmt: skip
+    """The pairs to add to ``fixed`` (pairs kept as they are), each with its role: a
+    spanning tree under the module's rules ("tree"), then the redundant edges of
+    the ligands ``free`` (default: all) left on one ("redundant")."""
     parent = list(range(n))
 
     def root(k):
@@ -135,7 +136,7 @@ def _choose(n, scored: dict, fixed=(), redundant=True, max_change=MAX_CHANGE,
     def large(p):
         return bool(max_change) and scored[p].changed > max_change
 
-    chosen = set()
+    chosen = {}
     # small edges within the cap; small ones past it; only then large ones: a hub of
     # small changes is better than a large change
     for allow_large, strict in ((False, True), (False, False), (True, True), (True, False)):
@@ -149,7 +150,7 @@ def _choose(n, scored: dict, fixed=(), redundant=True, max_change=MAX_CHANGE,
                 if over:
                     log(f"  ligand(s) {over} past {max_degree} edges: no other edge joins them")
             parent[root(a)] = root(b)
-            chosen.add((a, b))
+            chosen[a, b] = "tree"
             degree[a] += 1
             degree[b] += 1
     if redundant:
@@ -162,7 +163,7 @@ def _choose(n, scored: dict, fixed=(), redundant=True, max_change=MAX_CHANGE,
                 other = p[0] if p[1] == node else p[1]
                 if capped(other) or (max_change and scored[p].changed > max_change):
                     continue
-                chosen.add(p)
+                chosen[p] = "redundant"
                 degree[node] += 1
                 degree[other] += 1
                 break
@@ -208,7 +209,7 @@ def edges(ligands, redundant: bool = True, max_distance: float = 0.95,
                if len(charges) > 1 and not charge_change else "")  # fmt: skip
         raise ValueError(f"the ligands fall apart into groups no mapping joins: {parts}{why}")
     chosen = _choose(n, scored, (), redundant, max_change, max_degree, reference, log=log)
-    return [scored[e] for e in sorted(chosen)]
+    return [_as(scored[p], role) for p, role in sorted(chosen.items())]
 
 
 def extend(ligands, existing, new, redundant: bool = True, max_distance: float = 0.95,
@@ -237,7 +238,101 @@ def extend(ligands, existing, new, redundant: bool = True, max_distance: float =
         raise ValueError(f"no mapping joins these new ligands to the network: {alone}")
     chosen = _choose(n, scored, have, redundant, max_change, max_degree, reference,
                      free=new, log=log)  # fmt: skip
-    return [scored[e] for e in sorted(chosen)]
+    return [_as(scored[p], role) for p, role in sorted(chosen.items())]
+
+
+def _as(e: Edge, role: str) -> Edge:
+    e.role = role
+    return e
+
+
+def summary(names, pairs, changed, settings: dict) -> str:
+    """One line on how a network was built and what it came out as: ``pairs``
+    (a, b) every edge, ``changed`` their heavy atoms that change (None unknown)."""
+    degree = np.zeros(len(names), int)
+    for a, b in pairs:
+        degree[a] += 1
+        degree[b] += 1
+    top = int(degree.argmax())
+    rules = [settings.get("method", "3d"), f"max change {settings.get('max_change')}",
+             f"max degree {settings.get('max_degree')}"]  # fmt: skip
+    if settings.get("reference") is not None:
+        rules.append(f"reference {settings['reference']}")
+    known = [c for c in changed if c is not None]
+    sizes = (f"; heavy atoms changed: median {np.median(known):g}, max {max(known)}"
+             if known else "")  # fmt: skip
+    return (f"Network ({', '.join(rules)}): {len(pairs)} edges over {len(names)} ligands; "
+            f"edges per ligand {degree.min()}-{degree.max()} ({names[top]}: {degree[top]})"
+            + sizes)  # fmt: skip
+
+
+def draw(path_stem, names, pairs, changed=None, roles=None, reference=None,
+         max_change: int = MAX_CHANGE, log=print) -> list:  # fmt: skip
+    """The network as a picture, ``<path_stem>_white.pdf`` and ``_black.pdf``: each
+    ligand a labelled node (the reference ringed), each edge a line coloured by the
+    heavy atoms it changes (past ``max_change`` in red), dashed where redundant;
+    the files, or [] without matplotlib."""
+    import warnings
+    from pathlib import Path
+
+    try:
+        import matplotlib
+    except ImportError:
+        return []
+    matplotlib.use("Agg")
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+    import networkx as nx
+
+    from .plot_correlation import THEMES, font_ready, style
+
+    stem = Path(path_stem)
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    g = nx.Graph()
+    g.add_nodes_from(range(len(names)))
+    g.add_edges_from(pairs)
+    xy = nx.kamada_kawai_layout(g) if g.number_of_edges() else nx.circular_layout(g)
+    changed = list(changed) if changed is not None else [None] * len(pairs)
+    roles = list(roles) if roles is not None else ["tree"] * len(pairs)
+    known = [c for c in changed if c is not None]
+    top = max(known + [max_change or 1, 1])
+    cmap = mpl.colormaps["viridis"]
+    font = font_ready(log)
+    written = []
+    size = max(4.5, 0.45 * len(names) ** 0.75 + 3)
+    for background, ink in THEMES.items():
+        rc = style(ink)
+        if not font:
+            rc.pop("font.family")
+        with mpl.rc_context(rc), warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            fig, ax = plt.subplots(figsize=(size, size))
+            for (a, b), c, role in zip(pairs, changed, roles, strict=True):
+                color = (ink if c is None else "tab:red" if max_change and c > max_change
+                         else cmap(0.85 * c / top))  # fmt: skip
+                (x0, y0), (x1, y1) = xy[a], xy[b]
+                ax.plot([x0, x1], [y0, y1], color=color, lw=2.0, zorder=1,
+                        ls="--" if role == "redundant" else "-")  # fmt: skip
+                if c is not None:
+                    ax.text((x0 + x1) / 2, (y0 + y1) / 2, str(c), fontsize=12, color=ink,
+                            ha="center", va="center", zorder=3)  # fmt: skip
+            for k, name in enumerate(names):
+                ref = reference is not None and k == reference
+                ax.scatter(*xy[k], s=260 if ref else 160, color="tab:blue", zorder=2,
+                           edgecolors="tab:orange" if ref else "none", linewidths=2.5)  # fmt: skip
+                ax.annotate(name, xy[k], xytext=(0, 11), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=12, color=ink, zorder=4)  # fmt: skip
+            ax.set_axis_off()
+            ax.margins(0.12)
+            note = "line: heavy atoms changed; dashed: redundant"
+            if max_change:
+                note += f"; red: more than {max_change}"
+            ax.set_title(note, fontsize=12)
+            path = stem.with_name(f"{stem.name}_{background}.pdf")
+            fig.savefig(path, format="pdf", transparent=True)
+            plt.close(fig)
+            written.append(path)
+    return written
 
 
 def estimate(n: int, results, reference: int | None = None) -> tuple[np.ndarray, np.ndarray]:

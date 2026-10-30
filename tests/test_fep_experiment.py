@@ -120,7 +120,8 @@ def test_the_null_model_and_axes_alike(tmp_path):
     rows = (plots / "dG.csv").read_text().splitlines()
     assert all(r.split(",")[-1] for r in rows[1:])  # every measured point has its null
     lines = json.loads((plots / "dG.json").read_text())["lines"]
-    assert lines[-1].startswith("log MW: RMSE 0.00")
+    assert lines[0].startswith("FEP: RMSE") and "[" not in lines[0]  # no intervals
+    assert lines[1].startswith("log MW: RMSE 0.00") and lines[-1] == "n = 4"
     at = plot_correlation.ticks(-12.3, -7.9)  # the ticks both axes are given
     assert at == sorted(at) and -12.3 <= at[0] and at[-1] <= -7.9 and len(at) >= 3
     assert len({round(b - a, 9) for a, b in zip(at, at[1:], strict=False)}) == 1  # evenly spaced

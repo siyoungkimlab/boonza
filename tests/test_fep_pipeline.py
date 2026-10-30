@@ -105,8 +105,14 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
     work = tmp_path / "work"
     measured = {"benzene": {"dG": -0.9}, "toluene": {"dG": -0.8}, "phenol": {"dG": -6.6}}
     first = _sdf(tmp_path / "first.sdf", ["benzene", "toluene", "phenol"], measured)
-    assert cli.main(["prep", "--ligands", str(first), "--workdir", str(work), *tiny]) == 0
+    assert cli.main(["prep", "--ligands", str(first), "--workdir", str(work), *tiny,
+                     "--max-degree", "3"]) == 0  # fmt: skip
     assert (work / "ligands.sdf").exists()  # kept, every field with it
+    chosen = json.loads((work / "network.json").read_text())
+    assert chosen["settings"]["max_degree"] == 3 and chosen["settings"]["method"] == "3d"
+    first_rows = list(csv.DictReader((work / "edges.csv").open()))
+    assert all(r["changed_heavy"] != "" and r["role"] in ("tree", "redundant")
+               for r in first_rows)  # fmt: skip
     old = (work / "commands.txt").read_text().splitlines()
     _run_all(old)
     ran = {p: p.read_bytes() for p in (work / "edges").glob("*/*/run_*.npz")}
@@ -122,6 +128,9 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
     new = (work / "commands_new.txt").read_text().splitlines()
     assert new and all("anisole" in line for line in new)
     assert (work / "commands.txt").read_text().splitlines() == old + new
+    # the first prep's network rules kept; every edge, old and new, in edges.csv
+    assert json.loads((work / "network.json").read_text())["settings"]["max_degree"] == 3
+    assert len(list(csv.DictReader((work / "edges.csv").open()))) > len(first_rows)
     assert all(p.read_bytes() == b for p, b in ran.items())  # nothing run is touched
     _run_all(new)
     capsys.readouterr()
