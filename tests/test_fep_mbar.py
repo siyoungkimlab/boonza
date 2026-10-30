@@ -81,3 +81,17 @@ def test_equilibration_is_detected_and_the_rest_thinned():
     idx = subsample(T - t0, g0)
     assert len(idx) == pytest.approx((T - t0) / g0, rel=0.1)
     assert np.all(np.diff(idx) > 0)
+
+
+def test_samples_with_enormous_energies_in_some_states():
+    # 20 iterations of a real leg (IGF1R Cmpd1~Cmpd8 in water, 23 windows): frames in
+    # which an atom overlaps another where its repulsion is back on cost 1e13-1e17 kT
+    # there.  A failed Newton line search, taken anyway, gave -1010 kT; pymbar 4.0.3
+    # (robust) gives -318.702
+    from pathlib import Path
+
+    u = np.load(Path(__file__).parent / "data" / "mbar_overlapping_atoms.npz")["u_kn"]
+    assert u.max() > 1e13
+    K, n = u.shape
+    res = mbar(u, np.full(K, n // K))
+    assert res.f[-1] == pytest.approx(-318.702, abs=1e-3)
