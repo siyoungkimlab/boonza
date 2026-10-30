@@ -296,6 +296,17 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log, smiles_of) -> d
         out["edges"] = stats
         if files:
             log(f"  {', '.join(str(f) for f in files)}")
+    if done and ligs:  # where the series breaks: the network coloured by the errors
+        from .network import draw_errors
+
+        index = {n: k for k, n in enumerate(names)}
+        error = {x["ligand"]: x["dG_shifted"] - x["exp_dG"] for x in ligs if "exp_dG" in x}
+        files = draw_errors(work / "plots" / "network_errors",
+                            names, [(index[r["ligand_a"]], index[r["ligand_b"]]) for r in done],
+                            [r["ddG"] - r["exp_ddG"] if "exp_ddG" in r else None for r in done],
+                            [error.get(n) for n in names], log=log)  # fmt: skip
+        if files:
+            log(f"  {', '.join(str(f) for f in files)}")
     return out
 
 

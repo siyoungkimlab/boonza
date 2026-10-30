@@ -104,6 +104,9 @@ def test_no_hubs_small_edges_first_and_a_reference():
     g.add_nodes_from(range(len(ligs)))
     for e in big:
         assert not nx.has_path(g, e.a, e.b)
+    # a redundant edge may be large: every ligand still sits in a cycle
+    checked = _graph(network.edges(ligs, max_degree=0, max_change=1))
+    assert min(dict(checked.degree).values()) >= 2
     # a reference: preferred, and free of the cap
     ref = names.index("toluene")
     anchored = network.edges(ligs, max_degree=2, reference=ref)

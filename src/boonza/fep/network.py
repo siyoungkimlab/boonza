@@ -17,8 +17,10 @@ rules:
 * a ``reference`` ligand (the one with a crystal pose) is preferred, and free of
   the cap, so the network grows out from the pose that is known.
 
-Each ligand left on one edge then gets its next best within the rules, so every
-ligand sits in a cycle and a bad edge shows as a cycle that does not close.
+Each ligand left on one edge then gets its next best within the cap -- past
+``max_change`` if nothing smaller is left, since a check that samples less well
+is better than none -- so every ligand sits in a cycle and a bad edge shows as a
+cycle that does not close.
 Whatever scored the pairs, an edge is built from its 3D mapping.
 
 Values: the ΔG of each ligand (relative to their mean, or to a reference) by
@@ -161,7 +163,7 @@ def _choose(n, scored: dict, fixed=(), redundant=True, max_change=MAX_CHANGE,
                 if node not in p or p in chosen or p in fixed:
                     continue
                 other = p[0] if p[1] == node else p[1]
-                if capped(other) or (max_change and scored[p].changed > max_change):
+                if capped(other):
                     continue
                 chosen[p] = "redundant"
                 degree[node] += 1
@@ -266,6 +268,79 @@ def summary(names, pairs, changed, settings: dict) -> str:
             + sizes)  # fmt: skip
 
 
+def _layout(n, pairs):
+    import networkx as nx
+
+    g = nx.Graph()
+    g.add_nodes_from(range(n))
+    g.add_edges_from(sorted(tuple(sorted(p)) for p in pairs))  # one layout, whatever the order
+    return nx.kamada_kawai_layout(g) if g.number_of_edges() else nx.circular_layout(g)
+
+
+def draw_errors(path_stem, names, pairs, edge_errors, ligand_errors, log=print) -> list:
+    """The network as :func:`draw` lays it out, coloured by the results: each edge by
+    its calculated minus measured ΔΔG (grey where unmeasured), each ligand by its
+    calculated minus measured ΔG, kcal/mol, blue too strong and red too weak; the
+    files, or [] without matplotlib."""
+    import warnings
+    from pathlib import Path
+
+    try:
+        import matplotlib
+    except ImportError:
+        return []
+    matplotlib.use("Agg")
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+
+    from .plot_correlation import THEMES, font_ready, style
+
+    stem = Path(path_stem)
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    xy = _layout(len(names), pairs)
+    known = [abs(v) for v in list(edge_errors) + list(ligand_errors)
+             if v is not None and np.isfinite(v)]  # fmt: skip
+    top = max([2.0] + known)
+    norm = mpl.colors.TwoSlopeNorm(vmin=-top, vcenter=0.0, vmax=top)
+    cmap = mpl.colormaps["coolwarm"]
+    font = font_ready(log)
+    written = []
+    size = max(4.5, 0.45 * len(names) ** 0.75 + 3)
+    for background, ink in THEMES.items():
+        rc = style(ink)
+        if not font:
+            rc.pop("font.family")
+        with mpl.rc_context(rc), warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            fig, ax = plt.subplots(figsize=(size + 1.0, size))
+            for (a, b), err in zip(pairs, edge_errors, strict=True):
+                (x0, y0), (x1, y1) = xy[a], xy[b]
+                ok = err is not None and np.isfinite(err)
+                ax.plot([x0, x1], [y0, y1], lw=3.0, zorder=1,
+                        color=cmap(norm(err)) if ok else "tab:gray")  # fmt: skip
+                if ok:
+                    ax.text((x0 + x1) / 2, (y0 + y1) / 2, f"{err:+.1f}", fontsize=12,
+                            color=ink, ha="center", va="center", zorder=3)  # fmt: skip
+            for k, name in enumerate(names):
+                err = ligand_errors[k]
+                ok = err is not None and np.isfinite(err)
+                ax.scatter(*xy[k], s=200, zorder=2, edgecolors=ink, linewidths=0.8,
+                           color=cmap(norm(err)) if ok else "tab:gray")  # fmt: skip
+                ax.annotate(name, xy[k], xytext=(0, 11), textcoords="offset points",
+                            ha="center", va="bottom", fontsize=12, color=ink, zorder=4)  # fmt: skip
+            bar = fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax,
+                               shrink=0.6, pad=0.02)  # fmt: skip
+            bar.set_label("calculated − measured (kcal/mol)")
+            bar.outline.set_edgecolor(ink)
+            ax.set_axis_off()
+            ax.margins(0.12)
+            path = stem.with_name(f"{stem.name}_{background}.pdf")
+            fig.savefig(path, format="pdf", transparent=True)
+            plt.close(fig)
+            written.append(path)
+    return written
+
+
 def draw(path_stem, names, pairs, changed=None, roles=None, reference=None,
          max_change: int = MAX_CHANGE, log=print) -> list:  # fmt: skip
     """The network as a picture, ``<path_stem>_white.pdf`` and ``_black.pdf``: each
@@ -282,16 +357,12 @@ def draw(path_stem, names, pairs, changed=None, roles=None, reference=None,
     matplotlib.use("Agg")
     import matplotlib as mpl
     import matplotlib.pyplot as plt
-    import networkx as nx
 
     from .plot_correlation import THEMES, font_ready, style
 
     stem = Path(path_stem)
     stem.parent.mkdir(parents=True, exist_ok=True)
-    g = nx.Graph()
-    g.add_nodes_from(range(len(names)))
-    g.add_edges_from(pairs)
-    xy = nx.kamada_kawai_layout(g) if g.number_of_edges() else nx.circular_layout(g)
+    xy = _layout(len(names), pairs)
     changed = list(changed) if changed is not None else [None] * len(pairs)
     roles = list(roles) if roles is not None else ["tree"] * len(pairs)
     known = [c for c in changed if c is not None]

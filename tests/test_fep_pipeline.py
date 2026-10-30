@@ -143,6 +143,8 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
     assert [m.GetProp("_Name") for m in sdf] == names
     assert all(m.HasProp("FEP_dG") and m.HasProp("FEP_dG_shifted") for m in sdf)
     assert sdf[0].GetProp("dG") == "-0.9"  # the fields it came with, kept
+    assert (work / "network_white.pdf").exists()  # prep's drawing of the network
+    assert (work / "plots" / "network_errors_black.pdf").exists()  # result's, by errors
     plotted = (work / "plots" / "dG.csv").read_text().splitlines()
     assert plotted[-1].startswith("anisole,") and plotted[-1].endswith(",,,,")
     from boonza.viewer.outputs import from_folder  # boonza view WORKDIR: the series
