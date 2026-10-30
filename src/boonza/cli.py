@@ -1840,7 +1840,8 @@ def _parser() -> argparse.ArgumentParser:
                    "open files in), a structure (a topology with -c) or a PDB ID "
                    "(downloaded from RCSB into this folder) and optionally its trajectory "
                    "(DCD, XTC, TRR, NetCDF, DTR/STK); or several structures; or the output "
-                   "folder of boonza modes, triage or cavity, "
+                   "folder of boonza modes, triage, cavity or fep (the receptor and the "
+                   "ligands' results), "
                    "or any folder with a view.json")  # fmt: skip
     q.add_argument("-c", "--coordinates", help="coordinates for a topology (.top, .psf, "
                    "prmtop), e.g. a .gro; a Martini .top gives bead sizes")  # fmt: skip

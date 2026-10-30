@@ -152,7 +152,8 @@ def results(workdir, log=print, experimental=None, ligands=None) -> dict:
                         f"{total:+.2f} kcal/mol")  # fmt: skip
     measured = _measured(work, table, rows, experimental)
     if measured:
-        out["experiment"] = _compare(work, names, rows, out.get("ligands"), measured, log)
+        out["experiment"] = _compare(work, names, rows, out.get("ligands"), measured, log,
+                                     [r["smiles"] for r in table])  # fmt: skip
     if out.get("ligands"):
         kind = next((r["kind"] for r in rows if "kind" in r), "binding")
         _write_sdf(work, out["ligands"], kind, temperature, ligands, log)
@@ -216,10 +217,11 @@ def _measured(work: Path, table, rows, experimental) -> dict:
             if r.get("exp_dG", "") != ""}  # fmt: skip
 
 
-def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
+def _compare(work: Path, names, rows, ligs, measured: dict, log, smiles_of) -> dict:
     """Calculated against measured, per ligand (shifted to the measured mean) and per
-    edge: the statistics, printed, written beside the results, and plotted."""
-    from .experiment import correlation_plot, describe, statistics
+    edge: the statistics, printed, written beside the results, and plotted, beside
+    those of the null model, log MW fitted to the measured (binding only)."""
+    from .experiment import correlation_plot, describe, log_mw, null_fit, statistics
 
     done = [r for r in rows if "ddG" in r]
     kind = done[0]["kind"] if done else "binding"
@@ -231,6 +233,14 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
         + ("; pIC50 taken for a dissociation constant" if "pIC50" in fields else "")
     )
     out = {}
+    # the null model, binding only: log MW, fitted to the measured ligands
+    slope = None
+    with_exp = [n for n in names if n in measured]
+    if kind == "binding" and len(with_exp) >= 3:
+        smiles = dict(zip(names, smiles_of, strict=True))
+        lmw = dict(zip(names, log_mw([smiles[n] for n in names]), strict=True))
+        slope, intercept = null_fit([lmw[n] for n in with_exp],
+                                    [measured[n][0] for n in with_exp])  # fmt: skip
     if ligs:
         have = [x for x in ligs if x["ligand"] in measured]
         if len(have) >= 2:
@@ -250,10 +260,17 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
             if predicted:
                 log(f"  {len(predicted)} without a measured value, predicted: "
                     + ", ".join(f"{n} {v:.2f}" for n, v in predicted))  # fmt: skip
+            null = null_stats = None
+            if slope is not None:
+                null = np.array([slope * lmw[x["ligand"]] + intercept for x in have])
+                null_stats = statistics(null, exp)
+                log("  null model, log MW fitted to the measured: "
+                    + "; ".join(describe(null_stats)))  # fmt: skip
             files = correlation_plot(work / "plots" / "dG", calc, exp,
                                      calc_err=[x["error"] for x in have], quantity=quantity,
                                      stats=stats, log=log, names=[x["ligand"] for x in have],
-                                     predicted=predicted)  # fmt: skip
+                                     predicted=predicted, null=null,
+                                     null_stats=null_stats)  # fmt: skip
             out["ligands"] = stats
             if files:
                 log(f"  {', '.join(str(f) for f in files)}")
@@ -267,9 +284,15 @@ def _compare(work: Path, names, rows, ligs, measured: dict, log) -> dict:
         stats = statistics(calc, exp)
         log(f"edges, Δ{quantity}: " + "; ".join(describe(stats)))
         errors = [r["error"] if np.isfinite(r["error"]) else r["mbar_error"] for r in pairs]
+        null = null_stats = None
+        if slope is not None:
+            null = np.array([slope * (lmw[r["ligand_b"]] - lmw[r["ligand_a"]]) for r in pairs])
+            null_stats = statistics(null, exp)
+            log("  null model, log MW: " + "; ".join(describe(null_stats)))
         files = correlation_plot(work / "plots" / "ddG", calc, exp, calc_err=errors,
                                  quantity=f"Δ{quantity}", stats=stats, log=log,
-                                 names=[r["edge"] for r in pairs])  # fmt: skip
+                                 names=[r["edge"] for r in pairs], null=null,
+                                 null_stats=null_stats)  # fmt: skip
         out["edges"] = stats
         if files:
             log(f"  {', '.join(str(f) for f in files)}")

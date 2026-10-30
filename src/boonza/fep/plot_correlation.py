@@ -9,11 +9,15 @@ and draws its plots with it, so, from that directory,
 redraws them exactly; edit the copy freely (result leaves an edited copy alone).
 It needs numpy and matplotlib only, not boonza.
 
-``<name>.csv``: one row per point, ``name, calc, exp, calc_err, exp_err``
+``<name>.csv``: one row per point, ``name, calc, exp, calc_err, exp_err, null``
 (kcal/mol).  A row with ``exp`` empty is a prediction alone -- a ligand without a
 measured value -- drawn as a dashed horizontal line at its calculated value,
-named at the right; the statistics leave it out.  ``<name>.json``: the quantity
-on the axes and the statistics' lines written in the corner.
+named at the right; the statistics leave it out.  ``null``, where given, is what
+the null model (log MW, fitted to the measured values) predicts for the point,
+drawn as open gray circles beside the calculated ones.  ``<name>.json``: the
+quantity on the axes and the statistics' lines written in the corner.
+
+Both axes share their range, their scale and their ticks.
 
 Each plot is written twice, for a white and a black background
 (``*_white.pdf`` in black ink, ``*_black.pdf`` in white), transparent, Arial,
@@ -36,6 +40,7 @@ FONT = "Arial"
 #: the measured points, and the predictions without a measurement
 POINT_COLOR = "tab:blue"
 PREDICTED_COLOR = "tab:orange"
+NULL_COLOR = "tab:gray"
 #: the band around y = x (kcal/mol)
 BAND = 1.0
 
@@ -79,11 +84,21 @@ def font_ready(log=print) -> bool:
         return False
 
 
+def ticks(lo: float, hi: float) -> list[float]:
+    """The ticks both axes share: round steps within [lo, hi]."""
+    from matplotlib.ticker import MaxNLocator
+
+    at = MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]).tick_values(lo, hi)
+    return [float(t) for t in at if lo - 1e-9 <= t <= hi + 1e-9]
+
+
 def plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG", lines=(),
-         predicted=(), log=print) -> list[Path]:  # fmt: skip
+         predicted=(), null=None, log=print) -> list[Path]:  # fmt: skip
     """``calc`` against ``exp`` with y = x and a ±BAND band, ``lines`` of text in the
-    corner, and each of ``predicted`` [(name, calc)] a dashed horizontal line;
-    written as ``<path_stem>_white.pdf`` and ``_black.pdf``, which it returns."""
+    corner, each of ``predicted`` [(name, calc)] a dashed horizontal line, and
+    ``null`` (the null model's value for each point) as open circles; both axes
+    the same range and ticks; written as ``<path_stem>_white.pdf`` and
+    ``_black.pdf``, which it returns."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -93,8 +108,11 @@ def plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG", line
     stem = Path(path_stem)
     stem.parent.mkdir(parents=True, exist_ok=True)
     calc, exp = np.asarray(calc, float), np.asarray(exp, float)
-    values = np.concatenate([calc, exp, [v for _, v in predicted]])
+    null = None if null is None else np.asarray(null, float)
+    values = np.concatenate([calc, exp, [v for _, v in predicted],
+                             [] if null is None else null[np.isfinite(null)]])  # fmt: skip
     lo, hi = float(values.min()) - 1.0, float(values.max()) + 1.0
+    at = ticks(lo, hi)
     font = font_ready(log)
     written = []
     for background, ink in THEMES.items():
@@ -111,11 +129,19 @@ def plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG", line
                 ax.axhline(value, color=PREDICTED_COLOR, ls="--", lw=1.0)
                 ax.text(hi - 0.02 * (hi - lo), value, name, color=PREDICTED_COLOR,
                         ha="right", va="bottom", fontsize=12)  # fmt: skip
+            if null is not None:
+                ax.plot(exp, null, "o", mfc="none", mec=NULL_COLOR, ms=6, mew=1.0,
+                        label="log MW")  # fmt: skip
             if len(calc):
                 ax.errorbar(exp, calc, xerr=exp_err, yerr=calc_err, fmt="o",
-                            color=POINT_COLOR, ecolor=POINT_COLOR, ms=6, mew=0)  # fmt: skip
+                            color=POINT_COLOR, ecolor=POINT_COLOR, ms=6, mew=0,
+                            label="FEP")  # fmt: skip
+            if null is not None and len(calc):
+                ax.legend(loc="lower right", fontsize=12, handletextpad=0.2, borderaxespad=0.3)
             ax.set_xlim(lo, hi)
             ax.set_ylim(lo, hi)
+            ax.set_xticks(at)
+            ax.set_yticks(at)
             ax.set_aspect("equal")
             ax.set_xlabel(f"experimental {quantity} (kcal/mol)")
             ax.set_ylabel(f"calculated {quantity} (kcal/mol)")
@@ -130,24 +156,26 @@ def plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG", line
 
 
 def write_data(path_stem, names, calc, exp, calc_err=None, exp_err=None, quantity="ΔG",
-               lines=(), predicted=()) -> None:  # fmt: skip
+               lines=(), predicted=(), null=None) -> None:  # fmt: skip
     """``<path_stem>.csv`` and ``.json``: what :func:`redraw` reads back."""
     stem = Path(path_stem)
     stem.parent.mkdir(parents=True, exist_ok=True)
     n = len(calc)
     ce = list(calc_err) if calc_err is not None else [None] * n
     ee = list(exp_err) if exp_err is not None else [None] * n
+    nu = list(null) if null is not None else [None] * n
 
     def num(v):
         return "" if v is None or not np.isfinite(v) else f"{float(v):.4f}"
 
     with stem.with_suffix(".csv").open("w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["name", "calc", "exp", "calc_err", "exp_err"])
+        w.writerow(["name", "calc", "exp", "calc_err", "exp_err", "null"])
         for k in range(n):
-            w.writerow([names[k], num(calc[k]), num(exp[k]), num(ce[k]), num(ee[k])])
+            w.writerow([names[k], num(calc[k]), num(exp[k]), num(ce[k]), num(ee[k]),
+                        num(nu[k])])  # fmt: skip
         for name, value in predicted:
-            w.writerow([name, num(value), "", "", ""])
+            w.writerow([name, num(value), "", "", "", ""])
     stem.with_suffix(".json").write_text(
         json.dumps({"quantity": quantity, "lines": list(lines)}, ensure_ascii=False, indent=1)
         + "\n"
@@ -162,14 +190,14 @@ def redraw(path_stem, log=print) -> list[Path]:
     measured = [r for r in rows if r["exp"] != ""]
 
     def column(key):
-        got = [float(r[key]) if r[key] != "" else np.nan for r in measured]
+        got = [float(r[key]) if r.get(key, "") != "" else np.nan for r in measured]
         return None if all(np.isnan(got)) else got
 
     return plot(stem, [float(r["calc"]) for r in measured], [float(r["exp"]) for r in measured],
                 calc_err=column("calc_err"), exp_err=column("exp_err"),
                 quantity=meta.get("quantity", "ΔG"), lines=meta.get("lines", ()),
                 predicted=[(r["name"], float(r["calc"])) for r in rows if r["exp"] == ""],
-                log=log)  # fmt: skip
+                null=column("null"), log=log)  # fmt: skip
 
 
 def main(argv=None) -> int:

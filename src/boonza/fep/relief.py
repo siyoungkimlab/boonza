@@ -12,14 +12,15 @@ soft nonbonded interactions (REM, :mod:`boonza.rem`) and then with the real forc
 field (EM).  One receptor comes out, room made in it for every ligand, so every
 edge still meets one and the same receptor.
 
-In REM the side chains of residues within :data:`FREE_A` of a ligand are free,
-and the backbone, the side chains farther out and any cofactor are held to the
-posed receptor (:data:`HOLD_KJ`).  REM's own soft, bounded Coulomb stays: without
+In REM the residues within :data:`FREE_A` of a ligand are free, backbone and
+side chain alike -- a pocket accommodates a larger ligand with its backbone too --
+and the rest of the receptor and any cofactor are held to the posed receptor
+(:data:`HOLD_KJ`).  REM's own soft, bounded Coulomb stays: without
 it a hydrogen bond's or a salt bridge's atoms sit inside each other's
 Lennard-Jones radius with nothing holding them there.  Soft potentials let atoms
 pass through each other, so the free residues' stereocentres (CA, and Ile's and
 Thr's CB) are held as they were.  EM then finishes with the force field's own
-Lennard-Jones and Coulomb on what REM was free to move: the free side chains,
+Lennard-Jones and Coulomb on what REM was free to move: the free residues,
 held firmly to where REM left them (:data:`EM_HOLD_KJ`), and every hydrogen;
 the rest of the receptor stays fixed, since in vacuum, unscreened, its charges
 would pull at each other.  Each leg's own minimization and equilibration,
@@ -35,19 +36,18 @@ import numpy as np
 
 #: ligand and receptor heavy atoms nearer than this (Å) are a clash
 CLASH_A = 2.2
-#: residues with a heavy atom this near a ligand's (Å): side chains free in REM
-FREE_A = 3.0
-#: what holds the backbone, the side chains farther out and cofactors to the posed
-#: receptor in REM (kJ/mol/nm^2)
+#: residues with a heavy atom this near a ligand's (Å): free in REM, backbone too
+FREE_A = 5.0
+#: what holds the residues farther out and cofactors to the posed receptor in REM
+#: (kJ/mol/nm^2)
 HOLD_KJ = 1.0e4
-#: what holds the free side chains' heavy atoms to where REM left them in EM
+#: what holds the free residues' heavy atoms to where REM left them in EM
 #: (kJ/mol/nm^2), the rest of the receptor fixed there: in vacuum, unscreened,
 #: charges pull (1000 let a terminus move 2.8 Å toward another, 10000 an Asp 2.4 Å);
 #: an overlap REM left pushes far harder
 EM_HOLD_KJ = 1.0e5
 #: residues whose heavy atoms moved at least this (Å) are listed in rem_residues.csv
 MOVED_A = 0.1
-_BACKBONE = ("N", "CA", "C", "O", "OXT")
 #: stereocentres other than CA: (centre, its neighbours as the improper reads them)
 _CENTRES = {"ILE": ("CB", ("CA", "CG1", "CG2")), "THR": ("CB", ("CA", "OG1", "CG2"))}
 
@@ -92,11 +92,8 @@ def pocket(receptor, ligs, within: float = FREE_A) -> np.ndarray:
 
 
 def free_atoms(receptor, residues) -> np.ndarray:
-    """The side-chain atoms (hydrogens too) of ``residues``: what REM leaves free."""
-    res = np.asarray(receptor.atoms["residue"])
-    name = np.asarray(receptor.atoms["name"])
-    return np.flatnonzero(np.isin(res, residues) & ~np.isin(name, _BACKBONE)
-                          & (name != "H") & (name != "HA"))  # fmt: skip
+    """Every atom of ``residues``, backbone and hydrogens too: what REM leaves free."""
+    return np.flatnonzero(np.isin(np.asarray(receptor.atoms["residue"]), residues))
 
 
 def held_torsions(receptor, residues) -> list[tuple[int, int, int, int]]:
@@ -200,7 +197,7 @@ def relieve(receptor, ligs, names, ff, args, log=print) -> tuple[list[dict], lis
     free = np.zeros(n_rec, bool)
     free[free_atoms(receptor, residues)] = True
     heavy = _heavy(receptor)
-    log(f"  {len(residues)} residues within {FREE_A:g} Å of a ligand: side chains free")
+    log(f"  {len(residues)} residues within {FREE_A:g} Å of a ligand: free, backbone too")
     soft = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(system))
     _hold(soft, rec[heavy[~free[heavy]]], xyz, HOLD_KJ, "k_receptor")
     torsions = [tuple(int(rec[k]) for k in t) for t in held_torsions(receptor, residues)]

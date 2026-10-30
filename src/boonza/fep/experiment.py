@@ -137,17 +137,42 @@ def describe(stats: dict) -> list[str]:
     return lines
 
 
+def log_mw(smiles) -> np.ndarray:
+    """ln of each molecule's molecular weight (g/mol), from its SMILES."""
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors
+
+    return np.array([math.log(Descriptors.MolWt(Chem.MolFromSmiles(s))) for s in smiles])
+
+
+def null_fit(x, exp) -> tuple[float, float]:
+    """The null model's slope and intercept: ``exp`` ≈ slope·x + intercept by least
+    squares, x the ligands' log MW -- bigger binds tighter, the baseline a series'
+    FEP has to beat.  Fitted to the measured values, so its statistics are in-sample."""
+    slope, intercept = np.polyfit(np.asarray(x, float), np.asarray(exp, float), 1)
+    return float(slope), float(intercept)
+
+
+def null_line(stats: dict) -> str:
+    """The null model's statistics in one line, for the plot's corner."""
+    labels = (("RMSE", "RMSE"), ("R2", "R²"), ("tau", "τ"))
+    parts = [f"{label} {stats[k]['value']:.2f}" for k, label in labels if k in stats]
+    return "log MW: " + ", ".join(parts)
+
+
 # --- plots -------------------------------------------------------------------------------------
 
 
 def correlation_plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG",
-                     stats=None, log=print, names=None, predicted=()) -> list:  # fmt: skip
-    """Calculated against measured, with y = x and a ±1 kcal/mol band, and each of
+                     stats=None, log=print, names=None, predicted=(), null=None,
+                     null_stats=None) -> list:  # fmt: skip
+    """Calculated against measured, with y = x and a ±1 kcal/mol band, each of
     ``predicted`` [(name, ΔG)] -- calculated, not measured -- a dashed horizontal
-    line; written as ``<path_stem>_white.pdf`` and ``_black.pdf``, the data beside
-    them (``<path_stem>.csv``, ``.json``) and the script that drew them
-    (``plot_correlation.py``, to redraw and tailor); the files, or [] without
-    matplotlib."""
+    line, and ``null`` (the null model's value for each point, its statistics
+    ``null_stats``) as open circles; written as ``<path_stem>_white.pdf`` and
+    ``_black.pdf``, the data beside them (``<path_stem>.csv``, ``.json``) and the
+    script that drew them (``plot_correlation.py``, to redraw and tailor); the
+    files, or [] without matplotlib."""
     import filecmp
     import shutil
     from pathlib import Path
@@ -157,8 +182,10 @@ def correlation_plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity
     stem = Path(path_stem)
     names = list(names) if names is not None else [str(k + 1) for k in range(len(calc))]
     lines = describe(stats) if stats else []
+    if null_stats:
+        lines.append(null_line(null_stats))
     plot_correlation.write_data(stem, names, calc, exp, calc_err, exp_err, quantity, lines,
-                                predicted)  # fmt: skip
+                                predicted, null)  # fmt: skip
     script, copy = Path(plot_correlation.__file__), stem.parent / "plot_correlation.py"
     if not copy.exists():
         shutil.copyfile(script, copy)
@@ -170,4 +197,4 @@ def correlation_plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity
         return []
     return plot_correlation.plot(stem, calc, exp, calc_err=calc_err, exp_err=exp_err,
                                  quantity=quantity, lines=lines, predicted=predicted,
-                                 log=log)  # fmt: skip
+                                 null=null, log=log)  # fmt: skip

@@ -18,6 +18,7 @@ Layout::
 
     WORKDIR/ligands.csv          the ligands, their charges and SMILES
     WORKDIR/ligands.sdf          the ligands as given, every field kept (result adds its own)
+    WORKDIR/receptor.pdb         the receptor the complex legs are built in (boonza view WORKDIR)
     WORKDIR/edges.csv            the pairs, how many atoms map, their scores
     WORKDIR/forcefield/          the GAFF2 patch (every ligand, any cofactor)
     WORKDIR/edges/A~B/complex/   system.xml.gz, state.npz, leg.json
@@ -591,7 +592,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
 
         if getattr(args, "rem", False) and before is None:
             log("REM, then EM: the receptor relaxed around every ligand's pose (the "
-                "ligands held as posed, the side chains that reach a ligand free)")  # fmt: skip
+                "ligands held as posed, the residues within 5 Å of one free)")  # fmt: skip
             relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log))
         else:
             close = relief.clashes(receptor, ligs, names)
@@ -630,6 +631,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                         "" if got is None else round(got[0], 4),
                         "" if got is None else got[1]])  # fmt: skip
     write_ligands(work / "ligands.sdf", mols, names)
+    if receptor is not None:
+        from ..io import save
+
+        save(receptor, work / "receptor.pdb")
     runs, rows = [], []
     for e in edges:
         a, b = names[e.a], names[e.b]

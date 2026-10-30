@@ -4,6 +4,7 @@
     boonza view MODES_OUT                # boonza modes: a pose per mode, biggest first
     boonza view TRIAGE_OUT               # boonza triage: a pose per run, fitted on the first
     boonza view CAVITY_OUT              # boonza cavity: the protein and its pockets
+    boonza view FEP_WORKDIR             # boonza fep: the receptor and the ligands' results
 
 A folder with a ``view.json`` is read from it (see :func:`from_manifest`), and
 any pipeline can write one::
@@ -779,8 +780,28 @@ def from_folder(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
         return from_triage(d, merge=merge, fit=fit, scaffold=scaffold)
     if (d / "pockets.csv").is_file() and (d / "sites.pqr").is_file():
         return from_cavity(d)
+    if (d / "ligands.csv").is_file() and (d / "edges").is_dir():
+        return from_fep(d)
     raise ValueError(f"{d}: not a folder boonza view knows (a view.json, or the output of "
-                     "boonza modes, triage or cavity)")  # fmt: skip
+                     "boonza modes, triage, cavity or fep)")  # fmt: skip
+
+
+def from_fep(d) -> Viewer:
+    """boonza fep: the receptor the complex legs were built in, and the ligands as a
+    series, a row each with its fields -- those boonza fep result added (FEP_dG,
+    FEP_KD_nM ...) once it has run, the SDF's own before."""
+    d = Path(d)
+    ligands = next((f for f in (d / "results_ligands.sdf", d / "ligands.sdf") if f.is_file()),
+                   None)  # fmt: skip
+    if ligands is None:
+        raise ValueError(f"{d}: no ligands.sdf (prepared before boonza fep kept it); "
+                         "'boonza fep result DIR --ligands SDF' writes "
+                         "results_ligands.sdf")  # fmt: skip
+    receptor = next((f for f in (d / "receptor.pdb", d / "receptor_rem.pdb") if f.is_file()),
+                    None)  # fmt: skip
+    v = from_paths([receptor, ligands] if receptor else [ligands])
+    v.title = d.name
+    return v
 
 
 def _rows(path, key: str) -> dict:
