@@ -66,6 +66,9 @@ CHARGE_CHANGE_PENALTY = 0.1
 #: and runs openfe's longer protocol (its industry benchmark's settings)
 CHARGE_WINDOWS = 22
 CHARGE_PRODUCTION_NS = 20.0
+#: an edge where either ligand has at least this many atoms of its own (not mapped
+#: to the other's) runs boonza.fep.lambdas.dense(); 0 never
+LARGE_CHANGE_ATOMS = 8
 #: without a receptor, what the water leg is set against (boonza fep prep --phase)
 PHASES = ("vacuum", "octanol", "wet-octanol")
 #: what the receptor is written as (receptor.EXT, receptor_rem.EXT): the input's
@@ -164,18 +167,33 @@ def previous(work: Path, mols, names) -> Previous:
     return Previous(old, pairs, rows, [c for c in commands if c.strip()], metas, rem)
 
 
+def schedule(n_old: int, n_new: int, charged: bool, windows: int, charge_windows: int,
+             large_change_atoms: int = LARGE_CHANGE_ATOMS) -> np.ndarray:  # fmt: skip
+    """The master lambdas of an edge whose ligands have ``n_old`` and ``n_new`` atoms
+    of their own: ``charge_windows`` for a change of charge, the dense schedule for
+    a large group (``large_change_atoms``), else ``windows`` evenly spaced."""
+    if charged:
+        return lambdas.windows(charge_windows)
+    if large_change_atoms and max(n_old, n_new) >= large_change_atoms:
+        return lambdas.dense()
+    return lambdas.windows(windows)
+
+
 def same_settings(before: Previous, args, repeats, windows, iteration_ps, phase,
-                  charge_windows, charge_production_ns) -> None:  # fmt: skip
+                  charge_windows, charge_production_ns,
+                  large_change_atoms: int = LARGE_CHANGE_ATOMS) -> None:  # fmt: skip
     """Raise unless the new edges would be built as the first prep's were."""
     differ = []
     for meta in before.metas:
         charged = bool(meta.get("charge_change"))
+        own = meta.get("unique_old", 0), meta.get("unique_new", 0)
+        want_windows = len(schedule(*own, charged, windows, charge_windows, large_change_atoms))
         want = {"repeats": repeats, "iteration_ps": iteration_ps, "phase": phase,
                 "temperature": args.temperature, "pressure": args.pressure,
                 "timestep_fs": args.integration_fs,
                 "equilibration_ns": args.equilibration_ns,
                 "production_ns": charge_production_ns if charged else args.production_ns,
-                "windows": charge_windows if charged else windows}  # fmt: skip
+                "windows": want_windows}  # fmt: skip
         had = dict(meta, windows=len(meta["lambdas"]))
         for k, v in want.items():
             if k not in had:
@@ -510,10 +528,13 @@ def write_leg(directory: Path, hyb, old: System, meta: dict) -> None:
 def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: float = 2.5,
          cofactors=(), log=print, charge_windows: int = CHARGE_WINDOWS,
          charge_production_ns: float = CHARGE_PRODUCTION_NS, phase: str = "vacuum",
-         octanol_box=None, extend: bool = False) -> list[Path]:  # fmt: skip
+         octanol_box=None, extend: bool = False,
+         large_change_atoms: int = LARGE_CHANGE_ATOMS) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
-    ``charge_windows`` windows and ``charge_production_ns`` of production.
+    ``charge_windows`` windows and ``charge_production_ns`` of production; one
+    where either ligand has ``large_change_atoms`` or more atoms of its own, the
+    dense schedule (boonza.fep.lambdas.dense; 0 never).
     ``phase``, without a receptor, what the water leg is set against: vacuum
     (hydration), octanol or wet-octanol (transfer); ``octanol_box`` a box built
     before (boonza.fep.octanol.box), else one is built in the work directory.
@@ -539,7 +560,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         log(f"  adding {len(new)} to the {len(before.names)} of the first prep: "
             + ", ".join(names[k] for k in new))  # fmt: skip
         same_settings(before, args, repeats, windows, iteration_ps, phase, charge_windows,
-                      charge_production_ns)  # fmt: skip
+                      charge_production_ns, large_change_atoms)  # fmt: skip
     if phase not in PHASES:
         raise ValueError(f"--phase is one of {', '.join(PHASES)}, not {phase!r}")
     if phase != "vacuum" and args.input_structure:
@@ -659,7 +680,6 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         if solvent_box is not None:  # a relative transfer free energy: water, and octanol
             legs = (("solvent", None, SOLVENT_PADDING_NM), ("octanol", None, SOLVENT_PADDING_NM))
         dq = charges[e.b] - charges[e.a]
-        n_windows = charge_windows if dq else windows
         production_ns = charge_production_ns if dq else args.production_ns
         for leg, env, padding in legs:
             log(f"{a} -> {b}: {leg}")
@@ -667,10 +687,16 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                               charge_change=dq,
                               solvent=solvent_box if leg == "octanol" else None)  # fmt: skip
             hyb, old, dropped = built.hybrid, built.old, built.dropped
+            n_old, n_new = len(hyb.unique_old), len(hyb.unique_new)
+            schedule_ = schedule(n_old, n_new, bool(dq), windows, charge_windows,
+                                 large_change_atoms)  # fmt: skip
+            if len(schedule_) != (charge_windows if dq else windows):
+                log(f"  {max(n_old, n_new)} atoms of one ligand's own: {len(schedule_)} "
+                    "windows, dense where their Lennard-Jones is switched")  # fmt: skip
             _finish(hyb, old, args, leg == "complex", log)
             meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "phase": phase,
                     "score": e.score,
-                    "lambdas": lambdas.windows(n_windows).tolist(), "charge_change": dq,
+                    "lambdas": schedule_.tolist(), "charge_change": dq,
                     "alchemical_waters": built.alchemical_waters,
                     "temperature": args.temperature, "pressure": args.pressure,
                     "timestep_fs": args.integration_fs, "iteration_ps": iteration_ps,

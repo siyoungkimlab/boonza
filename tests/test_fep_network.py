@@ -60,3 +60,16 @@ def test_ligands_added_later_join_the_network_without_touching_it():
     assert all(g.degree[k] >= 2 for k in (4, 5, 6))  # every new ligand in a cycle
     with pytest.raises(ValueError, match="no new"):
         network.extend(ligs, existing, [])
+
+
+def test_a_large_change_gets_the_dense_schedule():
+    from boonza.fep import lambdas
+    from boonza.fep.prep import schedule
+
+    d = lambdas.dense()
+    assert len(d) == 23 and d[0] == 0.0 and d[-1] == 1.0 and np.all(np.diff(d) > 0)
+    assert np.allclose(np.diff(d[(d >= 0.3) & (d <= 0.7)]), 0.025)  # where sterics switch
+    assert len(schedule(2, 5, False, 11, 22)) == 11
+    assert len(schedule(11, 5, False, 11, 22)) == 23  # a benzyl ring that goes
+    assert len(schedule(11, 5, True, 11, 22)) == 22  # a change of charge: its own
+    assert len(schedule(11, 5, False, 11, 22, large_change_atoms=0)) == 11

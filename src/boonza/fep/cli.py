@@ -42,7 +42,7 @@ FEP_DEFAULTS = {"equilibration_ns": 1.0, "production_ns": 5.0, "hmr": True,
 def _prep(argv) -> int:
     from .. import viparr
     from ..md.config import build_parser, parse_arguments
-    from .prep import CHARGE_PRODUCTION_NS, CHARGE_WINDOWS, PHASES, prep
+    from .prep import CHARGE_PRODUCTION_NS, CHARGE_WINDOWS, LARGE_CHANGE_ATOMS, PHASES, prep
 
     parser = build_parser("boonza fep prep")
     g = parser.add_argument_group("fep")
@@ -58,6 +58,11 @@ def _prep(argv) -> int:
     g.add_argument("--charge-windows", dest="charge_windows", type=int,
                    help="lambda windows of an edge that changes the net charge "
                         "(default: 22)")  # fmt: skip
+    g.add_argument("--large-change-atoms", dest="large_change_atoms", type=int,
+                   help="an edge where either ligand has this many atoms of its own (not "
+                        "mapped) runs 23 windows, dense from lambda 0.3 to 0.7 where their "
+                        "Lennard-Jones is switched, instead of --windows; 0 never "
+                        f"(default: {LARGE_CHANGE_ATOMS})")  # fmt: skip
     g.add_argument("--charge-production-ns", dest="charge_production_ns", type=float,
                    help="production of an edge that changes the net charge, per window "
                         "(default: 20)")  # fmt: skip
@@ -90,7 +95,8 @@ def _prep(argv) -> int:
              charge_windows=x.get("charge_windows", CHARGE_WINDOWS),
              charge_production_ns=x.get("charge_production_ns", CHARGE_PRODUCTION_NS),
              phase=x.get("phase") or "vacuum", octanol_box=x.get("octanol_box"),
-             extend=bool(x.get("extend")))  # fmt: skip
+             extend=bool(x.get("extend")),
+             large_change_atoms=x.get("large_change_atoms", LARGE_CHANGE_ATOMS))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)
         return 1
