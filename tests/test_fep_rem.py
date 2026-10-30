@@ -138,8 +138,12 @@ def test_prep_rem_writes_what_it_did(tmp_path, capsys):
     assert all(float(r["closest_after"]) > float(r["closest_before"]) for r in rows)
     moved = list(csv.DictReader((work / "rem_residues.csv").open()))
     assert moved and moved[0]["resname"] == "LYS"
-    relaxed = boonza.load(work / "receptor_rem.pdb")
+    relaxed = boonza.load(work / "receptor_rem.pdb")  # the input's format
     assert relaxed.natoms == boonza.load(pdb).natoms
     assert np.allclose(boonza.load(work / "receptor.pdb").positions, relaxed.positions,
                        atol=1e-3)  # what the legs were built in, for boonza view  # fmt: skip
+    from boonza.fep import prep as fep_prep
+
+    assert fep_prep.receptor_format("x.dms") == ".dms"
+    assert fep_prep.receptor_format("x.maegz") == fep_prep.receptor_format("x.gro") == ".mae"
     assert (work / "edges").is_dir() and (work / "commands.txt").exists()

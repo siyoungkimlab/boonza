@@ -248,13 +248,13 @@ def relieve(receptor, ligs, names, ff, args, log=print) -> tuple[list[dict], lis
     return lig_rows, res_rows
 
 
-def write(work: Path, receptor, lig_rows, res_rows) -> None:
-    """``receptor_rem.pdb`` (the relaxed receptor), ``rem.csv`` (a row per ligand)
+def write(work: Path, receptor, lig_rows, res_rows, suffix: str = ".mae") -> None:
+    """``receptor_rem<suffix>`` (the relaxed receptor), ``rem.csv`` (a row per ligand)
     and ``rem_residues.csv`` (a row per residue that moved) in ``work``."""
     import boonza
 
     work = Path(work)
-    boonza.save(receptor, work / "receptor_rem.pdb")
+    boonza.save(receptor, work / f"receptor_rem{suffix}")
     for path, rows, head in ((work / "rem.csv", lig_rows, ["ligand", "closest_before",
                               "closest_after"]),
                              (work / "rem_residues.csv", res_rows, ["chain", "resid", "resname",

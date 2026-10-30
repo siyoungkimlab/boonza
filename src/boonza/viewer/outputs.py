@@ -797,8 +797,10 @@ def from_fep(d) -> Viewer:
         raise ValueError(f"{d}: no ligands.sdf (prepared before boonza fep kept it); "
                          "'boonza fep result DIR --ligands SDF' writes "
                          "results_ligands.sdf")  # fmt: skip
-    receptor = next((f for f in (d / "receptor.pdb", d / "receptor_rem.pdb") if f.is_file()),
-                    None)  # fmt: skip
+    from ..fep.prep import RECEPTOR_FORMATS
+
+    receptor = next((d / f"{stem}{s}" for stem in ("receptor", "receptor_rem")
+                     for s in RECEPTOR_FORMATS if (d / f"{stem}{s}").is_file()), None)  # fmt: skip
     v = from_paths([receptor, ligands] if receptor else [ligands])
     v.title = d.name
     return v
