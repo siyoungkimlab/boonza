@@ -168,6 +168,10 @@ def _grow(argv) -> int:
                    help="ps of MD scoring each placement (default: 100)")  # fmt: skip
     g.add_argument("--max-heavy", dest="max_heavy", type=int,
                    help="heavy atoms of a chain grown in one step (default: 3)")  # fmt: skip
+    g.add_argument("--hold", choices=("rings", "core"),
+                   help="what of the reference's core is held firmly where it was: its ring "
+                        "atoms, the rest (and what grew) loosely, then the whole ligand "
+                        "relaxed (rings, the default); or every core atom (core)")  # fmt: skip
     g.add_argument("--water", action="store_true",
                    help="score each placement in TIP3P water rather than in a reaction "
                         "field of water's dielectric, without solvent (the default)")  # fmt: skip
@@ -192,7 +196,8 @@ def _grow(argv) -> int:
                             beam=x.get("beam", 2), keep=x.get("keep", 3),
                             n_conformers=x.get("conformers", 60), md_ps=x.get("md_ps", 100.0),
                             max_heavy=x.get("max_heavy", 3),
-                            water=bool(x.get("water")))  # fmt: skip
+                            water=bool(x.get("water")),
+                            hold=x.get("hold") or "rings")  # fmt: skip
                 print(f"  {path}")
             except (ValueError, RuntimeError) as e:
                 print(f"boonza fep grow: {name}: {e}", file=sys.stderr)

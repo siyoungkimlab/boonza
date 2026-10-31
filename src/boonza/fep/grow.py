@@ -77,6 +77,8 @@ CROWDED = 8
 #: kJ/mol/nm^2: what holds the core's heavy atoms in the MD (2000 let a held
 #: alpha carbon slip 0.5 Å through the plane of its substituents and invert)
 CORE_KJ = 1.0e5
+#: Å: how far a loosely held atom may go before it is held (hold="rings")
+LOOSE_A = 2.0
 #: Å: residues with a heavy atom this near the ligand move, the rest are held; found
 #: again for every placement, from the ligand as it now is, so the pocket grows with it
 POCKET_A = 8.0
@@ -400,7 +402,8 @@ def _forcefield(receptor, lig, ff, args):
 
 
 def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 1,
-             water: bool = False, pocket_a: float = POCKET_A, log=print) -> dict:  # fmt: skip
+             water: bool = False, pocket_a: float = POCKET_A, loose=(),
+             log=print) -> dict:  # fmt: skip
     """A short MD of ``receptor`` and ``lig``, ``core`` (ligand atoms) restrained, the
     residues within ``pocket_a`` of the ligand free and the rest of the protein held
     where it is; without ``water`` (the default) in a reaction field of water's
@@ -443,9 +446,20 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
     hold.addPerParticleParameter("k")
     for p in ("x0", "y0", "z0"):
         hold.addPerParticleParameter(p)
-    for i in lig_ids[list(core)]:
-        if anum[i] > 1:
+    loose = set(loose)
+    for k_, i in zip(core, lig_ids[list(core)], strict=True):
+        if anum[i] > 1 and k_ not in loose:
             hold.addParticle(int(i), [CORE_KJ, *xyz0[i]])
+    if loose:  # free within LOOSE_A of where they are, held beyond
+        dist = "periodicdistance(x,y,z,x0,y0,z0)" if water else "sqrt((x-x0)^2+(y-y0)^2+(z-z0)^2)"
+        wall = mm.CustomExternalForce(f"0.5*{CORE_KJ}*max(0, {dist}-{LOOSE_A / 10.0})^2")
+        for p in ("x0", "y0", "z0"):
+            wall.addPerParticleParameter(p)
+        for k_ in sorted(loose):
+            i = lig_ids[k_]
+            if anum[i] > 1:
+                wall.addParticle(int(i), list(xyz0[i]))
+        system.addForce(wall)
     lig_heavy = lig_ids[anum[lig_ids] > 1]
     rec_heavy = rec[anum[rec] > 1]
     # the pocket's residues free, every other protein heavy atom held where it is
@@ -548,7 +562,7 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
 
 def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 2,
          keep: int = 3, n_conformers: int = 60, md_ps: float = 100.0, max_heavy: int = 3,
-         water: bool = False, log=print) -> Path:  # fmt: skip
+         water: bool = False, hold: str = "rings", log=print) -> Path:  # fmt: skip
     """``target`` (RDKit, with hydrogens) grown from ``reference`` (posed in
     ``receptor``) step by step (the module docstring); its complex's path."""
     from ..io import save
@@ -568,7 +582,12 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
                      for s in plan))  # fmt: skip
     states = [State(np.asarray(receptor.positions, float),
                     {t: ref_xyz[r] for t, r in core.items()})]  # fmt: skip
-    record = {"name": name, "core": len(core), "steps": []}
+    record = {"name": name, "core": len(core), "steps": [], "hold": hold}
+    # held firmly: the core's ring atoms; its other atoms and everything grown are
+    # held only loosely (hold="rings"), since a reference's ester or tBu need not sit
+    # where the target's do (6N4B's and 9B54's shared core differ by 2.3 Å)
+    rings = set().union(*_ring_systems(target)) if target.GetRingInfo().NumRings() else set()
+    firm = {i for i in core if i in rings} if hold == "rings" else set(core)
     placed = set(core)
     for k, step in enumerate(plan, 1):
         placed |= set(step)
@@ -591,8 +610,10 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
                 here = rec.copy()
                 relief.relieve(here, [lig], [name], lig_ff, args, log=lambda *_: None)
                 core_ids = [index[i] for i in state.placed if i in index]
+                loose = [index[i] for i in state.placed if i in index and i not in firm]
                 out = md_score(here, lig, core_ids, new, lig_ff, args, ps=md_ps,
-                               seed=1000 * k + 10 * s + c, water=water, log=log)  # fmt: skip
+                               seed=1000 * k + 10 * s + c, water=water,
+                               loose=loose if hold == "rings" else (), log=log)  # fmt: skip
                 row = {k_: v for k_, v in out.items() if k_ not in ("receptor", "ligand")}
                 row.update(step=k, parent=s, candidate=c)
                 record["steps"].append(row)
@@ -614,6 +635,17 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
             f"(hydrogen bonds {best[2]['hbonds']}, buried unsatisfied "
             f"{best[2]['buried_unsatisfied']}, drift {best[2]['drift']:.2f} Å)")  # fmt: skip
     _, final, out, mol = best
+    if hold == "rings":  # a last relaxation: the whole ligand loosely held, rings too
+        rec = receptor.copy()
+        rec.positions = final.receptor
+        lig = _ligand(mol, out["ligand"])
+        every = list(range(mol.GetNumAtoms()))
+        last = md_score(rec, lig, every, [], lig_ff, args, ps=2 * md_ps, seed=99, water=water,
+                        loose=every, log=log)  # fmt: skip
+        if _same_stereo(mol, last["ligand"]):
+            out = {**out, "ligand": last["ligand"]}
+            final = State(last["receptor"], final.placed, final.score, final.history)
+            log(f"  relaxed whole: ligand within {LOOSE_A:g} Å of where it grew")
     complex_ = receptor.copy()
     complex_.positions = final.receptor
     complex_.append(_ligand(mol, out["ligand"]))

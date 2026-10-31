@@ -88,10 +88,10 @@ def test_growing_toluene_from_benzene_in_a_peptide(tmp_path):
     assert out.natoms == s.natoms + target.GetNumAtoms()
     record = json.loads((tmp_path / "grow" / "toluene.json").read_text())
     assert record["core"] == 6 and record["steps"] and "score" in record["steps"][0]
-    # the core stayed where the reference was
+    # the core stayed near where the reference was
     n = target.GetNumAtoms()
     lig = np.asarray(out.positions)[-n:]
     core = grow.core_map(ref, target)
     ref_xyz = ref.GetConformer().GetPositions()
     d = [np.linalg.norm(lig[t] - ref_xyz[r]) for t, r in core.items()]
-    assert max(d) < 1.0
+    assert max(d) < grow.LOOSE_A + 0.5  # rings held, then the whole relaxed within LOOSE_A
