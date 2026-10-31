@@ -2353,7 +2353,8 @@ export function setupUI(app) {
   const ELEMENT_SMILES = { C: "C", N: "N", O: "O", S: "S", P: "P", F: "F", Cl: "Cl", Br: "Br", I: "I" };
   const RINGS = [["Benzene", "c1ccccc1"], ["Pyridine", "c1ccncc1"], ["Pyrimidine", "c1cncnc1"], ["Pyrrole", "c1cc[nH]c1"],
     ["Imidazole", "c1c[nH]cn1"], ["Pyrazole", "c1cn[nH]c1"], ["Thiophene", "c1ccsc1"], ["Furan", "c1ccoc1"],
-    ["Cyclopropane", "C1CC1"], ["Cyclopentane", "C1CCCC1"], ["Cyclohexane", "C1CCCCC1"], ["Piperidine", "C1CCNCC1"],
+    ["Cyclopropane", "C1CC1"], ["Cyclobutane", "C1CCC1"], ["Azetidine", "C1CNC1"], ["Oxetane", "C1COC1"],
+    ["Cyclopentane", "C1CCCC1"], ["Cyclohexane", "C1CCCCC1"], ["Piperidine", "C1CCNCC1"],
     ["Piperazine", "C1CNCCN1"], ["Morpholine", "C1COCCN1"], ["Naphthalene", "c1ccc2ccccc2c1"], ["Indole", "c1ccc2[nH]ccc2c1"]];
   let tool = null;  // {kind: element|smiles|bond|charge|erase, value, label}
 

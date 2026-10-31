@@ -853,6 +853,7 @@ def _peptide():
 
 
 def test_functional_groups_and_molecules(served):
+    from boonza.viewer import edit
     from boonza.viewer.edit import GROUPS, neighbors
 
     s = boonza.from_smiles("CCO")
@@ -870,6 +871,17 @@ def test_functional_groups_and_molecules(served):
     d = np.linalg.norm(pos[heavy][:, None] - pos[heavy][None], axis=2) + 9 * np.eye(len(heavy))
     assert d.min() > 1.2  # bonded, not overlapping
     assert {"Phenyl", "Morpholino", "Trifluoromethyl"} <= set(GROUPS)
+    # an amide either way round, and the four-membered rings
+    assert {"Carboxamide", "N-Methylamide", "Formamido", "Cyclobutyl", "Azetidinyl",
+            "Azetidin-3-yl", "Oxetan-3-yl"} <= set(GROUPS)  # fmt: skip
+    for name in ("N-Methylamide", "Formamido", "Cyclobutyl", "Azetidin-3-yl", "Oxetan-3-yl"):
+        one = boonza.from_smiles("CCO")
+        hx = [b for b, _ in neighbors(one, 0) if one.atoms["anum"][b] == 1][0]
+        edit.attach(one, 0, hx, GROUPS[name])
+        xyz = one.positions
+        hv = [a for a in range(one.natoms) if one.atoms["anum"][a] > 1]
+        gap = np.linalg.norm(xyz[hv][:, None] - xyz[hv][None], axis=2) + 9 * np.eye(len(hv))
+        assert gap.min() > 1.2, name
     out = post(
         "api/edit", {"op": "molecule", "value": {"smiles": "c1ccccc1", "centre": [10, 0, 0]}}
     )[1]

@@ -1459,17 +1459,22 @@ COVALENT = {1: 0.31, 5: 0.84, 6: 0.76, 7: 0.71, 8: 0.66, 9: 0.57, 14: 1.11, 15: 
 #: functional groups: the first atom of each SMILES bonds to the anchor
 GROUPS = {
     "Methyl": "C", "Ethyl": "CC", "Isopropyl": "C(C)C", "tert-Butyl": "C(C)(C)C",
-    "Cyclopropyl": "C1CC1", "Cyclohexyl": "C1CCCCC1", "Phenyl": "c1ccccc1",
+    "Cyclopropyl": "C1CC1", "Cyclobutyl": "C1CCC1", "Cyclohexyl": "C1CCCCC1",
+    "Phenyl": "c1ccccc1",
     "2-Pyridyl": "c1ccccn1", "3-Pyridyl": "c1cccnc1", "4-Pyridyl": "c1ccncc1",
     "2-Thienyl": "c1cccs1", "Imidazol-4-yl": "c1c[nH]cn1",
     "Hydroxyl": "O", "Methoxy": "OC", "Amino": "N", "Methylamino": "NC", "Dimethylamino": "N(C)C",
-    "Acetamido": "NC(C)=O", "Carboxamide": "C(N)=O", "Carboxyl": "C(=O)O",
+    # amides both ways round: the carbonyl bonds (Carboxamide, N-methylamide) or the
+    # nitrogen does (Acetamido, Formamido)
+    "Carboxamide": "C(N)=O", "N-Methylamide": "C(=O)NC", "N,N-Dimethylamide": "C(=O)N(C)C",
+    "Acetamido": "NC(C)=O", "Formamido": "NC=O", "Carboxyl": "C(=O)O",
     "Methyl ester": "C(=O)OC",
     "Acetyl": "C(C)=O", "Formyl": "C=O", "Nitrile": "C#N", "Nitro": "[N+](=O)[O-]",
     "Sulfonamide": "S(N)(=O)=O", "Methylsulfonyl": "S(C)(=O)=O", "Trifluoromethyl": "C(F)(F)F",
     "Fluoro": "F", "Chloro": "Cl", "Bromo": "Br", "Iodo": "I",
     "Morpholino": "N1CCOCC1", "Piperazinyl": "N1CCNCC1", "Piperidinyl": "N1CCCCC1",
-    "Pyrrolidinyl": "N1CCCC1",
+    "Pyrrolidinyl": "N1CCCC1", "Azetidinyl": "N1CCC1", "Azetidin-3-yl": "C1CNC1",
+    "Oxetan-3-yl": "C1COC1",
 }  # fmt: skip
 
 
