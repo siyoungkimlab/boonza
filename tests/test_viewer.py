@@ -1567,3 +1567,12 @@ def test_any_selection_has_a_smiles():
     assert len(got) == 1 and got[0]["smiles"]  # a residue of the chain, cut out
     water = names.index("HOH")
     assert v.smiles(np.flatnonzero(res == water).tolist(), exact=True)[0]["smiles"] == "O"
+
+
+def test_cavity_folder_lists_each_pockets_coarse_grained_frame(tmp_path):
+    d = make_cavity(tmp_path / "cavity")
+    boonza.save(boonza.load(DATA / "1HHO.pdb"), d / "frame_1_md40.pdb")  # a stand-in protein
+    v = viewer.from_paths([d])
+    frame = next(m for m in v.models if m.group == "frames")
+    assert frame.name == "frame 1 (md frame 40)" and not frame.shown and frame.row["rank"] == 1
+    assert frame.load().system.natoms > 0

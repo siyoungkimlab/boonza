@@ -1063,7 +1063,9 @@ def _with_ligand(structure, ligand) -> Session:
 
 def from_cavity(d) -> Viewer:
     """boonza cavity: the protein (or apo structure), its ligand, and each pocket's
-    medoid site; pharmacophore hotspots and the holo structure are listed, off.  The
+    medoid site; pharmacophore hotspots, the holo structure, and each pocket's
+    coarse-grained protein and probes in its medoid's MD frame (frame_K_mdF,
+    probes_K_mdF) are listed, off.  The
     ligand is in the file ligand.json names: in the structure, it is part of that
     model; in holo, it is a model of its own over the apo protein, and holo is off."""
     import json
@@ -1100,7 +1102,7 @@ def from_cavity(d) -> Viewer:
     if holo is not None:
         structure("holo", holo, False, **({"ligand": lig_sel} if lig_file == holo else {}))
 
-    pharmacophores = []
+    pharmacophores, frames = [], []
     ranks = sorted({int(line[22:26]) for line in (d / "sites.pqr").read_text().splitlines()
                     if line.startswith(("ATOM", "HETATM"))})  # fmt: skip
     for k in ranks:
@@ -1132,6 +1134,15 @@ def from_cavity(d) -> Viewer:
 
             pharmacophores.append(Model(f"pharmacophore {k}", hotspots, group="pharmacophore",
                                         shown=False, row={"rank": k}))  # fmt: skip
-    models += pharmacophores
+        # the coarse-grained protein in the MD frame of the pocket's medoid site, and
+        # the probe molecules near it then (boonza cavity's report writes them): off
+        for stem, group in (("frame", "frames"), ("probes", "probes")):
+            found = [f for f in sorted(d.glob(f"{stem}_{k}_md*.*")) if f.suffix != ".json"]
+            if found:
+                f = found[0]
+                md = f.stem.split("_md")[-1]
+                frames.append(Model(f"{stem} {k} (md frame {md})", lambda f=f: _session(f),
+                                    group=group, shown=False, row={"rank": k}))  # fmt: skip
+    models += pharmacophores + frames
     columns = [c for c in POCKET_COLUMNS if any(c in m.row for m in models)]
     return Viewer(models, title=f"{d.name}: {len(ranks)} pockets", columns=columns)
