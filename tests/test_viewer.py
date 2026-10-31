@@ -1572,7 +1572,8 @@ def test_any_selection_has_a_smiles():
 def test_cavity_folder_lists_each_pockets_coarse_grained_frame(tmp_path):
     d = make_cavity(tmp_path / "cavity")
     boonza.save(boonza.load(DATA / "1HHO.pdb"), d / "frame_1_md40.pdb")  # a stand-in protein
-    v = viewer.from_paths([d])
+    assert not any(m.group == "frames" for m in viewer.from_paths([d]).models)  # by default
+    v = viewer.from_paths([d], cg_frames=True)
     frame = next(m for m in v.models if m.group == "frames")
     assert frame.name == "frame 1 (md frame 40)" and not frame.shown and frame.row["rank"] == 1
     assert frame.load().system.natoms > 0
