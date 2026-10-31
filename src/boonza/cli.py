@@ -1802,6 +1802,7 @@ def _view(args) -> int:
             raise ValueError("-c, -s, --center and --fit go with one structure (and trajectory)")
         if not paths[0].lower().endswith(".sdf") or len(paths) > 1:
             what = viewer.from_paths(paths, merge=args.merge, fit=args.merge_fit,
+                                     cg_frames=args.cg_frames,
                                      scaffold=args.merge_scaffold or None)  # fmt: skip
     else:
         structure, trajectory = paths[0], paths[1] if len(paths) == 2 else None
@@ -1863,6 +1864,11 @@ def _parser() -> argparse.ArgumentParser:
                         "say (default: the first run's own).  Predictions of a protein "
                         "of several domains disagree over the whole chain however well "
                         "the domain fits, so the first one is otherwise arbitrary")  # fmt: skip
+    q.add_argument("--cg-frames", dest="cg_frames", action="store_true",
+                   help="a boonza cavity folder: list each pocket's coarse-grained protein "
+                        "and probe molecules in the MD frame of its medoid site too (off "
+                        "until ticked); beads are often enough to see a pocket's "
+                        "shape")  # fmt: skip
     q.add_argument("--center", help="wrap the box around these atoms")
     q.add_argument("--fit", help="superpose every frame onto the first on these atoms")
     q.add_argument("--no-whole", action="store_true", help="leave molecules split across "

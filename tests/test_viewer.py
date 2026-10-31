@@ -1523,3 +1523,57 @@ def test_a_model_says_whether_its_parts_name_a_source():
 
     s.atoms["source"] = np.array(["/runs/md_a/pose.mae"] * s.natoms)
     assert viewer.Session(s).topology()["sources"] is True
+
+
+def test_deleting_a_chain_is_quick_and_says_which_atom_was_which():
+    import time
+
+    from boonza.viewer.session import Session
+
+    v = Session(boonza.load(DATA / "1HHO.pdb"))
+    names = list(np.asarray(v.system.atoms["name"]))
+    chain = np.asarray(v.system.residues["chain"])[np.asarray(v.system.atoms["residue"])]
+    ids = np.flatnonzero(chain == chain[0]).tolist()
+    start = time.time()
+    out = v.edit("delete", ids, hydrogens=True)
+    assert time.time() - start < 2.0  # the bonds were walked once per atom: 5 s here
+    was = out["was"]
+    assert len(was) == v.system.natoms and sorted(was) == sorted(set(range(len(names))) - set(ids))
+    assert [names[w] for w in was] == list(np.asarray(v.system.atoms["name"]))
+
+
+def test_a_long_residue_name_is_kept_and_a_pdb_says_it_cuts_it(tmp_path):
+    from boonza.viewer import edit
+    from boonza.viewer.session import Session
+
+    v = Session(boonza.load(DATA / "1HHO.pdb"))
+    edit.relabel(v.system, [0], name="LIGAND")
+    assert str(v.system.residues["name"][v.system.atoms["residue"][0]]) == "LIGAND"
+    with pytest.raises(ValueError, match="no spaces"):
+        edit.relabel(v.system, [0], name="LIG AND")
+    assert "warning" not in v.save(tmp_path / "x.mae")
+    assert "LIGAND" in v.save(tmp_path / "x.pdb")["warning"]
+
+
+def test_any_selection_has_a_smiles():
+    from boonza.viewer.session import Session
+
+    v = Session(boonza.load(DATA / "1HHO.pdb"))
+    s = v.system
+    res = np.asarray(s.atoms["residue"])
+    names = [str(n) for n in s.residues["name"]]
+    ala = names.index("ALA")
+    got = v.smiles(np.flatnonzero(res == ala).tolist(), exact=True)
+    assert len(got) == 1 and got[0]["smiles"]  # a residue of the chain, cut out
+    water = names.index("HOH")
+    assert v.smiles(np.flatnonzero(res == water).tolist(), exact=True)[0]["smiles"] == "O"
+
+
+def test_cavity_folder_lists_each_pockets_coarse_grained_frame(tmp_path):
+    d = make_cavity(tmp_path / "cavity")
+    boonza.save(boonza.load(DATA / "1HHO.pdb"), d / "frame_1_md40.pdb")  # a stand-in protein
+    assert not any(m.group == "frames" for m in viewer.from_paths([d]).models)  # by default
+    v = viewer.from_paths([d], cg_frames=True)
+    frame = next(m for m in v.models if m.group == "frames")
+    assert frame.name == "frame 1 (md frame 40)" and not frame.shown and frame.row["rank"] == 1
+    assert frame.load().system.natoms > 0

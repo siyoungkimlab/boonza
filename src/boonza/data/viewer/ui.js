@@ -576,12 +576,18 @@ export function setupUI(app) {
     }
     return sel[0];
   }
+  // one edit at a time: one sent while another is still on the server would name
+  // atoms by indices that edit is about to change
+  let editing = false;
   async function serverEdit(m, url, body, topology = true) {
+    if (editing) { app.message("an edit is still running: wait for it to finish", true); return null; }
+    editing = true;
     try {
       const out = await app.post(url, { m: m.index, ...body });
-      await app.reloadModel(m, out.topology ?? topology);
+      await app.reloadModel(m, out.topology ?? topology, out.was);
       return out;
     } catch (e) { app.message(e.message, true); return null; }
+    finally { editing = false; }
   }
   const autoH = () => localStorage.getItem("boonza.autoH") !== "0";
   // the model a command acts on: the selection's, else the current one
@@ -634,9 +640,9 @@ export function setupUI(app) {
     if (changed.length) remember({ look: changed });
   };
   const reloadModel = app.reloadModel;
-  app.reloadModel = async (m, topology) => {
+  app.reloadModel = async (m, topology, was = null) => {
     if (!replaying) remember({ edit: m, before: m.state ? snapshot(m) : null });
-    return reloadModel(m, topology);
+    return reloadModel(m, topology, was);
   };
   // a model just loaded again takes a look its atoms fit (what an edit undone or redone had)
   function lookAgain(m, snap) {
@@ -2299,8 +2305,9 @@ export function setupUI(app) {
   };
 
   // SMILES of the selected molecules (else of the current model's ligands)
-  async function smilesOf(m, ids = []) {
-    return (await app.getJSON(`api/smiles?m=${m.index}&sel=${ids.slice(0, 5000).join(",")}`)).molecules;
+  // exact: of the atoms themselves (each bonded piece), not the molecules they are in
+  async function smilesOf(m, ids = [], exact = false) {
+    return (await app.getJSON(`api/smiles?m=${m.index}&sel=${ids.slice(0, 5000).join(",")}${exact ? "&exact=1" : ""}`)).molecules;
   }
   async function copyText(text) {
     try { await navigator.clipboard.writeText(text); return true; } catch (e) {
@@ -3302,9 +3309,9 @@ export function setupUI(app) {
     const sel = app.selection();
     if (sel.length !== 1) return;
     const [m, ids] = sel[0];
-    if (!m.topo || !ids.every(a => m.topo.atoms.class[a] === 1)) return;
-    let mols;
-    try { mols = (await smilesOf(m, ids)).filter(x => x.smiles); } catch (e) { return; }
+    if (!m.topo) return;
+    let mols;  // whatever is selected: a ligand, a residue of the chain, a water
+    try { mols = (await smilesOf(m, ids, true)).filter(x => x.smiles); } catch (e) { return; }
     if (ticket !== footTicket || !mols.length) return;
     const text = mols.map(x => x.smiles).join(".");
     $("footer-edit").append(el("span", { className: "what" }, "SMILES"), el("code", { className: "smiles", title: text }, text),
@@ -3611,7 +3618,11 @@ export function setupUI(app) {
   async function savePath(path) {
     const m = actingModel();
     if (!m) return false;
-    try { const out = await app.post("api/save", { m: m.index, path }); app.message(`saved ${out.path}`); return true; }
+    try {
+      const out = await app.post("api/save", { m: m.index, path });
+      app.message(out.warning ? `saved ${out.path} · ${out.warning}` : `saved ${out.path}`, !!out.warning);
+      return true;
+    }
     catch (e) { app.message(e.message, true); return false; }
   }
   async function closeModel(which = null) {

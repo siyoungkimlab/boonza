@@ -694,18 +694,19 @@ def from_session(path) -> Viewer:
     return v
 
 
-def from_paths(paths, merge: bool = False, fit: str = "", scaffold=None, **kwargs) -> Viewer:
+def from_paths(paths, merge: bool = False, fit: str = "", scaffold=None, cg_frames: bool = False,
+               **kwargs) -> Viewer:  # fmt: skip
     """Files (a model each), folders (see the module docstring) and saved sessions
     (.bview), in order."""
     paths = [Path(p) for p in paths]
     if len(paths) == 1 and paths[0].suffix == ".bview":
         return from_session(paths[0])
     if len(paths) == 1 and paths[0].is_dir():
-        return from_folder(paths[0], merge=merge, fit=fit, scaffold=scaffold)
+        return from_folder(paths[0], merge=merge, fit=fit, scaffold=scaffold, cg_frames=cg_frames)
     models, columns = [], []
     for p in paths:
         if p.is_dir():
-            v = from_folder(p, merge=merge, fit=fit, scaffold=scaffold)
+            v = from_folder(p, merge=merge, fit=fit, scaffold=scaffold, cg_frames=cg_frames)
             for m in v.models:
                 m.group = m.group or p.name
             models += v.models
@@ -769,7 +770,8 @@ def _series_members(path, taken=()) -> list[Model]:
     return out
 
 
-def from_folder(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
+def from_folder(d, merge: bool = False, fit: str = "", scaffold=None,
+                cg_frames: bool = False) -> Viewer:  # fmt: skip
     """What a folder holds: a view.json, or the output of modes, triage or cavity."""
     d = Path(d)
     if (d / "view.json").is_file():
@@ -779,7 +781,7 @@ def from_folder(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
     if (d / "summary.csv").is_file() and (d / "structures").is_dir():
         return from_triage(d, merge=merge, fit=fit, scaffold=scaffold)
     if (d / "pockets.csv").is_file() and (d / "sites.pqr").is_file():
-        return from_cavity(d)
+        return from_cavity(d, cg_frames=cg_frames)
     if (d / "ligands.csv").is_file() and (d / "edges").is_dir():
         return from_fep(d)
     raise ValueError(f"{d}: not a folder boonza view knows (a view.json, or the output of "
@@ -1061,9 +1063,11 @@ def _with_ligand(structure, ligand) -> Session:
     return Session(s, title=Path(structure).name, ligand=f"index {ids[0]} to {ids[-1]}")
 
 
-def from_cavity(d) -> Viewer:
+def from_cavity(d, cg_frames: bool = False) -> Viewer:
     """boonza cavity: the protein (or apo structure), its ligand, and each pocket's
-    medoid site; pharmacophore hotspots and the holo structure are listed, off.  The
+    medoid site; pharmacophore hotspots and the holo structure are listed, off.
+    ``cg_frames`` (boonza view --cg-frames): each pocket's coarse-grained protein
+    and probes in its medoid's MD frame (frame_K_mdF, probes_K_mdF) too, off.  The
     ligand is in the file ligand.json names: in the structure, it is part of that
     model; in holo, it is a model of its own over the apo protein, and holo is off."""
     import json
@@ -1100,7 +1104,7 @@ def from_cavity(d) -> Viewer:
     if holo is not None:
         structure("holo", holo, False, **({"ligand": lig_sel} if lig_file == holo else {}))
 
-    pharmacophores = []
+    pharmacophores, frames = [], []
     ranks = sorted({int(line[22:26]) for line in (d / "sites.pqr").read_text().splitlines()
                     if line.startswith(("ATOM", "HETATM"))})  # fmt: skip
     for k in ranks:
@@ -1132,6 +1136,15 @@ def from_cavity(d) -> Viewer:
 
             pharmacophores.append(Model(f"pharmacophore {k}", hotspots, group="pharmacophore",
                                         shown=False, row={"rank": k}))  # fmt: skip
-    models += pharmacophores
+        # the coarse-grained protein in the MD frame of the pocket's medoid site, and
+        # the probe molecules near it then (boonza cavity's report writes them): off
+        for stem, group in (("frame", "frames"), ("probes", "probes")) if cg_frames else ():
+            found = [f for f in sorted(d.glob(f"{stem}_{k}_md*.*")) if f.suffix != ".json"]
+            if found:
+                f = found[0]
+                md = f.stem.split("_md")[-1]
+                frames.append(Model(f"{stem} {k} (md frame {md})", lambda f=f: _session(f),
+                                    group=group, shown=False, row={"rank": k}))  # fmt: skip
+    models += pharmacophores + frames
     columns = [c for c in POCKET_COLUMNS if any(c in m.row for m in models)]
     return Viewer(models, title=f"{d.name}: {len(ranks)} pockets", columns=columns)

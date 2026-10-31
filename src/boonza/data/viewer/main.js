@@ -323,8 +323,9 @@ function carryOver(old, model) {
   const from = new Map();
   old.keys.forEach((k, a) => from.set(k, a));
   const found = new Int32Array(n).fill(-1);
+  const byIndex = old.was && old.was.length === n;  // the server said which atom was which
   for (let a = 0; a < n; a++) {
-    const o = from.get(atomKey(topo, a));
+    const o = byIndex ? (old.was[a] >= 0 ? old.was[a] : undefined) : from.get(atomKey(topo, a));
     if (o === undefined) continue;
     found[a] = o;
     st.sel[a] = old.sel[o]; st.constraint[a] = old.constraint[o]; st.labels[a] = old.labels[o];
@@ -378,12 +379,13 @@ function carryOver(old, model) {
 }
 
 // after an edit: positions again, and with new atoms the topology too
-async function reloadModel(model, topology) {
+// ``was``: each atom's index before the edit (-1: new), when the server sent it
+async function reloadModel(model, topology, was = null) {
   model.frames.clear();
   if (topology) {
     const st = model.state, topo = model.topo;
     model.keep = { ...st, reps: model.reps, keys: range(topo.natoms).map(a => atomKey(topo, a)), element: topo.atoms.element,
-                   residue: topo.atoms.residue };
+                   residue: topo.atoms.residue, was };
     model.topo = null;
     model.loading = null;
     await load(model);

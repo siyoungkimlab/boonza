@@ -52,9 +52,16 @@ def _valences(anum: int, charge: int) -> tuple[int, ...]:
     return tuple(v + charge for v in base if v + charge >= 0)
 
 
-def neighbors(s, a: int) -> list[tuple[int, int]]:
-    """(atom, bond order) bonded to ``a``."""
-    return [(int(b), int(o)) for b, o in _bonded(s).get(a, [])]
+def neighbors(s, a: int, bonded: dict | None = None) -> list[tuple[int, int]]:
+    """(atom, bond order) bonded to ``a``.  ``bonded``: :func:`bonded` of ``s``, for a
+    loop over many atoms (building it walks every bond: once per atom made deleting
+    a 4,600-atom chain take 45 s)."""
+    return [(int(b), int(o)) for b, o in (bonded if bonded is not None else _bonded(s)).get(a, [])]
+
+
+def bonded(s) -> dict:
+    """{atom: [(atom, bond order), ...]} of every bond of ``s``."""
+    return _bonded(s)
 
 
 def _bonded(s) -> dict:
@@ -491,8 +498,9 @@ def set_bond(s, i: int, j: int, order: int) -> None:
 def delete(s, atoms) -> np.ndarray:
     """Delete ``atoms`` and the hydrogens bonded to them; the old-to-new index map."""
     gone = {int(a) for a in atoms}
+    adj, anum = _bonded(s), np.asarray(s.atoms["anum"])
     for a in list(gone):
-        gone |= {b for b, _ in neighbors(s, a) if s.atoms["anum"][b] == 1}
+        gone |= {b for b, _ in neighbors(s, a, adj) if anum[b] == 1}
     return s.delete_atoms(sorted(gone))
 
 
@@ -512,8 +520,8 @@ def relabel(s, atoms, name: str = "", resid: str = "", chain: str = "") -> None:
     if not (name or resid or chain):
         raise ValueError("give a residue name, a residue number or a chain")
     if name:
-        if " " in name or len(name) > 4:
-            raise ValueError("a residue name is up to 4 characters, without spaces")
+        if " " in name:
+            raise ValueError("a residue name has no spaces")
         names = np.asarray(s.residues["name"]).astype(object)
         names[residues] = name
         s.residues["name"] = names.astype(str)
