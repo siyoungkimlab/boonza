@@ -677,11 +677,14 @@ def amber_charges(s, forcefields=None) -> tuple[np.ndarray, np.ndarray]:
 
 def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: float = 10.0,
              max_iterations: int = 0, parameterized=None, log=print, fixed=None,
-             tethered=None, path: bool = False, rem: bool = False) -> dict:  # fmt: skip
+             tethered=None, path: bool = False, rem: bool = False,
+             solvent: str = "rf") -> dict:  # fmt: skip
     """Minimize ``s`` in place: ``mobile`` atoms free, the heavy atoms of the rest held
     to where they are by ``restraint`` (kcal/mol/A^2) springs; hydrogens are free
-    everywhere.  Vacuum with a reaction field outside
-    12 A.  Or, as Constrain sets them: ``fixed`` atoms do not move at
+    everywhere.  ``solvent``: ``rf`` for a reaction field outside 12 A (the default,
+    which is what OpenMM does anyway), ``vacuum`` for no screening at all, or ``gb``
+    for Generalized Born implicit solvent, which charges for burying a polar atom.
+    Or, as Constrain sets them: ``fixed`` atoms do not move at
     all, ``tethered`` ones are held by the springs and the rest is free (hydrogens
     neither fixed nor held); ``mobile`` is then not needed.  ``tolerance`` in kJ/mol/nm.
     Returns energies (kJ/mol), the RMSD and largest move of the mobile atoms and the
@@ -697,21 +700,7 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
     if not (np.asarray(s.atoms["anum"]) == 1).any():
         raise ValueError("no hydrogens: add them first (an all-atom force field needs them)")
     heavy = np.asarray(s.atoms["anum"]) > 1
-    fix = np.zeros(s.natoms, bool)
-    if fixed is not None or tethered is not None:
-        tether = np.zeros(s.natoms, bool)
-        fix[np.asarray(fixed if fixed is not None else [], np.int64)] = True
-        fix &= heavy  # hydrogens are never held, frozen or restrained
-        tether[np.asarray(tethered if tethered is not None else [], np.int64)] = True
-        tether &= ~fix
-        free = ~(fix | tether)
-    else:
-        free = np.zeros(s.natoms, bool)
-        free[s.select(mobile).ids] = True
-        tether = ~free
-    if not free.any() and not tether.any():
-        raise ValueError("nothing can move: every atom is fixed" if fix.any()
-                         else f"no atoms in {mobile!r}")  # fmt: skip
+    fix, tether, free = _mobile_masks(s, mobile, fixed, tethered)
     held = tether & heavy
     p = parameterized if parameterized is not None else parameterize(s, log=log)
     order = np.asarray(p.atoms["view_index"], dtype=np.int64)  # p's atom k is s's order[k]
@@ -721,6 +710,7 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
     # no constraints: a fixed (massless) atom may not share one with a moving atom
     _, omm_system, _ = to_openmm(p, nonbonded_method="CutoffNonPeriodic", cutoff=12.0,
                                  constraints=False)  # fmt: skip
+    how_solvent = _solvent(omm_system, p, order, solvent)
     for k, a in enumerate(order):
         if fix[a]:
             omm_system.setParticleMass(k, 0.0)  # the minimizer leaves massless atoms be
@@ -786,7 +776,227 @@ def minimize(s, mobile: str | None = None, restraint: float = 10.0, tolerance: f
         "held_atoms": int(held.sum()),
         "fixed_atoms": int(fix.sum()),
         "held_max": round(float(shift.max()), 3),
+        "solvent": solvent,
+        "solvent_how": how_solvent,
     }
+
+
+def _mobile_masks(s, mobile, fixed, tethered):
+    """(fix, tether, free) atom masks from either ``mobile`` or Constrain's ``fixed``
+    and ``tethered``; hydrogens are never fixed or held.  What minimize and dynamics
+    both decide the same way."""
+    heavy = np.asarray(s.atoms["anum"]) > 1
+    fix = np.zeros(s.natoms, bool)
+    if fixed is not None or tethered is not None:
+        tether = np.zeros(s.natoms, bool)
+        fix[np.asarray(fixed if fixed is not None else [], np.int64)] = True
+        fix &= heavy
+        tether[np.asarray(tethered if tethered is not None else [], np.int64)] = True
+        tether &= ~fix
+        free = ~(fix | tether)
+    else:
+        free = np.zeros(s.natoms, bool)
+        free[s.select(mobile).ids] = True
+        tether = ~free
+    if not free.any() and not tether.any():
+        raise ValueError("nothing can move: every atom is fixed" if fix.any()
+                         else f"no atoms in {mobile!r}")  # fmt: skip
+    return fix, tether, free
+
+
+class DynamicsPath:
+    """A run of dynamics for the page to play back, in the shape
+    :class:`MinimizationPath` returns: the potential energy per frame and the positions
+    at up to ``FRAMES`` of them."""
+
+    FRAMES = 60
+
+    def __init__(self, order, start):
+        self.order = order
+        self.frames = [(0, np.asarray(start, np.float32))]
+        self.energies = []
+
+    def add(self, step: int, x, energy: float) -> None:
+        pos = np.empty_like(self.frames[0][1])
+        pos[self.order] = np.asarray(x, np.float32) * 10.0
+        self.frames.append((step, pos))
+        self.energies.append((step, energy))
+
+    def result(self, stage: str = "dynamics") -> dict:
+        frames = self.frames
+        moved = np.flatnonzero(np.linalg.norm(frames[-1][1] - frames[0][1], axis=1) > 0.05)
+        keep = frames
+        if len(keep) > self.FRAMES:  # every nth, the last one always among them
+            stride = -(-len(keep) // self.FRAMES)
+            keep = frames[::stride]
+            if keep[-1] is not frames[-1]:
+                keep = [*keep, frames[-1]]
+        return {
+            "atoms": moved.tolist(),
+            "iterations": [k for k, _ in keep],
+            "frames": [np.round(f[moved], 3).ravel().tolist() for _, f in keep],
+            "energy": [[k, round(e, 1)] for k, e in self.energies],
+            "stages": [[stage, 0]],
+        }
+
+
+def dynamics(s, mobile: str | None = None, restraint: float = 10.0, picoseconds: float = 10.0,
+             temperature: float = 300.0, timestep_fs: float = 1.0, minimize_first: bool = True,
+             parameterized=None, log=print, fixed=None, tethered=None, path: bool = False,
+             solvent: str = "rf", seed: int = 0) -> dict:  # fmt: skip
+    """Run ``picoseconds`` of Langevin dynamics on ``s`` in place at ``temperature`` K,
+    with the same choice of what moves as :func:`minimize` -- ``mobile`` free and the
+    rest's heavy atoms held by ``restraint`` (kcal/mol/A^2) springs, or Constrain's
+    ``fixed`` and ``tethered``.  ``solvent`` as :func:`_solvent` takes it.  Bonds are
+    not constrained (a frozen atom may not share a constraint with a moving one), so
+    the step is 1 fs by default.  ``minimize_first``: relax the start, so dynamics does
+    not begin on a clash.  Returns the energies, the temperature reached, how far atoms
+    moved, and with ``path`` the frames to play back."""
+    import openmm
+    import openmm.unit as u
+
+    from ..omm import to_openmm
+
+    if not (np.asarray(s.atoms["anum"]) == 1).any():
+        raise ValueError("no hydrogens: add them first (an all-atom force field needs them)")
+    if picoseconds <= 0:
+        raise ValueError("picoseconds must be positive")
+    fix, tether, free = _mobile_masks(s, mobile, fixed, tethered)
+    heavy = np.asarray(s.atoms["anum"]) > 1
+    held = tether & heavy
+    p = parameterized if parameterized is not None else parameterize(s, log=log)
+    order = np.asarray(p.atoms["view_index"], dtype=np.int64)
+    if (order >= 0).sum() != s.natoms:
+        raise ValueError("the force field changed the atoms; run what boonza md would run")
+    _, omm_system, _ = to_openmm(p, nonbonded_method="CutoffNonPeriodic", cutoff=12.0,
+                                 constraints=False)  # fmt: skip
+    how_solvent = _solvent(omm_system, p, order, solvent)
+    for k, a in enumerate(order):
+        if fix[a]:
+            omm_system.setParticleMass(k, 0.0)
+    hold = openmm.CustomExternalForce("0.5*k*((x-x0)^2+(y-y0)^2+(z-z0)^2)")
+    hold.addGlobalParameter("k", restraint * 4.184 * 100)
+    for name in ("x0", "y0", "z0"):
+        hold.addPerParticleParameter(name)
+    start = np.array(s.positions, float)
+    xyz = start[order] / 10.0
+    for k, a in enumerate(order):
+        if held[a]:
+            hold.addParticle(k, xyz[k].tolist())
+    omm_system.addForce(hold)
+    integrator = openmm.LangevinMiddleIntegrator(temperature * u.kelvin, 1.0 / u.picosecond,
+                                                 timestep_fs * u.femtosecond)  # fmt: skip
+    if seed:
+        integrator.setRandomNumberSeed(int(seed))
+    context = openmm.Context(omm_system, integrator)
+    context.setPositions(xyz * u.nanometer)
+    before = (
+        context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(u.kilojoule_per_mole)
+    )
+    if minimize_first:
+        openmm.LocalEnergyMinimizer.minimize(context, 10.0, 0)
+    context.setVelocitiesToTemperature(temperature * u.kelvin, int(seed) or 1)
+    steps = max(1, int(round(picoseconds * 1000.0 / timestep_fs)))
+    every = max(1, steps // DynamicsPath.FRAMES)
+    recorder = DynamicsPath(order, start) if path else None
+    moving = int(omm_system.getNumParticles() - fix.sum())
+    energies, temperatures = [], []
+    done = 0
+    while done < steps:
+        n = min(every, steps - done)
+        integrator.step(n)
+        done += n
+        state = context.getState(getEnergy=True, getPositions=bool(recorder))
+        e = state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole)
+        ke = state.getKineticEnergy().value_in_unit(u.kilojoule_per_mole)
+        energies.append(e)
+        # 3N/2 kT for the atoms that actually move; a held atom still has momentum
+        if moving > 0:
+            temperatures.append(2.0 * ke / (3.0 * moving * 0.0083144621))
+        if recorder is not None:
+            recorder.add(done, state.getPositions(asNumpy=True).value_in_unit(u.nanometer), e)
+    state = context.getState(getEnergy=True, getPositions=True)
+    after = state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole)
+    out = np.asarray(state.getPositions(asNumpy=True).value_in_unit(u.nanometer)) * 10.0
+    new = start.copy()
+    new[order] = out
+    s.positions = new
+    moved = np.linalg.norm(new[free] - start[free], axis=1) if free.any() else np.zeros(1)
+    shift = np.linalg.norm(new[held] - start[held], axis=1) if held.any() else np.zeros(1)
+    report = {"path": recorder.result()} if recorder is not None else {}
+    return {
+        **report,
+        "energy_before": round(before, 1),
+        "energy_after": round(after, 1),
+        "energy_mean": round(float(np.mean(energies)), 1),
+        "temperature": round(float(np.mean(temperatures)), 1) if temperatures else 0.0,
+        "picoseconds": picoseconds,
+        "steps": steps,
+        "mobile_atoms": int(free.sum()),
+        "mobile_rmsd": round(float(np.sqrt((moved**2).mean())), 3),
+        "mobile_max": round(float(moved.max()), 3),
+        "held_atoms": int(held.sum()),
+        "fixed_atoms": int(fix.sum()),
+        "held_max": round(float(shift.max()), 3),
+        "solvent": solvent,
+        "solvent_how": how_solvent,
+    }
+
+
+#: how the solvent is modelled when minimizing or running dynamics in the viewer
+SOLVENTS = ("rf", "vacuum", "gb")
+#: Å and the OBC scale factor per element, Amber's mbondi2 as the GB radii; a hydrogen
+#: on nitrogen is the one exception (1.3 Å), and anything else falls back to the last
+GB_RADII = {1: (1.2, 0.85), 6: (1.7, 0.72), 7: (1.55, 0.79), 8: (1.5, 0.85),
+            9: (1.5, 0.88), 15: (1.85, 0.86), 16: (1.8, 0.96), 17: (1.7, 0.80),
+            35: (1.85, 0.80), 53: (1.98, 0.80)}  # fmt: skip
+GB_DEFAULT = (1.5, 0.80)
+#: water's dielectric, for the reaction field and for Generalized Born
+EPSILON_WATER = 78.5
+
+
+def _solvent(omm_system, p, order, solvent: str, cutoff: float = 12.0) -> str:
+    """Put ``solvent`` on an OpenMM system built with a cutoff, and say what it is.
+
+    ``rf``: a reaction field at water's dielectric outside the cutoff, which is what
+    OpenMM's NonbondedForce does by default (78.3) -- nothing to add.  ``vacuum``: the
+    same field with a dielectric of 1, so charges are unscreened.  ``gb``: Generalized
+    Born (OBC2, Amber's mbondi2 radii) on top of the reaction field, so that burying a
+    polar atom costs its desolvation -- what a reaction field alone never charges for.
+    """
+    import openmm as mm
+    import openmm.unit as u
+
+    if solvent not in SOLVENTS:
+        raise ValueError(f"solvent is one of {', '.join(SOLVENTS)}, not {solvent!r}")
+    nb = next((f for f in omm_system.getForces() if isinstance(f, mm.NonbondedForce)), None)
+    if nb is None:
+        raise ValueError("no NonbondedForce: this system cannot be given a solvent")
+    if solvent == "vacuum":
+        nb.setReactionFieldDielectric(1.0)
+        return "vacuum, charges unscreened"
+    if solvent == "rf":
+        return f"vacuum with a {cutoff:g} Å reaction field (ε {nb.getReactionFieldDielectric():g})"
+    anum = np.asarray(p.atoms["anum"])
+    bonded: dict[int, list[int]] = {}
+    tab = p.bonds
+    for i, j in zip(np.asarray(tab["i"]), np.asarray(tab["j"]), strict=True):
+        bonded.setdefault(int(i), []).append(int(j))
+        bonded.setdefault(int(j), []).append(int(i))
+    gb = mm.GBSAOBCForce()
+    gb.setSolventDielectric(EPSILON_WATER)
+    gb.setSoluteDielectric(1.0)
+    gb.setNonbondedMethod(mm.GBSAOBCForce.CutoffNonPeriodic)
+    gb.setCutoffDistance(cutoff / 10.0 * u.nanometer)
+    for k in range(omm_system.getNumParticles()):
+        z = int(anum[k])
+        radius, scale = GB_RADII.get(z, GB_DEFAULT)
+        if z == 1 and any(anum[j] == 7 for j in bonded.get(k, ())):
+            radius = 1.3  # mbondi2: a hydrogen on nitrogen is larger
+        charge = nb.getParticleParameters(k)[0]
+        gb.addParticle(charge, radius / 10.0, scale)
+    omm_system.addForce(gb)
+    return f"implicit solvent (Generalized Born OBC2, ε {EPSILON_WATER:g})"
 
 
 class MinimizationPath:

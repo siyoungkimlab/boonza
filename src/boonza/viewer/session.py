@@ -1218,19 +1218,13 @@ class Session:
         return {"svg": draw.GetDrawingText(), "atoms": heavy, "coords": coords, "name": name,
                 "width": width, "height": height}  # fmt: skip
 
-    def minimize(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
-                 tethered=None, mode: str | None = None, path: bool = False,
-                 rem: bool = False) -> dict:  # fmt: skip
-        """Relax ``mobile`` (default the ligand and its pocket), the other heavy atoms
-        restrained; or, given ``fixed`` and ``tethered`` atoms (Constrain), those
-        held and the rest free; or by ``mode``, the rest's heavy atoms restrained: both
-        (the ligand and its pocket free), ligand (the ligand alone) or pocket (the pocket
-        alone).
-        Hydrogens are never restrained.  ``path``: how it went, step by step; ``rem``:
-        soft nonbonded interactions first (boonza.rem)."""
-        from .edit import minimize, pocket_selection
+    def _what_moves(self, mode, fixed, tethered, mobile):
+        """(fixed, tethered, mobile) for a ``mode`` -- both (the ligand and its pocket
+        free), ligand or pocket, the rest's heavy atoms held by springs (frozen, a
+        crystal structure's strain stays: energies of 1e5 kJ/mol) -- or what was given.
+        Hydrogens are never held.  What minimize and dynamics both take."""
+        from .edit import pocket_selection
 
-        self._editable()
         if mode is not None:
             lig = f"same residue as ({self.ligand or LIGAND})"
             pocket = f"({pocket_selection(lig)}) and not ({lig})"
@@ -1241,14 +1235,28 @@ class Session:
             if not len(free):
                 raise ValueError("nothing to move: choose the ligand (right-click it, "
                                  "Set as Ligand)")  # fmt: skip
-            # the rest's heavy atoms held by springs (frozen, a crystal structure's
-            # strain stays: energies of 1e5 kJ/mol); hydrogens are never held
             heavy = np.flatnonzero(np.asarray(self.system.atoms["anum"]) > 1)
-            fixed, tethered = [], np.setdiff1d(heavy, free)
-        given = [x for x in (fixed, tethered) if x is not None]
-        constrained = mode is not None or any(len(x) for x in given)
-        if not constrained:
+            return [], np.setdiff1d(heavy, free), mobile
+        if not any(len(x) for x in (fixed, tethered) if x is not None):
             mobile = mobile or pocket_selection(self.ligand or LIGAND)
+        return fixed, tethered, mobile
+
+    def minimize(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
+                 tethered=None, mode: str | None = None, path: bool = False,
+                 rem: bool = False, solvent: str = "rf") -> dict:  # fmt: skip
+        """Relax ``mobile`` (default the ligand and its pocket), the other heavy atoms
+        restrained; or, given ``fixed`` and ``tethered`` atoms (Constrain), those
+        held and the rest free; or by ``mode``, the rest's heavy atoms restrained: both
+        (the ligand and its pocket free), ligand (the ligand alone) or pocket (the pocket
+        alone).
+        Hydrogens are never restrained.  ``path``: how it went, step by step; ``rem``:
+        soft nonbonded interactions first (boonza.rem); ``solvent``: rf (a reaction
+        field, the default), vacuum, or gb (Generalized Born implicit solvent)."""
+        from .edit import minimize
+
+        self._editable()
+        fixed, tethered, mobile = self._what_moves(mode, fixed, tethered, mobile)
+        constrained = mode is not None or any(len(x) for x in (fixed, tethered) if x is not None)
         with self._lock:
             p = self._parameterized()
             self._remember()
@@ -1257,7 +1265,37 @@ class Session:
                                   restraint=restraint, parameterized=p,
                                   fixed=fixed if constrained else None,
                                   tethered=tethered if constrained else None,
-                                  path=path, rem=rem)  # fmt: skip
+                                  path=path, rem=rem, solvent=solvent)  # fmt: skip
+            except Exception:
+                self.system = self._undo.pop()[0]
+                raise
+            how = mode or ("constraints" if constrained else mobile)
+            return {**self._changed(topology=False), **report, "mobile": how}
+
+    def dynamics(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
+                 tethered=None, mode: str | None = None, path: bool = False,
+                 solvent: str = "rf", picoseconds: float = 10.0, temperature: float = 300.0,
+                 minimize_first: bool = True) -> dict:  # fmt: skip
+        """Molecular dynamics instead of minimization, with the same choice of what
+        moves (``mobile``, ``mode``, or Constrain's ``fixed`` and ``tethered``) and the
+        same ``solvent``.  ``picoseconds`` at ``temperature`` K, minimized first unless
+        told otherwise, so a barrier the minimizer cannot cross can be crossed here."""
+        from .edit import dynamics
+
+        self._editable()
+        fixed, tethered, mobile = self._what_moves(mode, fixed, tethered, mobile)
+        constrained = mode is not None or any(len(x) for x in (fixed, tethered) if x is not None)
+        with self._lock:
+            p = self._parameterized()
+            self._remember()
+            try:
+                report = dynamics(self.system, None if constrained else mobile,
+                                  restraint=restraint, parameterized=p,
+                                  fixed=fixed if constrained else None,
+                                  tethered=tethered if constrained else None,
+                                  path=path, solvent=solvent, picoseconds=picoseconds,
+                                  temperature=temperature,
+                                  minimize_first=minimize_first)  # fmt: skip
             except Exception:
                 self.system = self._undo.pop()[0]
                 raise

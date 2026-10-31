@@ -538,6 +538,84 @@ def test_minimize_holds_the_rest():
     assert session.undo()["version"] == 2 and np.allclose(session.system.positions, before)
 
 
+def test_set_as_ligand_takes_the_selection_not_the_whole_molecule():
+    """A protein chain is one fragment, so selecting the molecule of a residue is its
+    whole chain: choosing one residue as the ligand turned the chain into the ligand,
+    and selected it.  The menu item now leaves a selection alone, and only stands in
+    the molecule under the cursor when nothing is selected."""
+    import re
+
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    item = re.search(r"\(p => \(\{ label: p\.label.*?\}\)\)\(ligandPick\(c\)\),", ui)
+    assert item, "Set as Ligand no longer goes through ligandPick"
+    assert "app.select(c.m, c.molecule); chooseLigand()" not in ui
+    pick = ui[ui.index("function ligandPick(c) {") :]
+    pick = pick[: pick.index("\n  }\n")]
+    # with a selection in this model, nothing is re-selected; without one, the molecule
+    assert "app.selection().find(" in pick
+    assert "pick: () => app.select(c.m, c.molecule)" in pick  # only on the no-selection path
+    assert pick.count("app.select(") == 1
+    # the server side takes whatever atoms it is given, a protein residue included
+    g = DATA / "gmx_amber"
+    s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    session = viewer.Session(s, atoms="protein", cg=False)
+    residue = [int(a) for a in session.system.select("resid 2").ids]
+    out = session.set_ligand(residue)
+    assert len(session.system.select(out["ligand"]).ids) == len(residue)
+
+
+def test_each_solvent_is_a_different_field():
+    """Reaction field (what it has always been), vacuum and Generalized Born: each one
+    reaches a different energy, and only GB adds a solvation term."""
+    g = DATA / "gmx_amber"
+    s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    start = boonza.load(g / "topol.top", coordinates=g / "conf.gro").positions.copy()
+    energies, how = {}, {}
+    for solvent in ("rf", "vacuum", "gb"):
+        session = viewer.Session(s.clone(), atoms="protein", cg=False)
+        session.system.positions = start[session.system.select("protein").ids]
+        out = session.minimize("resid 2", restraint=10.0, solvent=solvent)
+        energies[solvent] = out["energy_after"]
+        how[solvent] = out["solvent_how"]
+        assert out["solvent"] == solvent
+    assert "78.3" in how["rf"] and "reaction field" in how["rf"]
+    assert "unscreened" in how["vacuum"]
+    assert "Generalized Born" in how["gb"]
+    # GB adds the solvation free energy, which is large and negative: it is not a
+    # reaction field by another name
+    assert energies["gb"] < energies["rf"] - 100.0
+    assert len({round(e, 1) for e in energies.values()}) == 3
+    with pytest.raises(ValueError, match="solvent is one of"):
+        viewer.Session(s.clone(), atoms="protein", cg=False).minimize("resid 2", solvent="tip3p")
+
+
+def test_dynamics_moves_further_than_minimizing_and_plays_back():
+    g = DATA / "gmx_amber"
+    s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    session = viewer.Session(s, atoms="protein", cg=False)
+    before = session.system.positions.copy()
+    out = session.dynamics("resid 2", restraint=10.0, picoseconds=2.0, temperature=300.0,
+                           path=True)  # fmt: skip
+    assert out["steps"] == 2000 and out["picoseconds"] == 2.0
+    assert 50.0 < out["temperature"] < 450.0  # a mean over a run that starts cold
+    assert out["mobile_atoms"] == len(session.system.select("resid 2")) > 0
+    held = session.system.select("not (resid 2) and not hydrogen").ids
+    after = session.system.positions
+    # the springs still hold the rest, while the free part has moved on
+    assert np.linalg.norm(after[held] - before[held], axis=1).max() == pytest.approx(
+        out["held_max"], abs=1e-3
+    )
+    assert out["mobile_max"] > out["held_max"]
+    path = out["path"]
+    assert 1 < len(path["frames"]) <= 61
+    assert len(path["frames"]) == len(path["iterations"]) == len(set(path["iterations"]))
+    assert path["iterations"][-1] == out["steps"] and path["stages"] == [["dynamics", 0]]
+    assert all(len(f) == 3 * len(path["atoms"]) for f in path["frames"])
+    assert session.undo()["version"] == 2 and np.allclose(session.system.positions, before)
+    with pytest.raises(ValueError, match="picoseconds must be positive"):
+        session.dynamics("resid 2", picoseconds=0.0)
+
+
 @pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
 def test_dihedral_scan_with_a_ligand():
     s = boonza.from_smiles("CCCC")
