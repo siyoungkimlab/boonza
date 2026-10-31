@@ -2307,19 +2307,33 @@ export function setupUI(app) {
     const body = $("ldock-body");
     body.innerHTML = "";
     (tab === "protein" ? proteinBuilder : atomBuilder)(body);
-    if (tab === "builder") {  // the hydrogens are where molecules grow: those of shown molecules too
+    if (tab === "builder") {  // molecules grow at their hydrogens, so every hydrogen of
+      // what the view draws has to be drawn too, and pickable -- a receptor's as much as
+      // a ligand's, since an edited residue stays in its chain and is classed with it
       setHydrogens("all");
+      const atomRep = r => r.on && !app.isRibbon(r) && r.style !== "surface";
       for (const m of app.shownModels()) {
-        const A = m.topo.atoms;
+        const A = m.topo.atoms, n = m.topo.natoms;
         for (const rep of m.reps) {
-          if (app.isRibbon(rep) || rep.style === "surface") continue;
+          if (!atomRep(rep)) continue;
           let grew = false;
-          for (let a = 0; a < m.topo.natoms; a++) {
-            if (A.element[a] !== "H" || A.class[a] !== 1 || rep.mask[a]) continue;
-            const heavy = m.topo.bondsOf[a][0];
-            if (heavy !== undefined && rep.mask[heavy]) { rep.mask[a] = 1; grew = true; }
+          for (let a = 0; a < n; a++) {
+            if (A.element[a] !== "H" || rep.mask[a]) continue;
+            if (m.topo.bondsOf[a].some(b => rep.mask[b])) { rep.mask[a] = 1; grew = true; }
           }
           if (grew) app.colorRep(m, rep);
+        }
+        // a hydrogen whose heavy atom only a ribbon draws is in no atom representation
+        // at all: it gets one, with that atom, so the bond is drawn and both can be picked
+        const left = new Set();
+        for (let a = 0; a < n; a++) {
+          if (A.element[a] !== "H" || m.reps.some(r => atomRep(r) && r.mask[a])) continue;
+          const heavy = m.topo.bondsOf[a][0];
+          if (heavy === undefined || !m.reps.some(r => r.on && app.isRibbon(r) && r.mask[heavy])) continue;
+          left.add(a).add(heavy);
+        }
+        if (left.size) {
+          m.reps.push(app.makeRep(m, { ids: [...left], label: "hydrogens", style: "sticks" }));
         }
         app.aggregate(m);
       }
