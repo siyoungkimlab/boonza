@@ -371,6 +371,9 @@ class _Builder:
                              else [""] * P.s.nresidues)  # fmt: skip
         self._bbs: dict[int, dict | None] = {}
         self.chosen: list[dict] = []  # the parent each amino acid got, and why
+        # residues pulled into a group only to move a cut away from a GAFF2 atom: they
+        # keep their own force field's types, charges and template
+        self.grown: set[int] = set()
         s = P.s
         self.anum, self.nbrs, self.names = P.anum, P.nbrs, P.names
         self.residue, self.resnames = P.residue, P.resnames
@@ -407,6 +410,17 @@ class _Builder:
             self.anum[i] == self.anum[j] == 16 and self.names[i] == self.names[j] == "SG"
         )
 
+    def _keeps_types(self, r: int) -> set[int] | None:
+        """Atoms of residue ``r`` that keep their parent template's protein types, or
+        None where the parent cannot be told (:meth:`_group` raises about that)."""
+        try:
+            t, m, ok, _ = self._parent(r)
+        except ViparrError:
+            return None
+        if self.extent == "cb" and t is not None:
+            ok = {a for a in ok if _up_to_cb(t, m[a])}
+        return ok
+
     def _matched(self, r: int) -> dict[int, tuple[str, str]] | None:
         """Types of residue ``r``'s atoms from the first force field matching it."""
         if r not in self.typed:
@@ -429,6 +443,28 @@ class _Builder:
                         rb = self.residue[b]
                         if self.anum[b] > 0 and rb not in todo and not self._link(a, b):
                             todo.add(rb)
+                            changed = True
+        changed = True
+        while changed:
+            # A protein link is cut and capped, and the terms across the cut come from
+            # the host force field, which has them only for its own types.  Where the
+            # atom at the cut takes a GAFF2 type instead -- an N-alkylated backbone
+            # nitrogen, say, which no amino-acid template matches -- the group grows
+            # across the link, so the cut lands on a residue that does match its parent
+            # and the capped bond keeps protein types on both sides.
+            changed = False
+            for r in list(todo):
+                keep = self._keeps_types(r)
+                if keep is None:
+                    continue
+                for a in self.res_atoms[r]:
+                    if a in keep:
+                        continue
+                    for b in self.nbrs[a]:
+                        rb = self.residue[b]
+                        if self.anum[b] > 0 and rb not in todo and self._link(a, b):
+                            todo.add(rb)
+                            self.grown.add(rb)
                             changed = True
         parent = {r: r for r in todo}
 
@@ -782,6 +818,8 @@ class _Builder:
 
         parts = [self.resnames[r] or "LIG" for r in residues]
         for i, r in enumerate(residues):
+            if r in self.grown:  # the host force field parameterizes it, as before
+                continue
             t, m, _ = parents[r]
             part = parts[i] if parts.count(parts[i]) == 1 else f"{parts[i]}{i + 1}"
             tname = name if len(residues) == 1 else f"{name}_{part}"

@@ -282,6 +282,68 @@ def test_free_molecules_and_their_hydrogens_stay_gaff2():
     assert t.name.endswith("LYS") or t.name == "LYN"
 
 
+#: ACE-ALA-(N-methyl-ALA)-ALA-NME: residue 3's backbone nitrogen carries a methyl and
+#: no hydrogen, which no amino-acid template matches
+NME_BACKBONE = (
+    "[CH3:1][C:2](=[O:3])[NH:4][C@@H:5]([CH3:6])[C:7](=[O:8])[N:9]([CH3:24])[C@@H:10]"
+    "([CH3:11])[C:15](=[O:16])[NH:17][C@@H:18]([CH3:19])[C:20](=[O:21])[NH:22][CH3:23]",
+    ["ACE 1 CH3", "ACE 1 C", "ACE 1 O", "ALA 2 N", "ALA 2 CA", "ALA 2 CB", "ALA 2 C", "ALA 2 O",
+     "ALA 3 N", "ALA 3 CA", "ALA 3 CB", "", "", "", "ALA 3 C", "ALA 3 O",
+     "ALA 4 N", "ALA 4 CA", "ALA 4 CB", "ALA 4 C", "ALA 4 O", "NME 5 N", "NME 5 CH3",
+     "ALA 3 CN"],
+)  # fmt: skip
+
+
+def _spans_cap(b, residues) -> set[str]:
+    """Names of the GAFF2 atoms of ``residues`` that a stretch, angle or dihedral of
+    the capped fragment shares with a cap atom: what :meth:`_terms` refuses."""
+    atoms = [a for r in residues for a in b.res_atoms[r]]
+    inside, protein = set(atoms), set()
+    for r in residues:
+        protein |= b._keeps_types(r) or set()
+    frag, f = b._capped(atoms, residues)
+    ncap, n = len(frag), f.natoms
+    adj: dict[int, set[int]] = {i: set() for i in range(n)}
+    for i, j in zip(f.bonds["i"].tolist(), f.bonds["j"].tolist(), strict=True):
+        adj[i].add(j)
+        adj[j].add(i)
+    gaffs = {i for i in range(ncap) if frag[i] in inside and frag[i] not in protein}
+    out: set[str] = set()
+
+    def walk(path):
+        if len(path) > 4:
+            return
+        if len(path) > 1 and any(i >= ncap for i in path):
+            out.update(str(b.names[frag[i]]) for i in path if i in gaffs)
+        for nb in adj[path[-1]]:
+            if nb not in path:
+                walk([*path, nb])
+
+    for start in range(n):
+        walk([start])
+    return out
+
+
+def test_a_group_grows_so_its_cut_keeps_protein_types():
+    s = _mapped(*NME_BACKBONE, "A")
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    b = gaff._Builder(s, [ff])
+    names = s.atoms["name"]
+    r3 = int(np.flatnonzero(s.residues["resid"] == 3)[0])
+    # the alkylated nitrogen gets no protein types; the rest of the backbone does
+    keep = b._keeps_types(r3)
+    assert sorted(str(names[a]) for a in keep if s.atoms["anum"][a] > 1) == ["C", "CA", "CB", "O"]
+    # so the group takes the residue before it in as well, and the cut moves to a
+    # peptide bond whose atoms both keep their protein types
+    assert b.groups() == [[r3 - 1, r3]]
+    assert b.grown == {r3 - 1}
+    assert _spans_cap(b, [r3 - 1, r3]) == set()
+    # cutting at the alkylated nitrogen is what ``_terms`` refuses
+    assert _spans_cap(gaff._Builder(s, [ff]), [r3]) == {"N"}
+    # a residue the host force field parameterizes gets no template of its own
+    assert gaff.find_unmatched(s, [ff]) == [[r3 - 1, r3]]
+
+
 def test_modified_residue_records(tmp_path):
     s = _mse()
     pdb = tmp_path / "mse.pdb"
