@@ -1459,17 +1459,22 @@ COVALENT = {1: 0.31, 5: 0.84, 6: 0.76, 7: 0.71, 8: 0.66, 9: 0.57, 14: 1.11, 15: 
 #: functional groups: the first atom of each SMILES bonds to the anchor
 GROUPS = {
     "Methyl": "C", "Ethyl": "CC", "Isopropyl": "C(C)C", "tert-Butyl": "C(C)(C)C",
-    "Cyclopropyl": "C1CC1", "Cyclohexyl": "C1CCCCC1", "Phenyl": "c1ccccc1",
+    "Cyclopropyl": "C1CC1", "Cyclobutyl": "C1CCC1", "Cyclohexyl": "C1CCCCC1",
+    "Phenyl": "c1ccccc1",
     "2-Pyridyl": "c1ccccn1", "3-Pyridyl": "c1cccnc1", "4-Pyridyl": "c1ccncc1",
     "2-Thienyl": "c1cccs1", "Imidazol-4-yl": "c1c[nH]cn1",
     "Hydroxyl": "O", "Methoxy": "OC", "Amino": "N", "Methylamino": "NC", "Dimethylamino": "N(C)C",
-    "Acetamido": "NC(C)=O", "Carboxamide": "C(N)=O", "Carboxyl": "C(=O)O",
+    # amides both ways round: the carbonyl bonds (Carboxamide, N-methylamide) or the
+    # nitrogen does (Acetamido, Formamido)
+    "Carboxamide": "C(N)=O", "N-Methylamide": "C(=O)NC", "N,N-Dimethylamide": "C(=O)N(C)C",
+    "Acetamido": "NC(C)=O", "Formamido": "NC=O", "Carboxyl": "C(=O)O",
     "Methyl ester": "C(=O)OC",
     "Acetyl": "C(C)=O", "Formyl": "C=O", "Nitrile": "C#N", "Nitro": "[N+](=O)[O-]",
     "Sulfonamide": "S(N)(=O)=O", "Methylsulfonyl": "S(C)(=O)=O", "Trifluoromethyl": "C(F)(F)F",
     "Fluoro": "F", "Chloro": "Cl", "Bromo": "Br", "Iodo": "I",
     "Morpholino": "N1CCOCC1", "Piperazinyl": "N1CCNCC1", "Piperidinyl": "N1CCCCC1",
-    "Pyrrolidinyl": "N1CCCC1",
+    "Pyrrolidinyl": "N1CCCC1", "Azetidinyl": "N1CCC1", "Azetidin-3-yl": "C1CNC1",
+    "Oxetan-3-yl": "C1COC1",
 }  # fmt: skip
 
 
@@ -1554,6 +1559,41 @@ def _best_turn(s, b: int, c: int, moving, steps: int = 12) -> None:
     s.positions = rotate_about(pos, b, c, moving, 360 * best / steps)
 
 
+def _trans_amides(s, atoms) -> list[tuple[int, int, float]]:
+    """Turn every secondary amide among ``atoms`` to trans (omega 180), the rotamer
+    amides sit in: cis is some 2.5 kcal/mol up and rarer than one in a hundred away
+    from proline.  A fragment comes off the embedder in whichever rotamer it was built
+    in, which for an N-linked one (Acetamido, Formamido) is cis about half the time.
+
+    Only bonds with an atom of ``atoms`` at one end move, so attaching an acetyl never
+    turns an amide somewhere else in the structure.  Returns (C, N, omega) for each one
+    turned."""
+    anum = np.asarray(s.atoms["anum"])
+    touched = set(int(a) for a in atoms)
+    turned = []
+    for i, j in zip(s.bonds["i"].tolist(), s.bonds["j"].tolist(), strict=True):
+        for c, n in ((i, j), (j, i)):
+            if anum[c] != 6 or anum[n] != 7 or not ({c, n} & touched):
+                continue
+            nb = neighbors(s, c)
+            if not any(anum[b] == 8 and o == 2 for b, o in nb):
+                continue
+            o = next(b for b, order in nb if anum[b] == 8 and order == 2)
+            r1 = sorted((b for b, _ in nb if b != n and b != o), key=lambda b: -anum[b])
+            r2 = sorted((b for b, _ in neighbors(s, n) if b != c), key=lambda b: -anum[b])
+            # a primary amide has no rotamer, and a tertiary one has both sides filled:
+            # turning it would only trade one substituent's clash for the other's
+            if not r1 or not r2 or anum[r2[0]] == 1 or (len(r2) > 1 and anum[r2[1]] > 1):
+                continue
+            if abs(dihedral_angle(s.positions, r1[0], c, n, r2[0])) > 90:
+                continue
+            try:
+                turned.append((c, n, set_dihedral(s, r1[0], c, n, r2[0], 180.0)))
+            except ValueError:  # in a ring (a lactam): it cannot turn, and is as built
+                pass
+    return turned
+
+
 def attach(s, anchor: int, leaving: int, smiles: str, length: float | None = None,
            residue: int | None = None) -> np.ndarray:  # fmt: skip
     """Bond a fragment (``smiles``, its first atom bonding) to ``anchor`` in place of
@@ -1596,6 +1636,7 @@ def attach(s, anchor: int, leaving: int, smiles: str, length: float | None = Non
     anchor = int(index[anchor])
     _unique_names(s, res, new.tolist())
     _best_turn(s, anchor, int(new[0]), new[1:].tolist() if len(new) > 1 else [])
+    _trans_amides(s, [anchor, *new.tolist()])
     # list the residue in one piece; follow the new atoms through the renumbering
     s.atoms["view_new"] = np.zeros(s.natoms, np.int64)
     mark = np.asarray(s.atoms["view_new"]).copy()
@@ -1617,7 +1658,9 @@ def add_molecule(s, smiles: str, centre, resname: str = "LIG") -> np.ndarray:
     frag.residues["name"] = names.astype(str)
     if s.nresidues:  # a residue number of its own, so it is told apart from the others
         frag.residues["resid"] = np.arange(1, frag.nresidues + 1) + int(np.max(s.residues["resid"]))
-    return s.append(frag)
+    new = s.append(frag)
+    _trans_amides(s, new.tolist())  # the embedder's amides are trans already; make sure
+    return new
 
 
 def clean_up(s, atoms=()) -> dict:

@@ -864,7 +864,42 @@ def _peptide():
     return boonza.load(g / "topol.top", coordinates=g / "conf.gro").select("protein").clone()
 
 
+def _secondary_amides(s):
+    """(C, N, omega) of every secondary amide: the one amide with a rotamer to get wrong."""
+    from boonza.viewer.edit import neighbors
+
+    anum = np.asarray(s.atoms["anum"])
+    out = []
+    for i, j in zip(s.bonds["i"].tolist(), s.bonds["j"].tolist(), strict=True):
+        for c, n in ((i, j), (j, i)):
+            if anum[c] != 6 or anum[n] != 7:
+                continue
+            nb = neighbors(s, c)
+            dbl = [b for b, o in nb if anum[b] == 8 and o == 2]
+            if not dbl:
+                continue
+            r1 = sorted((b for b, _ in nb if b != n and b not in dbl), key=lambda b: -anum[b])
+            r2 = sorted((b for b, _ in neighbors(s, n) if b != c), key=lambda b: -anum[b])
+            if not r1 or not r2 or anum[r2[0]] == 1 or (len(r2) > 1 and anum[r2[1]] > 1):
+                continue
+            out.append((c, n, _omega(s, c, n)))
+    return out
+
+
+def _omega(s, c, n) -> float:
+    """The amide's R1-C-N-R2, 180 trans and 0 cis."""
+    from boonza.viewer.edit import dihedral_angle, neighbors
+
+    anum = np.asarray(s.atoms["anum"])
+    nb = neighbors(s, c)
+    dbl = [b for b, o in nb if anum[b] == 8 and o == 2]
+    r1 = sorted((b for b, _ in nb if b != n and b not in dbl), key=lambda b: -anum[b])
+    r2 = sorted((b for b, _ in neighbors(s, n) if b != c), key=lambda b: -anum[b])
+    return dihedral_angle(s.positions, r1[0], c, n, r2[0])
+
+
 def test_functional_groups_and_molecules(served):
+    from boonza.viewer import edit
     from boonza.viewer.edit import GROUPS, neighbors
 
     s = boonza.from_smiles("CCO")
@@ -882,6 +917,20 @@ def test_functional_groups_and_molecules(served):
     d = np.linalg.norm(pos[heavy][:, None] - pos[heavy][None], axis=2) + 9 * np.eye(len(heavy))
     assert d.min() > 1.2  # bonded, not overlapping
     assert {"Phenyl", "Morpholino", "Trifluoromethyl"} <= set(GROUPS)
+    # an amide either way round, and the four-membered rings
+    assert {"Carboxamide", "N-Methylamide", "Formamido", "Cyclobutyl", "Azetidinyl",
+            "Azetidin-3-yl", "Oxetan-3-yl"} <= set(GROUPS)  # fmt: skip
+    for name in ("N-Methylamide", "Formamido", "Cyclobutyl", "Azetidin-3-yl", "Oxetan-3-yl"):
+        one = boonza.from_smiles("CCO")
+        hx = [b for b, _ in neighbors(one, 0) if one.atoms["anum"][b] == 1][0]
+        edit.attach(one, 0, hx, GROUPS[name])
+        xyz = one.positions
+        hv = [a for a in range(one.natoms) if one.atoms["anum"][a] > 1]
+        gap = np.linalg.norm(xyz[hv][:, None] - xyz[hv][None], axis=2) + 9 * np.eye(len(hv))
+        assert gap.min() > 1.2, name
+        # a secondary amide comes out trans, whichever end of it bonded
+        for c, n, _ in _secondary_amides(one):
+            assert abs(_omega(one, c, n)) > 170, (name, _omega(one, c, n))
     out = post(
         "api/edit", {"op": "molecule", "value": {"smiles": "c1ccccc1", "centre": [10, 0, 0]}}
     )[1]
