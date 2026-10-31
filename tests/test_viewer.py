@@ -1553,3 +1553,17 @@ def test_a_long_residue_name_is_kept_and_a_pdb_says_it_cuts_it(tmp_path):
         edit.relabel(v.system, [0], name="LIG AND")
     assert "warning" not in v.save(tmp_path / "x.mae")
     assert "LIGAND" in v.save(tmp_path / "x.pdb")["warning"]
+
+
+def test_any_selection_has_a_smiles():
+    from boonza.viewer.session import Session
+
+    v = Session(boonza.load(DATA / "1HHO.pdb"))
+    s = v.system
+    res = np.asarray(s.atoms["residue"])
+    names = [str(n) for n in s.residues["name"]]
+    ala = names.index("ALA")
+    got = v.smiles(np.flatnonzero(res == ala).tolist(), exact=True)
+    assert len(got) == 1 and got[0]["smiles"]  # a residue of the chain, cut out
+    water = names.index("HOH")
+    assert v.smiles(np.flatnonzero(res == water).tolist(), exact=True)[0]["smiles"] == "O"

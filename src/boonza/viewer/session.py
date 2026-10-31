@@ -443,7 +443,15 @@ class Session:
         if self.radii is None:
             poly = CG_POLYMER if self.cg else "protein or nucleic"
             solvent = f"resname {CG_SOLVENT}" if self.cg else "water or ions"
-            klass[s.select(poly).ids] = 0
+            ids = s.select(poly).ids
+            if not self.cg:  # a link of a chain: an amino acid's N, CA, C and O alone are
+                # no protein (a peptide-like ligand of one residue carries them too)
+                from ..analyze import chain_residues
+
+                linked = np.zeros(s.nresidues, bool)
+                linked[chain_residues(s)] = True
+                ids = ids[linked[np.asarray(s.atoms["residue"])[ids]]]
+            klass[ids] = 0
             klass[s.select(solvent).ids] = 2
         bonds = s.bonds
         if self.radii is None:
@@ -703,9 +711,12 @@ class Session:
             picked[keep] = np.arange(len(keep))
             return {**self._changed(topology=True), "picked": picked[atoms].tolist()}
 
-    def smiles(self, atoms=()) -> list[dict]:
+    def smiles(self, atoms=(), exact: bool = False) -> list[dict]:
         """SMILES of each molecule the atoms are in (default: every molecule that is not
-        polymer, water or ions): canonical, isomeric, hydrogens implicit."""
+        polymer, water or ions): canonical, isomeric, hydrogens implicit.  ``exact``:
+        of the atoms themselves, each bonded piece of them, whatever they are (a
+        residue of a chain, a ligand read as protein, a water), a bond cut where the
+        piece ends filled with hydrogen."""
         from rdkit import Chem
 
         from ..chem import to_rdkit
@@ -714,7 +725,27 @@ class Session:
         if self.radii is not None:
             return []
         frag = np.asarray(s.fragids)
-        if len(atoms):
+        if exact and len(atoms):  # the pieces the atoms make, bonded among themselves
+            picked = sorted({int(a) for a in atoms})
+            parent = {a: a for a in picked}
+
+            def root(a):
+                while parent[a] != a:
+                    parent[a] = parent[parent[a]]
+                    a = parent[a]
+                return a
+
+            for i, j in zip(s.bonds["i"].tolist(), s.bonds["j"].tolist(), strict=True):
+                if i in parent and j in parent:
+                    parent[root(i)] = root(j)
+            pieces: dict = {}
+            for a in picked:
+                pieces.setdefault(root(a), []).append(a)
+            frag = np.full(s.natoms, -1, np.int64)
+            for k, piece in enumerate(pieces.values()):
+                frag[piece] = k
+            frags = list(range(len(pieces)))
+        elif len(atoms):
             frags = sorted({int(frag[int(a)]) for a in atoms})
         else:
             small = CG_LIGAND if self.cg else "not (protein or nucleic or water or ions)"

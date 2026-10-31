@@ -2305,8 +2305,9 @@ export function setupUI(app) {
   };
 
   // SMILES of the selected molecules (else of the current model's ligands)
-  async function smilesOf(m, ids = []) {
-    return (await app.getJSON(`api/smiles?m=${m.index}&sel=${ids.slice(0, 5000).join(",")}`)).molecules;
+  // exact: of the atoms themselves (each bonded piece), not the molecules they are in
+  async function smilesOf(m, ids = [], exact = false) {
+    return (await app.getJSON(`api/smiles?m=${m.index}&sel=${ids.slice(0, 5000).join(",")}${exact ? "&exact=1" : ""}`)).molecules;
   }
   async function copyText(text) {
     try { await navigator.clipboard.writeText(text); return true; } catch (e) {
@@ -3308,9 +3309,9 @@ export function setupUI(app) {
     const sel = app.selection();
     if (sel.length !== 1) return;
     const [m, ids] = sel[0];
-    if (!m.topo || !ids.every(a => m.topo.atoms.class[a] === 1)) return;
-    let mols;
-    try { mols = (await smilesOf(m, ids)).filter(x => x.smiles); } catch (e) { return; }
+    if (!m.topo) return;
+    let mols;  // whatever is selected: a ligand, a residue of the chain, a water
+    try { mols = (await smilesOf(m, ids, true)).filter(x => x.smiles); } catch (e) { return; }
     if (ticket !== footTicket || !mols.length) return;
     const text = mols.map(x => x.smiles).join(".");
     $("footer-edit").append(el("span", { className: "what" }, "SMILES"), el("code", { className: "smiles", title: text }, text),

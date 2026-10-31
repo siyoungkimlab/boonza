@@ -146,7 +146,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.viewer.session(arg("m")).atom_info(arg("a")))
         elif url.path == "/api/smiles":
             sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
-            self._json({"molecules": self.viewer.session(arg("m")).smiles(sel)})
+            exact = query.get("exact", ["0"])[0] == "1"
+            self._json({"molecules": self.viewer.session(arg("m")).smiles(sel, exact)})
         elif url.path == "/api/contacts":
             self._json({"contacts": self.viewer.contacts(arg("m"), arg("i"))})
         else:
