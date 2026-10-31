@@ -31,12 +31,19 @@ the residues within ``POCKET_A`` of the ligand as it now is free and the rest of
 the protein held; without solvent, in a reaction field of water's dielectric
 (``water``: in TIP3P).  Each is scored on the new unit:
 
-    score = sum over its polar atoms of the fraction of frames they hydrogen-bond
-            - 2 x (1 - that fraction) for each one that is buried (protein all around)
+    score = - its interaction energy with the protein (kJ/mol), averaged over the
+              MD's frames, over ``INTERACTION_KJ``
             - 0.5 x its drift (Å) + 0.01 x its protein contacts
 
 so a pyridine N that points at a backbone NH wins over the flip that buries it
-against a leucine.  A candidate whose unit drifts more than ``MAX_DRIFT`` is
+against a leucine, and a coordinated cation beats a loosely touching one by the
+margin its electrostatics deserve rather than by a hand-set weight.  Hydrogen
+bonds (per polar atom, with the donor and acceptor the right way round), burial
+and cation-pi contacts are measured and reported for every placement, but do not
+enter the score; the energy already prices what they describe, except for
+desolvation, which no term covers while there is no explicit water.
+
+A candidate whose unit drifts more than ``MAX_DRIFT`` is
 dropped.  The ``beam`` best go on to the next step, so one wrong turn early does
 not decide the rest; a step that adds no polar atom keeps twice as many
 placements and carries every one on, since its score (drift and contacts alone)
@@ -75,6 +82,24 @@ MAX_DRIFT = 2.0
 CLASH_A = 2.5
 #: Å: a hydrogen bond's donor-acceptor distance at most, and its angle at least (°)
 HBOND_A, HBOND_DEG = 3.3, 120.0
+#: kJ/mol of interaction energy with the protein per unit of score
+INTERACTION_KJ = 50.0
+#: water's dielectric, for the reaction field the interaction energy is read in
+EPSILON_RF = 78.5
+#: kJ Å / mol / e^2: Coulomb's constant, as OpenMM's ONE_4PI_EPS0 in these units
+ONE_4PI_EPS0 = 1389.35456
+#: Å: a cation this far from an aromatic ring's plane, and this far off the axis
+#: through its centre, counts as a cation-pi contact (reported, not scored)
+CATION_PI_A, CATION_PI_OFFSET_A = 4.5, 2.0
+#: the aromatic rings of the protein's side chains, by residue and atom names
+#: (His under any of its protonation states' names)
+AROMATIC = {
+    "PHE": (("CG", "CD1", "CD2", "CE1", "CE2", "CZ"),),
+    "TYR": (("CG", "CD1", "CD2", "CE1", "CE2", "CZ"),),
+    "TRP": (("CG", "CD1", "NE1", "CE2", "CD2"),
+            ("CD2", "CE2", "CZ2", "CH2", "CZ3", "CE3")),  # fmt: skip
+    "HIS": (("CG", "ND1", "CD2", "CE1", "NE2"),),
+}
 #: a polar atom with fewer waters than this within 3.5 Å, on average, is buried
 BURIED_WATERS = 0.5
 #: without water: protein heavy atoms within 4.5 Å of a polar atom that bury it
@@ -453,11 +478,18 @@ def _forcefield(receptor, lig, ff, args):
 
 def _write_candidates(path, poses) -> None:
     """Every placement tried, its ligand where its MD left it, with its step, parent,
-    candidate and score as fields: to see what the search found and rejected."""
+    candidate and score as fields: to see what the search found and rejected.  Beside
+    it, ``<path>.npz`` holds each one's receptor as its MD left it too, under the same
+    name, so any candidate's complex can be rebuilt and its contacts measured -- the
+    ligand alone, against the receptor the search started from, is not a geometry the
+    MD ever saw."""
     from rdkit import Chem
 
+    receptors = {}
     with Chem.SDWriter(str(path)) as w:
-        for mol, xyz, row in poses:
+        for mol, xyz, rec, row in poses:
+            receptors[f"step{row['step']}_from{row['parent']}_c{row['candidate']}"] = \
+                np.asarray(rec, np.float32)
             m = Chem.Mol(mol)
             m.RemoveAllConformers()
             conf = Chem.Conformer(m.GetNumAtoms())
@@ -465,11 +497,108 @@ def _write_candidates(path, poses) -> None:
                 conf.SetAtomPosition(k, [float(v) for v in p])
             m.AddConformer(conf, assignId=True)
             m.SetProp("_Name", f"step{row['step']}_from{row['parent']}_c{row['candidate']}")
-            for key in ("step", "parent", "candidate", "score", "drift", "contacts",
+            for key in ("step", "parent", "candidate", "score", "interaction",
+                        "interaction_ligand", "drift", "contacts", "cation_pi",
                         "buried_unsatisfied"):  # fmt: skip
                 m.SetProp(key, str(round(row[key], 3) if isinstance(row[key], float) else row[key]))
             m.SetProp("hbonds", " ".join(str(h) for h in row["hbonds"]))
             w.write(m)
+    np.savez_compressed(str(path) + ".npz", **receptors)
+
+
+def _acceptors(anum, hydrogens, ids) -> dict[int, bool]:
+    """Which of ``ids`` can accept a hydrogen bond, by whether a lone pair is free:
+    an oxygen always can, a nitrogen only with no hydrogen on it.  So a guanidinium
+    or ammonium nitrogen, an amide's, Trp's NE1 and a backbone N donate and do not
+    accept, while His's unprotonated N, a pyridine's and a tertiary amine's accept.
+    A neutral primary or secondary amine is taken to donate alone, which at pH 7 is
+    mostly what it does."""
+    return {int(i): bool(anum[i] == 8 or not hydrogens.get(int(i))) for i in ids}
+
+
+def _rings(param, rec_ids, near_xyz, within: float = 12.0):
+    """The protein's aromatic rings within ``within`` Å of ``near_xyz`` (nm), as
+    arrays of atom indices."""
+    res = np.asarray(param.atoms["residue"])
+    name = np.asarray(param.atoms["name"])
+    rname = np.asarray(param.residues["name"])
+    xyz = np.asarray(param.positions, float) / 10.0
+    by_residue: dict[int, dict[str, int]] = {}
+    for i in rec_ids:
+        by_residue.setdefault(int(res[i]), {})[str(name[i])] = int(i)
+    out = []
+    for r, atoms in by_residue.items():
+        key = str(rname[r])[:3].upper()
+        key = "HIS" if key.startswith("HI") else key
+        for names in AROMATIC.get(key, ()):
+            if all(n in atoms for n in names):
+                ring = np.array([atoms[n] for n in names])
+                if np.linalg.norm(xyz[ring].mean(0) - near_xyz, axis=-1).min() <= within / 10.0:
+                    out.append(ring)
+    return out
+
+
+def _normal(ring_xyz):
+    """The unit normal of a ring's plane."""
+    return np.linalg.svd(ring_xyz - ring_xyz.mean(0))[2][2]
+
+
+def _cation_centres(lig, lig_ids, new, bonds, anum):
+    """The centre of every positively charged group of the new unit: its charged atom
+    and the heavy atoms bonded to it, since a guanidinium's charge is spread over all
+    three nitrogens and sits on its carbon."""
+    formal = np.asarray(lig.atoms["formal_charge"])
+    out = []
+    for k in new:
+        if formal[k] <= 0:
+            continue
+        i = int(lig_ids[k])
+        group = [i] + [j for j in bonds.get(i, ()) if anum[j] > 1]
+        out.append(np.array(group))
+    return out
+
+
+def _nonbonded(system):
+    """Every particle's charge (e), sigma (Å) and epsilon (kJ/mol), and the nonbonded
+    cutoff (Å), read out of an OpenMM system's NonbondedForce."""
+    import openmm as mm
+    import openmm.unit as u
+
+    nb = next(f for f in system.getForces() if isinstance(f, mm.NonbondedForce))
+    n = system.getNumParticles()
+    q, sigma, epsilon = (np.empty(n) for _ in range(3))
+    for i in range(n):
+        a, b, c = nb.getParticleParameters(i)
+        q[i] = a.value_in_unit(u.elementary_charge)
+        sigma[i] = b.value_in_unit(u.angstrom)
+        epsilon[i] = c.value_in_unit(u.kilojoule_per_mole)
+    return q, sigma, epsilon, nb.getCutoffDistance().value_in_unit(u.angstrom)
+
+
+def _interaction(x, a, b, q, sigma, epsilon, cutoff: float) -> float:
+    """The nonbonded interaction energy of atoms ``a`` with atoms ``b`` at ``x`` (Å),
+    in kJ/mol: Coulomb in a reaction field of water's dielectric out to ``cutoff``,
+    plus Lennard-Jones, combined as the force field does.  The two are different
+    molecules, so no pair of them is bonded or excluded.  Read directly rather than
+    from a second OpenMM context, which cannot share a GPU held exclusively; with
+    explicit water the MD itself uses PME, which this does not reproduce exactly,
+    and periodic images are left out -- it ranks like against like."""
+    if not len(a) or not len(b):
+        return 0.0
+    a, b = np.asarray(a, int), np.asarray(b, int)
+    r = np.linalg.norm(x[a][:, None, :] - x[b][None, :, :], axis=2)
+    near = (r <= cutoff) & (r > 0.0)
+    if not near.any():
+        return 0.0
+    i, j = np.nonzero(near)
+    r = r[near]
+    krf = (1.0 / cutoff**3) * (EPSILON_RF - 1.0) / (2.0 * EPSILON_RF + 1.0)
+    crf = (1.0 / cutoff) * (3.0 * EPSILON_RF) / (2.0 * EPSILON_RF + 1.0)
+    coulomb = ONE_4PI_EPS0 * q[a[i]] * q[b[j]] * (1.0 / r + krf * r**2 - crf)
+    s = 0.5 * (sigma[a[i]] + sigma[b[j]])
+    e = np.sqrt(epsilon[a[i]] * epsilon[b[j]])
+    sr6 = (s / r) ** 6
+    return float((coulomb + 4.0 * e * (sr6**2 - sr6)).sum())
 
 
 def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 1,
@@ -579,8 +708,25 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
             bonded[int(i)].add(int(j))
         if int(j) in bonded:
             bonded[int(j)].add(int(i))
+    neighbours: dict[int, list[int]] = {}
+    for i, j in zip(np.asarray(tab["i"]), np.asarray(tab["j"]), strict=True):
+        neighbours.setdefault(int(i), []).append(int(j))
+        neighbours.setdefault(int(j), []).append(int(i))
+    accepts = _acceptors(anum, hydrogens, polar_all)
+    cations = _cation_centres(lig, lig_ids, new, neighbours, anum)
+    rings = _rings(param, rec, xyz0[lig_heavy]) if cations else []
+    q, sigma, epsilon, cutoff_a = _nonbonded(system)
+    # the unit the energy is of: its heavy atoms and the hydrogens on them.  Without
+    # them a guanidinium is N,C,N,N at about -1.6 e instead of the +1 e it really
+    # carries, and its electrostatics with the protein come out the wrong way round
+    unit = np.array(sorted({int(i) for i in new_ids}
+                           | {j for i in new_ids for j in neighbours.get(int(i), ())
+                              if anum[j] == 1}), int)  # fmt: skip
+    energies: list[float] = []
+    whole: list[float] = []
     hb = {i: 0 for i in polar_new}
     wet = {i: 0.0 for i in polar_new}
+    cation_pi = 0
     drift, contacts, frames = [], [], 0
     n_frames = max(1, int(round(ps / 2.0)))
     for _ in range(n_frames):
@@ -589,6 +735,23 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
         if start is None:
             start = x[new_ids].copy()
         frames += 1
+        # what the score is: the new unit against the protein, this frame
+        energies.append(_interaction(x, unit, rec, q, sigma, epsilon, cutoff_a))
+        whole.append(_interaction(x, lig_ids, rec, q, sigma, epsilon, cutoff_a))
+        touching = False  # cation-pi: a charged group of the unit on an aromatic ring
+        for centre in cations:
+            p = x[centre].mean(0)
+            for ring in rings:
+                rx = x[ring]
+                v = p - rx.mean(0)
+                perp = abs(float(v @ _normal(rx)))
+                off = float(np.sqrt(max(float(v @ v) - perp**2, 0.0)))
+                if perp <= CATION_PI_A and off <= CATION_PI_OFFSET_A:
+                    touching = True
+                    break
+            if touching:
+                break
+        cation_pi += touching
         tree = cKDTree(x[polar_all])
         for i in polar_new:
             near = [int(polar_all[k]) for k in tree.query_ball_point(x[i], HBOND_A)]
@@ -597,6 +760,8 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
                 if j == i or j in bonded[i]:
                     continue
                 for donor, acceptor in ((j, i), (i, j)):
+                    if not accepts[acceptor]:  # two donors cannot bond to each other
+                        continue
                     for h in hydrogens.get(donor, []):
                         a = x[donor] - x[h]
                         b = x[acceptor] - x[h]
@@ -622,14 +787,19 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
     buried = [i for i in polar_new if wet[i] / frames < BURIED_WATERS]
     mean_drift = float(np.mean(drift)) if drift else 0.0
     mean_contacts = float(np.mean(contacts)) if contacts else 0.0
-    score = (sum(persistence.values()) - 2.0 * sum(1.0 - persistence[i] for i in buried)
-             - 0.5 * mean_drift + 0.01 * mean_contacts)  # fmt: skip
+    interaction = float(np.mean(energies)) if energies else 0.0
+    # the whole ligand's, reported beside it: cutting the unit off its chain leaves it
+    # a few tenths of an electron out, while the ligand is whole and balanced
+    interaction_all = float(np.mean(whole)) if whole else 0.0
+    score = -interaction / INTERACTION_KJ - 0.5 * mean_drift + 0.01 * mean_contacts
     mm.LocalEnergyMinimizer.minimize(ctx, 10.0, 200)
     x = ctx.getState(getPositions=True).getPositions(asNumpy=True).value_in_unit(u.angstrom)
     ref = np.asarray(receptor.positions, float)
     # back into the receptor's frame: the box moved everything by one vector
     shift = (xyz0[rec] * 10.0 - ref).mean(0)
-    return {"score": float(score), "drift": mean_drift, "contacts": mean_contacts,
+    return {"score": float(score), "interaction": interaction,
+            "interaction_ligand": interaction_all, "drift": mean_drift,
+            "contacts": mean_contacts, "cation_pi": cation_pi / frames,
             "hbonds": [round(persistence[i], 2) for i in polar_new],
             "buried_unsatisfied": sum(1 for i in buried if persistence[i] < 0.5),
             "receptor": x[rec] - shift, "ligand": x[lig_ids] - shift}  # fmt: skip
@@ -704,7 +874,7 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
                 row = {k_: v for k_, v in out.items() if k_ not in ("receptor", "ligand")}
                 row.update(step=k, parent=s, candidate=c)
                 record["steps"].append(row)
-                poses.append((mol, out["ligand"], row))
+                poses.append((mol, out["ligand"], out["receptor"], row))
                 if out["drift"] > MAX_DRIFT:
                     continue
                 if not _same_stereo(mol, out["ligand"]):  # a centre inverted in the MD
@@ -722,20 +892,27 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
         log(f"  step {k}: {len(found)} placements kept"
             + (", all carried on (no polar atom to judge them by)" if blind and step else "")
             + f"; best score {best[0]:.2f} "
-            f"(hydrogen bonds {best[2]['hbonds']}, buried unsatisfied "
-            f"{best[2]['buried_unsatisfied']}, drift {best[2]['drift']:.2f} Å)")  # fmt: skip
+            f"({best[2]['interaction']:.0f} kJ/mol with the protein, the whole ligand "
+            f"{best[2]['interaction_ligand']:.0f}, hydrogen bonds "
+            f"{best[2]['hbonds']}, buried unsatisfied {best[2]['buried_unsatisfied']}, "
+            f"cation-pi {best[2]['cation_pi']:.2f}, drift {best[2]['drift']:.2f} Å)")  # fmt: skip
     _, final, out, mol = best
-    if hold == "rings":  # a last relaxation: the whole ligand loosely held, rings too
+    if hold == "rings":  # a last relaxation: the whole ligand loosely held, rings firm
         rec = receptor.copy()
         rec.positions = final.receptor
         lig = _ligand(mol, out["ligand"])
         every = list(range(mol.GetNumAtoms()))
+        # the core's rings stay where the reference put them, as they did at every
+        # step: let them loose here too and they drift the whole LOOSE_A away, taking
+        # the pose with them, while what this relaxation is for is the rest of it
+        firm_rings = [index[i] for i in firm if i in index]
         last = md_score(rec, lig, every, [], lig_ff, args, ps=2 * md_ps, seed=99, water=water,
-                        loose=every, log=log)  # fmt: skip
+                        loose=[i for i in every if i not in set(firm_rings)], log=log)  # fmt: skip
         if _same_stereo(mol, last["ligand"]):
             out = {**out, "ligand": last["ligand"]}
             final = State(last["receptor"], final.placed, final.score, final.history)
-            log(f"  relaxed whole: ligand within {LOOSE_A:g} Å of where it grew")
+            log(f"  relaxed whole: the core's rings held, the rest within {LOOSE_A:g} Å "
+                "of where it grew")  # fmt: skip
     complex_ = receptor.copy()
     complex_.positions = final.receptor
     complex_.append(_ligand(mol, out["ligand"]))

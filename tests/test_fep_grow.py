@@ -69,6 +69,59 @@ def test_every_intermediate_is_a_molecule():
     assert Chem.MolToSmiles(Chem.RemoveHs(mol)) == Chem.MolToSmiles(Chem.RemoveHs(target))
 
 
+def test_a_donor_alone_does_not_accept_a_hydrogen_bond():
+    """A nitrogen carrying a hydrogen -- a guanidinium's, Trp's NE1, a backbone N --
+    donates and cannot also accept, so two of them near each other make no hydrogen
+    bond however their hydrogens point."""
+    #            guanidinium N-H, pyridine N, carbonyl O, hydroxyl O, Trp NE1
+    anum = np.array([7, 7, 8, 8, 7])
+    hydrogens = {0: [10, 11], 3: [12], 4: [13]}
+    assert grow._acceptors(anum, hydrogens, range(5)) == {0: False, 1: True, 2: True,
+                                                          3: True, 4: False}  # fmt: skip
+
+
+def test_the_interaction_energy_is_openmm_s_own():
+    """The score's energy, read with numpy, against the force it stands for: OpenMM's
+    NonbondedForce in a reaction field, with every pair inside each group excluded."""
+    import openmm as mm
+    import openmm.unit as u
+
+    rng = np.random.default_rng(3)
+    n = 8
+    q = rng.normal(0, 0.8, n)
+    q -= q.mean()
+    sigma, epsilon = rng.uniform(2.5, 3.6, n), rng.uniform(0.1, 0.9, n)  # Å, kJ/mol
+    xyz = rng.uniform(0, 9, (n, 3))  # Å
+    a, b = [0, 1, 2], [3, 4, 5, 6, 7]
+    system = mm.System()
+    nb = mm.NonbondedForce()
+    nb.setNonbondedMethod(mm.NonbondedForce.CutoffNonPeriodic)
+    nb.setCutoffDistance(1.2 * u.nanometer)
+    nb.setReactionFieldDielectric(grow.EPSILON_RF)
+    for i in range(n):
+        system.addParticle(12.0)
+        nb.addParticle(q[i], sigma[i] / 10.0, epsilon[i])
+    for group in (a, b):  # leave only the a-b pairs, which is what the energy is
+        for p in range(len(group)):
+            for r in range(p + 1, len(group)):
+                nb.addException(group[p], group[r], 0.0, 1.0, 0.0)
+    system.addForce(nb)
+    ctx = mm.Context(system, mm.VerletIntegrator(1.0 * u.femtosecond),
+                     mm.Platform.getPlatformByName("Reference"))  # fmt: skip
+    ctx.setPositions(xyz / 10.0)
+    want = ctx.getState(getEnergy=True).getPotentialEnergy().value_in_unit(
+        u.kilojoule_per_mole)  # fmt: skip
+    got = grow._interaction(xyz, a, b, *grow._nonbonded(system))
+    assert abs(got - want) < 1e-6 * abs(want)
+    assert grow._interaction(xyz, [], b, *grow._nonbonded(system)) == 0.0
+
+
+def test_a_ring_s_normal_is_perpendicular_to_it():
+    ring = np.array([[np.cos(t), np.sin(t), 0.0] for t in np.linspace(0, 2 * np.pi, 6)])
+    n = grow._normal(ring + [1.0, 2.0, 3.0])
+    assert abs(abs(n @ [0, 0, 1]) - 1.0) < 1e-6
+
+
 @pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
 def test_growing_toluene_from_benzene_in_a_peptide(tmp_path):
     from boonza.fep.cli import FEP_DEFAULTS
@@ -94,6 +147,15 @@ def test_growing_toluene_from_benzene_in_a_peptide(tmp_path):
     assert out.natoms == s.natoms + target.GetNumAtoms()
     record = json.loads((tmp_path / "grow" / "toluene.json").read_text())
     assert record["core"] == 6 and record["steps"] and "score" in record["steps"][0]
+    # the score is the interaction energy; hydrogen bonds and cation-pi are reported
+    row = record["steps"][0]
+    # a methyl 7 Å from the peptide barely feels it, and there is no cation to stack
+    assert abs(row["interaction"]) < 10.0 and row["cation_pi"] == 0.0 and "hbonds" in row
+    assert abs(row["score"] - (-row["interaction"] / grow.INTERACTION_KJ
+                               - 0.5 * row["drift"] + 0.01 * row["contacts"])) < 1e-6  # fmt: skip
+    # every candidate's receptor is kept, so its complex can be rebuilt
+    kept = np.load(tmp_path / "grow" / "toluene_candidates.sdf.npz")
+    assert kept["step1_from0_c0"].shape == (s.natoms, 3)
     # the core stayed near where the reference was
     n = target.GetNumAtoms()
     lig = np.asarray(out.positions)[-n:]
