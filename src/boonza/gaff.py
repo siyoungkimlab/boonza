@@ -543,10 +543,11 @@ class _Builder:
         """(template, {atom: template atom}, atoms that keep its types, source).
 
         The parent is the one given, else the file's, else the PDB
-        dictionary's; among its templates (termini, protonation states) the
-        one matching most atoms wins. With none named, every amino-acid
-        template is tried, and the guess must be unambiguous and cover the
-        backbone and CB, or this raises.
+        dictionary's, else its own name when that is a standard amino acid;
+        among its templates (termini, protonation states) the one matching
+        most atoms wins. With none of those, every amino-acid template is
+        tried, and the guess must be unambiguous and cover the backbone and
+        CB, or this raises.
         """
         if self.host is None or not self._amino(r):
             return None, {}, set(), None
@@ -554,6 +555,13 @@ class _Builder:
         name = str(self.resnames[r])
         label = f"{name}{self.resid[r]}"
         source, value = self._parent_source(r)
+        if value is None and _family(name) in _STANDARD:
+            # a residue called ALA names its own parent, as surely as MODRES or the PDB
+            # dictionary would: the atoms that still match alanine keep their protein
+            # types and the rest gets GAFF2.  Guessing from every template instead, and
+            # then demanding the guess cover the backbone and CB, refused a residue
+            # whose own name said what it was
+            source, value = "its name", name
         amino = [t for t in self.host.templates if {"N", "CA", "C"} <= set(t.names)]
         if value is not None:
             candidates = [t for t in amino if _family(t.name) == _family(value)]

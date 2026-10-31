@@ -243,6 +243,26 @@ def test_parent_of_a_modified_residue():
     assert _parent_of(ren, parents={"XSE": "MET"}) == ("MET", "given", heavy)
 
 
+def test_a_residue_named_for_an_amino_acid_names_its_own_parent():
+    """A residue called ALA has told us its parent.  Guessing among every template
+    instead, and then insisting the guess be unambiguous and cover the backbone and CB,
+    refused an edited residue whose own name said what it was: an alanine grown a
+    propyl at CB matched ARG, GLN, GLU, ILE, LEU and LYS equally well and stopped
+    there.  It now hybridizes as a named parent always did -- the backbone keeping its
+    ff19SB types, the new side chain GAFF2."""
+    s = _mse("ALA")  # the modified residue named for a standard amino acid
+    t, source, heavy = _parent_of(s)
+    assert (gaff._family(t), source) == ("ALA", "its name")
+    names = sorted(str(s.atoms["name"][a]) for a in heavy)
+    # the backbone alone: alanine's CB is a methyl, and this one carries CG
+    assert names == ["C", "CA", "N", "O"]
+    # an unknown name still has to be guessed, and still refuses to guess blindly
+    with pytest.raises(viparr.ViparrError, match="cannot tell the parent residue of XSE3"):
+        _parent_of(_mse("XSE"))
+    # a parent given by hand still wins over the name
+    assert _parent_of(_mse("ALA"), parents={"ALA": "MET"})[:2] == ("MET", "given")
+
+
 def test_free_molecules_and_their_hydrogens_stay_gaff2():
     free = boonza.from_smiles("NCC(=O)O", name="XGL")  # glycine, not in a chain
     free.atoms["name"] = np.array(["N", "CA", "C", "O", "OXT"]
@@ -256,7 +276,9 @@ def test_free_molecules_and_their_hydrogens_stay_gaff2():
     t, _, ok, source = b._parent(r)
     nz = next(a for a in s.residue_atoms(r).tolist() if s.atoms["name"][a] == "NZ")
     hz = [a for a in s.bonded_atoms(nz).tolist() if s.atoms["anum"][a] == 1]
-    assert (source, nz in ok, any(h in ok for h in hz)) == ("guessed", False, False)
+    # named LYS, so LYS is its parent by its own name; the same template and the same
+    # atoms as guessing among them all used to find
+    assert (source, nz in ok, any(h in ok for h in hz)) == ("its name", False, False)
     assert t.name.endswith("LYS") or t.name == "LYN"
 
 

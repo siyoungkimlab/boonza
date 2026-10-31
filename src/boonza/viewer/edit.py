@@ -570,9 +570,17 @@ def parameterize(s, forcefields=None, log=print):
     (gaff.CHARGE_GEOMETRIES).  Atom order follows ``s`` (column ``view_index``)."""
     from .. import gaff, viparr
     from ..md.config import DEFAULT_FORCEFIELDS
+    from ..md.prepare import _gather_residues
 
     work = s.copy()
     work.atoms["view_index"] = np.arange(work.natoms, dtype=np.int64)
+    # a residue whose atoms sit in two pieces -- hydrogens written at the end of the
+    # file, as preparation tools do -- is a topology OpenMM refuses ("All atoms within
+    # a residue must be contiguous").  boonza md gathers them on load; do the same
+    # here, in this copy alone: view_index is already set, so it maps back to s either
+    # way and the viewer's own atom order, which the page holds indices into, is left
+    # exactly as it is
+    _gather_residues(work, "this model", log)
     ffs = []
     for base, *patches in forcefields or DEFAULT_FORCEFIELDS:
         ff = viparr.load_forcefield(base)

@@ -538,6 +538,36 @@ def test_minimize_holds_the_rest():
     assert session.undo()["version"] == 2 and np.allclose(session.system.positions, before)
 
 
+def test_minimizing_a_file_whose_residues_are_in_pieces():
+    """Preparation tools write the hydrogens they add at the end of the file, which
+    leaves a residue's atoms in two pieces; OpenMM refuses such a topology.  boonza md
+    gathers them on load and the viewer now does the same, in the parameterized copy,
+    so the page's own atom indices do not move."""
+    from boonza.viewer.edit import minimize, protonate
+
+    s = boonza.peptide("GAG")
+    s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
+    protonate(s)
+    anum = np.asarray(s.atoms["anum"])
+    perm = np.concatenate([np.flatnonzero(anum > 1), np.flatnonzero(anum == 1)])
+    split = s.clone(perm)  # every hydrogen after every heavy atom
+    res = np.asarray(split.atoms["residue"])
+    starts = np.concatenate([[0], np.flatnonzero(np.diff(res) != 0) + 1])
+    _, pieces = np.unique(res[starts], return_counts=True)
+    assert (pieces > 1).all()  # every residue is in two pieces
+    before = np.asarray(split.positions).copy()
+    out = minimize(split, mobile="all", max_iterations=30, log=lambda *_: None)
+    assert out["energy_after"] < out["energy_before"]
+    # the atoms kept their places in the viewer's order, and reached the same structure
+    # as the same system in residue order does
+    tidy = s.clone()
+    plain = minimize(tidy, mobile="all", max_iterations=30, log=lambda *_: None)
+    assert plain["energy_before"] == pytest.approx(out["energy_before"], abs=0.2)
+    moved = np.asarray(split.positions)
+    assert np.abs(moved - np.asarray(tidy.positions)[perm]).max() < 1e-3
+    assert not np.allclose(moved, before)  # it really did move
+
+
 def test_set_as_ligand_takes_the_selection_not_the_whole_molecule():
     """A protein chain is one fragment, so selecting the molecule of a residue is its
     whole chain: choosing one residue as the ligand turned the chain into the ligand,
