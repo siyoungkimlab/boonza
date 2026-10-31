@@ -137,7 +137,8 @@ def plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity="ΔG", line
                             color=POINT_COLOR, ecolor=POINT_COLOR, ms=6, mew=0,
                             label="FEP")  # fmt: skip
             if null is not None and len(calc):
-                ax.legend(loc="lower right", fontsize=12, handletextpad=0.2, borderaxespad=0.3)
+                ax.legend(loc="lower right", fontsize=12, handletextpad=0.2, borderaxespad=0.3,
+                          frameon=True, framealpha=1, facecolor="none", edgecolor=ink)  # fmt: skip
             ax.set_xlim(lo, hi)
             ax.set_ylim(lo, hi)
             ax.set_xticks(at)

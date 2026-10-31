@@ -94,13 +94,21 @@ def mbar(u_kn, N_k, tolerance: float = 1e-10, max_iterations: int = 200) -> MBAR
             step = -np.linalg.solve(Hr, g)
         except np.linalg.LinAlgError:
             step = -np.linalg.lstsq(Hr, g, rcond=None)[0]
-        now, scale = objective(fs), 1.0
+        now, scale, trial = objective(fs), 1.0, None
         while scale > 1e-6:  # backtrack until the objective falls
-            trial = fs.copy()
-            trial[1:] += scale * step
-            if objective(trial) <= now:
+            attempt = fs.copy()
+            attempt[1:] += scale * step
+            if objective(attempt) <= now:
+                trial = attempt
                 break
             scale *= 0.5
+        if trial is None:
+            # no Newton step lowers the objective: a sample with an enormous energy in
+            # some state (1e13-1e17 kT, an atom overlapping where its repulsion is back
+            # on) leaves the Hessian near singular and the step huge.  Taking its last,
+            # failed fraction anyway sent IGF1R's free energies to -1e6 kT; a
+            # self-consistent iteration never diverges
+            trial = self_consistent(fs)
         change = np.abs(trial - fs).max()
         fs = trial - trial[0]
         if change < tolerance:

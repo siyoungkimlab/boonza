@@ -153,11 +153,12 @@ def null_fit(x, exp) -> tuple[float, float]:
     return float(slope), float(intercept)
 
 
-def null_line(stats: dict) -> str:
-    """The null model's statistics in one line, for the plot's corner."""
+def plot_line(stats: dict, name: str) -> str:
+    """``name``'s statistics in one line for the plot's corner: RMSE, R² and τ, no
+    intervals (those are in the log and the CSVs)."""
     labels = (("RMSE", "RMSE"), ("R2", "R²"), ("tau", "τ"))
     parts = [f"{label} {stats[k]['value']:.2f}" for k, label in labels if k in stats]
-    return "log MW: " + ", ".join(parts)
+    return f"{name}: " + ", ".join(parts)
 
 
 # --- plots -------------------------------------------------------------------------------------
@@ -181,9 +182,11 @@ def correlation_plot(path_stem, calc, exp, calc_err=None, exp_err=None, quantity
 
     stem = Path(path_stem)
     names = list(names) if names is not None else [str(k + 1) for k in range(len(calc))]
-    lines = describe(stats) if stats else []
+    lines = [plot_line(stats, "FEP")] if stats else []
     if null_stats:
-        lines.append(null_line(null_stats))
+        lines.append(plot_line(null_stats, "log MW"))
+    if stats:
+        lines.append(f"n = {stats['n']}")
     plot_correlation.write_data(stem, names, calc, exp, calc_err, exp_err, quantity, lines,
                                 predicted, null)  # fmt: skip
     script, copy = Path(plot_correlation.__file__), stem.parent / "plot_correlation.py"
