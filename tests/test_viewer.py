@@ -568,6 +568,144 @@ def test_minimizing_a_file_whose_residues_are_in_pieces():
     assert not np.allclose(moved, before)  # it really did move
 
 
+def test_turning_a_stereocentre_over():
+    """R/S for any centre, D/L on an amino acid's alpha carbon.  The two smallest
+    branches are swapped rigidly, so bond lengths inside them are kept, and the result
+    is read back: a centre that quietly fails to invert would be worse than one that
+    refuses."""
+    from boonza.viewer.edit import protonate, set_chirality, stereocentre
+
+    s = boonza.peptide("AAA")
+    s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
+    protonate(s)
+    res, names = np.asarray(s.atoms["residue"]), np.asarray(s.atoms["name"])
+    ca = int(np.flatnonzero((res == 1) & (names == "CA"))[0])
+    info = stereocentre(s, ca)
+    assert (info["cip"], info["alpha"], info["dl"]) == ("S", True, "L")
+    # HA and the side chain are the two smallest, which is the textbook D/L swap
+    assert [len(b) for b in info["branches"]][:2] == [1, 4]
+    before = np.asarray(s.positions).copy()
+    out = set_chirality(s, ca, "D", log=lambda *_: None)
+    assert (out["was"], out["is"], out["changed"]) == ("L", "D", True)
+    assert stereocentre(s, ca)["dl"] == "D"
+    # the backbone bonds it did not move are untouched
+    for nm in ("N", "C"):
+        k = int(np.flatnonzero((res == 1) & (names == nm))[0])
+        d0 = np.linalg.norm(before[k] - before[ca])
+        d1 = np.linalg.norm(np.asarray(s.positions)[k] - np.asarray(s.positions)[ca])
+        assert d1 == pytest.approx(d0, abs=1e-6)
+    assert set_chirality(s, ca, "L", log=lambda *_: None)["is"] == "L"  # and back
+    assert set_chirality(s, ca, "L", log=lambda *_: None)["changed"] is False  # already
+
+    # a ligand centre takes R and S, and refuses D/L
+    lig = boonza.from_smiles("C[C@H](O)CC", name="LIG")
+    centre = next(int(a) for a in np.flatnonzero(np.asarray(lig.atoms["anum"]) == 6)
+                  if _cip(lig, int(a)))  # fmt: skip
+    was = stereocentre(lig, centre)["cip"]
+    assert set_chirality(lig, centre, "R" if was == "S" else "S",
+                         log=lambda *_: None)["changed"]  # fmt: skip
+    with pytest.raises(ValueError, match="not an amino acid's alpha carbon"):
+        set_chirality(lig, centre, "L")
+    with pytest.raises(ValueError, match="chirality is one of"):
+        set_chirality(lig, centre, "meso")
+
+
+def _cip(s, a):
+    from boonza.viewer.edit import stereocentre
+
+    try:
+        return stereocentre(s, a)["cip"]
+    except ValueError:
+        return None
+
+
+def test_choosing_another_ligand_redraws_for_it():
+    """The default representations name the ligand and its pocket in their selections,
+    so choosing a different one left them drawing the ligand before it: the page keeps
+    the representations it has, and only a reload rebuilt them.  set_ligand now hands
+    back the new defaults -- and nothing, where the representations are your own."""
+    from boonza.viewer.edit import protonate
+
+    s = boonza.peptide("GAGAGA")
+    s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
+    protonate(s)
+    session = viewer.Session(s, atoms="all", cg=False)
+    seen = []
+    for resid in (2, 4):
+        ids = [int(a) for a in session.system.select(f"resid {resid}").ids]
+        out = session.set_ligand(ids)
+        assert out["reps"] is not None
+        assert [r["label"] for r in out["reps"]] == ["protein or nucleic", "binding site",
+                                                     "ligand"]  # fmt: skip
+        ligand = next(r["sel"] for r in out["reps"] if r["label"] == "ligand")
+        assert all(str(a) in ligand for a in ids)  # it draws the ligand just chosen
+        seen.append(ligand)
+    assert seen[0] != seen[1]
+    # representations of your own are not thrown away
+    session.reps = [{"sel": "all", "style": "lines", "color": "element", "label": "mine"}]
+    assert session.set_ligand([int(a) for a in session.system.select("resid 1").ids])[
+        "reps"
+    ] is None  # fmt: skip
+    # and the page applies them where it is given them
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    choose = ui[ui.index("async function chooseLigand()") :]
+    choose = choose[: choose.index("\n  }\n")]
+    assert "if (out.reps)" in choose and "app.applyReps" in choose
+
+
+def test_an_edited_residue_stays_part_of_its_chain():
+    """The protein class goes by atom names, so renaming or deleting a backbone atom
+    dropped a residue out of its chain: it became class 1, and double-click (same
+    fragment and class) then selected that residue alone instead of the peptide.  A
+    residue bonded to chain links on both sides is part of the chain whatever its atoms
+    are called, while a one-residue peptide-like ligand still is not."""
+    from boonza.analyze import chain_residues
+    from boonza.viewer.edit import protonate
+
+    s = boonza.peptide("GAGAGA")
+    s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
+    protonate(s)
+    names = np.asarray(s.atoms["name"]).copy()
+    res = np.asarray(s.atoms["residue"])
+    names[res == 2] = [f"X{k}" for k in range(int((res == 2).sum()))]
+    s.atoms["name"] = names
+    # the force fields and the coarse-grained builders see what they always saw
+    assert 2 not in chain_residues(s).tolist()
+    assert 2 in chain_residues(s, bridge=True).tolist()
+    topo = viewer.Session(s, atoms="all", cg=False).topology()
+    klass = np.array(topo["atoms"]["class"])
+    fragment = np.array(topo["atoms"]["fragment"])
+    at = np.array(topo["atoms"]["residue"])
+    a = int(np.flatnonzero(at == 2)[0])
+    assert klass[a] == 0  # part of the protein, not a ligand of its own
+    molecule = np.flatnonzero((fragment == fragment[a]) & (klass == klass[a]))
+    assert len(molecule) == len(klass)  # double-click gets the whole chain
+    # a free one-residue peptide is still a ligand: that is what the rule is for
+    lig = boonza.peptide("G")
+    lig = lig.clone(np.flatnonzero(lig.atoms["anum"] > 1))
+    protonate(lig)
+    pos = np.asarray(lig.positions)
+    lig.positions = pos - pos.mean(0) + np.array([30.0, 0.0, 0.0])
+    both = s.clone()
+    both.append(lig)
+    topo = viewer.Session(both, atoms="all", cg=False).topology()
+    klass = np.array(topo["atoms"]["class"])
+    at = np.array(topo["atoms"]["residue"])
+    assert klass[int(np.flatnonzero(at == both.nresidues - 1)[0])] == 1
+
+
+def test_a_bond_out_of_a_selection_reaches_the_ribbon():
+    """A residue of a chain drawn as sticks over the cartoon had its peptide bonds drawn
+    by nobody -- the neighbour shows no atoms -- so it looked detached.  Such a bond is
+    now a stub, and only into a ribbon."""
+    geometry = (Path(boonza.__file__).parent / "data/viewer/geometry.js").read_text()
+    loop = geometry[geometry.index("// bonds: a line where either end") :]
+    loop = loop[: loop.index("// the traced atom of each residue")]
+    assert "if (!show[i] && !show[j]) continue;" in loop  # both hidden: nothing to draw
+    assert "if (!ribbonOn[hid]" in loop  # a stub only where a ribbon is drawn
+    assert "if (!show[i] || !show[j]) continue;" not in loop  # the old, unconditional skip
+
+
 def test_set_as_ligand_takes_the_selection_not_the_whole_molecule():
     """A protein chain is one fragment, so selecting the molecule of a residue is its
     whole chain: choosing one residue as the ligand turned the chain into the ligand,
