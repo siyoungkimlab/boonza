@@ -96,8 +96,7 @@ CATION_PI_A, CATION_PI_OFFSET_A = 4.5, 2.0
 AROMATIC = {
     "PHE": (("CG", "CD1", "CD2", "CE1", "CE2", "CZ"),),
     "TYR": (("CG", "CD1", "CD2", "CE1", "CE2", "CZ"),),
-    "TRP": (("CG", "CD1", "NE1", "CE2", "CD2"),
-            ("CD2", "CE2", "CZ2", "CH2", "CZ3", "CE3")),  # fmt: skip
+    "TRP": (("CG", "CD1", "NE1", "CE2", "CD2"), ("CD2", "CE2", "CZ2", "CH2", "CZ3", "CE3")),
     "HIS": (("CG", "ND1", "CD2", "CE1", "NE2"),),
 }
 #: a polar atom with fewer waters than this within 3.5 Å, on average, is buried
@@ -488,15 +487,15 @@ def _write_candidates(path, poses) -> None:
     receptors = {}
     with Chem.SDWriter(str(path)) as w:
         for mol, xyz, rec, row in poses:
-            receptors[f"step{row['step']}_from{row['parent']}_c{row['candidate']}"] = \
-                np.asarray(rec, np.float32)
+            name = f"step{row['step']}_from{row['parent']}_c{row['candidate']}"
+            receptors[name] = np.asarray(rec, np.float32)
             m = Chem.Mol(mol)
             m.RemoveAllConformers()
             conf = Chem.Conformer(m.GetNumAtoms())
             for k, p in enumerate(xyz):
                 conf.SetAtomPosition(k, [float(v) for v in p])
             m.AddConformer(conf, assignId=True)
-            m.SetProp("_Name", f"step{row['step']}_from{row['parent']}_c{row['candidate']}")
+            m.SetProp("_Name", name)
             for key in ("step", "parent", "candidate", "score", "interaction",
                         "interaction_ligand", "drift", "contacts", "cation_pi",
                         "buried_unsatisfied"):  # fmt: skip
