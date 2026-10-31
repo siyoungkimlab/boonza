@@ -87,9 +87,32 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
 
   // bonds: a line where either end is drawn as lines, a stick where both are sticks
   const bonded = new Uint8Array(n);
+  // a residue drawn as a ribbon shows no atoms, so a bond out of a sticks selection
+  // into it was drawn by nobody and the selection looked detached: one residue of a
+  // chain chosen as the ligand floated beside the cartoon.  Such a bond is drawn as a
+  // stub, from the atom that is shown to half way
+  const ribbonOn = new Uint8Array(n);
+  for (let r = 0; r < topo.residues.trace.length; r++) {
+    if (state.ribbon[r]) for (const a of topo.residueAtoms[r]) ribbonOn[a] = 1;
+  }
   for (let k = 0; k < B.i.length; k++) {
     const i = B.i[k], j = B.j[k];
-    if (!show[i] || !show[j]) continue;
+    if (!show[i] && !show[j]) continue;
+    if (!show[i] || !show[j]) {  // a stub into a ribbon, and only into a ribbon
+      const vis = show[i] ? i : j, hid = show[i] ? j : i;
+      if (!ribbonOn[hid] || style[vis] === SPACE) continue;
+      const pv = P(vis), ph = P(hid);
+      const mid = pv.map((x, d) => (x + ph[d]) / 2);
+      bonded[vis] = 1;
+      if (style[vis] === LINE || style[vis] === BALLLINE) {
+        segment(l, c, pv, mid, C(vis), topo.cg ? LINE_RADIUS.beads : LINE_RADIUS.atoms);
+      } else {
+        const r0 = style[vis] === BALLSTICK ? size.bond : size.stick;
+        c.a.push(...pv); c.b.push(...mid);
+        c.radius.push(r0); c.color.push(...C(vis));
+      }
+      continue;
+    }
     const si = style[i], sj = style[j];
     if (si === SPACE || sj === SPACE) continue;
     bonded[i] = bonded[j] = 1;

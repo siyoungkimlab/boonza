@@ -144,6 +144,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.viewer.session(arg("m")).ligand2d(sel, dark=dark))
         elif url.path == "/api/atom":
             self._json(self.viewer.session(arg("m")).atom_info(arg("a")))
+        elif url.path == "/api/stereocentre":
+            try:
+                self._json(self.viewer.session(arg("m")).stereocentre(arg("a")))
+            except ValueError as e:  # not a centre at all: the menu leaves it out
+                self._json({"error": str(e)})
         elif url.path == "/api/smiles":
             sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
             exact = query.get("exact", ["0"])[0] == "1"
@@ -263,6 +268,8 @@ class _Handler(BaseHTTPRequestHandler):
             s = session
             s._parameterized()
             self._json({"ok": True, "atom": s.atom_info(int(body["a"])) if "a" in body else None})
+        elif url.path == "/api/set_chirality":
+            self._json(session.set_chirality(int(body["atom"]), str(body["want"])))
         elif url.path == "/api/set_ligand":
             self._json(session.set_ligand(body["atoms"]))
         elif url.path == "/api/set_positions":

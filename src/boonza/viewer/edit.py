@@ -1100,6 +1100,112 @@ def _reach(adj, start: int, blocked: int) -> set:
     return seen
 
 
+#: how a stereocentre is named, by what the viewer offers for it
+CHIRALITY = ("R", "S", "D", "L")
+
+
+def stereocentre(s, atom: int) -> dict:
+    """What ``atom`` is as a stereocentre: its CIP code (``R``/``S``, None if RDKit
+    will not assign one), whether it is an amino acid's alpha carbon and then its
+    ``D``/``L``, and the four branches hanging off it, smallest first.
+
+    An alpha carbon is read by structure, not by the residue's name: a carbon bonded
+    to a backbone N and a backbone C of its own residue.  L is S, as it is for every
+    amino acid but cysteine, whose sulfur outranks its carboxyl."""
+    from rdkit import Chem
+
+    from ..chem import to_rdkit
+
+    a = int(atom)
+    adj = {}
+    for i, j in zip(np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"]), strict=True):
+        adj.setdefault(int(i), []).append(int(j))
+        adj.setdefault(int(j), []).append(int(i))
+    nbrs = sorted(adj.get(a, ()))
+    if len(nbrs) != 4:
+        raise ValueError(f"atom {a} has {len(nbrs)} bonds, not the 4 a stereocentre has")
+    branches = {b: sorted(_reach(adj, b, a) - {a}) for b in nbrs}
+    if any(a in br for br in branches.values()):
+        raise ValueError(f"atom {a} is in a ring through every branch: it cannot be turned "
+                         "over without breaking a bond")  # fmt: skip
+    order = sorted(nbrs, key=lambda b: (len(branches[b]), b))
+
+    res = np.asarray(s.atoms["residue"])
+    own = {str(nm).strip(): i for i, nm in enumerate(np.asarray(s.atoms["name"]))
+           if res[i] == res[a]}  # fmt: skip
+    alpha = own.get("N") in nbrs and own.get("C") in nbrs and s.atoms["anum"][a] == 6
+
+    cip = None
+    mol = to_rdkit(s, list(range(s.natoms)), sanitize=True, implicit_hydrogens=False)
+    if mol is not None:
+        Chem.AssignStereochemistryFrom3D(mol)
+        tag = mol.GetAtomWithIdx(a)
+        if tag.HasProp("_CIPCode"):
+            cip = str(tag.GetProp("_CIPCode"))
+    return {"atom": a, "cip": cip, "alpha": bool(alpha),
+            "dl": (None if cip is None else ("L" if cip == "S" else "D")) if alpha else None,
+            "branches": [branches[b] for b in order], "neighbours": order}  # fmt: skip
+
+
+def set_chirality(s, atom: int, want: str, relax: bool = True, log=print) -> dict:
+    """Turn the stereocentre ``atom`` into ``want`` (``R``, ``S``, ``D`` or ``L``) in
+    place, and say what it was and is.
+
+    Its two smallest branches are swapped -- rigidly, by the 180 degree turn about
+    their bisector, so every bond length and angle inside them is kept -- which is
+    what inverts a centre without rebuilding it.  On an alpha carbon those are HA and
+    the side chain, which is the textbook D/L swap.  The rest is then relaxed with the
+    centre and its other two branches held (MMFF), and the result is read back: if it
+    did not invert, nothing is changed and this raises, since a centre that quietly
+    stays put is worse than one that refuses."""
+    if want not in CHIRALITY:
+        raise ValueError(f"chirality is one of {', '.join(CHIRALITY)}, not {want!r}")
+    info = stereocentre(s, atom)
+    if want in ("D", "L") and not info["alpha"]:
+        raise ValueError(f"atom {atom} is not an amino acid's alpha carbon, so it has no "
+                         "D or L; use R or S")  # fmt: skip
+    now = info["dl"] if want in ("D", "L") else info["cip"]
+    if now is None:
+        raise ValueError(
+            f"atom {atom}: RDKit assigns it no configuration, so there is "
+            "nothing to turn over; are its branches all different?"
+        )
+    if now == want:
+        return {"atom": int(atom), "was": now, "is": now, "changed": False}
+    xyz = np.asarray(s.positions, float).copy()
+    centre = xyz[atom]
+    first, second = info["neighbours"][0], info["neighbours"][1]
+    u = xyz[first] - centre
+    v = xyz[second] - centre
+    axis = u / np.linalg.norm(u) + v / np.linalg.norm(v)
+    if np.linalg.norm(axis) < 1e-6:  # the two point opposite ways: any perpendicular
+        axis = np.cross(u, [1.0, 0.0, 0.0])
+        if np.linalg.norm(axis) < 1e-6:
+            axis = np.cross(u, [0.0, 1.0, 0.0])
+    axis = axis / np.linalg.norm(axis)
+    # a half turn about the bisector maps each branch's bond onto the other's
+    turn = 2.0 * np.outer(axis, axis) - np.eye(3)
+    moving = sorted(set(info["branches"][0]) | set(info["branches"][1]) | {first, second})
+    xyz[moving] = (xyz[moving] - centre) @ turn.T + centre
+    before = np.asarray(s.positions, float).copy()
+    s.positions = xyz
+    if relax:
+        held = [i for i in range(s.natoms) if i not in set(moving)]
+        try:
+            minimize(s, fixed=held, tethered=[], restraint=10.0, max_iterations=200,
+                     log=lambda *_: None)  # fmt: skip
+        except (ValueError, RuntimeError) as e:
+            log(f"  the swap was kept without relaxing it: {e}")
+    got = stereocentre(s, atom)
+    now_is = got["dl"] if want in ("D", "L") else got["cip"]
+    if now_is != want:
+        s.positions = before
+        raise ValueError(f"atom {atom}: swapping its two smallest branches left it "
+                         f"{now_is}, not {want}; nothing was changed")  # fmt: skip
+    return {"atom": int(atom), "was": now, "is": now_is, "changed": True,
+            "moved": len(moving), "alpha": got["alpha"]}  # fmt: skip
+
+
 def rotating_side(s, b: int, c: int) -> tuple[np.ndarray, int]:
     """The atoms that turn about the b-c bond, and +1 if they are c's side, -1 if b's
     (the smaller side turns, so a protein stays put and its side chain moves)."""
