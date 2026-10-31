@@ -124,6 +124,60 @@ def test_a_ring_s_normal_is_perpendicular_to_it():
     assert abs(abs(n @ [0, 0, 1]) - 1.0) < 1e-6
 
 
+def test_placements_are_spread_not_merely_the_least_clashing():
+    """Taking the n least-clashing conformers left them near-duplicates in one corner,
+    so more conformers made the sample less diverse: 120 did worse than 60.  spread()
+    takes the least-clashing first, then whatever is furthest from what it has."""
+    rng = np.random.default_rng(0)
+    new_atoms = [0, 1]
+    # the protein sits over the far group, so the ranking (fewest clashes, then
+    # furthest from it) prefers the crowd: exactly the case that went wrong
+    protein = np.array([[10.0, 0.0, 20.0]])
+    # ten conformers around x=0 and two around x=10: the crowd must not win every slot
+    crowd = [np.array([[rng.normal(0, 0.05), 0.0, 0.0], [1.0, 0.0, 0.0]]) for _ in range(10)]
+    far = [np.array([[10.0 + rng.normal(0, 0.05), 0.0, 0.0], [11.0, 0.0, 0.0]])
+           for _ in range(2)]  # fmt: skip
+    confs = crowd + far
+
+    def apart(picked):
+        xs = [c[0][0] for c in picked]
+        return max(xs) - min(xs)
+
+    got = grow.spread(confs, new_atoms, protein, 3)
+    assert len(got) == 3
+    assert apart(got) > 9.0  # it reached the far group
+    # the old rule: the first 3 by clashes alone, all from the crowd
+    ranked = sorted(confs, key=lambda c: (grow.clashes(c, new_atoms, protein)[0],
+                                          -grow.clashes(c, new_atoms, protein)[1]))  # fmt: skip
+    assert apart(ranked[:3]) < 1.0
+    # asking for more than there are returns them all, and a step that grew nothing
+    # falls back to the ranking
+    assert len(grow.spread(confs, new_atoms, protein, 99)) == len(confs)
+    assert len(grow.spread(confs, [], protein, 3)) == 3
+    # a clashing conformer is still not preferred to a clean one
+    clash = [np.array([[10.0, 0.0, 20.0], [10.0, 0.0, 20.5]])]
+    assert grow.clashes(clash[0], new_atoms, protein)[0] > 0
+    assert all(c[0][2] != 20.0 for c in grow.spread(confs + clash, new_atoms, protein, 3))
+
+
+def test_runs_are_grouped_by_the_pose_they_agree_on():
+    """--repeats keeps what the runs agree on, not what scored highest: across 24
+    growths the score told good poses from bad only weakly, so the best score returned
+    a 2.3 A pose while a 0.6 A one scored mid-pack."""
+    a = np.zeros((5, 3))
+    b = a + np.array([10.0, 0.0, 0.0])
+    poses = [a, a + 0.1, b, a + 0.2, b + 0.1, a + 0.3]  # four together, two apart
+    groups = grow.agree(poses, cut=1.0)
+    assert [len(g) for g in groups] == [4, 2]  # the largest first
+    assert groups[0] == [0, 1, 3, 5] and groups[1] == [2, 4]
+    # everything apart: one group each, and everything together: one group
+    assert len(grow.agree([a, b, b + 20.0], cut=1.0)) == 3
+    assert grow.agree([a, a + 0.1, a + 0.2], cut=1.0) == [[0, 1, 2]]
+    # single linkage: a chain of near poses is one group even end to end
+    chain = [a + np.array([0.9 * k, 0.0, 0.0]) for k in range(4)]
+    assert grow.agree(chain, cut=1.0) == [[0, 1, 2, 3]]
+
+
 def test_repeats_and_the_sampling_flags_reach_the_command_line():
     """The MD is not reproducible on a GPU, so the same search takes different
     branches: growing 9B54's ligand from 6N4B five times reached the crystal's salt
@@ -161,7 +215,13 @@ def test_growing_each_ligand_several_times_keeps_the_best(tmp_path):
               n_conformers=5, md_ps=2.0, repeats=3, log=lambda *_: None)  # fmt: skip
     record = json.loads((tmp_path / "grow" / "toluene.json").read_text())
     assert record["repeats"] == 3 and len(record["run_scores"]) == 3
-    assert record["score"] == pytest.approx(max(record["run_scores"]))
+    # the runs are ranked by one common measurement of the finished pose, not by the
+    # score each reached in its own trajectory: over 48 poses the two agreed most of
+    # the time, and of the times they did not the common one picked the closer pose in
+    # 92%.  The runs' grouping is reported beside it, never used to choose
+    assert len(record["rescored"]) == 3
+    assert record["kept_run"] == record["rescored"].index(min(record["rescored"]))
+    assert sum(len(g) for g in record["agreement"]) == 3
     names = [m.GetProp("_Name") for m in Chem.SDMolSupplier(
         str(tmp_path / "grow" / "toluene_candidates.sdf"), removeHs=False)]  # fmt: skip
     assert len(names) == len(set(names)) == 3  # one per run here, each named for its run

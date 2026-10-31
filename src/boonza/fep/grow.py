@@ -111,6 +111,10 @@ CORE_KJ = 1.0e5
 SS_KJ = 20.0
 #: Å: how far a loosely held atom may go before it is held (hold="rings")
 LOOSE_A = 2.0
+#: Å: two runs of --repeats agree on a pose when their heavy atoms are this close
+AGREE_A = 2.0
+#: the seed every run's final pose is measured with, so the measurement is the same one
+RESCORE_SEED = 4242
 #: Å: residues with a heavy atom this near the ligand move, the rest are held; found
 #: again for every placement, from the ligand as it now is, so the pocket grows with it
 POCKET_A = 8.0
@@ -430,6 +434,75 @@ def clashes(xyz, heavy, protein_heavy) -> tuple[int, float]:
         return 0, float("inf")
     d = cKDTree(protein_heavy).query(xyz[heavy])[0]
     return int((d < CLASH_A).sum()), float(d.min())
+
+
+def agree(poses, cut: float = AGREE_A) -> list[list[int]]:
+    """Group ``poses`` (heavy-atom coordinates in one frame) by whether they are within
+    ``cut`` RMSD of each other, nearest first, largest group first.
+
+    Whether several runs found the same thing -- reported, not used to choose.  Across
+    24 growths of 9B54's ligand from 6N4B, 19 settled on one pose 4.8 A from the
+    crystal's and 3 found it to 0.9 A: the search is biased, not noisy, so the group
+    most runs fall into is the wrong one and a majority vote is worse than the score
+    (0% within 2.5 A at 8 runs, against 76%).  What it does say is whether the runs
+    agree at all, which no single score can.
+
+    Compare the atoms that were grown, not the whole ligand: a held core of 29 heavy
+    atoms puts every pose of a 38-atom ligand inside 2 A of every other, whatever its
+    guanidinium did."""
+    n = len(poses)
+    seen, groups = set(), []
+    for i in range(n):
+        if i in seen:
+            continue
+        group = [i]
+        seen.add(i)
+        todo = [i]
+        while todo:  # single linkage: a chain of near poses is one group
+            k = todo.pop()
+            for j in range(n):
+                if j in seen:
+                    continue
+                d = float(np.sqrt(((poses[k] - poses[j]) ** 2).sum(1).mean()))
+                if d <= cut:
+                    seen.add(j)
+                    group.append(j)
+                    todo.append(j)
+        groups.append(sorted(group))
+    groups.sort(key=lambda g: (-len(g), g[0]))
+    return groups
+
+
+def spread(confs, new, protein_heavy, n: int) -> list:
+    """``n`` of ``confs`` that put the new atoms in as many different places as the
+    pocket allows: the least-clashing first, then each time the one whose new atoms sit
+    furthest (RMSD) from every one already taken.
+
+    Taking the least-clashing ``n`` instead left them near-duplicates in one corner,
+    and embedding more conformers made that worse rather than better -- 120 conformers
+    did worse than 60, because the six least-clashing of a larger pool are more alike,
+    not less.  Growing 9B54's chain from 6N4B, 7 of 34 placements put its end within
+    2 A of the crystal's while only 6 were kept, which is the rate at which the whole
+    growth found the right answer."""
+    if len(confs) <= n:
+        return list(confs)
+    scored = [clashes(c, new, protein_heavy) for c in confs]
+    order = sorted(range(len(confs)), key=lambda k: (scored[k][0], -scored[k][1]))
+    fewest = scored[order[0]][0]
+    pool = [k for k in order if scored[k][0] == fewest]
+    if len(pool) < n:  # not enough that clash least: take the next best too
+        pool = order[: max(n, len(pool))]
+    if not new:  # nothing grew this step: the ranking is all there is
+        return [confs[k] for k in pool[:n]]
+    picked = [pool[0]]
+    rest = [k for k in pool[1:]]
+    while len(picked) < n and rest:
+        far = max(rest, key=lambda k: min(
+            float(np.sqrt(((confs[k][new] - confs[q][new]) ** 2).sum(1).mean()))
+            for q in picked))  # fmt: skip
+        picked.append(far)
+        rest.remove(far)
+    return [confs[k] for k in picked]
 
 
 @dataclass
@@ -874,9 +947,7 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
                 rec = receptor.copy()
                 rec.positions = state.receptor
                 prot_heavy = state.receptor[np.asarray(rec.atoms["anum"]) > 1]
-                ranked = sorted(confs, key=lambda c: (clashes(c, new, prot_heavy)[0],
-                                                      -clashes(c, new, prot_heavy)[1]))  # fmt: skip
-                for c, xyz in enumerate(ranked[:here_keep]):
+                for c, xyz in enumerate(spread(confs, new, prot_heavy, here_keep)):
                     lig = _ligand(mol, xyz)
                     if lig_ff is None:
                         lig_ff = _forcefield(rec, lig, ff, args)
@@ -923,29 +994,75 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
         runs.append(got)
         if repeats > 1:
             log(f"  run {rep + 1}/{repeats}: best score {got[0][0]:.2f}")
-    # the best-scoring run wins; the others stay in the candidates file
-    best, index, lig_ff = max(runs, key=lambda g: g[0][0])
-    if repeats > 1:
-        scores = ", ".join(f"{g[0][0]:.2f}" for g in runs)
-        log(f"{name}: {repeats} runs scored {scores}; keeping the best")
-        record["run_scores"] = [float(g[0][0]) for g in runs]
-    _, final, out, mol = best
-    if hold == "rings":  # a last relaxation: the whole ligand loosely held, rings firm
+
+    def finish(got):
+        """A run's last relaxation: the whole ligand loosely held, the core's rings
+        firm.  Let the rings loose here too and they drift the whole LOOSE_A away,
+        taking the pose with them, while what this relaxation is for is the rest."""
+        best_, index_, lig_ff_ = got
+        _, final_, out_, mol_ = best_
+        if hold != "rings":
+            return final_, out_, mol_, index_, lig_ff_
         rec = receptor.copy()
-        rec.positions = final.receptor
-        lig = _ligand(mol, out["ligand"])
-        every = list(range(mol.GetNumAtoms()))
-        # the core's rings stay where the reference put them, as they did at every
-        # step: let them loose here too and they drift the whole LOOSE_A away, taking
-        # the pose with them, while what this relaxation is for is the rest of it
-        firm_rings = [index[i] for i in firm if i in index]
-        last = md_score(rec, lig, every, [], lig_ff, args, ps=2 * md_ps, seed=99, water=water,
-                        loose=[i for i in every if i not in set(firm_rings)], log=log)  # fmt: skip
-        if _same_stereo(mol, last["ligand"]):
-            out = {**out, "ligand": last["ligand"]}
-            final = State(last["receptor"], final.placed, final.score, final.history)
+        rec.positions = final_.receptor
+        lig = _ligand(mol_, out_["ligand"])
+        every = list(range(mol_.GetNumAtoms()))
+        firm_rings = {index_[i] for i in firm if i in index_}
+        last = md_score(rec, lig, every, [], lig_ff_, args, ps=2 * md_ps, seed=99,
+                        water=water, loose=[i for i in every if i not in firm_rings],
+                        log=log)  # fmt: skip
+        if _same_stereo(mol_, last["ligand"]):
+            out_ = {**out_, "ligand": last["ligand"]}
+            final_ = State(last["receptor"], final_.placed, final_.score, final_.history)
             log(f"  relaxed whole: the core's rings held, the rest within {LOOSE_A:g} Å "
                 "of where it grew")  # fmt: skip
+        return final_, out_, mol_, index_, lig_ff_
+
+    def rescore(final_, out_, mol_, lig_ff_):
+        """The whole ligand's interaction energy with the protein, under one protocol
+        for every run: the same length, the same seed, the same restraints.
+
+        A run's own score comes from its own trajectory at its own step, which ranks
+        runs only weakly.  Measured the same way for all of them it ranks better where
+        it matters: over 48 poses the two agreed most of the time, and of the times
+        they did not this picked the closer pose in 92% (within 2.5 A at 8 runs: 82%
+        against 75%, and within 1.5 A 20% against 13%)."""
+        rec = receptor.copy()
+        rec.positions = final_.receptor
+        lig = _ligand(mol_, out_["ligand"])
+        every = list(range(mol_.GetNumAtoms()))
+        heavy = [i for i in every if mol_.GetAtomWithIdx(i).GetAtomicNum() > 1]
+        got = md_score(rec, lig, every, heavy, lig_ff_, args, ps=md_ps, seed=RESCORE_SEED,
+                       water=water, loose=every, log=lambda *_: None)  # fmt: skip
+        return float(got["interaction"])
+
+    if repeats > 1:
+        done = [finish(g) for g in runs]
+        energies = [rescore(f, o, m, ff_) for f, o, m, _, ff_ in done]
+        chosen = int(np.argmin(energies))  # the most negative interaction energy
+        final, out, mol, index, lig_ff = done[chosen]
+        # how the runs group is reported, not used to choose.  Taking what most of them
+        # agree on is worse, not better: growing 9B54's ligand from 6N4B, 19 of 24 runs
+        # settled on the same pose 4.8 A from the crystal's while 3 found it to 0.9 A,
+        # so the error is a bias of the search and not noise to average away, and a
+        # majority picks the wrong answer with confidence (0% within 2.5 A at 8 runs).
+        # More than one group means the runs disagree and the pose wants an eye on it
+        grown = sorted(set(index.values()) - {index[i] for i in core if i in index})
+        groups = (agree([o["ligand"][grown] for _, o, _, _, _ in done]) if grown
+                  else [list(range(len(done)))])  # fmt: skip
+        log(
+            f"{name}: {repeats} runs, {' '.join(f'{e:.0f}' for e in energies)} kJ/mol "
+            f"with the protein measured alike; keeping run {chosen + 1}.  Their grown "
+            f"parts fall in {len(groups)} group(s) of "
+            f"{', '.join(str(len(g)) for g in groups)}"
+            + ("" if len(groups) == 1 else "; they do not agree, so look at the pose")
+        )
+        record["run_scores"] = [float(g[0][0]) for g in runs]
+        record["rescored"] = [round(e, 1) for e in energies]
+        record["agreement"] = [[int(k) for k in g] for g in groups]
+        record["kept_run"] = chosen
+    else:
+        final, out, mol, index, lig_ff = finish(runs[0])
     complex_ = receptor.copy()
     complex_.positions = final.receptor
     complex_.append(_ligand(mol, out["ligand"]))
