@@ -1523,3 +1523,20 @@ def test_a_model_says_whether_its_parts_name_a_source():
 
     s.atoms["source"] = np.array(["/runs/md_a/pose.mae"] * s.natoms)
     assert viewer.Session(s).topology()["sources"] is True
+
+
+def test_deleting_a_chain_is_quick_and_says_which_atom_was_which():
+    import time
+
+    from boonza.viewer.session import Session
+
+    v = Session(boonza.load(DATA / "1HHO.pdb"))
+    names = list(np.asarray(v.system.atoms["name"]))
+    chain = np.asarray(v.system.residues["chain"])[np.asarray(v.system.atoms["residue"])]
+    ids = np.flatnonzero(chain == chain[0]).tolist()
+    start = time.time()
+    out = v.edit("delete", ids, hydrogens=True)
+    assert time.time() - start < 2.0  # the bonds were walked once per atom: 5 s here
+    was = out["was"]
+    assert len(was) == v.system.natoms and sorted(was) == sorted(set(range(len(names))) - set(ids))
+    assert [names[w] for w in was] == list(np.asarray(v.system.atoms["name"]))

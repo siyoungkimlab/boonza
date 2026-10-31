@@ -576,12 +576,18 @@ export function setupUI(app) {
     }
     return sel[0];
   }
+  // one edit at a time: one sent while another is still on the server would name
+  // atoms by indices that edit is about to change
+  let editing = false;
   async function serverEdit(m, url, body, topology = true) {
+    if (editing) { app.message("an edit is still running: wait for it to finish", true); return null; }
+    editing = true;
     try {
       const out = await app.post(url, { m: m.index, ...body });
-      await app.reloadModel(m, out.topology ?? topology);
+      await app.reloadModel(m, out.topology ?? topology, out.was);
       return out;
     } catch (e) { app.message(e.message, true); return null; }
+    finally { editing = false; }
   }
   const autoH = () => localStorage.getItem("boonza.autoH") !== "0";
   // the model a command acts on: the selection's, else the current one
@@ -634,9 +640,9 @@ export function setupUI(app) {
     if (changed.length) remember({ look: changed });
   };
   const reloadModel = app.reloadModel;
-  app.reloadModel = async (m, topology) => {
+  app.reloadModel = async (m, topology, was = null) => {
     if (!replaying) remember({ edit: m, before: m.state ? snapshot(m) : null });
-    return reloadModel(m, topology);
+    return reloadModel(m, topology, was);
   };
   // a model just loaded again takes a look its atoms fit (what an edit undone or redone had)
   function lookAgain(m, snap) {

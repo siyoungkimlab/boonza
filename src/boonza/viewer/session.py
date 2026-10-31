@@ -613,7 +613,8 @@ class Session:
                         raise ValueError("pick the two atoms of the bond")
                     edit.set_bond(s, atoms[0], atoms[1], int(value))
                 elif op == "delete":
-                    near = {b for a in atoms for b, _ in edit.neighbors(s, a)} - set(atoms)
+                    adj = edit.bonded(s)
+                    near = {b for a in atoms for b, _ in edit.neighbors(s, a, adj)} - set(atoms)
                     index = edit.delete(s, atoms)
                     touched = [int(index[b]) for b in near if index[b] >= 0]
                 elif op == "hydrogens":
@@ -667,21 +668,27 @@ class Session:
                 self.system = self._undo.pop()[0]
                 raise
             # where the picked atoms are now (-1: deleted); added hydrogens carry 0
-            where = {int(k) - 1: i for i, k in enumerate(s.atoms["view_edit"].tolist()) if k}
+            tags = s.atoms["view_edit"].tolist()
+            where = {int(k) - 1: i for i, k in enumerate(tags) if k}
             s.atoms.del_prop("view_edit")
-            return {**self._changed(topology=True), "picked": [where.get(a, -1) for a in atoms]}
+            # and every atom's index before the edit (-1: new), for the page to carry
+            # its representations, selection and labels over by index, not by name
+            # (names repeat: chains A of protein and of water, a resid in two chains)
+            return {**self._changed(topology=True), "picked": [where.get(a, -1) for a in atoms],
+                    "was": [int(k) - 1 for k in tags]}  # fmt: skip
 
     def _drop(self, atoms) -> dict:
         """Delete from a trajectory's view, or points of a set of spheres: the atoms
         (and their hydrogens) leave what is drawn; the file and trajectory stay."""
-        from .edit import neighbors
+        from .edit import bonded, neighbors
 
         if not atoms:
             raise ValueError("pick atoms first")
         s = self.system
         gone = set(atoms)
+        adj, anum = bonded(s), np.asarray(s.atoms["anum"])
         for a in atoms:
-            gone |= {b for b, _ in neighbors(s, a) if s.atoms["anum"][b] == 1}
+            gone |= {b for b, _ in neighbors(s, a, adj) if anum[b] == 1}
         keep = np.setdiff1d(np.arange(s.natoms), sorted(gone))
         if not len(keep):
             raise ValueError("that is every atom: close the model instead (File | Close)")
