@@ -89,7 +89,8 @@ def test_growing_toluene_from_benzene_in_a_peptide(tmp_path):
     record = json.loads((tmp_path / "grow" / "toluene.json").read_text())
     assert record["core"] == 6 and record["steps"] and "score" in record["steps"][0]
     # the core stayed where the reference was
-    lig = np.asarray(out.positions)[-target.GetNumAtoms():]
+    n = target.GetNumAtoms()
+    lig = np.asarray(out.positions)[-n:]
     core = grow.core_map(ref, target)
     ref_xyz = ref.GetConformer().GetPositions()
     d = [np.linalg.norm(lig[t] - ref_xyz[r]) for t, r in core.items()]
