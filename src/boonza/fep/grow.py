@@ -122,25 +122,53 @@ def core_map(reference, target) -> dict[int, int]:
     return best
 
 
-def _stereo_agrees(reference, target, pairs) -> bool:
-    """Whether the core's stereocentres, as the reference has them in 3D, are the
-    target's."""
+def _centres(mol) -> dict[int, str]:
+    """The stereocentres ``mol`` specifies (as written, or from its 3D
+    coordinates when it has them and was so assigned), atom -> R/S."""
     from rdkit import Chem
 
-    ref = Chem.Mol(reference)
-    Chem.AssignStereochemistryFrom3D(ref)
-    want = {a.GetIdx(): a.GetProp("_CIPCode") for a in target.GetAtoms() if a.HasProp("_CIPCode")}
+    return dict(Chem.FindMolChiralCenters(mol, includeUnassigned=False,
+                                          useLegacyImplementation=False))  # fmt: skip
+
+
+def _stereo_agrees(reference, target, pairs) -> bool:
+    """Whether the target's core, put on the reference's coordinates through
+    ``pairs``, has the stereocentres the target specifies there: of each centre
+    whose heavy neighbours are all in the core (its hydrogen, if any, opposite
+    them), the handedness those coordinates fix.  A ring the reference has
+    without substituents (a cyclopropyl) maps either way round onto the target's
+    substituted one, and only one way gives the target's centre."""
+    from rdkit import Chem
+
+    want = _centres(target)
     if not want:
-        Chem.AssignStereochemistry(target, cleanIt=True, force=True)
-        want = {a.GetIdx(): a.GetProp("_CIPCode") for a in target.GetAtoms()
-                if a.HasProp("_CIPCode")}  # fmt: skip
+        return True
+    rx = reference.GetConformer().GetPositions()
+    m = Chem.Mol(target)
+    m.RemoveAllConformers()
+    xyz = np.zeros((m.GetNumAtoms(), 3))
     for t, r in pairs.items():
-        if t in want and ref.GetAtomWithIdx(r).HasProp("_CIPCode"):
-            # CIP labels depend on substituents beyond the core; compare only when
-            # those are the same, i.e. trust only a disagreement in the core itself
-            if ref.GetAtomWithIdx(r).GetProp("_CIPCode") != want[t]:
-                return False
-    return True
+        xyz[t] = rx[r]
+    judged = []
+    for a, _ in want.items():
+        atom = m.GetAtomWithIdx(a)
+        heavy = [n.GetIdx() for n in atom.GetNeighbors() if n.GetAtomicNum() > 1]
+        hs = [n.GetIdx() for n in atom.GetNeighbors() if n.GetAtomicNum() == 1]
+        if a not in pairs or not all(h in pairs for h in heavy) or len(heavy) < 3:
+            continue
+        if hs:  # opposite the heavy neighbours
+            v = sum((xyz[h] - xyz[a]) / (np.linalg.norm(xyz[h] - xyz[a]) + 1e-9) for h in heavy)
+            xyz[hs[0]] = xyz[a] - 1.09 * v / (np.linalg.norm(v) + 1e-9)
+        judged.append(a)
+    if not judged:
+        return True
+    conf = Chem.Conformer(m.GetNumAtoms())
+    for k, p in enumerate(xyz):
+        conf.SetAtomPosition(k, p.tolist())
+    m.AddConformer(conf, assignId=True)
+    Chem.AssignStereochemistryFrom3D(m)
+    got = _centres(m)
+    return all(got.get(a) == want[a] for a in judged)
 
 
 def _same_stereo(mol, xyz) -> bool:
@@ -154,7 +182,8 @@ def _same_stereo(mol, xyz) -> bool:
         conf.SetAtomPosition(k, [float(v) for v in p])
     m.AddConformer(conf, assignId=True)
     Chem.AssignStereochemistryFrom3D(m)
-    return Chem.MolToSmiles(Chem.RemoveHs(m)) == Chem.MolToSmiles(Chem.RemoveHs(mol))
+    got = _centres(m)  # only the centres the target specifies: one left open may go either way
+    return all(got.get(a) == r for a, r in _centres(mol).items())
 
 
 def _ring_systems(mol) -> list[set[int]]:
@@ -338,9 +367,7 @@ def embed(mol, fixed: dict[int, np.ndarray], n: int = 60, seed: int = 7) -> list
             xyz[keys] = target
         # a hydrogen left on the wrong face of a held centre inverts it: such a
         # conformer is not the target
-        probe = Chem.Mol(m, confId=cid)
-        Chem.AssignStereochemistryFrom3D(probe, confId=cid)
-        if Chem.MolToSmiles(Chem.RemoveHs(probe)) != want:
+        if not _same_stereo(mol, xyz):
             continue
         if new and any(np.sqrt(((xyz[new] - o[new]) ** 2).sum(1).mean()) < 0.5 for o in out):
             continue
