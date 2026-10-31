@@ -22,8 +22,11 @@ CACHE = 64  # glued frames kept on the server
 #: the ligand when none is named: what is not polymer, solvent, ions or membrane
 LIGAND = "not (protein or nucleic or water or ions or lipid)"
 #: atoms drawn as sticks: heavy atoms, and hydrogens only on N, O and S
-POLAR = "(not hydrogen or withinbonds 1 of (element N O S))"
 POCKET = 5.0  # A: residues this near the ligand are the pocket
+#: nonpolar hydrogens left out of a selection: for the merged poses view, where
+#: every pose is drawn at once (the single-structure defaults keep all of them
+#: and let the view's H setting decide what is drawn)
+POLAR = "(not hydrogen or withinbonds 1 of (element N O S))"
 POLAR_CONTACT = 3.5  # A: N/O pairs between ligand and the rest drawn as contacts
 
 # Coarse-grained models: the selection keywords (protein, water, ions) are
@@ -184,9 +187,13 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
         reps = [
             ("protein or nucleic", "cartoon", "chain", "protein or nucleic"),
             # closed off: 'same residue as' takes everything after it
+            # every hydrogen is in these, nonpolar ones included: what is drawn of them
+            # is the view's own setting (H: polar, the default, all, none), and a
+            # hydrogen left out of the representation could not be shown by it, picked,
+            # or grown from in the Builder
             (f"(same residue as ((protein or nucleic) and within {POCKET:g} of ({lig}))) "
-             f"and not ({lig}) and {POLAR}", "sticks", "element", "binding site"),
-            (f"(same residue as ({lig})) and {POLAR}", "sticks", f"element/{carbon}", "ligand"),
+             f"and not ({lig})", "sticks", "element", "binding site"),
+            (f"same residue as ({lig})", "sticks", f"element/{carbon}", "ligand"),
             ("ions and not (" + lig + ")", "spheres", "element", "ions"),
         ]  # fmt: skip
     out = [{"sel": sel, "style": style, "color": color, "label": label}
