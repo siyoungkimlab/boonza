@@ -103,7 +103,14 @@ def load(directory, mols, ligs, names, log=print):
             s.positions = make_whole(s)
         keep = s.select("not (water or ions)").ids
         s = s.clone(keep)
+        # protein: the links of a chain; a ligand with an amino acid's N, CA, C and O
+        # (a peptide mimic) is a ligand all the same
+        from ..analyze import chain_residues
+
+        linked = np.zeros(s.nresidues, bool)
+        linked[chain_residues(s)] = True
         protein = np.asarray(s.select("protein").ids)
+        protein = protein[linked[np.asarray(s.atoms["residue"])[protein]]]
         rest = np.setdiff1d(np.arange(s.natoms), protein)
         ligand = _match(mol, s, rest, path)
         other = np.setdiff1d(rest, ligand)
