@@ -31,6 +31,8 @@ Layout::
     WORKDIR/edges/A~B/vacuum/      (no receptor: hydration)
     WORKDIR/edges/A~B/octanol/     (no receptor, --phase octanol: transfer)
     WORKDIR/octanol/box.dms      the equilibrated octanol box the octanol legs tile
+    WORKDIR/receptors/NAME.EXT   (--complexes) each ligand's receptor, superposed on the
+                                 first's (boonza.fep.complexes)
     WORKDIR/receptor_rem.EXT, rem.csv, rem_residues.csv   (--rem) the receptor relaxed
     WORKDIR/commands.txt
     WORKDIR/commands_new.txt     (--extend) the runs of the edges just added
@@ -284,16 +286,21 @@ class Leg:
     #: B's long-range dispersion coefficient less A's (dispersion_coefficient), for
     #: a periodic leg; the hybrid runs without one, so result adds it back
     dispersion_dK: float = 0.0
+    #: hybrid positions (nm) the windows from lambda 0.5 on start from: B's receptor,
+    #: B's pose (boonza.fep.complexes); None, every window from ``hybrid.positions``
+    positions_b: np.ndarray | None = None
 
 
 def build_leg(env: System | None, lig_a: System, lig_b: System, core: dict, ff, args,
               padding_nm: float, log=print, charge_change: int = 0,
-              solvent: System | None = None):  # fmt: skip
+              solvent: System | None = None, env_b=None):  # fmt: skip
     """The two end states of one leg and their hybrid: ``env`` (the receptor, or
     None in water) with ligand A, and with ligand B; ``core`` maps A's atoms to
     B's.  ``padding_nm`` None: in vacuum, no water and no cutoff.  ``solvent``:
     a periodic box (octanol) to tile in whole copies instead of TIP3P, with no
-    ions, cleared where its heavy atoms come near the ligands.
+    ions, cleared where its heavy atoms come near the ligands.  ``env_b``: the
+    receptor's positions with B (Å), for the windows from lambda 0.5 on to start
+    from, with B's pose of the atoms A and B share (``positions_b``).
 
     ``charge_change``, B's net charge less A's, is balanced by as many waters
     far from the solute becoming ions in B (openfe's, after perses): Cl- for a
@@ -372,7 +379,20 @@ def build_leg(env: System | None, lig_a: System, lig_b: System, core: dict, ff, 
     if padding_nm is not None:
         rc = 10.0 * args.cutoff_nm
         dk = dispersion_coefficient(new, rc) - dispersion_coefficient(old, rc)
-    return Leg(hyb, old, new, sys_old, sys_new, dropped, waters, dk)
+    positions_b = None
+    if env_b is not None:  # the hybrid's particles: A's system in order, then B's own
+        positions_b = np.array(hyb.positions, float)
+        # solvating moved everything by one vector: B's receptor and pose move with it
+        shift = positions_b[where_old[:ne]] - np.asarray(env.positions, float) / 10.0
+        if np.abs(shift - shift.mean(0)).max() > 1e-4:
+            raise RuntimeError("the solvated receptor is not the receptor moved as a whole")
+        shift = shift.mean(0)
+        positions_b[where_old[:ne]] = np.asarray(env_b, float) / 10.0 + shift
+        b_xyz = np.asarray(lig_b.positions, float) / 10.0 + shift
+        for i, j in core.items():
+            if int(where_old[ne + i]) in core_idx:  # still mapped after _constraint_fix
+                positions_b[where_old[ne + i]] = b_xyz[j]
+    return Leg(hyb, old, new, sys_old, sys_new, dropped, waters, dk, positions_b)
 
 
 def dispersion_coefficient(s: System, cutoff: float) -> float:
@@ -524,16 +544,17 @@ def _finish(hyb, old: System, args, complex_leg: bool, log=print):
         log(f"  dihedral restraints: {len(records)} backbone torsions over {what}")
 
 
-def write_leg(directory: Path, hyb, old: System, meta: dict) -> None:
+def write_leg(directory: Path, hyb, old: System, meta: dict, positions_b=None) -> None:
     import openmm
 
     directory.mkdir(parents=True, exist_ok=True)
     with gzip.open(directory / "system.xml.gz", "wt") as fh:
         fh.write(openmm.XmlSerializer.serialize(hyb.system))
+    extra = {} if positions_b is None else {"positions_b": positions_b}
     np.savez(directory / "state.npz", positions=hyb.positions,
              box=np.asarray(old.cell, float) / 10.0, core=np.asarray(hyb.core),
              unique_old=np.asarray(hyb.unique_old),
-             unique_new=np.asarray(hyb.unique_new))  # fmt: skip
+             unique_new=np.asarray(hyb.unique_new), **extra)  # fmt: skip
     (directory / "leg.json").write_text(json.dumps(meta, indent=1))
 
 
@@ -543,7 +564,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
          octanol_box=None, extend: bool = False,
          large_change_atoms: int = LARGE_CHANGE_ATOMS, network_method: str | None = None,
          max_change: int | None = None, max_degree: int | None = None,
-         reference: str | None = None) -> list[Path]:  # fmt: skip
+         reference: str | None = None, complexes=None) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
     ``charge_windows`` windows and ``charge_production_ns`` of production; one
@@ -551,7 +572,8 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     dense schedule (boonza.fep.lambdas.dense; 0 never).  ``network_method``,
     ``max_change``, ``max_degree`` and ``reference`` (a ligand's name) choose the
     edges (boonza.fep.network); not given, the first prep's (network.json) with
-    ``extend``, else the network's defaults.
+    ``extend``, else the network's defaults.  ``complexes``: a directory of one
+    co-complex per ligand (boonza.fep.complexes), instead of one receptor.
     ``phase``, without a receptor, what the water leg is set against: vacuum
     (hydration), octanol or wet-octanol (transfer); ``octanol_box`` a box built
     before (boonza.fep.octanol.box), else one is built in the work directory.
@@ -563,6 +585,15 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     work.mkdir(parents=True, exist_ok=True)
     mols, ligs, names = load_ligands(ligands_path)
     log(f"{len(ligs)} ligands from {ligands_path}")
+    own_receptors = None
+    if complexes is not None:  # every ligand's pose and receptor from its own complex
+        from . import complexes as cx
+
+        if args.input_structure or cofactors:
+            raise ValueError("--complexes gives every ligand its receptor: no receptor and "
+                             "no --cofactor-sdf beside it")  # fmt: skip
+        log(f"a receptor for every ligand, from {complexes}:")
+        receptor_from_complexes, own_receptors = cx.load(complexes, mols, ligs, names, log)
     before, new = None, []
     if extend:  # the first prep's ligands keep their indices; the new ones follow
         before = previous(work, mols, names)
@@ -584,6 +615,11 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         raise ValueError("--phase sets the leg a water leg is compared with, without a "
                          "receptor; with one the legs are complex and solvent")  # fmt: skip
     receptor = load_input(args.input_structure, log) if args.input_structure else None
+    if own_receptors is not None:
+        receptor = receptor_from_complexes
+        if args.dihedral_restraint != "none":
+            log("  warning: --dihedral-restraint holds every leg's backbone to A's receptor, "
+                "B's windows too")  # fmt: skip
     if cofactors and receptor is None:
         raise ValueError("cofactors go with a receptor")
     for k, path in enumerate(cofactors):  # each record its own template, as the ligands
@@ -641,7 +677,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     if receptor is not None:  # poses that clash: relieved with --rem, else named
         from . import relief
 
-        if getattr(args, "rem", False) and before is None:
+        if own_receptors is not None:
+            if getattr(args, "rem", False):
+                log("--complexes: every ligand comes in its own receptor, so no REM")
+        elif getattr(args, "rem", False) and before is None:
             log("REM, then EM: the receptor relaxed around every ligand's pose (the "
                 "ligands held as posed, the residues within 5 Å of one free)")  # fmt: skip
             relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log),
@@ -711,7 +750,15 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     if receptor is not None:
         from ..io import save
 
-        save(receptor, work / f"receptor{receptor_format(args.input_structure)}")
+        source = (cx.find(complexes, names[0]) if own_receptors is not None
+                  else args.input_structure)  # fmt: skip
+        save(receptor, work / f"receptor{receptor_format(source)}")
+        if own_receptors is not None:  # each ligand's, superposed: to look at
+            (work / "receptors").mkdir(exist_ok=True)
+            for name, xyz in own_receptors.items():
+                each = receptor.copy()
+                each.positions = xyz
+                save(each, work / "receptors" / f"{name}{receptor_format(source)}")
     runs, rows = [], []
     for e in edges:
         a, b = names[e.a], names[e.b]
@@ -736,9 +783,15 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 "switched")  # fmt: skip
         for leg, env, padding in legs:
             log(f"{a} -> {b}: {leg}")
+            env_b = None
+            if env is not None and own_receptors is not None:  # A's receptor; B's from 0.5
+                env = receptor.copy()
+                env.positions = own_receptors[a]
+                env_b = own_receptors[b]
             built = build_leg(env, ligs[e.a], ligs[e.b], e.mapping, ff, args, padding, log,
                               charge_change=dq,
-                              solvent=solvent_box if leg == "octanol" else None)  # fmt: skip
+                              solvent=solvent_box if leg == "octanol" else None,
+                              env_b=env_b)  # fmt: skip
             hyb, old, dropped = built.hybrid, built.old, built.dropped
             _finish(hyb, old, args, leg == "complex", log)
             meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "phase": phase,
@@ -756,7 +809,9 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             if tail and built.dispersion_dK:
                 # kcal/mol Å^3: result adds dK / <V> to this leg's ΔG
                 meta["dispersion_dK"] = built.dispersion_dK
-            write_leg(edge_dir / leg, hyb, old, meta)
+            if built.positions_b is not None:
+                meta["start_b_from"] = 0.5  # windows from here start in B's receptor
+            write_leg(edge_dir / leg, hyb, old, meta, built.positions_b)
             for r in range(1, repeats + 1):
                 runs.append((edge_dir / leg, r))
             if dropped:

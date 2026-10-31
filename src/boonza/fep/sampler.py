@@ -127,18 +127,24 @@ class ReplicaExchange:
     # --- the run ----------------------------------------------------------------------
 
     def start(self, positions, box=None, minimize: int = 0) -> Replicas:
-        """Replicas all at ``positions`` (nm), each minimized in its state for up to
-        ``minimize`` iterations (0: until converged), velocities at temperature."""
+        """Replicas all at ``positions`` (nm), or each state at its own (a list, one
+        per state), each minimized in its state for up to ``minimize`` iterations
+        (0: until converged), velocities at temperature."""
         u = self.mm.unit
         K = len(self.states)
-        xyz = np.asarray(positions, float)
-        r = Replicas(positions=[xyz.copy() for _ in range(K)], velocities=[None] * K,
+        if isinstance(positions, (list, tuple)):
+            if len(positions) != K:
+                raise ValueError(f"{len(positions)} starting positions for {K} states")
+            starts = [np.asarray(p, float) for p in positions]
+        else:
+            starts = [np.asarray(positions, float)] * K
+        r = Replicas(positions=[x.copy() for x in starts], velocities=[None] * K,
                      boxes=[None] * K, states=np.arange(K))  # fmt: skip
         vectors = self.context.getSystem().getDefaultPeriodicBoxVectors() if box is None else (
             [v * u.nanometer for v in np.asarray(box, float)])  # fmt: skip
         for i in range(K):
             self.context.setPeriodicBoxVectors(*vectors)
-            self.context.setPositions(xyz * u.nanometer)
+            self.context.setPositions(starts[i] * u.nanometer)
             self._set_state(i)
             self.mm.LocalEnergyMinimizer.minimize(self.context, 10.0, minimize)
             self.context.setVelocitiesToTemperature(self.temperature,

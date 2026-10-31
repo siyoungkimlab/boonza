@@ -64,6 +64,13 @@ def _prep(argv) -> int:
                         "(not mapped) runs 23 windows, dense from lambda 0.3 to 0.7 where their "
                         "Lennard-Jones is switched, instead of --windows; 0 never "
                         f"(default: {LARGE_CHANGE_ATOMS})")  # fmt: skip
+    g.add_argument("--complexes", metavar="DIR",
+                   help="a co-complex per ligand (an MD snapshot, a crystal structure), "
+                        "named after it (NAME.mae, .dms, .cif, .pdb), instead of one "
+                        "receptor: each ligand's pose comes from its complex, and an edge's "
+                        "windows from lambda 0.5 on start from B's receptor; water and ions "
+                        "are left out, and every protein must be the same atom for "
+                        "atom")  # fmt: skip
     g.add_argument("--network", choices=("3d", "2d"),
                    help="score ligand pairs on their atom mapping in the poses (3d), or on "
                         "their graphs' maximum common substructure, leaving the poses out of "
@@ -115,7 +122,7 @@ def _prep(argv) -> int:
              large_change_atoms=x.get("large_change_atoms", LARGE_CHANGE_ATOMS),
              network_method=x.get("network"), max_change=x.get("max_change"),
              max_degree=x.get("max_degree"),
-             reference=x.get("reference"))  # fmt: skip
+             reference=x.get("reference"), complexes=x.get("complexes"))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)
         return 1
