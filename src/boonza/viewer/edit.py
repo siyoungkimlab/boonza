@@ -520,8 +520,8 @@ def relabel(s, atoms, name: str = "", resid: str = "", chain: str = "") -> None:
     if not (name or resid or chain):
         raise ValueError("give a residue name, a residue number or a chain")
     if name:
-        if " " in name or len(name) > 4:
-            raise ValueError("a residue name is up to 4 characters, without spaces")
+        if " " in name:
+            raise ValueError("a residue name has no spaces")
         names = np.asarray(s.residues["name"]).astype(object)
         names[residues] = name
         s.residues["name"] = names.astype(str)

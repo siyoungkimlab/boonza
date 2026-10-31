@@ -3617,7 +3617,11 @@ export function setupUI(app) {
   async function savePath(path) {
     const m = actingModel();
     if (!m) return false;
-    try { const out = await app.post("api/save", { m: m.index, path }); app.message(`saved ${out.path}`); return true; }
+    try {
+      const out = await app.post("api/save", { m: m.index, path });
+      app.message(out.warning ? `saved ${out.path} · ${out.warning}` : `saved ${out.path}`, !!out.warning);
+      return true;
+    }
     catch (e) { app.message(e.message, true); return false; }
   }
   async function closeModel(which = null) {

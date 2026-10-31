@@ -1033,11 +1033,21 @@ class Session:
         self.ligand = "same residue as index " + " ".join(map(str, atoms))
         return {"ligand": self.ligand}
 
-    def save(self, path) -> str:
-        from ..io import save
+    def save(self, path) -> dict:
+        """Write the structure; with a warning when the format cuts something short
+        (a residue name past PDB's 4 characters)."""
+        from ..io import _format, save
 
         save(self.system, path)
-        return str(path)
+        out = {"path": str(path)}
+        if _format(path, None) == ".pdb":
+            names = np.asarray(self.system.residues["name"]).astype(str)
+            long = sorted({n for n in names if len(n) > 4})
+            if long:
+                out["warning"] = (f"PDB keeps 4 characters of a residue name: {', '.join(long[:5])}"
+                                  + (" ..." if len(long) > 5 else "") + " cut short; MAE or DMS "
+                                  "keep them whole")  # fmt: skip
+        return out
 
     def surface_charges(self) -> dict:
         """The charges an electrostatic surface is coloured by: the force field's

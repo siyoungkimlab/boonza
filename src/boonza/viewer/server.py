@@ -271,7 +271,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/set_angle":
             self._json(session.set_angle(body["atoms"], float(body["value"])))
         elif url.path == "/api/save":
-            self._json({"path": session.save(body["path"])})
+            self._json(session.save(body["path"]))
         elif url.path == "/api/dihedral":
             self._json(session.dihedral(body["atoms"]))
         elif url.path == "/api/set_dihedral":

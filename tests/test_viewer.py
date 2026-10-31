@@ -1540,3 +1540,16 @@ def test_deleting_a_chain_is_quick_and_says_which_atom_was_which():
     was = out["was"]
     assert len(was) == v.system.natoms and sorted(was) == sorted(set(range(len(names))) - set(ids))
     assert [names[w] for w in was] == list(np.asarray(v.system.atoms["name"]))
+
+
+def test_a_long_residue_name_is_kept_and_a_pdb_says_it_cuts_it(tmp_path):
+    from boonza.viewer import edit
+    from boonza.viewer.session import Session
+
+    v = Session(boonza.load(DATA / "1HHO.pdb"))
+    edit.relabel(v.system, [0], name="LIGAND")
+    assert str(v.system.residues["name"][v.system.atoms["residue"][0]]) == "LIGAND"
+    with pytest.raises(ValueError, match="no spaces"):
+        edit.relabel(v.system, [0], name="LIG AND")
+    assert "warning" not in v.save(tmp_path / "x.mae")
+    assert "LIGAND" in v.save(tmp_path / "x.pdb")["warning"]
