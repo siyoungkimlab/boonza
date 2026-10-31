@@ -431,6 +431,27 @@ def _forcefield(receptor, lig, ff, args):
     return out
 
 
+def _write_candidates(path, poses) -> None:
+    """Every placement tried, its ligand where its MD left it, with its step, parent,
+    candidate and score as fields: to see what the search found and rejected."""
+    from rdkit import Chem
+
+    with Chem.SDWriter(str(path)) as w:
+        for mol, xyz, row in poses:
+            m = Chem.Mol(mol)
+            m.RemoveAllConformers()
+            conf = Chem.Conformer(m.GetNumAtoms())
+            for k, p in enumerate(xyz):
+                conf.SetAtomPosition(k, [float(v) for v in p])
+            m.AddConformer(conf, assignId=True)
+            m.SetProp("_Name", f"step{row['step']}_from{row['parent']}_c{row['candidate']}")
+            for key in ("step", "parent", "candidate", "score", "drift", "contacts",
+                        "buried_unsatisfied"):  # fmt: skip
+                m.SetProp(key, str(round(row[key], 3) if isinstance(row[key], float) else row[key]))
+            m.SetProp("hbonds", " ".join(str(h) for h in row["hbonds"]))
+            w.write(m)
+
+
 def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 1,
              water: bool = False, pocket_a: float = POCKET_A, loose=(),
              secondary: bool = True, log=print) -> dict:  # fmt: skip
@@ -620,6 +641,7 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
     states = [State(np.asarray(receptor.positions, float),
                     {t: ref_xyz[r] for t, r in core.items()})]  # fmt: skip
     record = {"name": name, "core": len(core), "steps": [], "hold": hold}
+    poses = []  # every placement's ligand after its MD, for grow/NAME_candidates.sdf
     # held firmly: the core's ring atoms; its other atoms and everything grown are
     # held only loosely (hold="rings"), since a reference's ester or tBu need not sit
     # where the target's do (6N4B's and 9B54's shared core differ by 2.3 Å)
@@ -654,6 +676,7 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
                 row = {k_: v for k_, v in out.items() if k_ not in ("receptor", "ligand")}
                 row.update(step=k, parent=s, candidate=c)
                 record["steps"].append(row)
+                poses.append((mol, out["ligand"], row))
                 if out["drift"] > MAX_DRIFT:
                     continue
                 if not _same_stereo(mol, out["ligand"]):  # a centre inverted in the MD
@@ -690,4 +713,5 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
     save(complex_, path)
     record["score"] = final.score
     (work / "grow" / f"{name}.json").write_text(json.dumps(record, indent=1, default=float))
+    _write_candidates(work / "grow" / f"{name}_candidates.sdf", poses)
     return path
