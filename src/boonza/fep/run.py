@@ -57,7 +57,13 @@ def run_leg(directory, repeat: int = 1, platform: str | None = None, minimize: i
     else:
         log(f"{a} -> {b} {meta['leg']}, repeat {repeat}: {len(states)} states, minimizing")
         box = state["box"] if np.any(state["box"]) else None  # none in vacuum
-        r = rex.start(state["positions"], box=box, minimize=minimize)
+        start = state["positions"]
+        if "positions_b" in state.files:  # from B's receptor from lambda 0.5 on
+            at = float(meta.get("start_b_from", 0.5))
+            start = [state["positions_b"] if x >= at else state["positions"]
+                     for x in meta["lambdas"]]  # fmt: skip
+            log(f"  windows from lambda {at:g} start from {b}'s receptor")
+        r = rex.start(start, box=box, minimize=minimize)
     left_eq = max(n_eq - r.equilibration, 0)
     if left_eq:
         log(f"  equilibration: {left_eq} iterations ({left_eq * every / 1000:g} ns)")

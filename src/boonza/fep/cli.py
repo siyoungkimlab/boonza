@@ -64,6 +64,13 @@ def _prep(argv) -> int:
                         "(not mapped) runs 23 windows, dense from lambda 0.3 to 0.7 where their "
                         "Lennard-Jones is switched, instead of --windows; 0 never "
                         f"(default: {LARGE_CHANGE_ATOMS})")  # fmt: skip
+    g.add_argument("--complexes", metavar="DIR",
+                   help="a co-complex per ligand (an MD snapshot, a crystal structure), "
+                        "named after it (NAME.mae, .dms, .cif, .pdb), instead of one "
+                        "receptor: each ligand's pose comes from its complex, and an edge's "
+                        "windows from lambda 0.5 on start from B's receptor; water and ions "
+                        "are left out, and every protein must be the same atom for "
+                        "atom")  # fmt: skip
     g.add_argument("--network", choices=("3d", "2d"),
                    help="score ligand pairs on their atom mapping in the poses (3d), or on "
                         "their graphs' maximum common substructure, leaving the poses out of "
@@ -115,7 +122,7 @@ def _prep(argv) -> int:
              large_change_atoms=x.get("large_change_atoms", LARGE_CHANGE_ATOMS),
              network_method=x.get("network"), max_change=x.get("max_change"),
              max_degree=x.get("max_degree"),
-             reference=x.get("reference"))  # fmt: skip
+             reference=x.get("reference"), complexes=x.get("complexes"))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)
         return 1
@@ -135,6 +142,78 @@ def _run(argv) -> int:
         run_leg(a.leg, a.repeat, a.platform)
     except (ValueError, FileNotFoundError) as e:
         print(f"boonza fep run: error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _grow(argv) -> int:
+    from .. import viparr
+    from ..md.config import build_parser, parse_arguments
+    from ..md.prepare import forcefields, load_input
+    from .grow import grow
+    from .prep import load_ligands
+
+    parser = build_parser("boonza fep grow")
+    g = parser.add_argument_group("grow")
+    g.add_argument("--reference", help="the reference ligand, posed in the receptor (SDF, "
+                   "one record, with hydrogens)")  # fmt: skip
+    g.add_argument("--ligands", help="the ligands to grow from it (SDF with hydrogens and "
+                   "formal charges; their coordinates are not used)")  # fmt: skip
+    g.add_argument("--only", nargs="+", metavar="NAME", help="grow these ligands alone")
+    g.add_argument("--beam", type=int, help="placements carried to the next step (default: 2)")
+    g.add_argument("--keep", type=int, help="placements of a step taken through REM, EM and "
+                   "MD, from each carried one (default: 3)")  # fmt: skip
+    g.add_argument("--conformers", type=int, help="conformers embedded per step (default: 60)")
+    g.add_argument("--md-ps", dest="md_ps", type=float,
+                   help="ps of MD scoring each placement (default: 100)")  # fmt: skip
+    g.add_argument("--max-heavy", dest="max_heavy", type=int,
+                   help="heavy atoms of a chain grown in one step (default: 3)")  # fmt: skip
+    g.add_argument("--hold", choices=("rings", "core"),
+                   help="what of the reference's core is held firmly where it was: its ring "
+                        "atoms, the rest (and what grew) loosely, then the whole ligand "
+                        "relaxed (rings, the default); or every core atom (core)")  # fmt: skip
+    g.add_argument("--water", action="store_true",
+                   help="score each placement in TIP3P water rather than in a reaction "
+                        "field of water's dielectric, without solvent (the default)")  # fmt: skip
+    g.add_argument("--repeats", type=int,
+                   help="grow each ligand this many times and keep the best-scoring run "
+                        "(default: 1).  The MD is not reproducible on a GPU, so runs take "
+                        "different branches: one reached a salt bridge that four others "
+                        "missed.  Without explicit water a placement costs seconds")  # fmt: skip
+    args = parse_arguments(argv, parser)
+    for k, v in FEP_DEFAULTS.items():
+        if k not in args.specified:
+            setattr(args, k, v)
+    x = args.extra
+    try:
+        if not (args.input_structure and x.get("reference") and x.get("ligands")):
+            raise ValueError("give the receptor, --reference and --ligands")
+        receptor = load_input(args.input_structure, print)
+        ref_mols, _, _ = load_ligands(x["reference"])
+        mols, _, names = load_ligands(x["ligands"])
+        _, ff = forcefields(args)
+        failed = []
+        for mol, name in zip(mols, names, strict=True):
+            if x.get("only") and name not in x["only"]:
+                continue
+            try:
+                path = grow(receptor, ref_mols[0], mol, name, ff, args, args.workdir,
+                            beam=x.get("beam", 2), keep=x.get("keep", 3),
+                            n_conformers=x.get("conformers", 60), md_ps=x.get("md_ps", 100.0),
+                            max_heavy=x.get("max_heavy", 3),
+                            water=bool(x.get("water")),
+                            hold=x.get("hold") or "rings",
+                            repeats=x.get("repeats", 1),
+                            seed=getattr(args, "seed", 0) or 0)  # fmt: skip
+                print(f"  {path}")
+            except (ValueError, RuntimeError) as e:
+                print(f"boonza fep grow: {name}: {e}", file=sys.stderr)
+                failed.append(name)
+        if failed:
+            print(f"boonza fep grow: not grown: {', '.join(failed)}", file=sys.stderr)
+            return 1
+    except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
+        print(f"boonza fep grow: error: {e}", file=sys.stderr)
         return 1
     return 0
 
@@ -164,7 +243,7 @@ def _result(argv) -> int:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
-    commands = {"prep": _prep, "run": _run, "result": _result}
+    commands = {"prep": _prep, "run": _run, "result": _result, "grow": _grow}
     if not argv or argv[0] not in commands:
         print("usage: boonza fep {prep,run,result} ...\n\n" + __doc__, file=sys.stderr)
         return 2
