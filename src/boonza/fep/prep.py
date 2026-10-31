@@ -70,9 +70,11 @@ CHARGE_CHANGE_PENALTY = 0.1
 CHARGE_WINDOWS = 22
 CHARGE_PRODUCTION_NS = 20.0
 #: an edge where either ligand has at least this many heavy atoms of its own (not
-#: mapped to the other's) runs boonza.fep.lambdas.dense(); 0 never.  The network
-#: avoids such edges (boonza.fep.network.MAX_CHANGE), so it is the few it cannot
-LARGE_CHANGE_ATOMS = 8
+#: mapped to the other's) runs boonza.fep.lambdas.dense(); 0 never.  Only the
+#: largest: with MBAR fixed, 11 windows ran IGF1R's Cmpd1~Cmpd8 (a benzyl ring, 6)
+#: with neighbour overlap 0.09-0.12, though some of its edges that grow 4-9 from
+#: a phenol overlapped at 0.001-0.03
+LARGE_CHANGE_ATOMS = 12
 #: without a receptor, what the water leg is set against (boonza fep prep --phase)
 PHASES = ("vacuum", "octanol", "wet-octanol")
 #: what the receptor is written as (receptor.EXT, receptor_rem.EXT): the input's
