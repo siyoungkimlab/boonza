@@ -749,6 +749,28 @@ export function setupUI(app) {
     return { fixed, tethered };
   }
 
+  // how the solvent is modelled; "rf" is what the minimizer has always done
+  const SOLVENTS = [["rf", "Reaction field", "vacuum with a 12 Å reaction field at water's dielectric (ε 78.3): what OpenMM does with a cutoff, and what Minimize has always used"],
+                    ["gb", "Implicit solvent", "Generalized Born (OBC2, Amber's mbondi2 radii) on top of it: burying a polar atom costs its desolvation, which a reaction field alone never charges for"],
+                    ["vacuum", "Vacuum", "no screening at all (ε 1): salt bridges and charged groups pull far too hard"]];
+  function solventChoice(body, store = "boonza.solvent") {
+    let solvent = localStorage.getItem(store) || "rf";
+    const choices = SOLVENTS.map(([key, label, why]) => {
+      const b = button(label, () => {
+        solvent = key;
+        localStorage.setItem(store, key);
+        choices.forEach(x => x.classList.toggle("armed", x === b));
+      });
+      b.title = why;
+      b.classList.toggle("armed", key === solvent);
+      return b;
+    });
+    body.append(el("p", { className: "help" }, "Solvent. There is no explicit water either way; "
+      + "implicit solvent is the one that makes burying a polar group cost something."));
+    body.append(row(...choices));
+    return () => solvent;
+  }
+
   // what moves in each way to minimize; the rest is fixed
   const MIN_MODES = [["both", "Pocket + ligand", "the ligand and its pocket free"],
                      ["ligand", "Ligand", "the ligand free"],
@@ -758,7 +780,8 @@ export function setupUI(app) {
     if (!m) return;
     if (!m.topo?.editable) { app.message("this model cannot be minimized", true); return; }
     mode = mode || localStorage.getItem("boonza.minMode") || "both";
-    const c = m.state.constraint, body = { m: m.index, path: true, rem: localStorage.getItem("boonza.rem") === "1" };
+    const c = m.state.constraint, body = { m: m.index, path: true, rem: localStorage.getItem("boonza.rem") === "1",
+                                           solvent: localStorage.getItem("boonza.solvent") || "rf" };
     if (c.some(x => x)) {  // Edit | Restraints: those, not a mode
       body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
       body.fixed = app.range(c.length).filter(a => c[a] === 2);
@@ -779,7 +802,40 @@ export function setupUI(app) {
       const rem = out.rem_energy_before !== undefined
         ? ` (after REM: soft E ${out.rem_energy_before} → ${out.rem_energy_after})` : "";
       app.message(`${first}Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol${rem}; ${how}`
-        + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : ""));
+        + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : "")
+        + (out.solvent && out.solvent !== "rf" ? `; ${out.solvent_how}` : ""));
+      if (out.path) showPath(out.path, m);
+    } catch (e) { app.message(e.message, true); }
+  }
+
+  async function dynamics({ mode = null, restraint = null, picoseconds = null } = {}) {
+    const m = actingModel();
+    if (!m) return;
+    if (!m.topo?.editable) { app.message("this model cannot be run", true); return; }
+    mode = mode || localStorage.getItem("boonza.minMode") || "both";
+    const ps = picoseconds ?? +(localStorage.getItem("boonza.mdPs") || 10);
+    const T = +(localStorage.getItem("boonza.mdT") || 300);
+    const c = m.state.constraint;
+    const body = { m: m.index, path: true, picoseconds: ps, temperature: T,
+                   solvent: localStorage.getItem("boonza.solvent") || "rf",
+                   minimize_first: localStorage.getItem("boonza.mdMin") !== "0" };
+    if (c.some(x => x)) {
+      body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
+      body.fixed = app.range(c.length).filter(a => c[a] === 2);
+      body.tethered = app.range(c.length).filter(a => c[a] === 1);
+    } else Object.assign(body, { mode, restraint: restraint ?? +(localStorage.getItem("boonza.restraint") || 10) });
+    try {
+      const out = await app.busy(`running ${ps} ps of dynamics`, () => app.post("api/dynamics", body));
+      const added = out.protonated && state.models[out.protonated.m];
+      if (added && added !== m) await app.reloadModel(added, true);
+      await app.reloadModel(m, added === m);
+      const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
+        : `${MIN_MODES.find(([k]) => k === out.mobile)?.[2] ?? out.mobile}, the rest's heavy atoms held `
+          + `(${body.restraint} kcal/mol/Å², moved at most ${out.held_max} Å)`;
+      app.message(`${out.picoseconds} ps at ${out.temperature} K (${out.steps} steps): `
+        + `E ${out.energy_before} → ${out.energy_after} kJ/mol, mean ${out.energy_mean}; ${how}`
+        + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : "")
+        + `; ${out.solvent_how}`);
       if (out.path) showPath(out.path, m);
     } catch (e) { app.message(e.message, true); }
   }
@@ -933,6 +989,7 @@ export function setupUI(app) {
       { label: "Assign Force Field", run: assignForceField },
       { label: "Minimize…", run: minimizePanel },
       { label: "Minimize Ligand Only", run: () => minimize({ mode: "ligand" }) },
+      { label: "Dynamics…", run: dynamicsPanel },
       { label: "Torsion Profile…", run: () => profilePanel() },
       { label: "Ramachandran Plot…", run: () => ramaPanel() },
       "-",
@@ -1052,11 +1109,29 @@ export function setupUI(app) {
              molName: molecule.length === m.topo.residueAtoms[r].length ? `${R.name[r]}${R.resid[r]}` : `molecule of ${R.name[r]}${R.resid[r]}` };
   }
 
+  // Set as Ligand: the selection when there is one (a residue chosen stays that
+  // residue, a whole fragment stays the fragment), the molecule under the cursor
+  // otherwise.  Selecting the molecule over a selection was how choosing one
+  // protein residue turned its whole chain into the ligand, chain and all.
+  function ligandPick(c) {
+    const sel = app.selection().find(([model, ids]) => model === c.m && ids.length);
+    if (!sel) return { label: `Set ${c.molName} as Ligand`, pick: () => app.select(c.m, c.molecule) };
+    const R = c.m.topo.residues, of = c.m.topo.atoms.residue;
+    const res = [...new Set(sel[1].map(k => of[k]))];
+    const what = sel[1].length === c.m.topo.natoms ? "everything"
+      : res.length === 1 ? `${R.name[res[0]]}${R.resid[res[0]]}`
+      : `${res.length} selected residues`;
+    return { label: `Set ${what} as Ligand`, pick: () => {} };
+  }
+
   app.popup = (x, y, hit = null) => menu(() => [
     ...(c => c ? [
       { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
       { label: "Select Molecule", run: () => app.select(c.m, c.molecule) },
-      { label: "Set as Ligand", run: () => { app.select(c.m, c.molecule); chooseLigand(); } },
+      // what is selected becomes the ligand, as chooseLigand already takes it: a
+      // residue stays that residue.  Only with nothing selected does the molecule
+      // under the cursor stand in, which is what clicking a ligand means
+      (p => ({ label: p.label, run: () => { p.pick(); chooseLigand(); } }))(ligandPick(c)),
       // The selected part, when one is selected, and the atom under the cursor
       // otherwise: in a structure of a thousand superposed parts the cursor atom is
       // one of dozens within a few A of it, so a selection is what was meant.  The
@@ -1744,7 +1819,7 @@ export function setupUI(app) {
           + "style STYLE [SEL] (those atoms in that style only) · color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · "
           + "material opaque|glossy|matte|transparent|ghost · opacity 0.5 (the current representation's) · "
           + "surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine] · center [SEL] · fit · focus · reset\n"
-          + "editing: select SEL · minimize · undo · redo · open PATH|PDB-ID · save PATH\n"
+          + "editing: select SEL · minimize · dynamics [PS] · undo · redo · open PATH|PDB-ID · save PATH\n"
           + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
         return;
       case "model": {  // show these models alone
@@ -1807,6 +1882,7 @@ export function setupUI(app) {
         return;
       }
       case "minimize": await minimize(); return;
+      case "dynamics": case "md": await dynamics(args[0] ? { picoseconds: +args[0] } : {}); return;
       case "undo": await undo(); return;
       case "redo": await undo(true); return;
       case "open": await openPath(arg); return;
@@ -2528,6 +2604,7 @@ export function setupUI(app) {
         if (m?.receptor !== undefined) body.append(el("p", { className: "help" }, "A design is minimized in its receptor "
           + `(${state.models[m.receptor]?.name ?? "none"}); it keeps its new positions, the receptor its own.`));
       }
+      solventChoice(body);
       const rem = el("input", { type: "checkbox", checked: localStorage.getItem("boonza.rem") === "1" });
       rem.onchange = () => localStorage.setItem("boonza.rem", rem.checked ? "1" : "0");
       body.append(row(el("label", { title: "for a structure that clashes: Lennard-Jones and Coulomb made soft and bounded "
@@ -2536,7 +2613,53 @@ export function setupUI(app) {
       body.append(el("p", { className: "help" }, "Hydrogens are never held; a structure without any (or a design's receptor) "
         + "gets them first, as Add / Adjust H adds them. Force field: Amber ff19SB, "
         + "GAFF2 for ligands, AM1-BCC charges at a conformer built from the bonds (the same in every pose); "
-        + "vacuum with a 12 Å reaction field. The minimization plays back after."));
+        + "the solvent as chosen above, with a 12 Å cutoff. The minimization plays back after."));
+    });
+  }
+
+  function dynamicsPanel() {
+    panel("dynamics", "Molecular Dynamics", body => {
+      const m = app.currentModel();
+      const c = constraintCounts(m);
+      const num = (store, value, min, step, width = "60px") => {
+        const i = el("input", { type: "number", value: localStorage.getItem(store) || value, min, step, style: `width:${width}` });
+        i.onchange = () => localStorage.setItem(store, i.value);
+        return i;
+      };
+      const ps = num("boonza.mdPs", 10, 0.1, 1);
+      const T = num("boonza.mdT", 300, 0, 10);
+      const k = num("boonza.restraint", 10, 0, 1);
+      body.append(el("p", { className: "help" }, "Langevin dynamics, 1 fs steps with no bond constraints "
+        + "(a frozen atom may not share a constraint with a moving one). Unlike minimizing, this can cross a "
+        + "barrier and will not return to where it started: Edit | Undo takes the old positions back."));
+      body.append(row(el("span", { className: "what" }, "Length"), ps, el("span", {}, "ps"),
+                      el("span", { className: "what" }, "Temperature"), T, el("span", {}, "K")));
+      let mode = localStorage.getItem("boonza.minMode") || "both";
+      if (c.fixed || c.tethered) {
+        body.append(el("p", { className: "help" }, `Restraints: ${c.fixed} frozen, ${c.tethered} restrained `
+          + "(Edit | Restraints); the rest is free."));
+      } else {
+        const choices = MIN_MODES.map(([key, label]) => {
+          const b = button(label, () => {
+            mode = key;
+            localStorage.setItem("boonza.minMode", key);
+            choices.forEach(x => x.classList.toggle("armed", x === b));
+          });
+          b.classList.toggle("armed", key === mode);
+          return b;
+        });
+        body.append(el("p", { className: "help" }, "What moves; the heavy atoms of the rest are held by springs."));
+        body.append(row(...choices));
+      }
+      body.append(row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²")));
+      solventChoice(body);
+      const first = el("input", { type: "checkbox", checked: localStorage.getItem("boonza.mdMin") !== "0" });
+      first.onchange = () => localStorage.setItem("boonza.mdMin", first.checked ? "1" : "0");
+      body.append(row(el("label", { title: "dynamics started on a clash blows up; minimizing first takes the strain out" },
+        first, " Minimize first")));
+      body.append(row(button("Run Dynamics", () => dynamics({ mode, restraint: +k.value, picoseconds: +ps.value }), "blue")));
+      body.append(el("p", { className: "help" }, "The run plays back after, as a minimization does. "
+        + "A design in a receptor cannot be run yet: open the complex itself."));
     });
   }
 
@@ -3166,6 +3289,7 @@ export function setupUI(app) {
     if (panels.picture) { panels.picture.remove(); delete panels.picture; } else renderPanel();
   };
   $("btn-min").onclick = minimizePanel;
+  $("btn-md").onclick = dynamicsPanel;
 
   // --- the sequence, above the view: click a residue to select it (drag or Shift: a
   // run of them; Ctrl: add or take away), right click to mutate, center or show it ------

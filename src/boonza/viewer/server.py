@@ -290,6 +290,23 @@ class _Handler(BaseHTTPRequestHandler):
                     restraint=float(body.get("restraint", 10.0)),
                     fixed=body.get("fixed"),
                     tethered=body.get("tethered"),
+                    solvent=body.get("solvent", "rf"),
+                )
+            )
+        elif url.path == "/api/dynamics":
+            self._json(
+                self.viewer.dynamics(
+                    int(body.get("m", 0)),
+                    body.get("mode"),
+                    path=bool(body.get("path")),
+                    mobile=body.get("mobile") or None,
+                    restraint=float(body.get("restraint", 10.0)),
+                    fixed=body.get("fixed"),
+                    tethered=body.get("tethered"),
+                    solvent=body.get("solvent", "rf"),
+                    picoseconds=float(body.get("picoseconds", 10.0)),
+                    temperature=float(body.get("temperature", 300.0)),
+                    minimize_first=bool(body.get("minimize_first", True)),
                 )
             )
         else:

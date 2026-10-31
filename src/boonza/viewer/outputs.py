@@ -432,7 +432,8 @@ class Viewer:
         constrained = kw.get("fixed") is not None or kw.get("tethered") is not None
         if self.receptor(m) is not None and not constrained:
             return self.minimize_design(m, mode or "both", path=path,
-                                        restraint=kw.get("restraint", 10.0), rem=rem)  # fmt: skip
+                                        restraint=kw.get("restraint", 10.0), rem=rem,
+                                        solvent=kw.get("solvent", "rf"))  # fmt: skip
         protonated = _protonate_if_bare(self.session(m), m)
         out = self.session(m).minimize(mode=mode, path=path, rem=rem, **kw)
         if protonated:
@@ -441,8 +442,24 @@ class Viewer:
             out["path"] = _split_path(out["path"], [(m, None)])
         return out
 
+    def dynamics(self, m: int, mode: str | None = None, path: bool = False, **kw) -> dict:
+        """Molecular dynamics on model ``m`` (see :meth:`Session.dynamics`).  A design
+        is run in its receptor, as minimizing one is."""
+        constrained = kw.get("fixed") is not None or kw.get("tethered") is not None
+        if self.receptor(m) is not None and not constrained:
+            raise ValueError("a design in a receptor cannot be run yet: minimize it, or "
+                             "open the complex itself")  # fmt: skip
+        protonated = _protonate_if_bare(self.session(m), m)
+        out = self.session(m).dynamics(mode=mode, path=path, **kw)
+        if protonated:
+            out["protonated"] = protonated
+        if "path" in out:
+            out["path"] = _split_path(out["path"], [(m, None)])
+        return out
+
     def minimize_design(self, m: int, mode: str = "both", path: bool = False,
-                        restraint: float = 10.0, rem: bool = False) -> dict:  # fmt: skip
+                        restraint: float = 10.0, rem: bool = False,
+                        solvent: str = "rf") -> dict:  # fmt: skip
         """Minimize design ``m`` in its receptor: ``mode`` both (it and its pocket free),
         ligand (it alone) or pocket (the pocket alone); the heavy atoms of the rest
         held by ``restraint`` (kcal/mol/A^2) springs; ``rem``: soft first (boonza.rem).
@@ -480,7 +497,7 @@ class Viewer:
         p.positions = np.asarray(s.positions)[np.asarray(p.atoms["view_index"])]
         with design._lock:
             report = minimize(s, restraint=restraint, fixed=[], tethered=held, parameterized=p,
-                              path=path, rem=rem)  # fmt: skip
+                              path=path, rem=rem, solvent=solvent)  # fmt: skip
             design._remember()
             design.system.positions = np.asarray(s.positions)[n0:]
             out = {**design._changed(topology=False), **report, "mobile": mode,
