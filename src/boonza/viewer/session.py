@@ -1041,8 +1041,7 @@ class Session:
         save(self.system, path)
         out = {"path": str(path)}
         if _format(path, None) == ".pdb":
-            names = np.asarray(self.system.residues["name"]).astype(str)
-            long = sorted({n for n in names if len(n) > 4})
+            long = sorted({str(n) for n in self.system.residues["name"] if len(str(n)) > 4})
             if long:
                 out["warning"] = (f"PDB keeps 4 characters of a residue name: {', '.join(long[:5])}"
                                   + (" ..." if len(long) > 5 else "") + " cut short; MAE or DMS "
