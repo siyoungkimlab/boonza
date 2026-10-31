@@ -138,7 +138,7 @@ def classify(system) -> tuple[np.ndarray, np.ndarray]:
     return restype, atomtype
 
 
-def chain_residues(system) -> np.ndarray:
+def chain_residues(system, bridge: bool = False) -> np.ndarray:
     """Indices of the residues that are part of a chain: read as protein or
     nucleic acid, and bonded to another residue that is.
 
@@ -146,13 +146,35 @@ def chain_residues(system) -> np.ndarray:
     carries an amino acid's N, CA and C, and ATP, GDP or FAD a nucleotide's
     phosphate and ribose.  Only a bond into the next residue makes one a link of
     the chain, as a modified or D-amino acid is.
+
+    ``bridge``: also count a residue bonded to links on both sides, whatever its
+    atoms are called.  An edited residue -- a backbone atom deleted or renamed,
+    a substituent added -- sits inside the chain and is read as part of it, while
+    a cofactor bonded to one residue only (a heme on its histidine) is not.  For
+    what a chain looks like on screen, rather than what a force field or a
+    coarse-grained mapping can name.
     """
     res = system._atoms.column("residue")
     polymer = np.zeros(system.nresidues, bool)
     polymer[res[system.select("protein or nucleic").ids]] = True
     ri, rj = res[system._bonds.column("i")], res[system._bonds.column("j")]
-    link = (ri != rj) & polymer[ri] & polymer[rj]
-    return np.unique(np.concatenate([ri[link], rj[link]]))
+    between = ri != rj
+    link = between & polymer[ri] & polymer[rj]
+    found = np.unique(np.concatenate([ri[link], rj[link]])) if link.any() else np.zeros(0, int)
+    if not bridge:
+        return found
+    chain = np.zeros(system.nresidues, bool)
+    chain[found] = True
+    a, b = ri[between], rj[between]
+    for _ in range(system.nresidues):  # a run of edited residues joins one at a time
+        reached = np.zeros(system.nresidues, np.int64)
+        for p, q in ((a, b), (b, a)):
+            np.add.at(reached, p, chain[q].astype(np.int64))
+        inside = (reached >= 2) & ~chain
+        if not inside.any():
+            break
+        chain |= inside
+    return np.flatnonzero(chain)
 
 
 def end_caps(system) -> dict[int, tuple[int, str]]:

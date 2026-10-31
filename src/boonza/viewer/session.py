@@ -445,12 +445,15 @@ class Session:
             solvent = f"resname {CG_SOLVENT}" if self.cg else "water or ions"
             ids = s.select(poly).ids
             if not self.cg:  # a link of a chain: an amino acid's N, CA, C and O alone are
-                # no protein (a peptide-like ligand of one residue carries them too)
+                # no protein (a peptide-like ligand of one residue carries them too).
+                # Every atom of a link counts, not only those the atom-name reading
+                # finds: an edited residue inside the chain keeps its atoms' names to
+                # itself, and intersecting with the reading made an island of it
                 from ..analyze import chain_residues
 
                 linked = np.zeros(s.nresidues, bool)
-                linked[chain_residues(s)] = True
-                ids = ids[linked[np.asarray(s.atoms["residue"])[ids]]]
+                linked[chain_residues(s, bridge=True)] = True
+                ids = np.flatnonzero(linked[np.asarray(s.atoms["residue"])])
             klass[ids] = 0
             klass[s.select(solvent).ids] = 2
         bonds = s.bonds
@@ -1057,12 +1060,42 @@ class Session:
         return out
 
     def set_ligand(self, atoms) -> dict:
-        """These atoms (whole residues) are the ligand: pocket, contacts, minimize."""
+        """These atoms (whole residues) are the ligand: pocket, contacts, minimize.
+
+        With the default representations in use, the new ones are returned too: they
+        name the ligand and its pocket in their selections, so choosing a different
+        ligand leaves them drawing the one before it.  Representations of your own are
+        left alone (``reps`` is then None here)."""
         atoms = [int(a) for a in atoms]
         if not atoms:
             raise ValueError("select the ligand's atoms first")
         self.ligand = "same residue as index " + " ".join(map(str, atoms))
-        return {"ligand": self.ligand}
+        reps = None
+        if self.reps is None:
+            reps = default_reps(self.system, self.cg, self.ligand, self.carbon)
+        return {"ligand": self.ligand, "reps": reps}
+
+    def stereocentre(self, atom: int) -> dict:
+        """What an atom is as a stereocentre (see :func:`edit.stereocentre`), for the
+        menu to offer R/S, and D/L on an alpha carbon."""
+        from .edit import stereocentre
+
+        return stereocentre(self.system, int(atom))
+
+    def set_chirality(self, atom: int, want: str) -> dict:
+        """Turn a stereocentre over to ``want`` (R, S, D or L), its two smallest
+        branches swapped and the rest relaxed (:func:`edit.set_chirality`)."""
+        from .edit import set_chirality
+
+        self._editable()
+        with self._lock:
+            self._remember()
+            try:
+                report = set_chirality(self.system, int(atom), want)
+            except Exception:
+                self.system = self._undo.pop()[0]
+                raise
+            return {**self._changed(topology=False), **report}
 
     def save(self, path) -> dict:
         """Write the structure; with a warning when the format cuts something short

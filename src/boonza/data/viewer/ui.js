@@ -1057,6 +1057,13 @@ export function setupUI(app) {
     try {
       const out = await app.post("api/set_ligand", { m: m.index, atoms });
       m.topo.ligand = out.ligand;
+      if (out.reps) {  // the defaults name the old ligand in their selections
+        m.topo.reps = out.reps;
+        m.reps = [];
+        app.applyReps(m, await Promise.all(out.reps.map(async r =>
+          ({ ...r, ids: r.ids || await serverSelect(m, r.sel) }))));
+        app.repsChanged(m);
+      }
       app.message("ligand chosen: Focus on Ligand, Binding Site, contacts and Minimize use it");
       await app.refreshContacts();
       app.rebuild();
@@ -1124,6 +1131,52 @@ export function setupUI(app) {
     return { label: `Set ${what} as Ligand`, pick: () => {} };
   }
 
+  // Set Chirality: R/S for any centre, D/L as well on an amino acid's alpha carbon.
+  // What it is now is shown, so it is clear what is being turned over, and an atom
+  // that is no stereocentre says so rather than offering an edit that cannot work.
+  async function chiralityPanel(m, a) {
+    let info;
+    try {
+      info = await app.getJSON(`api/stereocentre?m=${m.index}&a=${a}`);
+    } catch (e) { app.message(e.message, true); return; }
+    const name = m.topo.atoms.name[a];
+    panel("chirality", `Chirality of ${name}`, body => {
+      if (info.error) {
+        body.append(el("p", { className: "help" }, info.error));
+        return;
+      }
+      const now = info.cip, dl = info.dl;
+      body.append(el("p", { className: "what" },
+        now ? `${name} is ${now}${dl ? ` — ${dl}` : ""}` : `${name} has no configuration assigned`));
+      const set = async want => {
+        try {
+          const out = await app.post("api/set_chirality", { m: m.index, atom: a, want });
+          await app.reloadModel(m, false);
+          app.message(out.changed
+            ? `${name}: ${out.was} → ${out.is}, ${out.moved} atoms moved (Edit | Undo takes it back)`
+            : `${name} is already ${out.is}`);
+          if (panels["chirality"]) { panels["chirality"].remove(); delete panels["chirality"]; }
+        } catch (e) { app.message(e.message, true); }
+      };
+      if (!now) {
+        body.append(el("p", { className: "help" }, "RDKit assigns it none: its four branches "
+          + "are not all different, or it has fewer than four."));
+        return;
+      }
+      body.append(row(...["R", "S"].map(w => button(w, () => set(w), w === now ? "" : "blue"))));
+      if (info.alpha) {
+        body.append(el("p", { className: "help" }, "An alpha carbon, so D and L name it too "
+          + "(L is S for every amino acid but cysteine, whose sulfur outranks its carboxyl)."));
+        body.append(row(...["D", "L"].map(w => button(w, () => set(w), w === dl ? "" : "blue"))));
+      }
+      body.append(el("p", { className: "help" }, "Its two smallest branches are swapped — "
+        + `here ${info.branches.map(b => b.length).join(", ")} atoms — rigidly, by the half turn `
+        + "about their bisector, so bond lengths and angles inside them are kept; the rest is "
+        + "then relaxed with the centre held. If it does not come out as asked, nothing is "
+        + "changed."));
+    });
+  }
+
   app.popup = (x, y, hit = null) => menu(() => [
     ...(c => c ? [
       { label: `${c.molName}${hit.atom !== undefined ? ` · ${c.m.topo.atoms.name[c.a]}` : ""}`, off: () => true },
@@ -1141,6 +1194,7 @@ export function setupUI(app) {
       { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
       { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
       ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
+      ...(hit.atom !== undefined ? [{ label: "Set Chirality…", run: () => chiralityPanel(c.m, c.a) }] : []),
       { label: "Copy Its SMILES", run: () => { app.select(c.m, c.molecule); copySmiles(); } },
       { label: "Copy Molecule Into", sub: copyIntoItems(c.m, c.molecule) },
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
@@ -2442,6 +2496,17 @@ export function setupUI(app) {
     refreshSmilesBox();
     body.append(el("p", { className: "help" }, "Pick a tool, then click in the view: a hydrogen grows the molecule "
       + "from it, an atom changes, empty space starts a new molecule. With atoms selected, a tool acts on them. Esc puts the tool down."));
+    body.append(el("h3", {}, "Chirality"));
+    body.append(el("p", { className: "help" }, "Select one atom of a stereocentre, then R or S "
+      + "(D or L on an amino acid's alpha carbon). Its two smallest branches are swapped, so a "
+      + "side chain and its HA change places and nothing is rebuilt."));
+    body.append(row(button("Turn It Over…", () => {
+      const t_ = editTarget();
+      if (!t_) return;
+      const [m, atoms] = t_;
+      if (atoms.length !== 1) { app.message("select exactly one atom: the centre", true); return; }
+      chiralityPanel(m, atoms[0]);
+    }, "blue")));
     body.append(el("h3", {}, "Atoms"));
     const g = grid();
     for (const e of ELEMENTS) if (e !== "H") g.append(toolButton(e, { kind: "element", value: e, label: e }));
