@@ -40,8 +40,8 @@ against a leucine.  A candidate whose unit drifts more than ``MAX_DRIFT`` is
 dropped.  The ``beam`` best go on to the next step, so one wrong turn early does
 not decide the rest; a step that adds no polar atom keeps twice as many
 placements and carries every one on, since its score (drift and contacts alone)
-says little about which way a chain should lie.  Placed atoms carry on into the next step where the MD left
-them, the protein too.
+says little about which way a chain should lie.  Placed atoms carry on into the
+next step where the MD left them, the protein too.
 """
 
 from __future__ import annotations
