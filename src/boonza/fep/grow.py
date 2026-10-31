@@ -488,6 +488,8 @@ def _write_candidates(path, poses) -> None:
     with Chem.SDWriter(str(path)) as w:
         for mol, xyz, rec, row in poses:
             name = f"step{row['step']}_from{row['parent']}_c{row['candidate']}"
+            if row.get("run"):  # run 0 keeps the plain name it always had
+                name = f"run{row['run'] + 1}_{name}"
             receptors[name] = np.asarray(rec, np.float32)
             m = Chem.Mol(mol)
             m.RemoveAllConformers()
@@ -809,9 +811,17 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
 
 def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 2,
          keep: int = 3, n_conformers: int = 60, md_ps: float = 100.0, max_heavy: int = 3,
-         water: bool = False, hold: str = "rings", log=print) -> Path:  # fmt: skip
+         water: bool = False, hold: str = "rings", repeats: int = 1, seed: int = 0,
+         log=print) -> Path:  # fmt: skip
     """``target`` (RDKit, with hydrogens) grown from ``reference`` (posed in
-    ``receptor``) step by step (the module docstring); its complex's path."""
+    ``receptor``) step by step (the module docstring); its complex's path.
+
+    ``repeats``: grow it this many times and keep the best-scoring run.  The MD is
+    not reproducible on a GPU, so two runs of the same search take different
+    branches: growing 9B54's ligand from 6N4B five times reached the crystal's
+    salt bridge once, and the other four settled a few Angstrom away.  Repeats
+    buy that back, and with a reaction field and no explicit water a placement
+    costs seconds."""
     from ..io import save
     from . import relief
 
@@ -827,74 +837,98 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
         f"{sum(len(s) for s in plan)} to grow in {len(plan)} step(s): "
         + " | ".join(" ".join(target.GetAtomWithIdx(i).GetSymbol() for i in s) or "-"
                      for s in plan))  # fmt: skip
-    states = [State(np.asarray(receptor.positions, float),
-                    {t: ref_xyz[r] for t, r in core.items()})]  # fmt: skip
-    record = {"name": name, "core": len(core), "steps": [], "hold": hold}
-    poses = []  # every placement's ligand after its MD, for grow/NAME_candidates.sdf
     # held firmly: the core's ring atoms; its other atoms and everything grown are
     # held only loosely (hold="rings"), since a reference's ester or tBu need not sit
     # where the target's do (6N4B's and 9B54's shared core differ by 2.3 Å)
     rings = set().union(*_ring_systems(target)) if target.GetRingInfo().NumRings() else set()
     firm = {i for i in core if i in rings} if hold == "rings" else set(core)
-    placed = set(core)
-    for k, step in enumerate(plan, 1):
-        placed |= set(step)
-        mol, index = intermediate(target, placed)
-        new = [index[i] for i in step]
-        # a step that adds no polar atom cannot be judged: a bare chain makes no
-        # hydrogen bond wherever it points, and its score is drift and contacts
-        # alone.  More of its placements are kept and every one goes on, to be
-        # judged by what the next step reaches from it
-        blind = not any(target.GetAtomWithIdx(i).GetAtomicNum() in (7, 8, 16) for i in step)
-        here_keep = 2 * keep if blind and step else keep
-        # a long chain has a torsion at every bond: more conformers to draw from
-        here_confs = n_conformers * max(1, (len(step) + 2) // 3)
-        found = []
-        lig_ff = None
-        for s, state in enumerate(states):
-            fixed = {index[i]: xyz for i, xyz in state.placed.items() if i in index}
-            confs = embed(mol, fixed, n=here_confs, seed=7 + 31 * k + s)
-            rec = receptor.copy()
-            rec.positions = state.receptor
-            prot_heavy = state.receptor[np.asarray(rec.atoms["anum"]) > 1]
-            ranked = sorted(confs, key=lambda c: (clashes(c, new, prot_heavy)[0],
-                                                  -clashes(c, new, prot_heavy)[1]))  # fmt: skip
-            for c, xyz in enumerate(ranked[:here_keep]):
-                lig = _ligand(mol, xyz)
-                if lig_ff is None:
-                    lig_ff = _forcefield(rec, lig, ff, args)
-                here = rec.copy()
-                relief.relieve(here, [lig], [name], lig_ff, args, log=lambda *_: None)
-                core_ids = [index[i] for i in state.placed if i in index]
-                loose = [index[i] for i in state.placed if i in index and i not in firm]
-                out = md_score(here, lig, core_ids, new, lig_ff, args, ps=md_ps,
-                               seed=1000 * k + 10 * s + c, water=water,
-                               loose=loose if hold == "rings" else (), log=log)  # fmt: skip
-                row = {k_: v for k_, v in out.items() if k_ not in ("receptor", "ligand")}
-                row.update(step=k, parent=s, candidate=c)
-                record["steps"].append(row)
-                poses.append((mol, out["ligand"], out["receptor"], row))
-                if out["drift"] > MAX_DRIFT:
-                    continue
-                if not _same_stereo(mol, out["ligand"]):  # a centre inverted in the MD
-                    row["inverted"] = True
-                    continue
-                back = {i: out["ligand"][j] for i, j in index.items()
-                        if target.GetAtomWithIdx(i).GetAtomicNum() > 1 and i in placed}  # fmt: skip
-                found.append((out["score"], State(out["receptor"], back, out["score"],
-                                                  state.history + [row]), out, mol))  # fmt: skip
-        if not found:
-            raise RuntimeError(f"{name}: no placement of step {k} stays where it was put")
-        found.sort(key=lambda f: -f[0])
-        states = [f[1] for f in found] if blind and step else [f[1] for f in found[:beam]]
-        best = found[0]
-        log(f"  step {k}: {len(found)} placements kept"
-            + (", all carried on (no polar atom to judge them by)" if blind and step else "")
-            + f"; best score {best[0]:.2f} "
-            f"({best[2]['interaction']:.0f} kJ/mol with the protein, the whole ligand "
-            f"{best[2]['interaction_ligand']:.0f}, hydrogen bonds "
-            f"{best[2]['hbonds']}, buried unsatisfied {best[2]['buried_unsatisfied']}, "
-            f"cation-pi {best[2]['cation_pi']:.2f}, drift {best[2]['drift']:.2f} Å)")  # fmt: skip
+    record = {"name": name, "core": len(core), "steps": [], "hold": hold,
+              "repeats": repeats}  # fmt: skip
+    poses = []  # every placement's ligand after its MD, for grow/NAME_candidates.sdf
+
+    def search(rep: int):
+        """One growth, its seeds shifted by ``rep``: (best, index, lig_ff)."""
+        offset = seed + 100_000 * rep
+        tag = f"run {rep + 1}/{repeats}: " if repeats > 1 else ""
+        states = [State(np.asarray(receptor.positions, float),
+                        {t: ref_xyz[r] for t, r in core.items()})]  # fmt: skip
+        placed = set(core)
+        best = index = lig_ff = None
+        for k, step in enumerate(plan, 1):
+            placed |= set(step)
+            mol, index = intermediate(target, placed)
+            new = [index[i] for i in step]
+            # a step that adds no polar atom cannot be judged: a bare chain makes no
+            # hydrogen bond wherever it points, and its score is drift and contacts
+            # alone.  More of its placements are kept and every one goes on, to be
+            # judged by what the next step reaches from it
+            blind = not any(target.GetAtomWithIdx(i).GetAtomicNum() in (7, 8, 16) for i in step)
+            here_keep = 2 * keep if blind and step else keep
+            # a long chain has a torsion at every bond: more conformers to draw from
+            here_confs = n_conformers * max(1, (len(step) + 2) // 3)
+            found = []
+            lig_ff = None
+            for s, state in enumerate(states):
+                fixed = {index[i]: xyz for i, xyz in state.placed.items() if i in index}
+                confs = embed(mol, fixed, n=here_confs, seed=offset + 7 + 31 * k + s)
+                rec = receptor.copy()
+                rec.positions = state.receptor
+                prot_heavy = state.receptor[np.asarray(rec.atoms["anum"]) > 1]
+                ranked = sorted(confs, key=lambda c: (clashes(c, new, prot_heavy)[0],
+                                                      -clashes(c, new, prot_heavy)[1]))  # fmt: skip
+                for c, xyz in enumerate(ranked[:here_keep]):
+                    lig = _ligand(mol, xyz)
+                    if lig_ff is None:
+                        lig_ff = _forcefield(rec, lig, ff, args)
+                    here = rec.copy()
+                    relief.relieve(here, [lig], [name], lig_ff, args, log=lambda *_: None)
+                    core_ids = [index[i] for i in state.placed if i in index]
+                    loose = [index[i] for i in state.placed if i in index and i not in firm]
+                    out = md_score(here, lig, core_ids, new, lig_ff, args, ps=md_ps,
+                                   seed=offset + 1000 * k + 10 * s + c, water=water,
+                                   loose=loose if hold == "rings" else (), log=log)  # fmt: skip
+                    row = {k_: v for k_, v in out.items() if k_ not in ("receptor", "ligand")}
+                    row.update(step=k, parent=s, candidate=c, run=rep)
+                    record["steps"].append(row)
+                    poses.append((mol, out["ligand"], out["receptor"], row))
+                    if out["drift"] > MAX_DRIFT:
+                        continue
+                    if not _same_stereo(mol, out["ligand"]):  # a centre inverted in the MD
+                        row["inverted"] = True
+                        continue
+                    heavy = target.GetAtomWithIdx
+                    back = {i: out["ligand"][j] for i, j in index.items()
+                            if heavy(i).GetAtomicNum() > 1 and i in placed}  # fmt: skip
+                    state_ = State(out["receptor"], back, out["score"], state.history + [row])
+                    found.append((out["score"], state_, out, mol))
+            if not found:
+                raise RuntimeError(f"{name}: no placement of step {k} stays where it was put")
+            found.sort(key=lambda f: -f[0])
+            states = [f[1] for f in found] if blind and step else [f[1] for f in found[:beam]]
+            best = found[0]
+            log(f"  {tag}step {k}: {len(found)} placements kept"
+                + (", all carried on (no polar atom to judge them by)"
+                   if blind and step else "")
+                + f"; best score {best[0]:.2f} "
+                f"({best[2]['interaction']:.0f} kJ/mol with the protein, the whole ligand "
+                f"{best[2]['interaction_ligand']:.0f}, hydrogen bonds "
+                f"{best[2]['hbonds']}, buried unsatisfied {best[2]['buried_unsatisfied']}, "
+                f"cation-pi {best[2]['cation_pi']:.2f}, "
+                f"drift {best[2]['drift']:.2f} Å)")  # fmt: skip
+        return best, index, lig_ff
+
+    runs = []
+    for rep in range(max(1, repeats)):
+        got = search(rep)
+        runs.append(got)
+        if repeats > 1:
+            log(f"  run {rep + 1}/{repeats}: best score {got[0][0]:.2f}")
+    # the best-scoring run wins; the others stay in the candidates file
+    best, index, lig_ff = max(runs, key=lambda g: g[0][0])
+    if repeats > 1:
+        scores = ", ".join(f"{g[0][0]:.2f}" for g in runs)
+        log(f"{name}: {repeats} runs scored {scores}; keeping the best")
+        record["run_scores"] = [float(g[0][0]) for g in runs]
     _, final, out, mol = best
     if hold == "rings":  # a last relaxation: the whole ligand loosely held, rings firm
         rec = receptor.copy()

@@ -175,6 +175,11 @@ def _grow(argv) -> int:
     g.add_argument("--water", action="store_true",
                    help="score each placement in TIP3P water rather than in a reaction "
                         "field of water's dielectric, without solvent (the default)")  # fmt: skip
+    g.add_argument("--repeats", type=int,
+                   help="grow each ligand this many times and keep the best-scoring run "
+                        "(default: 1).  The MD is not reproducible on a GPU, so runs take "
+                        "different branches: one reached a salt bridge that four others "
+                        "missed.  Without explicit water a placement costs seconds")  # fmt: skip
     args = parse_arguments(argv, parser)
     for k, v in FEP_DEFAULTS.items():
         if k not in args.specified:
@@ -197,7 +202,9 @@ def _grow(argv) -> int:
                             n_conformers=x.get("conformers", 60), md_ps=x.get("md_ps", 100.0),
                             max_heavy=x.get("max_heavy", 3),
                             water=bool(x.get("water")),
-                            hold=x.get("hold") or "rings")  # fmt: skip
+                            hold=x.get("hold") or "rings",
+                            repeats=x.get("repeats", 1),
+                            seed=getattr(args, "seed", 0) or 0)  # fmt: skip
                 print(f"  {path}")
             except (ValueError, RuntimeError) as e:
                 print(f"boonza fep grow: {name}: {e}", file=sys.stderr)
