@@ -15,6 +15,9 @@ onto it a step at a time, each step a unit that makes chemical sense:
 * a functional group, never split (carboxylate, guanidinium, amidine, amide,
   ester, carbamate, urea, sulfonamide, sulfone, nitro, nitrile, phosphate,
   CF3, ...), nor any atoms joined by a double or triple bond;
+* an unbranched chain whole, however long (a butoxy, an ethylene glycol): a bare
+  chain reaches nothing, so where it should point cannot be judged until its end
+  is there;
 * otherwise a chain of up to ``max_heavy`` (3) heavy atoms, cut only at single
   bonds.
 
@@ -35,7 +38,9 @@ the protein held; without solvent, in a reaction field of water's dielectric
 so a pyridine N that points at a backbone NH wins over the flip that buries it
 against a leucine.  A candidate whose unit drifts more than ``MAX_DRIFT`` is
 dropped.  The ``beam`` best go on to the next step, so one wrong turn early does
-not decide the rest.  Placed atoms carry on into the next step where the MD left
+not decide the rest; a step that adds no polar atom keeps twice as many
+placements and carries every one on, since its score (drift and contacts alone)
+says little about which way a chain should lie.  Placed atoms carry on into the next step where the MD left
 them, the protein too.
 """
 
@@ -236,10 +241,22 @@ def _heavy_neighbours(mol, i) -> set[int]:
     return {n.GetIdx() for n in mol.GetAtomWithIdx(i).GetNeighbors() if n.GetAtomicNum() > 1}
 
 
+def _chain_like(mol, unit) -> bool:
+    """Whether ``unit`` is one atom of a chain (a CH2, an ether O): in a ring none,
+    unbranched, and not in a group that is grown whole."""
+    if len(unit) != 1:
+        return False
+    i = next(iter(unit))
+    a = mol.GetAtomWithIdx(i)
+    return not a.IsInRing() and len(_heavy_neighbours(mol, i)) <= 2
+
+
 def steps(mol, core, max_heavy: int = 3) -> list[list[int]]:
     """The order to grow the target's heavy atoms outside ``core`` in: each step
-    one unit (units), or a chain of acyclic ones up to ``max_heavy`` heavy atoms,
-    always bonded to what is placed already."""
+    one unit (units), a chain of acyclic ones up to ``max_heavy`` heavy atoms, or
+    a whole flexible chain where its atoms are unbranched links (a butoxy, an
+    ethylene glycol), since a step is placed by what it reaches and a bare chain
+    reaches nothing: its direction cannot be judged until its end is there."""
     ring_atoms = set().union(*_ring_systems(mol)) if mol.GetRingInfo().NumRings() else set()
     placed, left, out = set(core), list(units(mol, core)), []
 
@@ -254,10 +271,13 @@ def steps(mol, core, max_heavy: int = 3) -> list[list[int]]:
         left.remove(unit)
         step = set(unit)
         placed |= unit
-        while not step & ring_atoms and len(step) < max_heavy:
+        chain = _chain_like(mol, unit)
+        while not step & ring_atoms and (chain or len(step) < max_heavy):
             nxt = [u for u in left if not u & ring_atoms and touches(u)
-                   and len(step) + len(u) <= max_heavy
+                   and (chain and _chain_like(mol, u) or len(step) + len(u) <= max_heavy)
                    and any(_heavy_neighbours(mol, i) & step for i in u)]  # fmt: skip
+            if chain:  # only the links themselves; its terminal group is its own step
+                nxt = [u for u in nxt if _chain_like(mol, u)]
             if not nxt:
                 break
             u = min(nxt, key=lambda u: (min(u), len(u)))
@@ -652,17 +672,25 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
         placed |= set(step)
         mol, index = intermediate(target, placed)
         new = [index[i] for i in step]
+        # a step that adds no polar atom cannot be judged: a bare chain makes no
+        # hydrogen bond wherever it points, and its score is drift and contacts
+        # alone.  More of its placements are kept and every one goes on, to be
+        # judged by what the next step reaches from it
+        blind = not any(target.GetAtomWithIdx(i).GetAtomicNum() in (7, 8, 16) for i in step)
+        here_keep = 2 * keep if blind and step else keep
+        # a long chain has a torsion at every bond: more conformers to draw from
+        here_confs = n_conformers * max(1, (len(step) + 2) // 3)
         found = []
         lig_ff = None
         for s, state in enumerate(states):
             fixed = {index[i]: xyz for i, xyz in state.placed.items() if i in index}
-            confs = embed(mol, fixed, n=n_conformers, seed=7 + 31 * k + s)
+            confs = embed(mol, fixed, n=here_confs, seed=7 + 31 * k + s)
             rec = receptor.copy()
             rec.positions = state.receptor
             prot_heavy = state.receptor[np.asarray(rec.atoms["anum"]) > 1]
             ranked = sorted(confs, key=lambda c: (clashes(c, new, prot_heavy)[0],
                                                   -clashes(c, new, prot_heavy)[1]))  # fmt: skip
-            for c, xyz in enumerate(ranked[:keep]):
+            for c, xyz in enumerate(ranked[:here_keep]):
                 lig = _ligand(mol, xyz)
                 if lig_ff is None:
                     lig_ff = _forcefield(rec, lig, ff, args)
@@ -689,9 +717,11 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
         if not found:
             raise RuntimeError(f"{name}: no placement of step {k} stays where it was put")
         found.sort(key=lambda f: -f[0])
-        states = [f[1] for f in found[:beam]]
+        states = [f[1] for f in found] if blind and step else [f[1] for f in found[:beam]]
         best = found[0]
-        log(f"  step {k}: {len(found)} placements kept; best score {best[0]:.2f} "
+        log(f"  step {k}: {len(found)} placements kept"
+            + (", all carried on (no polar atom to judge them by)" if blind and step else "")
+            + f"; best score {best[0]:.2f} "
             f"(hydrogen bonds {best[2]['hbonds']}, buried unsatisfied "
             f"{best[2]['buried_unsatisfied']}, drift {best[2]['drift']:.2f} Å)")  # fmt: skip
     _, final, out, mol = best

@@ -44,10 +44,16 @@ def test_groups_and_rings_are_grown_whole():
         if "NH2+" in smiles:
             guan = next(s for s in plan if _symbols(target, s).count("N") >= 3)
             assert len(guan) >= 4
-    # a chain: at most 3 heavy atoms a step
+    # an unbranched chain: one step, however long (it reaches nothing until its end)
     target = _mol("CCCCCCc1ccccc1")
+    assert [len(s) for s in grow.steps(target, grow.core_map(ref, target))] == [6]
+    # a chain to a group: the chain, then the group whole
+    target = _mol("[O-]C(=O)CCCCc1ccccc1")
     plan = grow.steps(target, grow.core_map(ref, target))
-    assert [len(s) for s in plan] == [3, 3]
+    assert [_symbols(target, s) for s in plan] == ["CCCC", "COO"]
+    # branched, so not a chain: at most 3 heavy atoms a step
+    target = _mol("CC(C)CC(C)Cc1ccccc1")
+    assert max(len(s) for s in grow.steps(target, grow.core_map(ref, target))) <= 3
 
 
 def test_every_intermediate_is_a_molecule():
