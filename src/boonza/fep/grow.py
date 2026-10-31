@@ -77,6 +77,9 @@ CROWDED = 8
 #: kJ/mol/nm^2: what holds the core's heavy atoms in the MD (2000 let a held
 #: alpha carbon slip 0.5 Å through the plane of its substituents and invert)
 CORE_KJ = 1.0e5
+#: kJ/mol: what holds the phi and psi of residues in helices and sheets (boonza md's
+#: dihedral_restraint "ss"), so the free pocket keeps its secondary structure
+SS_KJ = 20.0
 #: Å: how far a loosely held atom may go before it is held (hold="rings")
 LOOSE_A = 2.0
 #: Å: residues with a heavy atom this near the ligand move, the rest are held; found
@@ -403,7 +406,7 @@ def _forcefield(receptor, lig, ff, args):
 
 def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 1,
              water: bool = False, pocket_a: float = POCKET_A, loose=(),
-             log=print) -> dict:  # fmt: skip
+             secondary: bool = True, log=print) -> dict:  # fmt: skip
     """A short MD of ``receptor`` and ``lig``, ``core`` (ligand atoms) restrained, the
     residues within ``pocket_a`` of the ligand free and the rest of the protein held
     where it is; without ``water`` (the default) in a reaction field of water's
@@ -470,6 +473,13 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
         if res[i] not in pocket:
             hold.addParticle(int(i), [5000.0, *xyz0[i]])
     system.addForce(hold)
+    if secondary:  # helices and sheets kept as they are; the pocket's loops and side chains free
+        from ..md.restraints import add_dihedral_restraints
+
+        try:
+            add_dihedral_restraints(system, param, "ss", SS_KJ)
+        except ValueError:  # no helix or sheet to hold
+            pass
     platform = mm.Platform.getPlatformByName(args.platform) if args.platform else None
     integ = mm.LangevinMiddleIntegrator(args.temperature * u.kelvin, 1.0 / u.picosecond,
                                         args.integration_fs * u.femtosecond)  # fmt: skip
