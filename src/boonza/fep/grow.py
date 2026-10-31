@@ -23,11 +23,13 @@ open valence capped with a hydrogen.  A step places its unit by embedding many
 conformers with every atom placed before held where it is (the torsions about
 the new bond, a ring's flips, its puckers), drops those that clash with the
 protein, and takes the ``keep`` most distinct of the rest through REM and EM (the
-pocket making room, boonza.fep.relief) and a short MD in water with the core and
-the protein away from the ligand restrained.  Each is scored on the new unit:
+pocket making room, boonza.fep.relief) and a short MD with the core restrained,
+the residues within ``POCKET_A`` of the ligand as it now is free and the rest of
+the protein held; without solvent, in a reaction field of water's dielectric
+(``water``: in TIP3P).  Each is scored on the new unit:
 
     score = sum over its polar atoms of the fraction of frames they hydrogen-bond
-            - 2 x (1 - that fraction) for each one that is buried (no water near)
+            - 2 x (1 - that fraction) for each one that is buried (protein all around)
             - 0.5 x its drift (Å) + 0.01 x its protein contacts
 
 so a pyridine N that points at a backbone NH wins over the flip that buries it
@@ -70,6 +72,14 @@ CLASH_A = 2.5
 HBOND_A, HBOND_DEG = 3.3, 120.0
 #: a polar atom with fewer waters than this within 3.5 Å, on average, is buried
 BURIED_WATERS = 0.5
+#: without water: protein heavy atoms within 4.5 Å of a polar atom that bury it
+CROWDED = 8
+#: kJ/mol/nm^2: what holds the core's heavy atoms in the MD (2000 let a held
+#: alpha carbon slip 0.5 Å through the plane of its substituents and invert)
+CORE_KJ = 1.0e5
+#: Å: residues with a heavy atom this near the ligand move, the rest are held; found
+#: again for every placement, from the ligand as it now is, so the pocket grows with it
+POCKET_A = 8.0
 
 
 # --- the plan: core, units, steps --------------------------------------------------------
@@ -126,6 +136,20 @@ def _stereo_agrees(reference, target, pairs) -> bool:
             if ref.GetAtomWithIdx(r).GetProp("_CIPCode") != want[t]:
                 return False
     return True
+
+
+def _same_stereo(mol, xyz) -> bool:
+    """Whether ``mol`` at positions ``xyz`` (Å) has its stereocentres as written."""
+    from rdkit import Chem
+
+    m = Chem.Mol(mol)
+    m.RemoveAllConformers()
+    conf = Chem.Conformer(m.GetNumAtoms())
+    for k, p in enumerate(xyz):
+        conf.SetAtomPosition(k, [float(v) for v in p])
+    m.AddConformer(conf, assignId=True)
+    Chem.AssignStereochemistryFrom3D(m)
+    return Chem.MolToSmiles(Chem.RemoveHs(m)) == Chem.MolToSmiles(Chem.RemoveHs(mol))
 
 
 def _ring_systems(mol) -> list[set[int]]:
@@ -251,8 +275,13 @@ def intermediate(mol, placed):
 
 
 def embed(mol, fixed: dict[int, np.ndarray], n: int = 60, seed: int = 7) -> list[np.ndarray]:
-    """Up to ``n`` conformers of ``mol`` (Å) with its atoms ``fixed`` where they are
-    (superposed on them, then put back exactly), alike ones dropped."""
+    """Up to ``n`` conformers of ``mol`` (Å) with its atoms ``fixed`` where they are,
+    alike ones dropped.  Embedded with the fixed atoms as a coordinate map where
+    that works; a crystal's exact geometry often cannot be met, and then each
+    conformer is embedded freely and superposed on the fixed atoms within two bonds
+    of the new ones (the attachment, so the new atoms leave it as they should).
+    Either way the fixed atoms are put back exactly and the rest relaxed around
+    them (MMFF, the fixed atoms held)."""
     from rdkit import Chem
     from rdkit.Chem import AllChem
     from rdkit.Geometry import Point3D
@@ -261,26 +290,59 @@ def embed(mol, fixed: dict[int, np.ndarray], n: int = 60, seed: int = 7) -> list
 
     m = Chem.Mol(mol)
     m.RemoveAllConformers()
+    keys = sorted(fixed)
+    target = np.array([fixed[i] for i in keys]) if keys else np.zeros((0, 3))
+    new = [i for i in range(m.GetNumAtoms())
+           if i not in fixed and m.GetAtomWithIdx(i).GetAtomicNum() > 1]  # fmt: skip
     cmap = {i: Point3D(*map(float, xyz)) for i, xyz in fixed.items()}
     ids = list(AllChem.EmbedMultipleConfs(m, numConfs=n, coordMap=cmap, randomSeed=seed,
                                           useRandomCoords=True, enforceChirality=True,
-                                          maxAttempts=50))  # fmt: skip
-    if not ids:
-        raise RuntimeError(f"no conformer of {Chem.MolToSmiles(Chem.RemoveHs(mol))} keeps the "
-                           "atoms placed before where they are")  # fmt: skip
-    keys = sorted(fixed)
-    target = np.array([fixed[i] for i in keys])
-    new = [i for i in range(m.GetNumAtoms())
-           if i not in fixed and m.GetAtomWithIdx(i).GetAtomicNum() > 1]  # fmt: skip
+                                          maxAttempts=5))  # fmt: skip
+    anchor = keys
+    if not ids:  # free, superposed on the attachment
+        ids = list(AllChem.EmbedMultipleConfs(m, numConfs=n, randomSeed=seed,
+                                              enforceChirality=True))  # fmt: skip
+        if not ids:
+            raise RuntimeError(f"RDKit cannot embed {Chem.MolToSmiles(Chem.RemoveHs(mol))}")
+        near = set()
+        for a in new:
+            for b in m.GetAtomWithIdx(a).GetNeighbors():
+                near.add(b.GetIdx())
+                near |= {c.GetIdx() for c in b.GetNeighbors()}
+        near = sorted(i for i in near if i in fixed)
+        anchor = near if len(near) >= 3 else keys
+    where = [keys.index(i) for i in anchor]
+    props = AllChem.MMFFGetMoleculeProperties(m)
+    want = Chem.MolToSmiles(Chem.RemoveHs(mol))  # its stereocentres, as the target has them
     out = []
     for cid in ids:
         xyz = m.GetConformer(cid).GetPositions()
-        R, t = kabsch(xyz[keys], target)
-        xyz = xyz @ R.T + t
+        if len(anchor) >= 3:
+            R, t = kabsch(xyz[anchor], target[where])
+            xyz = xyz @ R.T + t
         xyz[keys] = target
+        conf = m.GetConformer(cid)
+        for k, p in enumerate(xyz):
+            conf.SetAtomPosition(k, p.tolist())
+        if props is not None and keys:  # the joins and hydrogens made good, fixed atoms held
+            field = AllChem.MMFFGetMoleculeForceField(m, props, confId=cid)
+            for i in keys:
+                field.AddFixedPoint(i)
+            field.Minimize(maxIts=500)
+            xyz = m.GetConformer(cid).GetPositions()
+            xyz[keys] = target
+        # a hydrogen left on the wrong face of a held centre inverts it: such a
+        # conformer is not the target
+        probe = Chem.Mol(m, confId=cid)
+        Chem.AssignStereochemistryFrom3D(probe, confId=cid)
+        if Chem.MolToSmiles(Chem.RemoveHs(probe)) != want:
+            continue
         if new and any(np.sqrt(((xyz[new] - o[new]) ** 2).sum(1).mean()) < 0.5 for o in out):
             continue
         out.append(xyz)
+    if not out:
+        raise RuntimeError(f"no conformer of {want} keeps the atoms placed before and its "
+                           "stereocentres")  # fmt: skip
     return out
 
 
@@ -338,11 +400,14 @@ def _forcefield(receptor, lig, ff, args):
 
 
 def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 1,
-             log=print) -> dict:  # fmt: skip
-    """A short MD of ``receptor`` and ``lig`` in water, ``core`` (ligand atoms) and
-    the protein farther than 10 Å from the ligand restrained; the new unit's
-    (``new``, ligand heavy atoms) hydrogen bonds, burial, drift and contacts, the
-    score, and where the MD left the protein and the ligand (Å)."""
+             water: bool = False, pocket_a: float = POCKET_A, log=print) -> dict:  # fmt: skip
+    """A short MD of ``receptor`` and ``lig``, ``core`` (ligand atoms) restrained, the
+    residues within ``pocket_a`` of the ligand free and the rest of the protein held
+    where it is; without ``water`` (the default) in a reaction field of water's
+    dielectric, no solvent, a polar atom buried where protein crowds it, else in
+    TIP3P water, buried where no water is near.  The new unit's (``new``, ligand
+    heavy atoms) hydrogen bonds, burial, drift and contacts, the score, and where
+    the MD left the protein and the ligand (Å)."""
     import openmm as mm
     import openmm.unit as u
     from scipy.spatial import cKDTree
@@ -355,35 +420,49 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
     both.append(lig)
     n_rec, n_lig = receptor.natoms, lig.natoms
     charge = float(_parameterize(both, ff, False).atoms["charge"].sum())
-    box = solvate(both, thickness=10.0)
-    box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
+    if water:
+        box = solvate(both, thickness=10.0)
+        box = neutralize(box, cation="Na", anion="Cl", charge=charge, concentration=args.saltM)
+    else:
+        box = both.copy()
     box.atoms["fep_index"] = np.arange(1, box.natoms + 1)
     param = _parameterize(box, ff, args.hmr)
     where = _by_tag(param, box.natoms)
-    _, system, _ = to_openmm(param, nonbonded_method="PME", cutoff=10.0 * args.cutoff_nm,
-                             constraints=True, dispersion_correction=True)  # fmt: skip
+    if water:
+        _, system, _ = to_openmm(param, nonbonded_method="PME", cutoff=10.0 * args.cutoff_nm,
+                                 constraints=True, dispersion_correction=True)  # fmt: skip
+    else:  # charges screened as by water beyond the cutoff: no salt bridge in vacuum
+        _, system, _ = to_openmm(param, nonbonded_method="CutoffNonPeriodic", cutoff=12.0,
+                                 constraints=True, dispersion_correction=False,
+                                 epsilon_rf=78.5)  # fmt: skip
     xyz0 = np.asarray(param.positions, float) / 10.0
     rec, lig_ids = where[:n_rec], where[n_rec:][:n_lig]
     anum = np.asarray(param.atoms["anum"])
-    hold = mm.CustomExternalForce("0.5*k*periodicdistance(x,y,z,x0,y0,z0)^2")
+    hold = mm.CustomExternalForce("0.5*k*periodicdistance(x,y,z,x0,y0,z0)^2" if water
+                                  else "0.5*k*((x-x0)^2+(y-y0)^2+(z-z0)^2)")  # fmt: skip
     hold.addPerParticleParameter("k")
     for p in ("x0", "y0", "z0"):
         hold.addPerParticleParameter(p)
     for i in lig_ids[list(core)]:
         if anum[i] > 1:
-            hold.addParticle(int(i), [2000.0, *xyz0[i]])
+            hold.addParticle(int(i), [CORE_KJ, *xyz0[i]])
     lig_heavy = lig_ids[anum[lig_ids] > 1]
     rec_heavy = rec[anum[rec] > 1]
-    far = cKDTree(xyz0[lig_heavy]).query(xyz0[rec_heavy])[0] > 1.0
-    for i in rec_heavy[far]:
-        hold.addParticle(int(i), [1000.0, *xyz0[i]])
+    # the pocket's residues free, every other protein heavy atom held where it is
+    res = np.asarray(param.atoms["residue"])
+    near = cKDTree(xyz0[lig_heavy]).query(xyz0[rec_heavy])[0] <= pocket_a / 10.0
+    pocket = set(res[rec_heavy[near]].tolist())
+    for i in rec_heavy:
+        if res[i] not in pocket:
+            hold.addParticle(int(i), [5000.0, *xyz0[i]])
     system.addForce(hold)
     platform = mm.Platform.getPlatformByName(args.platform) if args.platform else None
     integ = mm.LangevinMiddleIntegrator(args.temperature * u.kelvin, 1.0 / u.picosecond,
                                         args.integration_fs * u.femtosecond)  # fmt: skip
     ctx = (mm.Context(system, integ, platform) if platform is not None
            else mm.Context(system, integ))  # fmt: skip
-    ctx.setPeriodicBoxVectors(*(np.asarray(param.cell, float) / 10.0))
+    if water:
+        ctx.setPeriodicBoxVectors(*(np.asarray(param.cell, float) / 10.0))
     ctx.setPositions(xyz0)
     mm.LocalEnergyMinimizer.minimize(ctx, 10.0, 500)
     ctx.setVelocitiesToTemperature(args.temperature * u.kelvin, seed)
@@ -438,7 +517,11 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
                 if ok:
                     break
             hb[i] += ok
-            wet[i] += float((np.linalg.norm(x[water_o] - x[i], axis=1) < 3.5).sum())
+            if water:
+                wet[i] += float((np.linalg.norm(x[water_o] - x[i], axis=1) < 3.5).sum())
+            else:  # open to solvent where little protein crowds it
+                crowd = (np.linalg.norm(x[rec_heavy] - x[i], axis=1) < 4.5).sum()
+                wet[i] += float(crowd < CROWDED)
         new_heavy = new_ids[anum[new_ids] > 1]
         if len(new_heavy):
             drift.append(np.linalg.norm(x[new_ids].mean(0) - start.mean(0)))
@@ -465,7 +548,7 @@ def md_score(receptor, lig, core, new, ff, args, ps: float = 100.0, seed: int = 
 
 def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 2,
          keep: int = 3, n_conformers: int = 60, md_ps: float = 100.0, max_heavy: int = 3,
-         log=print) -> Path:  # fmt: skip
+         water: bool = False, log=print) -> Path:  # fmt: skip
     """``target`` (RDKit, with hydrogens) grown from ``reference`` (posed in
     ``receptor``) step by step (the module docstring); its complex's path."""
     from ..io import save
@@ -509,11 +592,14 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
                 relief.relieve(here, [lig], [name], lig_ff, args, log=lambda *_: None)
                 core_ids = [index[i] for i in state.placed if i in index]
                 out = md_score(here, lig, core_ids, new, lig_ff, args, ps=md_ps,
-                               seed=1000 * k + 10 * s + c, log=log)  # fmt: skip
+                               seed=1000 * k + 10 * s + c, water=water, log=log)  # fmt: skip
                 row = {k_: v for k_, v in out.items() if k_ not in ("receptor", "ligand")}
                 row.update(step=k, parent=s, candidate=c)
                 record["steps"].append(row)
                 if out["drift"] > MAX_DRIFT:
+                    continue
+                if not _same_stereo(mol, out["ligand"]):  # a centre inverted in the MD
+                    row["inverted"] = True
                     continue
                 back = {i: out["ligand"][j] for i, j in index.items()
                         if target.GetAtomWithIdx(i).GetAtomicNum() > 1 and i in placed}  # fmt: skip
