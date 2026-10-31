@@ -146,6 +146,62 @@ def _run(argv) -> int:
     return 0
 
 
+def _grow(argv) -> int:
+    from .. import viparr
+    from ..md.config import build_parser, parse_arguments
+    from ..md.prepare import forcefields, load_input
+    from .grow import grow
+    from .prep import load_ligands
+
+    parser = build_parser("boonza fep grow")
+    g = parser.add_argument_group("grow")
+    g.add_argument("--reference", help="the reference ligand, posed in the receptor (SDF, "
+                   "one record, with hydrogens)")  # fmt: skip
+    g.add_argument("--ligands", help="the ligands to grow from it (SDF with hydrogens and "
+                   "formal charges; their coordinates are not used)")  # fmt: skip
+    g.add_argument("--only", nargs="+", metavar="NAME", help="grow these ligands alone")
+    g.add_argument("--beam", type=int, help="placements carried to the next step (default: 2)")
+    g.add_argument("--keep", type=int, help="placements of a step taken through REM, EM and "
+                   "MD, from each carried one (default: 3)")  # fmt: skip
+    g.add_argument("--conformers", type=int, help="conformers embedded per step (default: 60)")
+    g.add_argument("--md-ps", dest="md_ps", type=float,
+                   help="ps of MD scoring each placement (default: 100)")  # fmt: skip
+    g.add_argument("--max-heavy", dest="max_heavy", type=int,
+                   help="heavy atoms of a chain grown in one step (default: 3)")  # fmt: skip
+    args = parse_arguments(argv, parser)
+    for k, v in FEP_DEFAULTS.items():
+        if k not in args.specified:
+            setattr(args, k, v)
+    x = args.extra
+    try:
+        if not (args.input_structure and x.get("reference") and x.get("ligands")):
+            raise ValueError("give the receptor, --reference and --ligands")
+        receptor = load_input(args.input_structure, print)
+        ref_mols, _, _ = load_ligands(x["reference"])
+        mols, _, names = load_ligands(x["ligands"])
+        _, ff = forcefields(args)
+        failed = []
+        for mol, name in zip(mols, names, strict=True):
+            if x.get("only") and name not in x["only"]:
+                continue
+            try:
+                path = grow(receptor, ref_mols[0], mol, name, ff, args, args.workdir,
+                            beam=x.get("beam", 2), keep=x.get("keep", 3),
+                            n_conformers=x.get("conformers", 60), md_ps=x.get("md_ps", 100.0),
+                            max_heavy=x.get("max_heavy", 3))  # fmt: skip
+                print(f"  {path}")
+            except (ValueError, RuntimeError) as e:
+                print(f"boonza fep grow: {name}: {e}", file=sys.stderr)
+                failed.append(name)
+        if failed:
+            print(f"boonza fep grow: not grown: {', '.join(failed)}", file=sys.stderr)
+            return 1
+    except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
+        print(f"boonza fep grow: error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _result(argv) -> int:
     from .result import results
 
@@ -171,7 +227,7 @@ def _result(argv) -> int:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
-    commands = {"prep": _prep, "run": _run, "result": _result}
+    commands = {"prep": _prep, "run": _run, "result": _result, "grow": _grow}
     if not argv or argv[0] not in commands:
         print("usage: boonza fep {prep,run,result} ...\n\n" + __doc__, file=sys.stderr)
         return 2
