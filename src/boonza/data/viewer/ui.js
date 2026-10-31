@@ -642,7 +642,9 @@ export function setupUI(app) {
   const reloadModel = app.reloadModel;
   app.reloadModel = async (m, topology, was = null) => {
     if (!replaying) remember({ edit: m, before: m.state ? snapshot(m) : null });
-    return reloadModel(m, topology, was);
+    const out = await reloadModel(m, topology, was);
+    markBuilderH();  // new hydrogens, and a state built again: mark them once more
+    return out;
   };
   // a model just loaded again takes a look its atoms fit (what an edit undone or redone had)
   function lookAgain(m, snap) {
@@ -1693,6 +1695,7 @@ export function setupUI(app) {
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {
+    markBuilderH();  // a selection of its own brings its hydrogens out, in the Builder
     ramaRefresh?.();
     footerEdit();
     footerSmiles();
@@ -2308,9 +2311,9 @@ export function setupUI(app) {
     body.innerHTML = "";
     (tab === "protein" ? proteinBuilder : atomBuilder)(body);
     if (tab === "builder") {  // molecules grow at their hydrogens, so every hydrogen of
-      // what the view draws has to be drawn too, and pickable -- a receptor's as much as
-      // a ligand's, since an edited residue stays in its chain and is classed with it
-      setHydrogens("all");
+      // what the view draws has to be in a representation, and pickable -- a receptor's
+      // as much as a ligand's, since an edited residue stays in its chain and is
+      // classed with it.  Which of them are drawn is markBuilderH's business.
       const atomRep = r => r.on && !app.isRibbon(r) && r.style !== "surface";
       for (const m of app.shownModels()) {
         const A = m.topo.atoms, n = m.topo.natoms;
@@ -2337,11 +2340,41 @@ export function setupUI(app) {
         }
         app.aggregate(m);
       }
-      app.rebuild();
+      markBuilderH();
     }
     app.draw();
   }
-  function closeDock() { setTool(null); $("ldock").hidden = true; $("window").classList.remove("docked"); app.draw(); }
+  // While the Builder is open, the hydrogens a molecule grows from are drawn whatever
+  // the H setting says: the ligand's, and those of whatever is selected -- an edited
+  // residue of the chain, which is classed with the receptor, is reached that way.  The
+  // rest of a structure keeps the setting, so opening the Builder on a receptor no
+  // longer fills the view with every C-H it has.
+  function markBuilderH() {
+    const on = !$("ldock").hidden && dockTab === "builder";
+    for (const m of app.shownModels()) {
+      const A = m.topo.atoms, mark = m.state.showH;
+      if (!mark) continue;
+      mark.fill(0);
+      if (on) {
+        for (let a = 0; a < m.topo.natoms; a++) {
+          if (A.element[a] !== "H") continue;
+          const heavy = m.topo.bondsOf[a][0];
+          if (heavy === undefined) continue;
+          if (A.class[heavy] === 1 || m.state.sel[heavy] || m.state.sel[a]) mark[a] = 1;
+        }
+      }
+      app.aggregate(m);
+    }
+    app.rebuild();
+  }
+
+  function closeDock() {
+    setTool(null);
+    $("ldock").hidden = true;
+    $("window").classList.remove("docked");
+    markBuilderH();  // the hydrogens it marked go back to the H setting
+    app.draw();
+  }
   function toggleDock(tab) { if (!$("ldock").hidden && dockTab === tab) closeDock(); else openDock(tab); }
   for (const b of document.querySelectorAll("#ldock-tabs [data-tab]")) b.onclick = () => openDock(b.dataset.tab);
   $("ldock-close").onclick = closeDock;
@@ -3521,6 +3554,14 @@ export function setupUI(app) {
     $("footer-edit").append(el("span", { className: "what" }, "SMILES"), el("code", { className: "smiles", title: text }, text),
       button("Copy", async () => app.message((await copyText(text)) ? `copied ${text}` : text)));
   }
+
+  // the Builder is what a view opens with: it is the panel most of a session is spent
+  // in, and opening it by hand was a click every time.  A page restored with its own
+  // layout, or anything that has already opened a panel, is left as it is.
+  app.onReady = () => {
+    if (!$("ldock").hidden || !Object.keys(app.state.groups || {}).length) return;
+    openDock("builder");
+  };
 
   // an empty view (nothing given, or the last model closed): the builder, to start
   app.onEmpty = () => {
