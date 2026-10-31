@@ -154,6 +154,9 @@ function initialState(model) {
   return {
     sel: new Uint8Array(n), constraint: new Uint8Array(n), labels: new Uint8Array(n),
     show: new Uint8Array(n), style: new Uint8Array(n), ribbon: new Uint8Array(nres),
+    // hydrogens drawn whatever the H setting says: the Builder marks the ones a
+    // molecule can grow from, so the rest of a structure stays as it was
+    showH: new Uint8Array(n),
   };
 }
 
@@ -496,7 +499,8 @@ function select(model, ids, mode = "set") {
 function visibleAtom(model, a) {
   const st = model.state, f = model.topo.flags;
   if (!st.show[a]) return false;
-  if (f.h[a] && (state.hydrogens === "none" || state.hydrogens === "polar" && f.nonpolar[a])) return false;
+  if (f.h[a] && !st.showH[a]
+      && (state.hydrogens === "none" || state.hydrogens === "polar" && f.nonpolar[a])) return false;
   return true;
 }
 
@@ -1219,6 +1223,7 @@ async function main() {
     showSummary();
     if (listing.page) await restorePage(listing.page);
     app.onSelection();
+    app.onReady?.();
     const n = shownModels().reduce((k, m) => k + m.topo.natoms, 0);
     const intro = `${listing.title || "boonza"}: ${n} atoms${live().length > 1 ? `, ${live().length} models` : ""}`;
     message(intro);
