@@ -19,6 +19,18 @@ export const NAMED = {
   lime: [0.6, 1, 0.2], teal: [0.2, 0.6, 0.6],
 };
 
+// a chain's color follows its name, not its place in the file: deleting chain A
+// leaves chain B its color (by place, B took A's).  A..Z in order, others hashed.
+function chainColor(topo, c) {
+  const name = (topo.chains?.name?.[c] ?? "").trim();
+  let k = c;
+  if (/^[A-Z]$/.test(name)) k = name.charCodeAt(0) - 65;
+  else if (/^[a-z]$/.test(name)) k = name.charCodeAt(0) - 97 + 26;
+  else if (/^[0-9]$/.test(name)) k = name.charCodeAt(0) - 48 + 52;
+  else if (name) { k = 0; for (const ch of name) k = (k * 31 + ch.charCodeAt(0)) >>> 0; }
+  return CHAINS[k % CHAINS.length];
+}
+
 export const SCHEMES = ["element", "chain", "restype", "resname", "ss", "spectrum", "bfactor"];
 
 // residue type, by three-letter name; SIRAH writes "s" and the one-letter code
@@ -108,11 +120,11 @@ export function colorAtoms(spec, ids, topo, ss, out) {
     const c = carbon && carbon !== "chain" ? named(carbon) : null;
     for (const a of ids) {
       const e = A.element[a];
-      if (e === "C" && carbon === "chain") put(out, a, CHAINS[R.chain[A.residue[a]] % CHAINS.length]);
+      if (e === "C" && carbon === "chain") put(out, a, chainColor(topo, R.chain[A.residue[a]]));
       else put(out, a, e === "C" && c ? c : ELEMENT[e] || OTHER);
     }
   } else if (scheme === "chain") {
-    for (const a of ids) put(out, a, CHAINS[R.chain[A.residue[a]] % CHAINS.length]);
+    for (const a of ids) put(out, a, chainColor(topo, R.chain[A.residue[a]]));
   } else if (scheme === "restype") {
     for (const a of ids) put(out, a, restype(R.name[A.residue[a]]) || byName(R.name[A.residue[a]]));
   } else if (scheme === "resname") {
@@ -147,7 +159,7 @@ export function colorResidues(spec, residues, topo, ss, out) {
   for (const r of residues) {
     let c;
     if (spec === "ss") c = SS[ss[r]] || SS.C;
-    else if (spec === "chain") c = CHAINS[R.chain[r] % CHAINS.length];
+    else if (spec === "chain") c = chainColor(topo, R.chain[r]);
     else if (spec === "spectrum") c = rainbow(topo.spectrum[r]);
     else if (spec === "restype") c = restype(R.name[r]) || NAMED.gray;
     else c = one || NAMED.white;
