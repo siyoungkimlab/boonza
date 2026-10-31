@@ -363,6 +363,18 @@ def test_default_reps_and_contacts():
     contacts = session.contacts()
     heme = set(s.select("resname HEM and chain A").ids)
     assert contacts and all(i in heme and j not in heme and d <= 3.5 for i, j, d in contacts)
+    # the ligand holds every hydrogen, nonpolar ones included: what is drawn of them is
+    # the view's own H setting, and one left out of the representation could not be
+    # shown by it, picked, or grown from in the Builder (1HHO carries none, so the
+    # heme is given them here)
+    from boonza.viewer import edit
+
+    with_h = boonza.load(DATA / "1HHO.pdb")
+    edit.adjust_hydrogens(with_h, with_h.select("resname HEM and chain A").ids.tolist())
+    nonpolar = set(with_h.select("hydrogen and withinbonds 1 of carbon "
+                                 "and resname HEM and chain A").ids.tolist())  # fmt: skip
+    lig = viewer.Session(with_h, ligand="resname HEM and chain A").topology()["reps"][2]
+    assert lig["label"] == "ligand" and nonpolar <= set(with_h.select(lig["sel"]).ids.tolist())
     # coarse-grained: no ligand in a lone protein, so cartoon alone
     cg = viewer.Session(boonza.load(DATA / "martini/2TRX/cg.pdb.gz")).topology()
     assert [r["style"] for r in cg["reps"]] == ["cartoon"]
