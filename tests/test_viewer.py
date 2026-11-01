@@ -1944,3 +1944,26 @@ def test_the_builder_only_draws_the_hydrogens_it_marks():
     opened = ui[ui.index("function openDock(") :]
     opened = opened[: opened.index("\n  }\n")]
     assert 'label: "hydrogens"' not in opened
+
+
+def test_aligning_onto_a_trajectory_uses_the_frame_on_screen(tmp_path):
+    """Align On superposed onto the reference's own structure -- the coordinates it
+    was opened with.  A run has since wrapped the protein by whole lattice vectors,
+    so the two came out parallel and a box apart.  The frame on screen is what the
+    reference looks like, so that is what it superposes onto."""
+    s = boonza.load(DATA / "1HHO.pdb")
+    s = s.clone(s.select("protein").ids)
+    cell = np.diag([120.0, 120.0, 120.0])
+    s.cell = cell
+    path = tmp_path / "shifted.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        w.write(s.positions + cell[0], cell)  # the run wrapped it one box along x
+    run = viewer.Session(s, boonza.open_trajectory(path, s), whole=True)
+    still = viewer.Session(boonza.load(DATA / "1HHO.pdb"))
+
+    out = still.align(run, "matchmaker", ref_frame=0)
+    assert out["rmsd"] < 1.0
+    shown, _ = run.frame(0)
+    gap = np.linalg.norm(still.system.positions[still.system.select("name CA").ids].mean(0)
+                         - shown[run.system.select("name CA").ids].mean(0))  # fmt: skip
+    assert gap < 5  # on top of what is drawn, not a box away

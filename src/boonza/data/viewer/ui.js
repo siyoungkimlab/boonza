@@ -3732,7 +3732,7 @@ export function setupUI(app) {
         const m = state.models[+a.model.value], r = state.models[+b.model.value];
         if (m === r) { app.message("pick two different models", true); return; }
         const kind = how();
-        const req = { m: m.index, ref: r.index, method: kind };
+        const req = { m: m.index, ref: r.index, method: kind, ref_frame: app.frameOf(r) };
         if (kind === "matchmaker") Object.assign(req, { chain: a.chain.value || null, ref_chain: b.chain.value || null });
         else Object.assign(req, { sel: selection(a, kind) || null, ref_sel: selection(b, kind) || null });
         try {
@@ -3851,7 +3851,7 @@ export function setupUI(app) {
       if (!await openPath(path)) return;
       opened = state.models[before];
       try {
-        const out = await app.post("api/align", { m: opened.index, ref: m.index, method: "matchmaker" });
+        const out = await app.post("api/align", { m: opened.index, ref: m.index, method: "matchmaker", ref_frame: app.frameOf(m) });
         await app.reloadModel(opened, false);
         app.message(`${name} onto ${m.name}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs`
           + " \u00b7 its ligand is where the run ended, not where it started");  // fmt: skip

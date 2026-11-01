@@ -986,13 +986,17 @@ class Session:
 
     def align(self, reference, method: str = "matchmaker", sel: str | None = None,
               ref_sel: str | None = None, chain: str | None = None,
-              ref_chain: str | None = None) -> dict:  # fmt: skip
+              ref_chain: str | None = None, ref_frame: int | None = None) -> dict:  # fmt: skip
         """Superpose this model onto ``reference`` (a Session) with boonza: matchmaker
         (sequence alignment and pruning, as ChimeraX; ``chain`` and ``ref_chain`` pick
         the chains), cealign (structure only), superpose (one atom a residue, paired by
         sequence) or pair (``sel`` atom for atom onto ``ref_sel``, in order, no pruning).
         ``sel`` and ``ref_sel`` (default: ``sel``) are the atoms of each that count, by
-        default the alpha carbons; the whole model moves."""
+        default the alpha carbons; the whole model moves.  ``ref_frame``: the frame of
+        a reference that is a trajectory (default: its first), superposed onto as it
+        is drawn -- glued, wrapped and fitted.  Its structure's own positions are the
+        ones it was loaded with, which a run has since wrapped by whole lattice
+        vectors, and superposing onto those leaves the two a box apart."""
         from ..align import superpose
         from ..ce import cealign
         from ..matchmaker import matchmaker
@@ -1000,6 +1004,12 @@ class Session:
         if method not in ("matchmaker", "cealign", "superpose", "pair"):
             raise ValueError("method: matchmaker, cealign, superpose or pair")
         ref = reference.system
+        if reference.trajectory is not None:
+            # the frame on screen, not the structure the trajectory was opened with
+            i = 0 if ref_frame is None else max(0, min(int(ref_frame), reference.nframes - 1))
+            pos, _ = reference.frame(i)
+            ref = ref.clone(np.arange(ref.natoms))
+            ref.positions = np.asarray(pos, dtype=np.float64)
         sides = (("this model", self.system, sel), ("the reference", ref, ref_sel or sel))
         for name, s, q in sides:
             if q and not len(s.select(q)):

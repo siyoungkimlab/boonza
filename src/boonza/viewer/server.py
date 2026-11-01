@@ -37,7 +37,8 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/surface_charges {"m": M} -> the force field's charges for the surface
     POST /api/fetch           {"id": PDB ID} -> downloads it (mmCIF) and opens it
     POST /api/align           {"m": mobile, "ref": reference, "method", "sel", "ref_sel",
-                               "chain", "ref_chain"}; method: matchmaker|cealign|superpose|pair
+                               "chain", "ref_chain", "ref_frame"}; method:
+                               matchmaker|cealign|superpose|pair
     POST /api/dihedral        {"m": M, "atoms": [a, b, c, d]} -> angle, atoms that turn
     POST /api/set_dihedral    {"m": M, "atoms": [...], "angle": degrees}
     POST /api/dihedral_scan   {"m": M, "atoms": [...], "step": 10} -> energy profiles
@@ -193,7 +194,8 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/api/align":
             mobile = self.viewer.session(int(body["m"]))
             ref = self.viewer.session(int(body["ref"]))
-            how = {k: body.get(k) for k in ("sel", "ref_sel", "chain", "ref_chain")}
+            how = {k: body.get(k) for k in ("sel", "ref_sel", "chain", "ref_chain",
+                                            "ref_frame")}
             self._json(mobile.align(ref, body.get("method", "matchmaker"), **how))
             return
         if url.path == "/api/save_session":

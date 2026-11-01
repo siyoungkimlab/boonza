@@ -415,6 +415,13 @@ function nframes() {
   return Math.max(1, ...shownModels().map(m => m.topo.nframes));
 }
 
+// the frame a model is showing: the slider's, clamped to what the model has.  What is
+// drawn of a trajectory is this frame glued, not the structure it was opened with, so
+// anything measured against a model server-side has to say which frame it means
+function frameOf(model) {
+  return model?.topo ? Math.min(state.frame, model.topo.nframes - 1) : 0;
+}
+
 async function show(models, on = true) {
   for (const m of models) m.shown = on;
   // a model tied to a frame of another (a site and the MD frame it was found in):
@@ -1167,7 +1174,7 @@ const app = {
   selected, selection, targets, select, clearSelection, visibleAtom,
   rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
-  setFrame, play, nframes, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
+  setFrame, play, nframes, frameOf, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
   range, STYLE, pageState, restorePage, PYTHON, withPictureScene,
   REP_STYLES, MATERIALS, makeRep, colorRep, repIds, isRibbon, repStyle, repsChanged, aggregate, repAlpha,
   onSelection: () => {}, onModels: () => {}, onEmpty: () => {}, onReps: () => {}, onFrame: () => {},  // ui.js fills these in
