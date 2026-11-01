@@ -134,7 +134,7 @@ class Viewer:
         # the same system pairs in order, another one by sequence
         superpose(s.system, ref.system, sel=self.align,
                   match="order" if len(a) == len(b) else "sequence")  # fmt: skip
-        s.set_glue(s.whole, s.center, s.fit)  # drop frames cached before the fit
+        s.set_glue(s.whole, s.center, s.fit, s.glued)  # drop frames cached before the fit
 
     def listing(self) -> dict:
         from .edit import GROUPS

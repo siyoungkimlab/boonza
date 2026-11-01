@@ -1791,7 +1791,8 @@ def _view(args) -> int:
     single = len(paths) == 1 and not os.path.isdir(paths[0]) and not paths[0].endswith(".bview")
     if len(paths) == 2 and is_trajectory(paths[1]) and not os.path.isdir(paths[0]):
         single = True
-    flags = args.coordinates or args.selection or args.center or args.fit
+    flags = (args.coordinates or args.selection or args.center or args.fit
+             or args.glue or args.ligand)  # fmt: skip
     if single and paths[0].lower().endswith(".sdf") and not flags:
         # an SDF of several molecules is a series (a table of its fields), as it is
         # when opened from the page; one molecule is a structure like any other
@@ -1799,7 +1800,8 @@ def _view(args) -> int:
         single = not what.models[0].group.startswith("series")
     if not single:
         if flags:
-            raise ValueError("-c, -s, --center and --fit go with one structure (and trajectory)")
+            raise ValueError("-c, -s, --ligand, --center, --glue and --fit go with one "
+                             "structure (and trajectory)")  # fmt: skip
         if not paths[0].lower().endswith(".sdf") or len(paths) > 1:
             what = viewer.from_paths(paths, merge=args.merge, fit=args.merge_fit,
                                      cg_frames=args.cg_frames,
@@ -1814,7 +1816,8 @@ def _view(args) -> int:
         title = " + ".join(os.path.basename(x) for x in (structure, trajectory) if x)
         what = viewer.Session(system, traj, atoms=args.selection,
                               whole=False if args.no_whole else None, center=args.center,
-                              fit=args.fit, title=title)  # fmt: skip
+                              glue=args.glue, fit=args.fit, ligand=args.ligand,
+                              title=title)  # fmt: skip
         what.path = Path(structure)
     viewer.serve(what, host=args.host, port=args.port, open_browser=not args.no_browser)
     return 0
@@ -1869,7 +1872,16 @@ def _parser() -> argparse.ArgumentParser:
                         "and probe molecules in the MD frame of its medoid site too (off "
                         "until ticked); beads are often enough to see a pocket's "
                         "shape")  # fmt: skip
+    q.add_argument("--ligand", help="the atoms the pocket, contacts and Minimize are "
+                   "about (default: whatever is not protein, nucleic, water, ions or "
+                   "lipid).  A modified residue of a chain is protein to nobody and "
+                   "becomes the ligand on its own: name the real one, e.g. 'chain "
+                   "P'")  # fmt: skip
     q.add_argument("--center", help="wrap the box around these atoms")
+    q.add_argument("--glue", help="keep the molecules touching these atoms together "
+                   "across the box, however the frame wrapped them (e.g. 'protein'): "
+                   "they move to the periodic images that bring them jointly "
+                   "closest")  # fmt: skip
     q.add_argument("--fit", help="superpose every frame onto the first on these atoms")
     q.add_argument("--no-whole", action="store_true", help="leave molecules split across "
                    "the box")  # fmt: skip

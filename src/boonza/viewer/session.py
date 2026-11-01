@@ -198,9 +198,10 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
         ]  # fmt: skip
     out = [{"sel": sel, "style": style, "color": color, "label": label}
            for sel, style, color, label in reps if len(system.select(sel))]  # fmt: skip
-    if any(r["color"] == carbon or r["color"].endswith("/" + carbon) for r in out):
-        # with a ligand, a neutral cartoon: its carbons are the colour that stands out
-        out[0]["color"] = "white" if out[0]["style"] == "cartoon" else out[0]["color"]
+    # the ligand's carbons are the colour that stands out; the cartoon keeps its own
+    # scheme, chain by chain.  (It used to be painted white wherever a ligand had a
+    # colour, which threw away the one thing that tells a receptor from the peptide
+    # bound to it.)
     if not any(r["style"] != "spheres" for r in out):  # no polymer, no ligand: just atoms
         out = [{"sel": "all", "style": "ballstick" if cg else "sticks", "color": "element"}]
     return out
@@ -245,7 +246,10 @@ class Session:
     ``atoms``: a selection kept for viewing (default all); the trajectory is
     read for those atoms only.  ``whole``, ``center`` and ``fit`` set up a
     :class:`boonza.Glue` on the viewed atoms (``fit`` onto the first frame);
-    ``whole`` defaults to on with a trajectory.  ``ligand``: the selection the
+    ``whole`` defaults to on with a trajectory.  ``glue``: molecules touching
+    these atoms are kept together across the box, which is what a receptor and
+    the ligand bound to it need when a frame wrapped them into different
+    images.  ``ligand``: the selection the
     pocket and contacts are about, ``carbon`` its carbons' colour.  ``reps``
     replace the default representations, ``radii`` the atoms' radii (spheres
     from a file of points), ``cg`` the coarse-grained guess.  ``sizes``: radii
@@ -253,7 +257,8 @@ class Session:
     """
 
     def __init__(self, system, trajectory=None, atoms=None, whole: bool | None = None,
-                 center: str | None = None, fit: str | None = None, title: str = "",
+                 center: str | None = None, fit: str | None = None, glue: str | None = None,
+                 title: str = "",
                  ligand: str | None = None, carbon: str = "green", reps=None, radii=None,
                  cg: bool | None = None, sizes: dict[str, float] | None = None,
                  numbers=()):  # fmt: skip
@@ -291,27 +296,29 @@ class Session:
         self._lock = threading.RLock()
         self._cache: OrderedDict = OrderedDict()
         self._ss: dict = {}
-        self.set_glue(trajectory is not None if whole is None else whole, center, fit)
+        self.set_glue(trajectory is not None if whole is None else whole, center, fit, glue)
 
     @property
     def nframes(self) -> int:
         return len(self.trajectory) if self.trajectory is not None else 1
 
     def set_glue(self, whole: bool = True, center: str | None = None,
-                 fit: str | None = None) -> None:  # fmt: skip
+                 fit: str | None = None, glue: str | None = None) -> None:  # fmt: skip
         """Change the periodic fixing and fitting; frames are recomputed."""
         from ..glue import Glue
 
         s = self.system
-        for sel in (center, fit):
+        for sel in (center, fit, glue):
             if sel and len(s.select(sel)) == 0:
                 raise ValueError(f"no atoms in {sel!r}")
         with self._lock:
             self.whole, self.center, self.fit = bool(whole), center or None, fit or None
-            if self.whole or self.center or self.fit:
+            self.glued = glue or None
+            if self.whole or self.center or self.fit or self.glued:
                 # fit onto the first frame, whatever frame is asked for first
                 reference = self._raw(0)[0] if self.fit else None
-                self.glue = Glue(s, center=self.center, fit=self.fit, reference=reference,
+                self.glue = Glue(s, glue=self.glued, center=self.center, fit=self.fit,
+                                 reference=reference,
                                  whole="all" if self.whole else None,
                                  wrap=self.center is not None)  # fmt: skip
             else:
@@ -523,7 +530,8 @@ class Session:
                 "order": np.asarray(bonds["order"], dtype=np.int64).tolist(),
             },
             "ss": self.ss(0),
-            "glue": {"whole": self.whole, "center": self.center, "fit": self.fit},
+            "glue": {"whole": self.whole, "center": self.center, "fit": self.fit,
+                     "glue": self.glued},
             "reps": reps,
         }
 
@@ -550,7 +558,7 @@ class Session:
         self.version += 1
         if topology:
             self.topo_version = getattr(self, "topo_version", 0) + 1
-        self.set_glue(self.whole, None, None)
+        self.set_glue(self.whole, None, None, self.glued)
         return {"version": self.version, "topology": topology, "natoms": self.system.natoms,
                 "undo": len(getattr(self, "_undo", []))}  # fmt: skip
 

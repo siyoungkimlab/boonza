@@ -246,9 +246,9 @@ def test_modes_folder(tmp_path, served):
     topo = json.loads(get("api/topology?m=1")[2])
     assert topo["ligand"] == "resname HEM and chain A"
     styles = [(r["style"], r["color"]) for r in topo["reps"]]
-    # cartoon, pocket, ligand (in the mode's colour)
+    # cartoon (its own chains), pocket, ligand (in the mode's colour)
     assert styles[:3] == [
-        ("cartoon", "white"),
+        ("cartoon", "chain"),
         ("sticks", "element"),
         ("sticks", "element/magenta"),
     ]
@@ -1884,3 +1884,63 @@ def test_cavity_folder_lists_each_pockets_coarse_grained_frame(tmp_path):
     frame = next(m for m in v.models if m.group == "frames")
     assert frame.name == "frame 1 (md frame 40)" and not frame.shown and frame.row["rank"] == 1
     assert frame.load().system.natoms > 0
+
+
+def test_a_peptide_in_the_next_image_comes_back(tmp_path, served):
+    """A receptor and the chain bound to it, wrapped into different images by the
+    run: --glue brings them back, and so does --center on both of them, which is
+    what "protein" is when the ligand is a peptide."""
+    s = boonza.load(DATA / "1HHO.pdb").clone(boonza.load(DATA / "1HHO.pdb").select("protein").ids)
+    cell = np.diag([120.0, 120.0, 120.0])
+    s.cell = cell
+    b = s.select("chain B").ids
+    pos = s.positions.copy()
+    pos[b] += cell[0]  # the next image along x
+    path = tmp_path / "split.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        w.write(pos, cell)
+    traj = boonza.open_trajectory(path, s)
+
+    def gap(session):
+        got, _ = session.frame(0)
+        a = got[s.select("chain A").ids].mean(0)
+        return float(np.linalg.norm(a - got[b].mean(0)))
+
+    assert gap(viewer.Session(s, traj, whole=True)) > 60
+    assert gap(viewer.Session(s, traj, glue="protein")) < 60
+    assert gap(viewer.Session(s, traj, center="protein")) < 60
+    # the page can ask for it too
+    session = viewer.Session(s, traj, whole=True)
+    _, post = served(session)
+    assert post("api/glue", {"whole": True, "glue": "protein"}) == (200, {"ok": True})
+    assert gap(session) < 60
+    assert post("api/glue", {"glue": "resname XXX"})[0] == 400
+
+
+def test_the_ligand_can_be_named():
+    """A modified residue is protein to nobody and becomes the ligand on its own;
+    --ligand names the real one, and the pocket follows it."""
+    s = boonza.load(DATA / "1HHO.pdb")
+    reps = viewer.Session(s, ligand="chain A").topology()["reps"]
+    sel = {r["label"]: r["sel"] for r in reps}
+    assert "chain A" in sel["ligand"]
+    pocket = s.select(sel["binding site"]).ids
+    assert len(pocket) and not set(pocket) & set(s.select("chain A").ids)
+
+
+def test_the_builder_only_draws_the_hydrogens_it_marks():
+    """Opening the Builder put every hydrogen a ribbon covers into a representation
+    of its own, with its heavy atom -- so a receptor came up strewn with N-H and C-H
+    over the cartoon, in pieces, since an atom between two of them that carries no
+    hydrogen was in no representation and its bonds were drawn by nobody.  The
+    representation belongs with the marks: the ligand's hydrogens and the
+    selection's, rebuilt whenever they change."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    body = ui[ui.index("function markBuilderH()") :]
+    body = body[: body.index("\n  }\n")]
+    assert 'label: "hydrogens"' in body and "rep.builderH = true" in body
+    assert "if (!mark[a]" in body  # only a marked hydrogen is drawn
+    assert "m.reps.filter(r => !r.builderH)" in body  # and the last one always goes
+    opened = ui[ui.index("function openDock(") :]
+    opened = opened[: opened.index("\n  }\n")]
+    assert 'label: "hydrogens"' not in opened

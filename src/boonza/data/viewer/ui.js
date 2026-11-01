@@ -2326,18 +2326,6 @@ export function setupUI(app) {
           }
           if (grew) app.colorRep(m, rep);
         }
-        // a hydrogen whose heavy atom only a ribbon draws is in no atom representation
-        // at all: it gets one, with that atom, so the bond is drawn and both can be picked
-        const left = new Set();
-        for (let a = 0; a < n; a++) {
-          if (A.element[a] !== "H" || m.reps.some(r => atomRep(r) && r.mask[a])) continue;
-          const heavy = m.topo.bondsOf[a][0];
-          if (heavy === undefined || !m.reps.some(r => r.on && app.isRibbon(r) && r.mask[heavy])) continue;
-          left.add(a).add(heavy);
-        }
-        if (left.size) {
-          m.reps.push(app.makeRep(m, { ids: [...left], label: "hydrogens", style: "sticks" }));
-        }
         app.aggregate(m);
       }
       markBuilderH();
@@ -2355,12 +2343,33 @@ export function setupUI(app) {
       const A = m.topo.atoms, mark = m.state.showH;
       if (!mark) continue;
       mark.fill(0);
+      // the representation of the previous marks goes whatever happens: the marks
+      // follow the selection, and a rep left behind would draw a stale pocketful of
+      // hydrogens -- and, with the heavy atoms it carries, a receptor's every N-H and
+      // C-H over the cartoon, in pieces where the atom between them has no hydrogen
+      m.reps = m.reps.filter(r => !r.builderH);
       if (on) {
         for (let a = 0; a < m.topo.natoms; a++) {
           if (A.element[a] !== "H") continue;
           const heavy = m.topo.bondsOf[a][0];
           if (heavy === undefined) continue;
           if (A.class[heavy] === 1 || m.state.sel[heavy] || m.state.sel[a]) mark[a] = 1;
+        }
+        // a marked hydrogen whose heavy atom only a ribbon draws is in no atom
+        // representation at all: it gets one, with that atom, so the bond is drawn
+        // and both can be picked
+        const atomRep = r => r.on && !app.isRibbon(r) && r.style !== "surface";
+        const left = new Set();
+        for (let a = 0; a < m.topo.natoms; a++) {
+          if (!mark[a] || m.reps.some(r => atomRep(r) && r.mask[a])) continue;
+          const heavy = m.topo.bondsOf[a][0];
+          if (heavy === undefined || !m.reps.some(r => r.on && app.isRibbon(r) && r.mask[heavy])) continue;
+          left.add(a).add(heavy);
+        }
+        if (left.size) {
+          const rep = app.makeRep(m, { ids: [...left], label: "hydrogens", style: "sticks" });
+          rep.builderH = true;
+          m.reps.push(rep);
         }
       }
       app.aggregate(m);
@@ -2854,10 +2863,10 @@ export function setupUI(app) {
   // carbons in the model's own ligand color
   const PRESETS = [
     ["default", "Default", null],
-    ["site", "Binding site", [["polymer", "cartoon", "white"], ["pocket", "sticks", "element"], ["ligand", "sticks", "carbon"]]],
+    ["site", "Binding site", [["polymer", "cartoon", "chain"], ["pocket", "sticks", "element"], ["ligand", "sticks", "carbon"]]],
     ["ribbon", "Cartoon", [["polymer", "cartoon", "ss"]]],
     ["ribbonlig", "Cartoon + ligand", [["polymer", "cartoon", "ss"], ["ligand", "sticks", "carbon"]]],
-    ["ribbonpocket", "Cartoon + pocket lines", [["polymer", "cartoon", "white"], ["pocket", "lines", "element"], ["ligand", "sticks", "carbon"]]],
+    ["ribbonpocket", "Cartoon + pocket lines", [["polymer", "cartoon", "chain"], ["pocket", "lines", "element"], ["ligand", "sticks", "carbon"]]],
     ["ribbonlines", "Cartoon + lines", [["polymer", "cartoon", "ss"], ["nosolvent", "lines", "element"]]],
     ["ribbonspace", "Cartoon + ligand spheres", [["polymer", "cartoon", "ss"], ["ligand", "spheres", "carbon"]]],
     ["lig", "Ligand", [["ligand", "sticks", "keep"]]],
