@@ -785,7 +785,10 @@ def test_dynamics_moves_further_than_minimizing_and_plays_back():
     assert np.linalg.norm(after[held] - before[held], axis=1).max() == pytest.approx(
         out["held_max"], abs=1e-3
     )
-    assert out["mobile_max"] > out["held_max"]
+    # over the whole set, not its single furthest atom: the springs are soft (10
+    # kJ/mol/Å²) and there are far more held atoms than free ones, so the largest
+    # held displacement beats the largest free one often enough on its own
+    assert out["mobile_rmsd"] > out["held_rmsd"]
     path = out["path"]
     assert 1 < len(path["frames"]) <= 61
     assert len(path["frames"]) == len(path["iterations"]) == len(set(path["iterations"]))
