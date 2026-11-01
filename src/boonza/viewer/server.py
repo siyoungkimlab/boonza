@@ -194,8 +194,7 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/api/align":
             mobile = self.viewer.session(int(body["m"]))
             ref = self.viewer.session(int(body["ref"]))
-            how = {k: body.get(k) for k in ("sel", "ref_sel", "chain", "ref_chain",
-                                            "ref_frame")}
+            how = {k: body.get(k) for k in ("sel", "ref_sel", "chain", "ref_chain", "ref_frame")}
             self._json(mobile.align(ref, body.get("method", "matchmaker"), **how))
             return
         if url.path == "/api/save_session":
@@ -255,8 +254,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(session.hbonds(a, body.get("b") or None,
                                       int(body.get("frame", 0))))  # fmt: skip
         elif url.path == "/api/glue":
-            session.set_glue(bool(body.get("whole", True)), body.get("center"),
-                             body.get("fit"), body.get("glue"))
+            session.set_glue(
+                bool(body.get("whole", True)), body.get("center"), body.get("fit"), body.get("glue")
+            )
             self._json({"ok": True})
         elif url.path == "/api/edit":
             self._json(session.edit(body["op"], body.get("atoms", ()), body.get("value"),

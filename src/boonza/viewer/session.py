@@ -530,8 +530,12 @@ class Session:
                 "order": np.asarray(bonds["order"], dtype=np.int64).tolist(),
             },
             "ss": self.ss(0),
-            "glue": {"whole": self.whole, "center": self.center, "fit": self.fit,
-                     "glue": self.glued},
+            "glue": {
+                "whole": self.whole,
+                "center": self.center,
+                "fit": self.fit,
+                "glue": self.glued,
+            },
             "reps": reps,
         }
 
