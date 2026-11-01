@@ -101,6 +101,9 @@ class Glue:
     selection, or None to skip).  ``weights``: "mass" or None for fitting.
     """
 
+    #: a center of more molecules than this is bulk, and is wrapped, not glued
+    CENTER_GLUE_MAX = 64
+
     def __init__(self, system, glue=None, center=None, fit=None, reference=None,
                  whole="all", wrap: bool = True, weights=None):  # fmt: skip
         self.system = system
@@ -121,7 +124,19 @@ class Glue:
         # selected atoms of each fragment, as msys does
         self._groups = []
         unit = frag.copy()
-        for sel in [glue] if isinstance(glue, str) else (glue or []):
+        sels = [glue] if isinstance(glue, str) else list(glue or [])
+        self._center = None if center is None else self._ids(center)
+        # A center spanning several molecules -- "protein" where a peptide ligand is
+        # protein too -- is one thing to the person who asked for it, so glue it:
+        # wrapping cannot bring its parts together (they are pinned, being the center)
+        # and its mean, taken across periodic images, points nowhere.  Above the cap
+        # the selection is a bulk one (water, "all"), where gluing means nothing and
+        # the optimal shifts would cost more than the wrap they feed.
+        if self._center is not None and not sels:
+            nfrag = len(np.unique(frag[self._center]))
+            if 1 < nfrag <= self.CENTER_GLUE_MAX:
+                sels = [self._center]
+        for sel in sels:
             ids = self._ids(sel)
             if len(ids) == 0:
                 continue
@@ -134,7 +149,6 @@ class Glue:
         self._nunits = int(self._unit.max()) + 1 if n else 0
         self._unit_size = np.bincount(self._unit, minlength=self._nunits)
 
-        self._center = None if center is None else self._ids(center)
         self._fixed_units = np.zeros(self._nunits, bool)
         if self._center is not None:
             self._fixed_units[self._unit[self._center]] = True

@@ -99,3 +99,30 @@ def test_matches_msys_wrapper_with_glue(tmp_path):
     ours, _ = Glue(s, glue=glue, center="protein")(pos, s.cell)
     ours -= ours[s.select("protein").ids].mean(0)
     np.testing.assert_allclose(ours, ref, atol=1e-6)
+
+
+def test_a_center_of_two_molecules_brings_them_together():
+    """A center spanning several molecules is one thing: wrapping cannot bring its
+    parts together, since the center is what everything else is wrapped around, so
+    they are glued.  A receptor and the peptide bound to it are both "protein"."""
+    cell = np.diag([12.0, 12.0, 12.0])
+    s = _box_system(cell)
+    one, two = (s.select(f"resid {r}").ids for r in (1, 2))
+    pos = s.positions.copy()
+    pos[two] += cell[0]  # the next image: the two sit a box apart
+    apart = np.linalg.norm(pos[one].mean(0) - pos[two].mean(0))
+    assert apart > 0.5 * 12
+    fixed, _ = Glue(s, center="resid 1 2")(pos, cell)
+    together = np.linalg.norm(fixed[one].mean(0) - fixed[two].mean(0))
+    assert together < 0.5 * 12
+    # and a center that is one molecule still only pins it
+    kept, _ = Glue(s, center="resid 1")(pos, cell)
+    np.testing.assert_allclose(kept[one], pos[one], atol=1e-9)
+
+
+def test_a_bulk_center_is_not_glued():
+    """Above the cap the center is bulk (water, "all"): wrapped as before."""
+    s = water_box(Glue.CENTER_GLUE_MAX + 1)
+    assert len(np.unique(s.fragids)) > Glue.CENTER_GLUE_MAX
+    fix = Glue(s, center="all")
+    assert fix._groups == []

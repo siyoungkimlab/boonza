@@ -253,7 +253,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(session.hbonds(a, body.get("b") or None,
                                       int(body.get("frame", 0))))  # fmt: skip
         elif url.path == "/api/glue":
-            session.set_glue(bool(body.get("whole", True)), body.get("center"), body.get("fit"))
+            session.set_glue(bool(body.get("whole", True)), body.get("center"),
+                             body.get("fit"), body.get("glue"))
             self._json({"ok": True})
         elif url.path == "/api/edit":
             self._json(session.edit(body["op"], body.get("atoms", ()), body.get("value"),
