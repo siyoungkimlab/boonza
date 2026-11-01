@@ -221,17 +221,10 @@ def test_growing_each_ligand_several_times_keeps_the_best(tmp_path):
     # 92%.  The runs' grouping is reported beside it, never used to choose
     assert len(record["rescored"]) == 3
     assert sum(len(g) for g in record["agreement"]) == 3
-    # the most negative energy, unless that pose is one no other run found: within the
-    # measurement's noise the energy cannot tell a good pose from a bad one, and of 8
-    # runs whose best four lay within 7 kJ/mol three were 2.2 Å from the crystal while
-    # the fourth, which the energy preferred, was 11.6 Å and stood alone
-    assert record["kept_by_energy_alone"] == record["rescored"].index(
-        min(record["rescored"]))  # fmt: skip
-    size = {k: len(g) for g in record["agreement"] for k in g}
-    band = min(record["rescored"]) + grow.BAND_KJ
-    tied = [k for k, e in enumerate(record["rescored"]) if e <= band]
-    shared = [k for k in tied if size.get(k, 1) >= 2]
-    assert record["kept_run"] == min(shared or tied, key=lambda k: record["rescored"][k])
+    # the most negative energy, and nothing else.  A near-tie was once broken by
+    # leaving out the poses no other run found; over 10 held-out trials that changed
+    # the pick twice and improved it neither time, so it is gone
+    assert record["kept_run"] == record["rescored"].index(min(record["rescored"]))
     # every run's co-complex is kept, not only the one chosen
     runs = sorted(p.name for p in (tmp_path / "runs").glob("toluene_run*.mae"))
     assert runs == ["toluene_run1.mae", "toluene_run2.mae", "toluene_run3.mae"]

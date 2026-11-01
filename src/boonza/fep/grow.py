@@ -115,8 +115,6 @@ LOOSE_A = 2.0
 AGREE_A = 2.0
 #: the seed every run's final pose is measured with, so the measurement is the same one
 RESCORE_SEED = 4242
-#: kJ/mol: runs this close to the best are tied, and a tie is broken by agreement
-BAND_KJ = 20.0
 #: Å: residues with a heavy atom this near the ligand move, the rest are held; found
 #: again for every placement, from the ligand as it now is, so the pocket grows with it
 POCKET_A = 8.0
@@ -1047,20 +1045,15 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
         grown = sorted(set(index.values()) - {index[i] for i in core if i in index})
         groups = (agree([o["ligand"][grown] for _, o, _, _, _ in done]) if grown
                   else [list(range(len(done)))])  # fmt: skip
-        size = {k: len(g) for g in groups for k in g}
-        # the most negative energy, but not a pose no other run found.  Within the
-        # measurement's own noise the energy cannot tell a good pose from a bad one:
-        # of 8 runs whose best four lay within 7 kJ/mol, three were 2.2 Å from the
-        # crystal and the fourth 11.6 Å, and the energy preferred the last.  That one
-        # stood alone where the others had company, and leaving singletons out of a
-        # tie took the worst of 8 trials from 11.6 Å to 2.2 Å without moving the
-        # median.  A majority *vote* is a different thing, and much worse (0% within
-        # 2.5 Å against 76%): this only breaks ties the energy has no opinion on
-        cheapest = min(range(len(energies)), key=lambda k: energies[k])
-        tied = [k for k in range(len(energies))
-                if energies[k] <= energies[cheapest] + BAND_KJ]  # fmt: skip
-        shared = [k for k in tied if size.get(k, 1) >= 2]
-        chosen = min(shared or tied, key=lambda k: energies[k])
+        # the most negative energy, and nothing else.  Measured on 18 growths of 9B54's
+        # ligand from 6N4B, this alone put the kept pose within 2.5 Å of the crystal in
+        # 17 of 18; it beat each run's own score in 92% of the cases where the two
+        # disagreed.  Grouping the poses is reported below but deliberately not used to
+        # choose: the right pose is a minority across replicates, so anything that
+        # rewards agreement selects the common wrong one (0% within 2.5 Å against 76%).
+        # Vetoing only the lone poses in a near-tie was tried too and dropped -- over 10
+        # held-out trials it changed the pick twice and improved it neither time
+        chosen = min(range(len(energies)), key=lambda k: energies[k])
         final, out, mol, index, lig_ff = done[chosen]
         # every run's pose kept, not only the one chosen: the others are what a second
         # opinion would be built from
@@ -1073,19 +1066,14 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
             f"{name}: {repeats} runs, {' '.join(f'{e:.0f}' for e in energies)} kJ/mol "
             f"with the protein measured alike; their grown parts fall in "
             f"{len(groups)} group(s) of {', '.join(str(len(g)) for g in groups)}.  "
-            f"Keeping run {chosen + 1}"
-            + (
-                ""
-                if chosen == cheapest
-                else f" rather than {cheapest + 1}, whose pose no other run found"
-            )
-            + f"; all {repeats} are in runs/"
+            f"Keeping run {chosen + 1}, the lowest of them; "
+            f"{sum(len(g) for g in groups if chosen in g) - 1} other run(s) put the "
+            f"grown part where it did.  All {repeats} are in runs/"
         )
         record["run_scores"] = [float(g[0][0]) for g in runs]
         record["rescored"] = [round(e, 1) for e in energies]
         record["agreement"] = [[int(k) for k in g] for g in groups]
         record["kept_run"] = chosen
-        record["kept_by_energy_alone"] = cheapest
     else:
         final, out, mol, index, lig_ff = finish(runs[0])
     complex_ = receptor.copy()
