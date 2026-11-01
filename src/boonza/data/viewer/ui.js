@@ -2863,10 +2863,10 @@ export function setupUI(app) {
   // carbons in the model's own ligand color
   const PRESETS = [
     ["default", "Default", null],
-    ["site", "Binding site", [["polymer", "cartoon", "white"], ["pocket", "sticks", "element"], ["ligand", "sticks", "carbon"]]],
+    ["site", "Binding site", [["polymer", "cartoon", "chain"], ["pocket", "sticks", "element"], ["ligand", "sticks", "carbon"]]],
     ["ribbon", "Cartoon", [["polymer", "cartoon", "ss"]]],
     ["ribbonlig", "Cartoon + ligand", [["polymer", "cartoon", "ss"], ["ligand", "sticks", "carbon"]]],
-    ["ribbonpocket", "Cartoon + pocket lines", [["polymer", "cartoon", "white"], ["pocket", "lines", "element"], ["ligand", "sticks", "carbon"]]],
+    ["ribbonpocket", "Cartoon + pocket lines", [["polymer", "cartoon", "chain"], ["pocket", "lines", "element"], ["ligand", "sticks", "carbon"]]],
     ["ribbonlines", "Cartoon + lines", [["polymer", "cartoon", "ss"], ["nosolvent", "lines", "element"]]],
     ["ribbonspace", "Cartoon + ligand spheres", [["polymer", "cartoon", "ss"], ["ligand", "spheres", "carbon"]]],
     ["lig", "Ligand", [["ligand", "sticks", "keep"]]],

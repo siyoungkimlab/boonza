@@ -198,9 +198,10 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
         ]  # fmt: skip
     out = [{"sel": sel, "style": style, "color": color, "label": label}
            for sel, style, color, label in reps if len(system.select(sel))]  # fmt: skip
-    if any(r["color"] == carbon or r["color"].endswith("/" + carbon) for r in out):
-        # with a ligand, a neutral cartoon: its carbons are the colour that stands out
-        out[0]["color"] = "white" if out[0]["style"] == "cartoon" else out[0]["color"]
+    # the ligand's carbons are the colour that stands out; the cartoon keeps its own
+    # scheme, chain by chain.  (It used to be painted white wherever a ligand had a
+    # colour, which threw away the one thing that tells a receptor from the peptide
+    # bound to it.)
     if not any(r["style"] != "spheres" for r in out):  # no polymer, no ligand: just atoms
         out = [{"sel": "all", "style": "ballstick" if cg else "sticks", "color": "element"}]
     return out

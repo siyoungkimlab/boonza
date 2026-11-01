@@ -246,9 +246,9 @@ def test_modes_folder(tmp_path, served):
     topo = json.loads(get("api/topology?m=1")[2])
     assert topo["ligand"] == "resname HEM and chain A"
     styles = [(r["style"], r["color"]) for r in topo["reps"]]
-    # cartoon, pocket, ligand (in the mode's colour)
+    # cartoon (its own chains), pocket, ligand (in the mode's colour)
     assert styles[:3] == [
-        ("cartoon", "white"),
+        ("cartoon", "chain"),
         ("sticks", "element"),
         ("sticks", "element/magenta"),
     ]
