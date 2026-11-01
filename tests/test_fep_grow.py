@@ -220,8 +220,14 @@ def test_growing_each_ligand_several_times_keeps_the_best(tmp_path):
     # the time, and of the times they did not the common one picked the closer pose in
     # 92%.  The runs' grouping is reported beside it, never used to choose
     assert len(record["rescored"]) == 3
-    assert record["kept_run"] == record["rescored"].index(min(record["rescored"]))
     assert sum(len(g) for g in record["agreement"]) == 3
+    # the most negative energy, and nothing else.  A near-tie was once broken by
+    # leaving out the poses no other run found; over 10 held-out trials that changed
+    # the pick twice and improved it neither time, so it is gone
+    assert record["kept_run"] == record["rescored"].index(min(record["rescored"]))
+    # every run's co-complex is kept, not only the one chosen
+    runs = sorted(p.name for p in (tmp_path / "runs").glob("toluene_run*.mae"))
+    assert runs == ["toluene_run1.mae", "toluene_run2.mae", "toluene_run3.mae"]
     names = [m.GetProp("_Name") for m in Chem.SDMolSupplier(
         str(tmp_path / "grow" / "toluene_candidates.sdf"), removeHs=False)]  # fmt: skip
     assert len(names) == len(set(names)) == 3  # one per run here, each named for its run

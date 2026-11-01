@@ -901,6 +901,8 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
     work = Path(workdir)
     (work / "complexes").mkdir(parents=True, exist_ok=True)
     (work / "grow").mkdir(parents=True, exist_ok=True)
+    if repeats > 1:
+        (work / "runs").mkdir(parents=True, exist_ok=True)
     core = core_map(reference, target)
     ref_xyz = reference.GetConformer().GetPositions()
     plan = steps(target, core, max_heavy)
@@ -1039,23 +1041,34 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
     if repeats > 1:
         done = [finish(g) for g in runs]
         energies = [rescore(f, o, m, ff_) for f, o, m, _, ff_ in done]
-        chosen = int(np.argmin(energies))  # the most negative interaction energy
-        final, out, mol, index, lig_ff = done[chosen]
-        # how the runs group is reported, not used to choose.  Taking what most of them
-        # agree on is worse, not better: growing 9B54's ligand from 6N4B, 19 of 24 runs
-        # settled on the same pose 4.8 A from the crystal's while 3 found it to 0.9 A,
-        # so the error is a bias of the search and not noise to average away, and a
-        # majority picks the wrong answer with confidence (0% within 2.5 A at 8 runs).
-        # More than one group means the runs disagree and the pose wants an eye on it
+        index = done[0][3]
         grown = sorted(set(index.values()) - {index[i] for i in core if i in index})
         groups = (agree([o["ligand"][grown] for _, o, _, _, _ in done]) if grown
                   else [list(range(len(done)))])  # fmt: skip
+        # the most negative energy, and nothing else.  Measured on 18 growths of 9B54's
+        # ligand from 6N4B, this alone put the kept pose within 2.5 Å of the crystal in
+        # 17 of 18; it beat each run's own score in 92% of the cases where the two
+        # disagreed.  Grouping the poses is reported below but deliberately not used to
+        # choose: the right pose is a minority across replicates, so anything that
+        # rewards agreement selects the common wrong one (0% within 2.5 Å against 76%).
+        # Vetoing only the lone poses in a near-tie was tried too and dropped -- over 10
+        # held-out trials it changed the pick twice and improved it neither time
+        chosen = min(range(len(energies)), key=lambda k: energies[k])
+        final, out, mol, index, lig_ff = done[chosen]
+        # every run's pose kept, not only the one chosen: the others are what a second
+        # opinion would be built from
+        for k, (f_, o_, m_, _, _) in enumerate(done):
+            each = receptor.copy()
+            each.positions = f_.receptor
+            each.append(_ligand(m_, o_["ligand"]))
+            save(each, work / "runs" / f"{name}_run{k + 1}.mae")
         log(
             f"{name}: {repeats} runs, {' '.join(f'{e:.0f}' for e in energies)} kJ/mol "
-            f"with the protein measured alike; keeping run {chosen + 1}.  Their grown "
-            f"parts fall in {len(groups)} group(s) of "
-            f"{', '.join(str(len(g)) for g in groups)}"
-            + ("" if len(groups) == 1 else "; they do not agree, so look at the pose")
+            f"with the protein measured alike; their grown parts fall in "
+            f"{len(groups)} group(s) of {', '.join(str(len(g)) for g in groups)}.  "
+            f"Keeping run {chosen + 1}, the lowest of them; "
+            f"{sum(len(g) for g in groups if chosen in g) - 1} other run(s) put the "
+            f"grown part where it did.  All {repeats} are in runs/"
         )
         record["run_scores"] = [float(g[0][0]) for g in runs]
         record["rescored"] = [round(e, 1) for e in energies]
