@@ -21,6 +21,8 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/build           {"smiles": ..., "centre": [x, y, z]} -> a new model of it
     POST /api/upload          a file's bytes (its name in X-Filename) -> opened
     POST /api/copy_into       {"m": from, "into": to, "atoms": [...]} -> appended there
+    POST /api/clone           {"m": M, "atoms": [...], "frame": N} -> a new model of them
+    POST /api/split           {"m": M, "by": chain|molecule, "frame": N} -> a model of each
     POST /api/series          {"m": M, "atoms": [...], "frame": N} -> a new series of designs,
                               its first member a copy of the atoms (a ligand)
     POST /api/series_add      {"m": member} -> a new member of its series, a copy of it
@@ -42,7 +44,8 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/dihedral        {"m": M, "atoms": [a, b, c, d]} -> angle, atoms that turn
     POST /api/set_dihedral    {"m": M, "atoms": [...], "angle": degrees}
     POST /api/dihedral_scan   {"m": M, "atoms": [...], "step": 10} -> energy profiles
-    POST /api/minimize        {"m": M, "mode": both|ligand|pocket, "path": bool, "rem":
+    POST /api/minimize        {"m": M, "mode": both|all|ligand|pocket|protein, "pocket": A,
+                              "path": bool, "rem":
                               bool (soft nonbonded interactions first)} -> the
                               energies, and with path how it went step by step; or
                               {"m": M, "mobile": sel, "restraint": kcal/mol/A^2}; a
@@ -205,6 +208,16 @@ class _Handler(BaseHTTPRequestHandler):
                                              body.get("atoms") or None,
                                              int(body.get("frame", 0))))  # fmt: skip
             return
+        if url.path == "/api/clone":
+            added = self.viewer.clone(int(body["m"]), body.get("atoms") or None,
+                                      int(body.get("frame", 0)))  # fmt: skip
+            self._json({"added": added, **self.viewer.listing()})
+            return
+        if url.path == "/api/split":
+            added = self.viewer.split(int(body["m"]), str(body.get("by", "chain")),
+                                      int(body.get("frame", 0)))  # fmt: skip
+            self._json({"added": added, **self.viewer.listing()})
+            return
         if url.path == "/api/series":
             added = self.viewer.create_series(int(body["m"]), body.get("atoms") or [],
                                               int(body.get("frame", 0)))  # fmt: skip
@@ -301,6 +314,7 @@ class _Handler(BaseHTTPRequestHandler):
                     fixed=body.get("fixed"),
                     tethered=body.get("tethered"),
                     solvent=body.get("solvent", "rf"),
+                    pocket=float(body.get("pocket", 5.0)),
                 )
             )
         elif url.path == "/api/dynamics":
@@ -314,6 +328,7 @@ class _Handler(BaseHTTPRequestHandler):
                     fixed=body.get("fixed"),
                     tethered=body.get("tethered"),
                     solvent=body.get("solvent", "rf"),
+                    pocket=float(body.get("pocket", 5.0)),
                     picoseconds=float(body.get("picoseconds", 10.0)),
                     temperature=float(body.get("temperature", 300.0)),
                     minimize_first=bool(body.get("minimize_first", True)),
