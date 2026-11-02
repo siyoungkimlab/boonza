@@ -2536,12 +2536,22 @@ export function setupUI(app) {
   }
 
   async function applyToAtoms(t, sel) {
+    if (t.kind === "bond" && sel.length > 1) {
+      app.message("those atoms are in two models, and a bond is within one: right-click one model, Copy Into the other, then bond them", true);
+      return;
+    }
     const [m, atoms] = sel[0];
     if (t.kind === "element") await serverEdit(m, "api/edit", { op: "element", atoms, value: t.value, hydrogens: autoH() });
     else if (t.kind === "charge") await serverEdit(m, "api/edit", { op: "charge", atoms, value: t.value, hydrogens: autoH() });
     else if (t.kind === "bond") {
-      if (atoms.length !== 2) { app.message("select the bond's two atoms (or click a bond with the tool)", true); return; }
-      await serverEdit(m, "api/edit", { op: "bond", atoms, value: t.value, hydrogens: autoH() });
+      if (atoms.length !== 2) { app.message(`select the bond's two atoms, not ${atoms.length} (or click a bond with the tool)`, true); return; }
+      const names = atoms.map(a => m.topo.atoms.name[a]).join("–");
+      const [p, q] = atoms.map(a => app.xyz(m, a));
+      const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+      if (!await serverEdit(m, "api/edit", { op: "bond", atoms, value: t.value, hydrogens: autoH() })) return;
+      // the atoms stay where they are: a bond made across a gap is as long as the gap
+      app.message(`${t.label}: ${names}, ${d.toFixed(2)} Å · Edit | Undo takes it back`
+        + (d > 2.2 ? " · long for a bond, the atoms were not moved: Clean Up with them selected brings them together" : ""));
     } else if (t.kind === "smiles") await serverEdit(m, "api/edit", { op: "attach", atoms: [atoms[0]], value: t.value, hydrogens: false });
   }
 
