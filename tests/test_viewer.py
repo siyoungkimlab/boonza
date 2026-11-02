@@ -2155,12 +2155,10 @@ def test_the_builder_draws_a_selected_residue_whole():
     assert "!(m.state.sel[heavy] || m.state.sel[a])) continue" in body  # the selection's only
 
 
-def test_water_and_ions_can_be_selected_and_are_not_drawn_by_default():
+def test_water_and_ions_can_be_selected():
     s = boonza.load(DATA / "1HHO.pdb")
     session = viewer.Session(s)
     top = session.topology()
-    water = set(s.select("water").ids.tolist())
-    assert not any(water & set(s.select(r["sel"]).ids.tolist()) for r in top["reps"])
     assert len(session.select("water")) == 109
     assert sum(k == 2 for k in top["atoms"]["class"]) == 109
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
@@ -2169,6 +2167,53 @@ def test_water_and_ions_can_be_selected_and_are_not_drawn_by_default():
     # the keyword "solvent" is not what the class means: it takes the ligands in too, so
     # the preset's representation, once re-applied, lost them
     assert 'nosolvent: "not (water or ions)"' in ui
+
+
+def _water_rep(session):
+    return [r for r in session.topology()["reps"] if r["label"] == "water"]
+
+
+@pytest.mark.parametrize(
+    "name, waters", [("1HHO", 109), ("1LYZ", 101), ("2TRX", 140), ("1TEN", 216)]
+)
+def test_a_crystal_structures_waters_are_drawn(name, waters):
+    s = boonza.load(DATA / f"{name}.pdb")
+    [rep] = _water_rep(viewer.Session(s))
+    assert rep["style"] == "ballstick" and len(s.select(rep["sel"])) == waters
+
+
+def test_a_water_box_is_not_drawn_though_it_is_called_hoh():
+    s = boonza.load(DATA / "1HHO.pdb")
+    pos = s.positions.copy()
+    far = s.select("water").ids
+    pos[far[: int(len(far) * 0.3)]] += 100.0  # 30% off the molecule: no crystal's
+    s.positions = pos
+    assert not _water_rep(viewer.Session(s))
+    # 20% is still a crystal's, loose ones and all
+    s = boonza.load(DATA / "1HHO.pdb")
+    pos = s.positions.copy()
+    pos[far[: int(len(far) * 0.1)]] += 100.0
+    s.positions = pos
+    assert _water_rep(viewer.Session(s))
+
+
+def test_a_runs_waters_are_not_drawn(tmp_path):
+    s = boonza.load(DATA / "1HHO.pdb")
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        w.write(s.positions, None)
+    assert not _water_rep(viewer.Session(s, boonza.open_trajectory(path, s), whole=False))
+
+
+def test_other_names_for_water_are_not_drawn():
+    s = boonza.load(DATA / "1HHO.pdb")
+    res = np.asarray(s.select("water").residues if False else s.atoms["residue"])[
+        s.select("water").ids
+    ]
+    names = s.residues["name"]
+    for r in np.unique(res).tolist():
+        names[r] = "SOL"
+    assert not _water_rep(viewer.Session(s))
 
 
 def test_the_selection_is_an_entry_with_a_color_of_its_own():

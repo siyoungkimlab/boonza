@@ -27,6 +27,8 @@ POCKET = 5.0  # A: residues this near the ligand are the pocket
 #: every pose is drawn at once (the single-structure defaults keep all of them
 #: and let the view's H setting decide what is drawn)
 POLAR = "(not hydrogen or withinbonds 1 of (element N O S))"
+WATER_NEAR = 6.0  # A: a water this near the molecule is on it
+WATER_FAR = 0.25  # waters may be further than that, and still be a crystal's
 POLAR_CONTACT = 3.5  # A: N/O pairs between ligand and the rest drawn as contacts
 
 # Coarse-grained models: the selection keywords (protein, water, ions) are
@@ -171,8 +173,25 @@ def bead_radii(system) -> np.ndarray:
     return np.where(np.isfinite(r) & (r > 0.5), r, CG_RADIUS)
 
 
-def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "green") -> list:
-    """Cartoon, pocket and ligand (and ions), each where its selection has atoms."""
+def crystal_water(system) -> str | None:
+    """The selection of a structure's crystal waters, or None if it has none.  By name,
+    HOH, and by where they are, since a water box can be called HOH too: a crystal's
+    waters sit on the molecule (at most 4% of them over 6 A from it in 1HHO, 1LYZ, 2TRX
+    and 1TEN), and most of a box's do not (75% in a solvated lysozyme)."""
+    sel = "water and resname HOH"
+    oxygens = len(system.select(f"{sel} and not hydrogen"))
+    if not oxygens:
+        return None
+    near = system.select(f"{sel} and not hydrogen and "
+                         f"within {WATER_NEAR:g} of (not water and not hydrogen)")  # fmt: skip
+    return sel if 1 - len(near) / oxygens <= WATER_FAR else None
+
+
+def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "green",
+                 water: bool = True) -> list:  # fmt: skip
+    """Cartoon, pocket and ligand (and ions, and crystal waters), each where its
+    selection has atoms.  ``water``: False leaves the waters out whatever they are (a
+    trajectory's are bulk by then, wherever the first frame has them)."""
     if cg:
         lig = ligand or CG_LIGAND
         reps = [
@@ -196,6 +215,9 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
             (f"same residue as ({lig})", "sticks", f"element/{carbon}", "ligand"),
             ("ions and not (" + lig + ")", "spheres", "element", "ions"),
         ]  # fmt: skip
+        crystal = crystal_water(system) if water else None
+        if crystal:
+            reps.append((f"({crystal}) and not ({lig})", "ballstick", "element", "water"))
     out = [{"sel": sel, "style": style, "color": color, "label": label}
            for sel, style, color, label in reps if len(system.select(sel))]  # fmt: skip
     # the ligand's carbons are the colour that stands out; the cartoon keeps its own
@@ -451,7 +473,7 @@ class Session:
         for sel, r in self.sizes.items():
             radius[s.select(sel).ids] = r
         carbon = self.carbon
-        reps = self.reps or default_reps(s, self.cg, self.ligand, carbon)
+        reps = self.reps or default_reps(s, self.cg, self.ligand, carbon, self.trajectory is None)
         # classes, for the R, S and L picking buttons: 0 receptor, 1 ligand, 2 solvent
         klass = np.ones(s.natoms, np.int64)
         if self.radii is None:
@@ -1101,7 +1123,8 @@ class Session:
         self.ligand = "same residue as index " + " ".join(map(str, atoms))
         reps = None
         if self.reps is None:
-            reps = default_reps(self.system, self.cg, self.ligand, self.carbon)
+            reps = default_reps(self.system, self.cg, self.ligand, self.carbon,
+                                self.trajectory is None)  # fmt: skip
         return {"ligand": self.ligand, "reps": reps}
 
     def stereocentre(self, atom: int) -> dict:
