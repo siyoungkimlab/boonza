@@ -1970,3 +1970,29 @@ def test_aligning_onto_a_trajectory_uses_the_frame_on_screen(tmp_path):
     gap = np.linalg.norm(still.system.positions[still.system.select("name CA").ids].mean(0)
                          - shown[run.system.select("name CA").ids].mean(0))  # fmt: skip
     assert gap < 5  # on top of what is drawn, not a box away
+
+
+def test_the_builder_reads_a_stereocentre_without_being_asked():
+    """The Chirality section hid behind a "Turn It Over..." button, so an atom had to
+    be sent to a panel before it would say whether it was a stereocentre at all.  The
+    reading needs only the selection, so it is in the section, refreshed with every
+    other selection-driven box.  And amber was the hand the centre is *not*: the
+    accent means "this is the one" everywhere else in the dock, so it now marks what
+    the atom is, and the plain button beside it is the other hand."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    body = ui[ui.index("async function refreshChiralityBox()") :]
+    body = body[: body.index("\n  }\n")]
+    assert "api/stereocentre" in body and "api/set_chirality" in body
+    assert 'w === cur ? "armed" : ""' in body  # what it is now is the marked one
+    assert "ticket !== chiralTicket" in body  # a later selection wins the race
+    selection = ui[ui.index("app.onSelection = () =>") :]
+    selection = selection[: selection.index("\n  }\n")]
+    assert "refreshChiralityBox()" in selection
+    builder = ui[ui.index("function atomBuilder(body)") :]
+    builder = builder[: builder.index("\n  }\n")]
+    assert 'className: "chirality-box"' in builder
+    assert "Turn It Over" not in ui  # no button in the way any more
+    panel = ui[ui.index("async function chiralityPanel(") :]
+    panel = panel[: panel.index("\n  }\n")]
+    for cur in ('w === now ? "blue" : ""', 'w === dl ? "blue" : ""'):
+        assert cur in panel  # the panel marks the same hand as the section

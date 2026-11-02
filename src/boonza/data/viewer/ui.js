@@ -1165,13 +1165,14 @@ export function setupUI(app) {
           + "are not all different, or it has fewer than four."));
         return;
       }
-      body.append(row(...["R", "S"].map(w => button(w, () => set(w), w === now ? "" : "blue"))));
+      body.append(row(...["R", "S"].map(w => button(w, () => set(w), w === now ? "blue" : ""))));
       if (info.alpha) {
         body.append(el("p", { className: "help" }, "An alpha carbon, so D and L name it too "
           + "(L is S for every amino acid but cysteine, whose sulfur outranks its carboxyl)."));
-        body.append(row(...["D", "L"].map(w => button(w, () => set(w), w === dl ? "" : "blue"))));
+        body.append(row(...["D", "L"].map(w => button(w, () => set(w), w === dl ? "blue" : ""))));
       }
-      body.append(el("p", { className: "help" }, "Its two smallest branches are swapped — "
+      body.append(el("p", { className: "help" }, "Amber is what it is now; click the other to "
+        + "turn it over. Its two smallest branches are swapped — "
         + `here ${info.branches.map(b => b.length).join(", ")} atoms — rigidly, by the half turn `
         + "about their bisector, so bond lengths and angles inside them are kept; the rest is "
         + "then relaxed with the centre held. If it does not come out as asked, nothing is "
@@ -1700,6 +1701,7 @@ export function setupUI(app) {
     footerEdit();
     footerSmiles();
     refreshSmilesBox();
+    refreshChiralityBox();
     paintSequence();
   };
   function footerEdit() {
@@ -2547,6 +2549,64 @@ export function setupUI(app) {
       button("Download SDF", () => download("sdf", m, sel[0]?.[1] || []))));
   }
 
+  // The Builder's Chirality section, live on the selection: select one atom and it
+  // says whether it is a stereocentre and which hand it is, so a centre can be read
+  // without opening anything and turned over in one click.  Amber is what it is
+  // now, as everywhere else in this dock, and the plain button beside it is the
+  // other hand -- it used to be the other way round, which read as "click the
+  // highlighted one" and turned the centre over by accident.
+  let chiralTicket = 0;
+  async function refreshChiralityBox() {
+    const box = document.querySelector("#ldock .chirality-box");
+    if (!box) return;
+    const ticket = ++chiralTicket;
+    const say = (...kids) => {
+      if (ticket !== chiralTicket) return;  // a later selection already answered
+      box.innerHTML = "";
+      box.append(...kids);
+    };
+    const help = t => el("p", { className: "help" }, t);
+    const sel = app.selection();
+    if (sel.length !== 1 || sel[0][1].length !== 1) {
+      say(help("Select one atom — the centre — to read and change its configuration."));
+      return;
+    }
+    const [m, atoms] = sel[0];
+    const a = atoms[0], name = m.topo.atoms.name[a];
+    let info;
+    try { info = await app.getJSON(`api/stereocentre?m=${m.index}&a=${a}`); }
+    catch (e) { say(help(e.message)); return; }
+    if (info.error) { say(el("p", { className: "what" }, `${name}: ${info.error}`)); return; }
+    const now = info.cip, dl = info.dl;
+    if (!now) {
+      say(el("p", { className: "what" }, `${name} has no configuration assigned`),
+          help("RDKit assigns it none: its four branches are not all different, or it has "
+             + "fewer than four."));
+      return;
+    }
+    const set = async want => {
+      const out = await serverEdit(m, "api/set_chirality", { atom: a, want });
+      if (!out) return;
+      app.message(out.changed
+        ? `${name}: ${out.was} → ${out.is}, ${out.moved} atoms moved (Edit | Undo takes it back)`
+        : `${name} is already ${out.is}`);
+      refreshChiralityBox();
+    };
+    const seg = (options, cur) =>
+      row(...options.map(w => button(w, () => set(w), w === cur ? "armed" : "")));
+    const kids = [el("p", { className: "what" }, `${name} is ${now}${dl ? ` — ${dl}` : ""}`),
+                  seg(["R", "S"], now)];
+    if (info.alpha) {
+      kids.push(seg(["D", "L"], dl));
+      kids.push(help("An alpha carbon, so D and L name it too (L is S for every amino acid but "
+                   + "cysteine, whose sulfur outranks its carboxyl)."));
+    }
+    kids.push(help(`Amber is what it is now; click the other to turn it over. Its two smallest `
+                 + `branches — here ${info.branches.map(b => b.length).join(", ")} atoms — swap `
+                 + `places rigidly, so nothing is rebuilt.`));
+    say(...kids);
+  }
+
   function atomBuilder(body) {
     body.append(el("h3", {}, "SMILES"));
     body.append(el("div", { className: "smiles-box" }));
@@ -2554,16 +2614,8 @@ export function setupUI(app) {
     body.append(el("p", { className: "help" }, "Pick a tool, then click in the view: a hydrogen grows the molecule "
       + "from it, an atom changes, empty space starts a new molecule. With atoms selected, a tool acts on them. Esc puts the tool down."));
     body.append(el("h3", {}, "Chirality"));
-    body.append(el("p", { className: "help" }, "Select one atom of a stereocentre, then R or S "
-      + "(D or L on an amino acid's alpha carbon). Its two smallest branches are swapped, so a "
-      + "side chain and its HA change places and nothing is rebuilt."));
-    body.append(row(button("Turn It Over…", () => {
-      const t_ = editTarget();
-      if (!t_) return;
-      const [m, atoms] = t_;
-      if (atoms.length !== 1) { app.message("select exactly one atom: the centre", true); return; }
-      chiralityPanel(m, atoms[0]);
-    }, "blue")));
+    body.append(el("div", { className: "chirality-box" }));
+    refreshChiralityBox();
     body.append(el("h3", {}, "Atoms"));
     const g = grid();
     for (const e of ELEMENTS) if (e !== "H") g.append(toolButton(e, { kind: "element", value: e, label: e }));
