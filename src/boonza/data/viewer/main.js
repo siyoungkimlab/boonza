@@ -9,7 +9,7 @@
 
 import { Camera } from "./camera.js";
 import { colorAtoms, colorResidues, named, RIBBON_SCHEMES } from "./colors.js";
-import { buildScene, setDetail, STYLES } from "./geometry.js";
+import { buildScene, setDetail, setHighlight, STYLES } from "./geometry.js";
 import { Renderer } from "./gl.js";
 import { setupMouse } from "./mouse.js";
 import { surface } from "./surface.js";
@@ -48,6 +48,9 @@ const state = {
   masks: [true, true, true, true],  // pickable: receptor, ligand, solvent, ribbons
   hydrogens: "polar",               // shown: all, polar, none
   contacts: false, meters: [], labelMode: "name", pocketNumbers: true, busy: 0,
+  selColor: localStorage.getItem("boonza.selColor") || "default",  // the selection's highlight
+  pocket: +(localStorage.getItem("boonza.pocket") || 5),  // A: residues this near the ligand are its pocket
+  selHidden: false,                 // (sel) unticked: still selected, not highlighted
   surfaceGrid: +(localStorage.getItem("boonza.surfaceGrid") || 0.5),  // A, View | Add Surface | Resolution
 };
 
@@ -249,6 +252,28 @@ function aggregate(model) {
   return st;
 }
 
+// the selection's highlight color: a color's name, or "default" (pink)
+function setSelectionColor(spec) {
+  state.selColor = spec;
+  setHighlight(named(spec));
+  localStorage.setItem("boonza.selColor", spec);
+  rebuild();
+}
+setHighlight(named(state.selColor));
+
+// the pocket: every use of it reads this, so what is drawn, Select | Binding Site and
+// what Minimize moves agree.  Beads touch further apart: a bead's reaches 1 A more
+function pocketSelection(topo) {
+  const lig = topo.ligand;
+  return topo.cg
+    ? `(same residue as ((same residue as name BB GC PX) and within ${state.pocket + 1} of (${lig}))) and not (${lig})`
+    : `(same residue as ((protein or nucleic) and within ${state.pocket} of (${lig}))) and not (${lig})`;
+}
+// a model's own representations, with its binding site at the distance chosen
+function pocketReps(topo, reps) {
+  return reps.map(r => (r.label === "binding site" && !r.ids ? { ...r, sel: pocketSelection(topo) } : r));
+}
+
 function applyReps(model, reps) {
   for (const r of reps) model.reps.push(makeRep(model, { ids: r.ids, sel: r.sel, label: r.label, style: r.style, color: r.color }));
 }
@@ -291,7 +316,7 @@ async function load(model) {
       if (old) carryOver(old, model);
       else {
         model.reps = [];
-        applyReps(model, await Promise.all(topo.reps.map(async r => ({ ...r, ids: r.ids || await selectIds(model, r.sel) }))));
+        applyReps(model, await Promise.all(pocketReps(topo, topo.reps).map(async r => ({ ...r, ids: r.ids || await selectIds(model, r.sel) }))));
       }
       aggregate(model);
       // a numbered model (a pocket, a site) is labeled at its ligand -- the site's points
@@ -555,7 +580,8 @@ function modelItems(m) {
   const nres = R.name.length;
   aggregate(m);
   const none = new Uint8Array(n), noRibbon = new Uint8Array(nres);
-  const selected = state.picture ? none : st.sel;  // a picture leaves out the selection's highlight
+  // a picture leaves out the selection's highlight, as does (sel) unticked
+  const selected = state.picture || state.selHidden ? none : st.sel;
   const drawn = new Uint8Array(n), traced = new Uint8Array(n), items = [];
   const base = { topo, pos: m.pos, ss: m.ss };
   const look = rep => ({ alpha: repAlpha(rep), shine: repShine(rep) });
@@ -1171,7 +1197,7 @@ const app = {
   state, camera, renderer, canvas,
   getJSON, post, busy, message, atomLabel,
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
-  selected, selection, targets, select, clearSelection, visibleAtom,
+  selected, selection, targets, select, clearSelection, visibleAtom, setSelectionColor, pocketSelection, pocketReps,
   rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
   setFrame, play, nframes, frameOf, updatePlayer, refreshContacts, refreshHbonds, TOKEN,

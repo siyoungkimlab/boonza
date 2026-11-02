@@ -27,6 +27,7 @@ when a row is clicked, and steps through them with the arrow keys.
 from __future__ import annotations
 
 import csv
+import itertools
 import json
 import math
 import re
@@ -37,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .session import LIGAND, POLAR, Session
+from .session import CG_SOLVENT, LIGAND, POCKET, POLAR, Session
 
 #: what poses are fitted on: alpha carbons, or a coarse-grained protein's
 #: backbone beads (Martini BB, SIRAH GC), as boonza modes fits its medoids
@@ -53,6 +54,12 @@ POCKET_COLOURS = ("cyan", "green", "blue", "orange", "purple", "magenta", "lime"
 #: anion red, aromatic orange, hydrophobe green
 PHARM_COLOURS = {"DON": "#87ceeb", "ACC": "#fa8072", "CAT": "#3f6fff", "ANI": "#ff3030",
                  "ARO": "#ffa500", "HYD": "#4caf50"}  # fmt: skip
+
+
+#: a clone with fewer chain residues than this is drawn as its atoms, not a ribbon
+MIN_RIBBON = 5
+#: split refuses to make more models than this
+SPLIT_MAX = 200
 
 
 @dataclass
@@ -273,6 +280,104 @@ class Viewer:
             new = b.system.append(piece)
             return {**b._changed(topology=True), "added": len(new)}
 
+    # --- clones and splits: new models of a model's atoms --------------------------------
+
+    def _piece(self, src: int, atoms, frame: int):
+        """Model ``src``'s ``atoms`` (default all) as a system of their own, where they
+        are in ``frame``."""
+        a = self.session(src)
+        if a.radii is not None:
+            raise ValueError(
+                "a model of points is not copied: its atoms are spheres, not molecules"
+            )
+        ids = None if atoms is None else np.asarray(atoms, np.int64)
+        if ids is not None and (len(ids) == 0 or ids.min() < 0 or ids.max() >= a.system.natoms):
+            raise ValueError("select the atoms first")
+        piece = a.system.clone(None if ids is None else ids.tolist())
+        pos = np.asarray(a.frame(frame)[0], float)
+        piece.positions = pos if ids is None else pos[ids]
+        return piece
+
+    def _add_piece(self, piece, name: str, group: str, cg: bool) -> int:
+        """A new model of ``piece``.  A stretch of chain gets the cartoon and all that goes
+        with it; a few residues have too little to draw a ribbon of, and would come up
+        empty, so they are drawn as their atoms."""
+        from ..analyze import chain_residues
+
+        reps = None
+        if not cg and len(chain_residues(piece)) < MIN_RIBBON:
+            reps = [{"sel": "all", "style": "sticks", "color": "element"}]
+        names = {m.name for m in self.models if not m.closed}
+        tries = itertools.chain([name], (f"{name} {k}" for k in itertools.count(2)))
+        unique = next(x for x in tries if x not in names)
+        session = Session(piece, title=unique, reps=reps, cg=cg)
+        self.models.append(Model(unique, lambda: session, group=group, _session=session))
+        return len(self.models) - 1
+
+    def clone(self, src: int, atoms=None, frame: int = 0) -> list[int]:
+        """A new model of model ``src``'s ``atoms`` (default all) where they are.  Named
+        for what it holds when that is one residue or one chain."""
+        piece = self._piece(src, atoms, frame)
+        base = self.models[src].name
+        if atoms is None:
+            what = "copy"
+        elif piece.nresidues == 1:
+            what = f"{str(piece.residues['name'][0]).strip()}{int(piece.residues['resid'][0])}"
+        else:
+            chains = {str(x).strip() for x in np.asarray(piece.chains["name"])}
+            what = f"chain {chains.pop()}" if len(chains) == 1 and "" not in chains else "copy"
+        return [self._add_piece(piece, f"{base} {what}", "copies", self.session(src).cg)]
+
+    def split(self, src: int, by: str = "chain", frame: int = 0) -> list[int]:
+        """Model ``src`` as a new model per chain (by name: a file can give a protein and
+        the ligand on it one chain, under one name) or per molecule (bonded atoms).  Water
+        and ions are one more model together, wherever they are filed, or a solvated run
+        would be a hundred thousand models and a dimer's chains would carry their waters.
+        The original is left as it is."""
+        if by not in ("chain", "molecule"):
+            raise ValueError("split by chain or molecule")
+        a = self.session(src)
+        s = a.system
+        base = self.models[src].name
+        solvent = np.zeros(s.natoms, bool)
+        solvent[s.select(f"resname {CG_SOLVENT}" if a.cg else "water or ions").ids] = True
+        if by == "chain":
+            res_chain = np.asarray(s.residues["chain"])[np.asarray(s.atoms["residue"])]
+            names = np.array([str(x).strip() for x in np.asarray(s.chains["name"])], dtype=object)
+            # chains without a name are told apart by their place
+            labels = np.array([n or f"{k + 1}" for k, n in enumerate(names)], dtype=object)
+            keys = labels[res_chain]
+        else:
+            keys = np.asarray(s.fragids)
+        pieces = {}
+        for key in dict.fromkeys(keys[~solvent].tolist()):
+            pieces[key] = np.flatnonzero((keys == key) & ~solvent)
+        if len(pieces) + bool(solvent.any()) < 2:
+            raise ValueError(f"{base} has only one {by}: nothing to split")
+        if len(pieces) > SPLIT_MAX:
+            raise ValueError(f"{base} has {len(pieces)} {by}s, more than {SPLIT_MAX} models: "
+                             "select what you want and clone it instead")  # fmt: skip
+        group = f"{base} by {by}"
+        added = []
+        for key, ids in pieces.items():
+            piece = self._piece(src, ids, frame)
+            if by == "chain":
+                name = f"{base} chain {key}"
+            else:
+                res = str(piece.residues["name"][0]).strip()
+                name = (
+                    f"{base} {res}{int(piece.residues['resid'][0])}"
+                    if piece.nresidues == 1
+                    else f"{base} molecule {key + 1}"
+                )
+            added.append(self._add_piece(piece, name, group, a.cg))
+        if solvent.any():
+            ids = np.flatnonzero(solvent)
+            added.append(
+                self._add_piece(self._piece(src, ids, frame), f"{base} solvent", group, a.cg)
+            )
+        return added
+
     # --- series: ligand designs, a model each, saved together as one SDF ---------------
 
     def series(self, group: str) -> list[int]:
@@ -433,7 +538,8 @@ class Viewer:
         if self.receptor(m) is not None and not constrained:
             return self.minimize_design(m, mode or "both", path=path,
                                         restraint=kw.get("restraint", 10.0), rem=rem,
-                                        solvent=kw.get("solvent", "rf"))  # fmt: skip
+                                        solvent=kw.get("solvent", "rf"),
+                                        pocket=kw.get("pocket", POCKET))  # fmt: skip
         protonated = _protonate_if_bare(self.session(m), m)
         out = self.session(m).minimize(mode=mode, path=path, rem=rem, **kw)
         if protonated:
@@ -459,9 +565,10 @@ class Viewer:
 
     def minimize_design(self, m: int, mode: str = "both", path: bool = False,
                         restraint: float = 10.0, rem: bool = False,
-                        solvent: str = "rf") -> dict:  # fmt: skip
+                        solvent: str = "rf", pocket: float = POCKET) -> dict:  # fmt: skip
         """Minimize design ``m`` in its receptor: ``mode`` both (it and its pocket free),
-        ligand (it alone) or pocket (the pocket alone); the heavy atoms of the rest
+        all (nothing held), ligand (it alone), pocket (the pocket alone) or protein (all
+        but it); ``pocket``, the distance defining the pocket; the heavy atoms of the rest
         held by ``restraint`` (kcal/mol/A^2) springs; ``rem``: soft first (boonza.rem).
         Only the design keeps its new positions: the receptor is every design's.  A
         receptor without hydrogens (a PDB entry) gets them first, as Add / Adjust H adds
@@ -480,12 +587,17 @@ class Viewer:
         s.append(design.system.clone())
         ligand = np.arange(n0, s.natoms)
         lig = "index " + " ".join(map(str, ligand.tolist()))
-        pocket = s.select(f"(same residue as ((protein or nucleic) and within 5 of ({lig})))").ids
-        free = {"both": np.union1d(ligand, pocket), "ligand": ligand, "pocket": pocket}.get(mode)
+        site = s.select(
+            f"(same residue as ((protein or nucleic) and within {pocket:g} of ({lig})))"
+        ).ids
+        free = {"both": np.union1d(ligand, site), "all": np.arange(s.natoms), "ligand": ligand,
+                "pocket": site, "protein": np.arange(n0)}.get(mode)  # fmt: skip
         if free is None:
-            raise ValueError(f"mode is both, ligand or pocket, not {mode!r}")
+            raise ValueError(f"mode is both, all, ligand, pocket or protein, not {mode!r}")
         if not len(free):
-            raise ValueError("nothing to move: no pocket residues within 5 A of the design")
+            raise ValueError(
+                f"nothing to move: no pocket residues within {pocket:g} A of the design"
+            )
         # the rest's heavy atoms held by springs; hydrogens are never held
         held = np.setdiff1d(np.flatnonzero(np.asarray(s.atoms["anum"]) > 1), free)
         key = (r, getattr(rec, "topo_version", 0), keep.tobytes(),

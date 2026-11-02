@@ -8,6 +8,8 @@ export const STYLE_NAMES = ["Line", "Stick", "Ball and Line", "Ball and Stick", 
 const [LINE, STICK, BALLLINE, BALLSTICK, SPACE] = [0, 1, 2, 3, 4];
 export const RIBBONS = ["cartoon", "tube"];
 const PINK = [1, 0.45, 0.85];
+let HIGHLIGHT = PINK;  // the selection's color: View's choice, pink unless one is made
+export function setHighlight(rgb) { HIGHLIGHT = rgb || PINK; }
 
 class Grow {  // a growable Float32Array
   constructor() { this.a = new Float32Array(1024); this.n = 0; }
@@ -83,7 +85,7 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
   const A = topo.atoms, B = topo.bonds, n = topo.natoms;
   for (const d of dashes || []) dash(d, l, c);
   const P = a => [pos[3 * a], pos[3 * a + 1], pos[3 * a + 2]];
-  const C = a => sel[a] ? PINK : [rgb[3 * a], rgb[3 * a + 1], rgb[3 * a + 2]];
+  const C = a => sel[a] ? HIGHLIGHT : [rgb[3 * a], rgb[3 * a + 1], rgb[3 * a + 2]];
 
   // bonds: a line where either end is drawn as lines, a stick where both are sticks
   const bonded = new Uint8Array(n);
@@ -147,7 +149,7 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
   for (let a = 0; a < n; a++) {
     if (!show[a]) {
       // a hidden atom shows only when selected: a pink ball, or its ribbon turns pink
-      if (sel[a] && !traced[a]) { s.center.push(...P(a)); s.radius.push(size.picked); s.color.push(...PINK); }
+      if (sel[a] && !traced[a]) { s.center.push(...P(a)); s.radius.push(size.picked); s.color.push(...HIGHLIGHT); }
       continue;
     }
     const st = style[a];
@@ -176,7 +178,7 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
     const t = R.trace[r];
     if (t < 0 || !traced[t]) continue;
     any = true;
-    for (let d = 0; d < 3; d++) color[3 * t + d] = sel[t] ? PINK[d] : state.ribbonRGB[3 * r + d];
+    for (let d = 0; d < 3; d++) color[3 * t + d] = sel[t] ? HIGHLIGHT[d] : state.ribbonRGB[3 * r + d];
   }
   if (any) {
     const shape = topo.cg ? CG_SHAPE : state.ribbonStyle === "tube" ? TUBE : SHAPE;

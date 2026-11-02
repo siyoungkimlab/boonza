@@ -1972,6 +1972,223 @@ def test_aligning_onto_a_trajectory_uses_the_frame_on_screen(tmp_path):
     assert gap < 5  # on top of what is drawn, not a box away
 
 
+def test_a_chain_is_cloned_where_it_is_and_named_for_it():
+    v = viewer.Viewer([])
+    v.upload("hho.pdb", (DATA / "1HHO.pdb").read_bytes())
+    s = v.session(0).system
+    ids = s.select("protein and chain A").ids
+    [k] = v.clone(0, ids.tolist())
+    copy = v.session(k).system
+    assert v.models[k].name == "hho.pdb chain A" and v.models[k].group == "copies"
+    assert copy.natoms == len(ids)
+    assert np.allclose(copy.positions, s.positions[ids])
+    assert s.natoms == 2396  # the original is untouched
+    # its cartoon, not a stick figure, and it can be edited on its own
+    assert v.session(k).topology()["reps"][0]["style"] == "cartoon"
+    assert v.session(k).topology()["editable"]
+    # again: a name of its own
+    [again] = v.clone(0, ids.tolist())
+    assert v.models[again].name == "hho.pdb chain A 2"
+
+
+def test_a_clone_of_a_few_residues_is_drawn_as_its_atoms():
+    """Two residues have no ribbon to speak of, so the default cartoon would draw a
+    clone of them as nothing at all."""
+    v = viewer.Viewer([])
+    v.upload("hho.pdb", (DATA / "1HHO.pdb").read_bytes())
+    s = v.session(0).system
+    one = s.select("chain A and resid 10").ids
+    [k] = v.clone(0, one.tolist())
+    assert v.models[k].name.startswith("hho.pdb ") and v.models[k].name.endswith("10")
+    reps = v.session(k).topology()["reps"]
+    assert [r["style"] for r in reps] == ["sticks"]
+    assert len(v.session(k).system.select(reps[0]["sel"])) == len(one)
+    # all of a model, and nothing is not all of it
+    [whole] = v.clone(0)
+    assert v.session(whole).system.natoms == s.natoms and v.models[whole].name == "hho.pdb copy"
+    with pytest.raises(ValueError, match="select the atoms"):
+        v.clone(0, [])
+
+
+def test_a_clone_takes_the_frame_on_screen(tmp_path):
+    s = boonza.load(DATA / "1LYZ.pdb")
+    s = s.clone(s.select("protein").ids)
+    path = tmp_path / "moved.dcd"
+    with boonza.open_writer(path, s.natoms) as w:
+        w.write(s.positions, None)
+        w.write(s.positions + 7.0, None)
+    v = viewer.Viewer([])
+    session = viewer.Session(s, boonza.open_trajectory(path, s), whole=False)
+    v.models.append(viewer.outputs.Model("run", lambda: session, _session=session))
+    [k] = v.clone(0, [0, 1, 2], frame=1)
+    assert np.allclose(v.session(k).system.positions, np.asarray(session.frame(1)[0])[[0, 1, 2]])
+    assert v.session(k).trajectory is None  # a structure, to edit
+
+
+def test_a_split_homodimer_aligns_chain_onto_chain():
+    """One file holding a homodimer: its chains apart, so that one can be superposed on
+    the other.  The water filed under each chain goes with neither."""
+    v = viewer.Viewer([])
+    v.upload("hho.pdb", (DATA / "1HHO.pdb").read_bytes())
+    added = v.split(0, "chain")
+    names = [v.models[k].name for k in added]
+    assert names == ["hho.pdb chain A", "hho.pdb chain B", "hho.pdb solvent"]
+    assert {v.models[k].group for k in added} == {"hho.pdb by chain"}
+    assert all(not len(v.session(k).system.select("water")) for k in added[:2])
+    assert len(v.session(added[2]).system.select("water")) == 109
+    assert sum(v.session(k).system.natoms for k in added) == v.session(0).system.natoms
+    assert v.session(0).system.natoms == 2396  # the original stays
+    a, b = v.session(added[0]), v.session(added[1])
+    before = a.system.positions.copy()
+    out = a.align(b, "cealign")
+    assert not np.allclose(before, a.system.positions)  # it moved
+    assert out["rmsd"] < 5
+
+
+def test_a_split_by_molecule_and_its_limits():
+    v = viewer.Viewer([])
+    v.upload("hho.pdb", (DATA / "1HHO.pdb").read_bytes())
+    added = v.split(0, "molecule")
+    names = [v.models[k].name for k in added]
+    # a heme bonded to its histidine is of that molecule; the phosphate is bonded to nothing
+    assert names == [
+        "hho.pdb molecule 1",
+        "hho.pdb molecule 2",
+        "hho.pdb PO4142",
+        "hho.pdb solvent",
+    ]
+    assert sum(v.session(k).system.natoms for k in added) == 2396
+    with pytest.raises(ValueError, match="chain or molecule"):
+        v.split(0, "residue")
+    lone = v.build("CCO")[0]
+    with pytest.raises(ValueError, match="nothing to split"):
+        v.split(lone, "molecule")
+
+
+def test_clone_and_split_are_served(served):
+    v = viewer.Viewer([])
+    get, post = served(v)
+    v.upload("hho.pdb", (DATA / "1HHO.pdb").read_bytes())
+    status, out = post("api/clone", {"m": 0, "atoms": [0, 1, 2], "frame": 0})
+    assert status == 200 and len(out["models"]) == 2
+    status, out = post("api/split", {"m": 0, "by": "chain"})
+    assert status == 200 and len(out["added"]) == 3
+
+
+def _with_a_ligand_residue():
+    # a stretch of protein whose ligand is one of its residues: no AmberTools needed
+    pytest.importorskip("openmm")
+    s = boonza.load(DATA / "1LYZ.pdb")
+    s = s.clone(s.select("protein and resid 1 to 12").ids)
+    session = viewer.Session(s, ligand="resid 6")
+    session.edit("protonate")
+    return session
+
+
+@pytest.mark.parametrize("mode", ["both", "all", "ligand", "pocket", "protein"])
+def test_each_minimize_mode_moves_what_it_says(mode):
+    """Measured: what a mode frees moves further than what it holds.  Held atoms are on
+    springs, not frozen, so they give a little on a structure this strained; 1.5 times
+    is far under what is seen (at least 2.1 times, and 7 for the ligand alone)."""
+    session = _with_a_ligand_residue()
+    start = session.system.positions.copy()
+    heavy = np.asarray(session.system.atoms["anum"]) > 1
+    site_sel = "(same residue as (within 5 of resid 6)) and not resid 6"
+    group = {"ligand": session.select("resid 6"),
+             "site": session.select(site_sel)}  # fmt: skip
+    outer = np.setdiff1d(np.flatnonzero(heavy), np.union1d(group["ligand"], group["site"]))
+    out = session.minimize(mode=mode)
+    moved = np.linalg.norm(session.system.positions - start, axis=1)
+
+    def rms(ids):
+        ids = ids[heavy[ids]]
+        return float(np.sqrt((moved[ids] ** 2).mean()))
+
+    lig, site, rest = rms(group["ligand"]), rms(group["site"]), rms(outer)
+    assert out["mobile"] == mode and out["energy_after"] < out["energy_before"]
+    if mode == "all":
+        assert out["held_atoms"] == 0 and rest > 0.5  # the far end relaxes too
+    elif mode == "both":
+        assert min(lig, site) > 1.5 * rest
+    elif mode == "ligand":
+        assert lig > 1.5 * max(site, rest)
+    elif mode == "pocket":
+        assert site > 1.5 * max(lig, rest)
+    else:
+        assert min(site, rest) > 1.5 * lig
+
+
+def test_the_pocket_distance_decides_what_minimize_frees():
+    session = _with_a_ligand_residue()
+    heavy = np.flatnonzero(np.asarray(session.system.atoms["anum"]) > 1)
+    held = {d: len(session._what_moves("both", None, None, None, d)[1]) for d in (2.0, 5.0, 12.0)}
+    assert held[2.0] > held[5.0] > held[12.0] and held[2.0] < len(heavy)
+    assert not len(session._what_moves("all", None, None, None)[1])
+    with pytest.raises(ValueError, match="both, all, ligand, pocket or protein"):
+        session._what_moves("everything", None, None, None)
+
+
+def test_the_pocket_slider_is_the_one_definition():
+    here = Path(boonza.__file__).parent / "data/viewer"
+    ui, main = (here / "ui.js").read_text(), (here / "main.js").read_text()
+    assert (
+        "within 4.5 of (${" not in ui
+        and "within 4.5" not in (Path(boonza.__file__).parent / "viewer/export.py").read_text()
+    )
+    assert "within ${state.pocket} of" in main and 'localStorage.getItem("boonza.pocket")' in main
+    assert ui.count("pocketRow()") >= 3  # under the representations, in Minimize and in Dynamics
+    assert ui.count("pocket: state.pocket") >= 2  # what is minimized and what is run
+    # a choice in a panel shows it is chosen: the style was the left dock's alone
+    assert ".panel button.armed" in (here / "style.css").read_text()
+
+
+def test_the_builder_draws_a_selected_residue_whole():
+    """A hydrogen with its heavy atom alone drew a residue in pieces: ARG31 at a gap in
+    the chain came up 23 of its 26 atoms with nothing selected (bonded to no residue it
+    is classed with the ligands, though it is no ligand), and a PHE of the chain 17 of 20
+    when selected, without its backbone C and O."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    body = ui[ui.index("function markBuilderH()") :]
+    body = body[: body.index("\n  }\n")]
+    assert "for (const b of m.topo.residueAtoms[A.residue[heavy]]) left.add(b)" in body
+    assert "left.add(a).add(heavy)" not in body
+    assert "!(m.state.sel[heavy] || m.state.sel[a])) continue" in body  # the selection's only
+
+
+def test_water_and_ions_can_be_selected_and_are_not_drawn_by_default():
+    s = boonza.load(DATA / "1HHO.pdb")
+    session = viewer.Session(s)
+    top = session.topology()
+    water = set(s.select("water").ids.tolist())
+    assert not any(water & set(s.select(r["sel"]).ids.tolist()) for r in top["reps"])
+    assert len(session.select("water")) == 109
+    assert sum(k == 2 for k in top["atoms"]["class"]) == 109
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    menu = ui[ui.index("const selectItems") :]
+    assert 'label: "Water"' in menu and 'label: "Ions"' in menu and 'label: "Chain"' in menu
+    # the keyword "solvent" is not what the class means: it takes the ligands in too, so
+    # the preset's representation, once re-applied, lost them
+    assert 'nosolvent: "not (water or ions)"' in ui
+
+
+def test_the_selection_is_an_entry_with_a_color_of_its_own():
+    here = Path(boonza.__file__).parent / "data/viewer"
+    ui, main, geo = ((here / f).read_text() for f in ("ui.js", "main.js", "geometry.js"))
+    assert 'id="rdock-sel"' in (here / "index.html").read_text()
+    assert "function refreshSelRow()" in ui and "(sel)" in ui
+    assert "state.selHidden" in main and "state.selHidden = false" in ui
+    assert "export function setHighlight" in geo
+    assert "sel[a] ? PINK" not in geo  # every use goes through the choice
+    assert "function setSelectionColor" in main and "boonza.selColor" in main
+
+
+def test_a_series_downloads_from_the_model_list():
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    header = ui[ui.index('const header = el("label", { className: "mgroup" }') :]
+    header = header[: header.index("return header")]
+    assert "downloadSeries(group)" in header and '"sdf")' in header
+
+
 def test_the_builder_reads_a_stereocentre_without_being_asked():
     """The Chirality section hid behind a "Turn It Over..." button, so an atom had to
     be sent to a panel before it would say whether it was a stereocentre at all.  The

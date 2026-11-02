@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from .outputs import Viewer
-from .session import CG_POCKET
+from .session import CG_POCKET, POCKET
 
 STATIC = Path(__file__).resolve().parent.parent / "data" / "viewer"
 
@@ -34,7 +34,7 @@ def _site_selections(topo: dict) -> list[str]:
         pocket = (f"(same residue as ((same residue as name BB GC PX) and within {CG_POCKET:g} "
                   f"of ({lig}))) and not ({lig})")  # fmt: skip
     else:
-        pocket = (f"(same residue as ((protein or nucleic) and within 4.5 of ({lig}))) "
+        pocket = (f"(same residue as ((protein or nucleic) and within {POCKET:g} of ({lig}))) "
                   f"and not ({lig})")  # fmt: skip
     return [f"same residue as ({lig})", pocket]
 

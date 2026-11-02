@@ -156,8 +156,7 @@ label.mgroup input { margin: 0; }
 #ldock input:not([type=checkbox]) { background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; min-width: 0; flex: 1; }
 #ldock .help { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 6px 0; }
 #ldock .what { color: var(--muted); width: 54px; font-size: 11px; }
-#ldock button.armed { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
-#ldock button.armed small { color: var(--accent-text); }
+/* every panel's choices, not only the dock's: Minimize's looked dead without it */
 
 /* --- the 2D ligand overlay ----------------------------------------------------------- */
 #lig2d { position: absolute; left: 10px; bottom: 44px; width: 360px; border: 1px solid var(--line); border-radius: 8px;
@@ -285,6 +284,15 @@ body.dark .label.meter { color: #ffd34d; }
 .rama circle.pro, .key.pro { fill: #e8a33c; background: #e8a33c; }
 .rama circle.on { fill: #ff73d9; stroke: var(--text); stroke-width: 1; }
 .rama circle:hover { stroke: var(--text); stroke-width: 1.2; }
+.pocket-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.pocket-row input { flex: 1; min-width: 60px; }
+.pocket-row output { width: 36px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+#rep-pocket { padding: 2px 8px; }
+/* (sel): the selection, as an entry above the models */
+#rdock-sel { padding: 0 6px; flex: none; }
+#rdock-sel[hidden] { display: none; }
+#rdock-sel .mrow { border-color: var(--line); }
+#rdock-sel .name { font-style: italic; cursor: default; }
 .mgroup .table-btn { margin-left: 8px; text-transform: none; padding: 0 6px; font-size: 10px; line-height: 15px;
   color: var(--text); background: var(--button); border: 1px solid var(--line); border-radius: 5px; }
 .mgroup .table-btn:hover { background: var(--hover); }
@@ -382,3 +390,7 @@ html.static #btn-py, html.static #btn-cancel, html.static #btn-min, html.static 
 #rep-edit input.cut::-webkit-outer-spin-button,
 #rep-edit input.cut::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 #rep-edit input.cut:focus { outline: none; border-color: var(--accent); }
+/* a choice that is on, in every panel as in the dock: last, to outrank each one's own
+   button style.  Minimize's choices looked dead without it */
+button.armed, .panel button.armed, #ldock button.armed { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.armed small, #ldock button.armed small { color: var(--accent-text); }

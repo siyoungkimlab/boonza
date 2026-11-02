@@ -142,6 +142,7 @@ export function setupUI(app) {
       if (!m?.state) continue;
       for (const rep of m.reps) {
         if (rep.style === "surface") continue;
+        if (spec === "element" && app.isRibbon(rep)) continue;  // a ribbon has no element
         const mine = ids.filter(a => rep.mask[a]);
         if (!mine.length) continue;
         if (mine.length === app.repIds(rep).length) { rep.color = spec; rep.tinted = false; app.colorRep(m, rep); continue; }
@@ -173,9 +174,47 @@ export function setupUI(app) {
   async function serverSelect(m, sel) {
     try { return Array.from(await app.selectIds(m, sel)); } catch (e) { app.message(e.message, true); return []; }
   }
-  const pocketSelection = m => m.topo.cg
-    ? `(same residue as ((same residue as name BB GC PX) and within 6 of (${m.topo.ligand}))) and not (${m.topo.ligand})`
-    : `(same residue as ((protein or nucleic) and within 4.5 of (${m.topo.ligand}))) and not (${m.topo.ligand})`;
+  const pocketSelection = m => app.pocketSelection(m.topo);
+
+  // The pocket's distance, one slider wherever it matters (under the representations, in
+  // Minimize and Dynamics): every copy moves together, and what is drawn follows
+  let pocketTimer = null, pocketTicket = 0;
+  function pocketRow() {
+    const input = el("input", { type: "range", min: 2, max: 12, step: 0.5, value: state.pocket, className: "pocket-slider",
+                                title: "whole residues with an atom this near the ligand are its pocket: what is drawn, selected and minimized" });
+    const shown = el("output", {}, `${state.pocket} Å`);
+    input.oninput = () => {
+      state.pocket = +input.value;
+      localStorage.setItem("boonza.pocket", input.value);
+      for (const r of document.querySelectorAll(".pocket-row")) {
+        r.querySelector("input").value = input.value;
+        r.querySelector("output").textContent = `${input.value} Å`;
+      }
+      clearTimeout(pocketTimer);
+      pocketTimer = setTimeout(redrawPockets, 150);
+    };
+    return el("label", { className: "pocket-row" }, "Pocket", input, shown);
+  }
+  // the binding site representations, at the distance chosen: a later move wins the race
+  async function redrawPockets() {
+    const ticket = ++pocketTicket;
+    for (const m of app.live().filter(o => o.state)) {
+      const reps = m.reps.filter(r => r.label === "binding site");
+      if (!reps.length) continue;
+      const text = pocketSelection(m);
+      let ids;
+      try { ids = await serverSelect(m, text); } catch (e) { app.message(e.message, true); return; }
+      if (ticket !== pocketTicket) return;
+      for (const rep of reps) {
+        rep.mask.fill(0);
+        for (const a of ids) rep.mask[a] = 1;
+        rep.sel = text; rep.version++;
+        app.colorRep(m, rep);
+      }
+      app.repsChanged(m);
+    }
+  }
+  if (!app.STATIC) $("rep-pocket").append(pocketRow());  // a static page has its selections made already
 
   // the ligand and its pocket in view; drawn as the binding site preset if neither is drawn
   async function focusLigand() {
@@ -206,6 +245,15 @@ export function setupUI(app) {
       if (ids.length) app.select(m, ids, "add");
     }
     app.rebuild(); app.onSelection();
+  }
+  // a chain by its name, without the water and ions a file files under the same name
+  // (a PDB entry's waters are in chains A and B too)
+  const chainOf = (m, a) => m.topo.chains.name[m.topo.residues.chain[m.topo.atoms.residue[a]]];
+  function chainItems() {
+    const names = new Set();
+    for (const m of app.shownModels()) for (const c of m.topo.residues.chain) names.add(m.topo.chains.name[c]);
+    return [...names].map(name => ({ label: name.trim() || "(no name)",
+      run: () => selectWhere((m, a) => m.topo.atoms.class[a] !== 2 && chainOf(m, a) === name) }));
   }
   function extend(how) {
     for (const [m, ids] of app.selection()) {
@@ -244,7 +292,10 @@ export function setupUI(app) {
     { label: "Ligand", run: () => selectServer(m => `same residue as (${m.topo.ligand})`) },
     { label: "Binding Site", run: () => selectServer(pocketSelection) },
     { label: "Receptor", run: () => selectWhere((m, a) => m.topo.atoms.class[a] === 0) },
+    { label: "Chain", sub: chainItems },
     { label: "Solvent", run: () => selectWhere((m, a) => m.topo.atoms.class[a] === 2) },
+    { label: "Water", run: () => selectServer(() => "water") },
+    { label: "Ions", run: () => selectServer(m => (m.topo.cg ? m.topo.solvent : "ions")) },
     { label: "Hydrogens", run: () => selectWhere((m, a) => m.topo.atoms.element[a] === "H") },
     { label: "Element", sub: [
       ...["C", "N", "O", "S", "P"].map(e => ({ label: e, run: () => selectWhere((m, a) => m.topo.atoms.element[a] === e) })),
@@ -775,8 +826,14 @@ export function setupUI(app) {
 
   // what moves in each way to minimize; the rest is fixed
   const MIN_MODES = [["both", "Pocket + ligand", "the ligand and its pocket free"],
+                     ["all", "Protein + ligand", "everything free"],
                      ["ligand", "Ligand", "the ligand free"],
-                     ["pocket", "Pocket", "the pocket free, the ligand fixed"]];
+                     ["pocket", "Pocket", "the pocket free, the ligand held"],
+                     ["protein", "Protein", "the protein free, the ligand held"]];
+  // what a mode's message says of what was held (nothing, when everything is free)
+  const heldHow = (out, restraint) => (out.mobile === "all" ? "everything free"
+    : `${MIN_MODES.find(([k]) => k === out.mobile)?.[2] ?? out.mobile}, the rest's heavy atoms held `
+      + `(${restraint} kcal/mol/Å², moved at most ${out.held_max} Å)`);
   async function minimize({ mode = null, restraint = null } = {}) {
     const m = actingModel();
     if (!m) return;
@@ -788,7 +845,7 @@ export function setupUI(app) {
       body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
       body.fixed = app.range(c.length).filter(a => c[a] === 2);
       body.tethered = app.range(c.length).filter(a => c[a] === 1);
-    } else Object.assign(body, { mode, restraint: restraint ?? +(localStorage.getItem("boonza.restraint") || 10) });
+    } else Object.assign(body, { mode, pocket: state.pocket, restraint: restraint ?? +(localStorage.getItem("boonza.restraint") || 10) });
     try {
       const out = await app.busy("minimizing (the first time sets up the force field)", () => app.post("api/minimize", body));
       // a model without hydrogens got them first (the receptor, or this one): its atoms changed
@@ -796,8 +853,7 @@ export function setupUI(app) {
       if (added && added !== m) await app.reloadModel(added, true);
       await app.reloadModel(m, added === m);
       const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
-        : `${MIN_MODES.find(([k]) => k === out.mobile)?.[2] ?? out.mobile}, the rest's heavy atoms held `
-          + `(${body.restraint} kcal/mol/Å², moved at most ${out.held_max} Å)`
+        : heldHow(out, body.restraint)
           + (out.receptor ? ` in ${out.receptor} (whose positions stay: every design shares it)` : "");
       const first = added ? `${out.protonated.hydrogens} hydrogens added to ${added.name} first (Edit | Undo takes them back)`
         + (out.protonated.incomplete.length ? `, incomplete residues left as they are: ${out.protonated.incomplete.join(", ")}` : "") + ". " : "";
@@ -825,15 +881,14 @@ export function setupUI(app) {
       body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
       body.fixed = app.range(c.length).filter(a => c[a] === 2);
       body.tethered = app.range(c.length).filter(a => c[a] === 1);
-    } else Object.assign(body, { mode, restraint: restraint ?? +(localStorage.getItem("boonza.restraint") || 10) });
+    } else Object.assign(body, { mode, pocket: state.pocket, restraint: restraint ?? +(localStorage.getItem("boonza.restraint") || 10) });
     try {
       const out = await app.busy(`running ${ps} ps of dynamics`, () => app.post("api/dynamics", body));
       const added = out.protonated && state.models[out.protonated.m];
       if (added && added !== m) await app.reloadModel(added, true);
       await app.reloadModel(m, added === m);
       const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
-        : `${MIN_MODES.find(([k]) => k === out.mobile)?.[2] ?? out.mobile}, the rest's heavy atoms held `
-          + `(${body.restraint} kcal/mol/Å², moved at most ${out.held_max} Å)`;
+        : heldHow(out, body.restraint);
       app.message(`${out.picoseconds} ps at ${out.temperature} K (${out.steps} steps): `
         + `E ${out.energy_before} → ${out.energy_after} kJ/mol, mean ${out.energy_mean}; ${how}`
         + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : "")
@@ -1062,7 +1117,7 @@ export function setupUI(app) {
       if (out.reps) {  // the defaults name the old ligand in their selections
         m.topo.reps = out.reps;
         m.reps = [];
-        app.applyReps(m, await Promise.all(out.reps.map(async r =>
+        app.applyReps(m, await Promise.all(app.pocketReps(m.topo, out.reps).map(async r =>
           ({ ...r, ids: r.ids || await serverSelect(m, r.sel) }))));
         app.repsChanged(m);
       }
@@ -1200,6 +1255,7 @@ export function setupUI(app) {
       ...(hit.atom !== undefined ? [{ label: "Set Chirality…", run: () => chiralityPanel(c.m, c.a) }] : []),
       { label: "Copy Its SMILES", run: () => { app.select(c.m, c.molecule); copySmiles(); } },
       { label: "Copy Molecule Into", sub: copyIntoItems(c.m, c.molecule) },
+      { label: "Clone Molecule as New Model", run: () => cloneAtoms(c.m, c.molecule) },
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
       "-",
       ...(c.m.topo.atoms.class[c.a] === 1 || isSeries(c.m) ? [...seriesItems(c.m, c.molecule), "-"] : []),
@@ -1219,6 +1275,8 @@ export function setupUI(app) {
     { label: "Models", sub: modelItems },
     "-",
     { label: "Copy SMILES", run: copySmiles },
+    { label: "Clone Selection as New Model", run: () => cloneSelection() },
+    { label: "Split Selection Off as New Model", run: () => cloneSelection(true) },
     { label: "Create Series from Selection", run: () => { const t = editTarget(); if (t) createSeries(...t); } },
     { label: "Rename Residue or Chain…", run: relabelPanel },
     { label: "Delete", run: deleteSelected },
@@ -1696,6 +1754,8 @@ export function setupUI(app) {
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {
+    state.selHidden = false;  // a new selection is one to see
+    refreshSelRow();
     markBuilderH();  // a selection of its own brings its hydrogens out, in the Builder
     ramaRefresh?.();
     footerEdit();
@@ -2138,6 +2198,43 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
 
+  // A new model of these atoms (none: all of them) where they are, in the frame on
+  // screen.  ``off``: out of this one too, with their hydrogens, as an edit Edit | Undo
+  // takes back.
+  async function cloneAtoms(m, ids, off = false) {
+    if (off) {
+      const A = m.topo.atoms, out = new Set(ids);
+      for (const a of ids) for (const b of m.topo.bondsOf[a]) if (A.element[b] === "H") out.add(b);
+      ids = [...out];
+      if (ids.length >= m.topo.natoms) { app.message("that is every atom: clone it instead", true); return; }
+    }
+    try {
+      const out = await app.post("api/clone", { m: m.index, atoms: ids, frame: Math.min(state.frame, m.topo.nframes - 1) });
+      if (off && !await serverEdit(m, "api/edit", { op: "delete", atoms: ids, hydrogens: false })) return;
+      app.clearSelection();
+      await addModels(out, false);
+      const made = state.models[out.added[0]];
+      app.message(`${made.name}: ${off ? `split off ${m.name} (Edit | Undo puts the atoms back in it)` : `a copy from ${m.name}`}, a model of its own`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  async function cloneSelection(off = false) {
+    const sel = app.selection();
+    if (!sel.length) { app.message("select atoms first", true); return; }
+    for (const [m, ids] of sel) await cloneAtoms(m, ids, off);
+  }
+  // A model apart into one model per chain or molecule, in a group, with the original
+  // hidden and untouched: chain A of a homodimer can then be aligned onto chain B
+  async function splitModel(m, by) {
+    try {
+      await app.load(m);
+      const out = await app.post("api/split", { m: m.index, by, frame: Math.min(state.frame, m.topo.nframes - 1) });
+      await addModels(out, false);
+      await app.show(out.added.map(k => state.models[k]));
+      await app.show([m], false);
+      app.message(`${m.name} split into ${out.added.length} models · Align On… in a model's right-click menu superposes them`);
+    } catch (e) { app.message(e.message, true); }
+  }
+
   // Analyze | Ramachandran Plot: phi and psi of each residue of the current model at this
   // frame, over the regions residues usually take; the selected residues are marked, and
   // a click on a point selects its residue (Shift: adds or takes it away)
@@ -2341,7 +2438,8 @@ export function setupUI(app) {
   // longer fills the view with every C-H it has.
   function markBuilderH() {
     const on = !$("ldock").hidden && dockTab === "builder";
-    for (const m of app.shownModels()) {
+    // every loaded model, not only those shown: a hidden one keeps no stale representation
+    for (const m of app.live().filter(o => o.state)) {
       const A = m.topo.atoms, mark = m.state.showH;
       if (!mark) continue;
       mark.fill(0);
@@ -2357,16 +2455,21 @@ export function setupUI(app) {
           if (heavy === undefined) continue;
           if (A.class[heavy] === 1 || m.state.sel[heavy] || m.state.sel[a]) mark[a] = 1;
         }
-        // a marked hydrogen whose heavy atom only a ribbon draws is in no atom
-        // representation at all: it gets one, with that atom, so the bond is drawn
-        // and both can be picked
+        // a selected hydrogen whose heavy atom only a ribbon draws is in no atom
+        // representation at all: its residue gets one, every atom of it.  (A hydrogen
+        // with its heavy atom alone drew a residue in pieces: the C and O of a backbone
+        // and whatever else carries no hydrogen were missing, and their bonds with
+        // them.)  Only the selection's: a residue read as protein but bonded to no
+        // other, at a gap, is classed with the ligands without being the ligand, and
+        // the ribbon is all that was asked of it.
         const atomRep = r => r.on && !app.isRibbon(r) && r.style !== "surface";
         const left = new Set();
         for (let a = 0; a < m.topo.natoms; a++) {
           if (!mark[a] || m.reps.some(r => atomRep(r) && r.mask[a])) continue;
           const heavy = m.topo.bondsOf[a][0];
-          if (heavy === undefined || !m.reps.some(r => r.on && app.isRibbon(r) && r.mask[heavy])) continue;
-          left.add(a).add(heavy);
+          if (heavy === undefined || !(m.state.sel[heavy] || m.state.sel[a])) continue;
+          if (!m.reps.some(r => r.on && app.isRibbon(r) && r.mask[heavy])) continue;
+          for (const b of m.topo.residueAtoms[A.residue[heavy]]) left.add(b);
         }
         if (left.size) {
           const rep = app.makeRep(m, { ids: [...left], label: "hydrogens", style: "sticks" });
@@ -2772,8 +2875,8 @@ export function setupUI(app) {
         });
         body.append(el("p", { className: "help" }, "What moves. The heavy atoms of the rest are held by springs: they barely "
           + "move, and a crystal structure's strain can relax (frozen, it stays, and so does an energy of 10⁵ kJ/mol). "
-          + "The pocket is the whole residues within 5 Å of the ligand."));
-        body.append(row(...choices), spring);
+          + "The pocket is the whole residues within the distance below of the ligand. Choose, then press Minimize."));
+        body.append(row(...choices), pocketRow(), spring);
         body.append(row(button("Minimize", () => minimize({ mode, restraint: +k.value }), "blue")));
         if (m?.receptor !== undefined) body.append(el("p", { className: "help" }, "A design is minimized in its receptor "
           + `(${state.models[m.receptor]?.name ?? "none"}); it keeps its new positions, the receptor its own.`));
@@ -2823,7 +2926,7 @@ export function setupUI(app) {
           return b;
         });
         body.append(el("p", { className: "help" }, "What moves; the heavy atoms of the rest are held by springs."));
-        body.append(row(...choices));
+        body.append(row(...choices), pocketRow());
       }
       body.append(row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²")));
       solventChoice(body);
@@ -2942,7 +3045,7 @@ export function setupUI(app) {
     if (what === "pocket") return serverSelect(m, pocketSelection(m));
     return [];
   }
-  const PRESET_SEL = { all: "all", nosolvent: "not solvent", ligand: null, pocket: null, polymer: null, receptor: null };
+  const PRESET_SEL = { all: "all", nosolvent: "not (water or ions)", ligand: null, pocket: null, polymer: null, receptor: null };
   const PRESET_LABEL = { all: "all", nosolvent: "all but solvent", ligand: "ligand", pocket: "binding site",
                          polymer: "polymer", receptor: "receptor" };
 
@@ -2953,7 +3056,7 @@ export function setupUI(app) {
     const before = m.reps;
     m.reps = [];
     if (spec === null) {  // the model's own: what it came with
-      app.applyReps(m, await Promise.all(m.topo.reps.map(async r => ({ ...r, ids: r.ids || await serverSelect(m, r.sel) }))));
+      app.applyReps(m, await Promise.all(app.pocketReps(m.topo, m.topo.reps).map(async r => ({ ...r, ids: r.ids || await serverSelect(m, r.sel) }))));
     } else {
       for (const [what, style, color] of spec) {
         const ids = await presetAtoms(m, what);
@@ -3325,6 +3428,69 @@ export function setupUI(app) {
     return b;
   }
 
+  // (sel): the selection as an entry above the models, as in PyMOL.  Its box turns the
+  // highlight off and on without letting go of the selection, its picker colors the
+  // atoms, and its right-click menu is what can be done to them.  The highlight is drawn
+  // over an atom's color, so coloring takes it off to show what was done.
+  const HIGHLIGHTS = [["default", "pink"], ...["yellow", "cyan", "green", "orange", "red", "blue", "magenta", "white"].map(c => [c, c])];
+  const ATOM_COLORS = [["element", "by element"], ["chain", "by chain"], ...["green", "cyan", "magenta", "yellow",
+    "orange", "red", "blue", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
+  function colorSelection(spec) {
+    const sel = app.selection();
+    if (!sel.length) return;
+    colorIn(sel, spec);
+    state.selHidden = true;
+    app.rebuild();
+    refreshSelRow();
+    app.message("colored · the highlight is off to show it: tick (sel) to bring it back");
+  }
+  const highlightItems = () => HIGHLIGHTS.map(([v, label]) => ({ label, checked: () => state.selColor === v, run: () => {
+    state.selHidden = false;
+    app.setSelectionColor(v);
+    refreshSelRow();
+  } }));
+  const selMenu = () => [
+    { label: "Color", sub: () => ATOM_COLORS.map(([v, label]) => ({ label, run: () => colorSelection(v) })) },
+    { label: "Color Carbons", sub: () => ATOM_COLORS.slice(2).map(([v, label]) => ({ label, run: () => colorSelection(`element/${v}`) })) },
+    { label: "Highlight Color", sub: highlightItems },
+    "-",
+    { label: "Show As", sub: showAsItems },
+    { label: "Hide", run: () => hideAtoms(app.selection()) },
+    { label: "New Representation", run: () => newRepFromSelection() },
+    { label: "Labels", sub: labelItems },
+    { label: "Center", run: () => app.centerView() },
+    "-",
+    { label: "Clone as New Model", run: () => cloneSelection() },
+    { label: "Split Off as New Model", run: () => cloneSelection(true) },
+    { label: "Copy SMILES", run: copySmiles },
+    { label: "Delete", run: deleteSelected },
+    "-",
+    { label: "Clear", run: () => { app.clearSelection(); app.rebuild(); app.onSelection(); } },
+  ];
+  function refreshSelRow() {
+    const box = $("rdock-sel"), sel = app.selection();
+    box.innerHTML = "";
+    box.hidden = !sel.length;
+    if (!sel.length) return;
+    const n = sel.reduce((k, [, ids]) => k + ids.length, 0);
+    const on = el("input", { type: "checkbox", checked: !state.selHidden, title: "the highlight: off keeps the selection, and shows the atoms' own color" });
+    on.onchange = () => { state.selHidden = !on.checked; app.rebuild(); };
+    const sw = el("span", { className: "swatch", title: "the highlight's color" });
+    sw.style.background = state.selColor === "default" ? "rgb(255,115,217)" : swatchColor(state.selColor);
+    sw.onclick = e => menu(highlightItems(), e.clientX, e.clientY);
+    const name = el("span", { className: "name", title: "the selection: right-click for what can be done to it" }, `(sel) ${n} atom${n === 1 ? "" : "s"}`);
+    const color = el("button", { className: "pick", title: "color these atoms" }, "color");
+    color.onclick = () => {
+      const r = color.getBoundingClientRect();
+      menu(ATOM_COLORS.map(([v, label]) => ({ label, run: () => colorSelection(v) })), r.left, r.bottom);
+    };
+    const x = el("button", { className: "x", title: "clear the selection" }, "✕");
+    x.onclick = () => { app.clearSelection(); app.rebuild(); app.onSelection(); };
+    const row = el("div", { className: "mrow on" }, el("div", { className: "top" }, on, sw, name, color, x));
+    row.oncontextmenu = e => { e.preventDefault(); menu(selMenu(), e.clientX, e.clientY); };
+    box.append(row);
+  }
+
   function swatchColor(spec) {
     if (spec === "default" || !spec) return "linear-gradient(135deg,#e53935 50%,#ffd54f 50%)";
     if (spec === "chain") return "linear-gradient(135deg,#5c5 33%,#3bd 33% 66%,#e5c 66%)";
@@ -3384,6 +3550,9 @@ export function setupUI(app) {
           ...(isSeries(m) ? [...seriesMemberItems(m), "-"] : []),
           { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },
           { label: "Copy Into", sub: copyIntoItems(m, []) },
+          { label: "Clone as New Model", run: async () => { await app.load(m); cloneAtoms(m, []); } },
+          { label: "Split", sub: [["By Chain", "chain"], ["By Molecule", "molecule"]]
+            .map(([label, by]) => ({ label, run: () => splitModel(m, by) })) },
           { label: "Download", sub: () => DOWNLOADS.map(([fmt, label]) => ({ label, run: async () => { await app.load(m); download(fmt, m, []); } })) },
           { label: "Save…", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; app.rebuild(); savePanel(); } },
           "-",
@@ -3424,7 +3593,9 @@ export function setupUI(app) {
     if (isSeries({ group }) && members.length) {  // its table: a row per member, a column per field
       const t = el("button", { className: "table-btn", title: `${group} as a table: its SDF fields, sortable, to plot` }, "table");
       t.onclick = e => { e.preventDefault(); e.stopPropagation(); seriesTablePanel(group); };
-      header.append(t);
+      const sdf = el("button", { className: "table-btn", title: `download ${group} as one SDF, a record per member` }, "sdf");
+      sdf.onclick = e => { e.preventDefault(); e.stopPropagation(); downloadSeries(group); };
+      header.append(t, sdf);
     }
     if (isSeries({ group }) && members.length) header.oncontextmenu = e => {
       e.preventDefault();
