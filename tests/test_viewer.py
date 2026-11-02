@@ -2189,7 +2189,7 @@ def test_a_water_box_is_not_drawn_though_it_is_called_hoh():
     pos[far[: int(len(far) * 0.3)]] += 100.0  # 30% off the molecule: no crystal's
     s.positions = pos
     assert not _water_rep(viewer.Session(s))
-    # 20% is still a crystal's, loose ones and all
+    # 10% is still a crystal's, loose ones and all
     s = boonza.load(DATA / "1HHO.pdb")
     pos = s.positions.copy()
     pos[far[: int(len(far) * 0.1)]] += 100.0
@@ -2207,9 +2207,7 @@ def test_a_runs_waters_are_not_drawn(tmp_path):
 
 def test_other_names_for_water_are_not_drawn():
     s = boonza.load(DATA / "1HHO.pdb")
-    res = np.asarray(s.select("water").residues if False else s.atoms["residue"])[
-        s.select("water").ids
-    ]
+    res = np.asarray(s.atoms["residue"])[s.select("water").ids]
     names = s.residues["name"]
     for r in np.unique(res).tolist():
         names[r] = "SOL"
