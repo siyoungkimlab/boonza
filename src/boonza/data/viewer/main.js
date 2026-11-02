@@ -585,6 +585,14 @@ function modelItems(m) {
   const drawn = new Uint8Array(n), traced = new Uint8Array(n), items = [];
   const base = { topo, pos: m.pos, ss: m.ss };
   const look = rep => ({ alpha: repAlpha(rep), shine: repShine(rep) });
+  // what the model draws, across its representations: a bond between two of them is
+  // drawn half by each (geometry.js)
+  const reach = new Uint8Array(n);
+  for (const rep of m.reps) {
+    if (!rep.on || rep.style === "surface") continue;
+    if (isRibbon(rep)) { for (const r of repResidues(m, rep)) for (const a of topo.residueAtoms[r]) reach[a] = 1; continue; }
+    for (let a = 0; a < n; a++) if (rep.mask[a] && visibleAtom(m, a)) reach[a] = 1;
+  }
   for (const rep of m.reps) {
     if (!rep.on) continue;
     if (rep.style === "surface") {
@@ -601,7 +609,7 @@ function modelItems(m) {
     // shown atoms, through the hydrogen filter
     const show = new Uint8Array(n), sel = new Uint8Array(n);
     for (let a = 0; a < n; a++) if (rep.mask[a] && visibleAtom(m, a)) { show[a] = 1; drawn[a] = 1; sel[a] = selected[a]; }
-    items.push({ ...base, ...look(rep), state: { show, style: new Uint8Array(n).fill(ATOM_STYLE[rep.style]), rgb: rep.rgb, sel, ribbon: noRibbon } });
+    items.push({ ...base, ...look(rep), state: { show, style: new Uint8Array(n).fill(ATOM_STYLE[rep.style]), rgb: rep.rgb, sel, ribbon: noRibbon, reach } });
   }
   // the selected atoms nothing draws: a pink ball each; contacts, bonds and meters dashed
   const loose = new Uint8Array(n);

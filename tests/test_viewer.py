@@ -714,8 +714,24 @@ def test_a_bond_out_of_a_selection_reaches_the_ribbon():
     loop = geometry[geometry.index("// bonds: a line where either end") :]
     loop = loop[: loop.index("// the traced atom of each residue")]
     assert "if (!show[i] && !show[j]) continue;" in loop  # both hidden: nothing to draw
-    assert "if (!ribbonOn[hid]" in loop  # a stub only where a ribbon is drawn
+    assert "if (!reach?.[hid]" in loop  # half of it, only where something draws the other end
     assert "if (!show[i] || !show[j]) continue;" not in loop  # the old, unconditional skip
+
+
+def test_a_bond_between_two_representations_is_drawn():
+    """A cysteine bonded to a warhead has one end in the binding site's representation
+    and the other in the ligand's.  Each draws only bonds with both ends its own, so the
+    bond was made and drawn by nobody, and the click looked like it had done nothing."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    main = (here / "main.js").read_text()
+    body = main[main.index("function modelItems(m)") :]
+    body = body[: body.index("\n}\n")]
+    assert "ribbon: noRibbon, reach }" in body  # each representation knows what the rest draw
+    assert "visibleAtom(m, a)) reach[a] = 1" in body  # a hidden hydrogen is no end of a bond
+    ui = (here / "ui.js").read_text()
+    apply = ui[ui.index("async function applyToAtoms(") :]
+    apply = apply[: apply.index("\n  }\n")]
+    assert "are in two models" in apply and "long for a bond" in apply
 
 
 def test_set_as_ligand_takes_the_selection_not_the_whole_molecule():

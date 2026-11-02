@@ -89,20 +89,18 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
 
   // bonds: a line where either end is drawn as lines, a stick where both are sticks
   const bonded = new Uint8Array(n);
-  // a residue drawn as a ribbon shows no atoms, so a bond out of a sticks selection
-  // into it was drawn by nobody and the selection looked detached: one residue of a
-  // chain chosen as the ligand floated beside the cartoon.  Such a bond is drawn as a
-  // stub, from the atom that is shown to half way
-  const ribbonOn = new Uint8Array(n);
-  for (let r = 0; r < topo.residues.trace.length; r++) {
-    if (state.ribbon[r]) for (const a of topo.residueAtoms[r]) ribbonOn[a] = 1;
-  }
+  // each representation is drawn on its own, so a bond out of one was drawn by nobody:
+  // a cysteine in the binding site's and the warhead bonded to it in the ligand's, or a
+  // residue over the ribbon of its chain, looked detached.  ``reach`` is what the model
+  // draws anywhere (an atom, or the ribbon its residue is under).  Such a bond is drawn
+  // from the atom shown to half way, and the other half by whatever draws the other end
+  const reach = state.reach;
   for (let k = 0; k < B.i.length; k++) {
     const i = B.i[k], j = B.j[k];
     if (!show[i] && !show[j]) continue;
-    if (!show[i] || !show[j]) {  // a stub into a ribbon, and only into a ribbon
+    if (!show[i] || !show[j]) {  // half of it, and only if something draws the other end
       const vis = show[i] ? i : j, hid = show[i] ? j : i;
-      if (!ribbonOn[hid] || style[vis] === SPACE) continue;
+      if (!reach?.[hid] || style[vis] === SPACE) continue;
       const pv = P(vis), ph = P(hid);
       const mid = pv.map((x, d) => (x + ph[d]) / 2);
       bonded[vis] = 1;
