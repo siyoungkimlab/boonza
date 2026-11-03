@@ -590,7 +590,8 @@ function modelItems(m) {
   const reach = new Uint8Array(n);
   for (const rep of m.reps) {
     if (!rep.on || rep.style === "surface") continue;
-    if (isRibbon(rep)) { for (const r of repResidues(m, rep)) for (const a of topo.residueAtoms[r]) reach[a] = 1; continue; }
+    // a ribbon draws no hydrogens: a bond to one would end in a stub, in mid-air
+    if (isRibbon(rep)) { for (const r of repResidues(m, rep)) for (const a of topo.residueAtoms[r]) if (!topo.flags.h[a]) reach[a] = 1; continue; }
     for (let a = 0; a < n; a++) if (rep.mask[a] && visibleAtom(m, a)) reach[a] = 1;
   }
   for (const rep of m.reps) {
