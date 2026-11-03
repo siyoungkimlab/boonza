@@ -38,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .session import CG_SOLVENT, LIGAND, POCKET, POLAR, Session
+from .session import CG_SOLVENT, IONS, LIGAND, POCKET, POLAR, Session
 
 #: what poses are fitted on: alpha carbons, or a coarse-grained protein's
 #: backbone beads (Martini BB, SIRAH GC), as boonza modes fits its medoids
@@ -340,7 +340,7 @@ class Viewer:
         s = a.system
         base = self.models[src].name
         solvent = np.zeros(s.natoms, bool)
-        solvent[s.select(f"resname {CG_SOLVENT}" if a.cg else "water or ions").ids] = True
+        solvent[s.select(f"resname {CG_SOLVENT}" if a.cg else f"water or {IONS}").ids] = True
         if by == "chain":
             res_chain = np.asarray(s.residues["chain"])[np.asarray(s.atoms["residue"])]
             names = np.array([str(x).strip() for x in np.asarray(s.chains["name"])], dtype=object)

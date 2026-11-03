@@ -98,6 +98,9 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
   for (let k = 0; k < B.i.length; k++) {
     const i = B.i[k], j = B.j[k];
     if (!show[i] && !show[j]) continue;
+    // an ion's (or water's) bond to another residue is a metal's coordination, which the
+    // file may give as bonds: drawn, it was a short stick out of the ion's sphere
+    if ((A.class[i] === 2 || A.class[j] === 2) && A.residue[i] !== A.residue[j]) continue;
     if (!show[i] || !show[j]) {  // half of it, and only if something draws the other end
       const vis = show[i] ? i : j, hid = show[i] ? j : i;
       if (!reach?.[hid] || style[vis] === SPACE) continue;

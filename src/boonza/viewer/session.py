@@ -19,8 +19,17 @@ import numpy as np
 
 CACHE = 64  # glued frames kept on the server
 
+#: metals, which are ions here even when the file bonds them to the residues around
+#: them (CONECT records, a .mae's zero-order bonds): the selection keyword ``ions``
+#: takes only atoms with no bonds, so a zinc bonded to its histidines was the ligand
+METALS = (
+    "Li Na K Rb Cs Be Mg Ca Sr Ba Al Ga Sc Ti V Cr Mn Fe Co Ni Cu Zn Y Zr Mo Ru Rh "
+    "Pd Ag Cd Sn W Re Os Ir Pt Au Hg Tl Pb La Ce Pr Nd Sm Eu Gd Tb Dy Ho Er Tm Yb Lu"
+)
+#: ions: unbonded atoms, and metals in a residue of their own (a heme's iron is the heme's)
+IONS = f"(ions or (element {METALS} and not (same residue as (not element {METALS}))))"
 #: the ligand when none is named: what is not polymer, solvent, ions or membrane
-LIGAND = "not (protein or nucleic or water or ions or lipid)"
+LIGAND = f"not (protein or nucleic or water or {IONS} or lipid)"
 #: atoms drawn as sticks: heavy atoms, and hydrogens only on N, O and S
 POCKET = 5.0  # A: residues this near the ligand are the pocket
 #: nonpolar hydrogens left out of a selection: for the merged poses view, where
@@ -29,6 +38,7 @@ POCKET = 5.0  # A: residues this near the ligand are the pocket
 POLAR = "(not hydrogen or withinbonds 1 of (element N O S))"
 WATER_NEAR = 6.0  # A: a water this near the molecule is on it
 WATER_FAR = 0.25  # waters may be further than that, and still be a crystal's
+ION_BOUND = 2.6  # A: an ion this near an N, O or S of the molecule is bound to it
 POLAR_CONTACT = 3.5  # A: N/O pairs between ligand and the rest drawn as contacts
 
 # Coarse-grained models: the selection keywords (protein, water, ions) are
@@ -187,11 +197,31 @@ def crystal_water(system) -> str | None:
     return sel if 1 - len(near) / oxygens <= WATER_FAR else None
 
 
+def crystal_ions(system, run: bool = False) -> str | None:
+    """The selection of a structure's crystal ions, or None if it has none.  A
+    crystal's sit on the molecule, as its waters do (crystal_water).  A simulation's are
+    the box's salt, put where waters were: the structure is one when its waters are a
+    box, its ions mostly off the molecule, or it is a run (``run``).  Then only ions
+    bound to the molecule are a crystal's (a zinc on its histidines, kept by the prep)."""
+    n = len(system.select(IONS))
+    if not n:
+        return None
+    solute = f"not water and not {IONS} and not hydrogen"
+    near = len(system.select(f"{IONS} and within {WATER_NEAR:g} of ({solute})"))
+    box = (run or 1 - near / n > WATER_FAR
+           or (len(system.select("water")) and crystal_water(system) is None))  # fmt: skip
+    if not box:
+        return IONS
+    bound = f"{IONS} and within {ION_BOUND:g} of ({solute} and element N O S)"
+    return bound if len(system.select(bound)) else None
+
+
 def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "green",
                  water: bool = True) -> list:  # fmt: skip
-    """Cartoon, pocket and ligand (and ions, and crystal waters), each where its
+    """Cartoon, pocket and ligand (and crystal ions and waters), each where its
     selection has atoms.  ``water``: False leaves the waters out whatever they are (a
-    trajectory's are bulk by then, wherever the first frame has them)."""
+    trajectory's are bulk by then, wherever the first frame has them), and the ions
+    but those bound to the molecule."""
     if cg:
         lig = ligand or CG_LIGAND
         reps = [
@@ -213,8 +243,10 @@ def default_reps(system, cg: bool, ligand: str | None = None, carbon: str = "gre
             (f"(same residue as ((protein or nucleic) and within {POCKET:g} of ({lig}))) "
              f"and not ({lig})", "sticks", "element", "binding site"),
             (f"same residue as ({lig})", "sticks", f"element/{carbon}", "ligand"),
-            ("ions and not (" + lig + ")", "spheres", "element", "ions"),
         ]  # fmt: skip
+        ions = crystal_ions(system, run=not water)
+        if ions:
+            reps.append((f"({ions}) and not ({lig})", "spheres", "element", "ions"))
         crystal = crystal_water(system) if water else None
         if crystal:
             reps.append((f"({crystal}) and not ({lig})", "ballstick", "element", "water"))
@@ -478,7 +510,7 @@ class Session:
         klass = np.ones(s.natoms, np.int64)
         if self.radii is None:
             poly = CG_POLYMER if self.cg else "protein or nucleic"
-            solvent = f"resname {CG_SOLVENT}" if self.cg else "water or ions"
+            solvent = f"resname {CG_SOLVENT}" if self.cg else f"water or {IONS}"
             ids = s.select(poly).ids
             if not self.cg:  # a link of a chain: an amino acid's N, CA, C and O alone are
                 # no protein (a peptide-like ligand of one residue carries them too).
@@ -512,7 +544,7 @@ class Session:
             "cg": self.cg,
             "ligand": self.ligand or (CG_LIGAND if self.cg else LIGAND),
             "carbon": self.carbon,  # the ligand's carbons' colour
-            "solvent": f"resname {CG_SOLVENT}" if self.cg else "water or ions",
+            "solvent": f"resname {CG_SOLVENT}" if self.cg else f"water or {IONS}",
             # a structure assembled from parts can say where each part came from
             "sources": "source" in s.atoms.props,
             "numbers": self._numbers(),
