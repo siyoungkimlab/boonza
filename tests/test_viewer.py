@@ -728,6 +728,9 @@ def test_a_bond_between_two_representations_is_drawn():
     body = body[: body.index("\n}\n")]
     assert "ribbon: noRibbon, reach }" in body  # each representation knows what the rest draw
     assert "visibleAtom(m, a)) reach[a] = 1" in body  # a hidden hydrogen is no end of a bond
+    # nor is a hydrogen under a ribbon, which draws none: a "noh" selection over the
+    # cartoon grew a short open cylinder toward each hydrogen it left out
+    assert "if (!topo.flags.h[a]) reach[a] = 1" in body
     ui = (here / "ui.js").read_text()
     apply = ui[ui.index("async function applyToAtoms(") :]
     apply = apply[: apply.index("\n  }\n")]
