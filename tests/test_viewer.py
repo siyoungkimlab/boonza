@@ -2275,3 +2275,70 @@ def test_the_builder_reads_a_stereocentre_without_being_asked():
     panel = panel[: panel.index("\n  }\n")]
     for cur in ('w === now ? "blue" : ""', 'w === dl ? "blue" : ""'):
         assert cur in panel  # the panel marks the same hand as the section
+
+
+def _with_metals(tmp_path):
+    """1LYZ with a zinc on Asp52, bonded to it by CONECT as a crystal's file has it, and
+    a sodium beside Asp101 without a bond."""
+    lines = (DATA / "1LYZ.pdb").read_text().splitlines()
+    atoms = [ln for ln in lines if ln.startswith("ATOM")]
+
+    def at(resid, name):
+        ln = next(x for x in atoms if int(x[22:26]) == resid and x[12:16].strip() == name)
+        return int(ln[6:11]), np.array([float(ln[30:38]), float(ln[38:46]), float(ln[46:54])])
+
+    def out_of(resid, d):
+        serial, o = at(resid, "OD1")
+        _, c = at(resid, "CG")
+        u = (o - c) / np.linalg.norm(o - c)
+        return serial, o + d * u
+
+    od1, zn = out_of(52, 2.1)
+    _, na = out_of(101, 2.4)
+    het = [f"HETATM{9001 + k:5d} {name:<4} {name:>3} A{900 + k:4d}    "
+           f"{p[0]:8.3f}{p[1]:8.3f}{p[2]:8.3f}  1.00 20.00          {el:>2}"
+           for k, (name, el, p) in enumerate([("ZN", "ZN", zn), ("NA", "NA", na)])]  # fmt: skip
+    end = next(k for k, x in enumerate(lines) if x.startswith(("CONECT", "MASTER", "END")))
+    body = lines[:end] + het + [f"CONECT{9001:5d}{od1:5d}", f"CONECT{od1:5d}{9001:5d}", "END"]
+    path = tmp_path / "metals.pdb"
+    path.write_text("\n".join(body) + "\n")
+    return boonza.load(path)
+
+
+def _ion_rep(session):
+    return [r for r in session.topology()["reps"] if r["label"] == "ions"]
+
+
+def test_a_metal_bonded_to_its_residues_is_an_ion_not_the_ligand(tmp_path):
+    """The keyword ``ions`` takes atoms with no bonds, so a zinc that the file bonds
+    to its residues was the ligand, drawn in sticks with its coordination bonds."""
+    s = _with_metals(tmp_path)
+    zn = s.select("element Zn").ids
+    assert len(s.select(f"withinbonds 1 of index {zn[0]}")) > 1  # bonded, as filed
+    session = viewer.Session(s)
+    metals = set(s.select("element Zn Na").ids)
+    assert not metals & set(s.select(viewer.LIGAND).ids)
+    [rep] = _ion_rep(session)
+    assert rep["style"] == "spheres" and len(s.select(rep["sel"])) == 2  # a crystal's: both
+    # a heme's iron stays the heme's
+    heme = boonza.load(DATA / "1HHO.pdb")
+    fe = heme.select("element Fe").ids
+    assert set(fe) <= set(heme.select(viewer.LIGAND).ids) and not _ion_rep(viewer.Session(heme))
+    # the coordination bond is not drawn
+    geometry = (Path(boonza.__file__).parent / "data/viewer/geometry.js").read_text()
+    skip = "(A.class[i] === 2 || A.class[j] === 2) && A.residue[i] !== A.residue[j]) continue"
+    assert skip in geometry
+
+
+def test_a_boxs_ions_are_not_drawn_and_a_bound_one_is(tmp_path):
+    s = _with_metals(tmp_path)
+    box = boonza.neutralize(boonza.solvate(s.clone("not water")), concentration=0.15, random_seed=3)
+    assert len(box.select("ions")) > 10
+    [rep] = _ion_rep(viewer.Session(box))
+    shown = box.select(rep["sel"]).ids
+    assert [box.atoms["name"][a] for a in shown] == ["ZN", "NA"]  # on the molecule, the salt not
+    path = tmp_path / "run.dcd"
+    with boonza.open_writer(path, box.natoms) as w:
+        w.write(box.positions, box.cell)
+    [rep] = _ion_rep(viewer.Session(box, boonza.open_trajectory(path, box), whole=False))
+    assert len(box.select(rep["sel"])) == 2
