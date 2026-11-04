@@ -2404,3 +2404,114 @@ def test_a_ring_is_built_through_an_atom_and_fused_on_a_bond():
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
     assert "label: n, ring: true }" in ui and 'op: "fuse", atoms: hit.atoms' in ui
     assert "formal charge ${fc > 0" in ui  # a clicked atom says its formal charge
+
+
+def _bare(tmp_path, ligands=(), cut=False):
+    """1LYZ's protein as a crystal's file has it (no hydrogens), cut inside the backbone
+    when asked (Ser60 ends at CA, Trp63 starts at it: 61 and 62 unresolved), and
+    ``ligands`` (SMILES) beside it as HETATM records without CONECT: every bond single."""
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+
+    lines = [ln for ln in (DATA / "1LYZ.pdb").read_text().splitlines() if ln.startswith("ATOM")]
+
+    def gone(ln):
+        resid, name = int(ln[22:26]), ln[12:16].strip()
+        return cut and (resid in (61, 62) or (resid, name) in ((60, "C"), (60, "O"), (63, "N")))
+
+    lines = [ln for ln in lines if not gone(ln)]
+    for k, smi in enumerate(ligands):
+        m = Chem.AddHs(Chem.MolFromSmiles(smi))
+        AllChem.EmbedMolecule(m, randomSeed=7)
+        m = Chem.RemoveHs(m)
+        xyz = m.GetConformer().GetPositions() + [60.0 + 12 * k, 0, 0]
+        for n, (a, p) in enumerate(zip(m.GetAtoms(), xyz, strict=True)):
+            el = a.GetSymbol()
+            xyz_ = f"{p[0]:8.3f}{p[1]:8.3f}{p[2]:8.3f}"
+            lines.append(f"HETATM{9000 + 20 * k + n:5d} {el + str(n + 1):<4} L{k:02d} "
+                         f"L{k + 1:4d}    {xyz_}  1.00  0.00          {el:>2}")  # fmt: skip
+    path = tmp_path / "bare.pdb"
+    path.write_text("\n".join(lines) + "\nEND\n")
+    return boonza.load(path)
+
+
+def test_a_ligand_without_hydrogens_is_charged_as_at_ph7(tmp_path):
+    """Acids lose a proton, aliphatic amines, amidines and guanidines gain one; anilines,
+    amides, pyridines and phenols stay neutral; a free phosphate is HPO4 2-."""
+    from rdkit import Chem
+
+    from boonza.chem import to_rdkit
+    from boonza.viewer import edit
+
+    smiles = ["NCc1ccc(cc1)C(=O)O", "NC(=N)c1ccccc1", "CN(C)C", "CC(=O)Nc1ccccc1",
+              "Oc1ccncc1", "OP(=O)(O)O", "NC(=N)NCCC(=O)O", "CS(=O)(=O)O", "Nc1ccccc1"]  # fmt: skip
+    want = ["[NH3+]Cc1ccc(C(=O)[O-])cc1", "NC(=[NH2+])c1ccccc1", "C[NH+](C)C", "CC(=O)Nc1ccccc1",
+            "Oc1ccncc1", "O=P([O-])([O-])O", "NC(=[NH2+])NCCC(=O)[O-]", "CS(=O)(=O)[O-]",
+            "Nc1ccccc1"]  # fmt: skip
+    s = _bare(tmp_path, smiles)
+    out = edit.prepare(s)
+    assert "L00: carboxylate, ammonium" in out["ligand_charges"]
+    for k, smi in enumerate(want):
+        mol = Chem.RemoveHs(to_rdkit(s, s.select(f"resname L{k:02d}").ids))
+        assert Chem.MolToSmiles(mol) == Chem.MolToSmiles(Chem.MolFromSmiles(smi)), smiles[k]
+    # Lys and Arg plus, Asp and Glu minus, the termini charged: lysozyme's +8
+    protein = s.select("protein").ids
+    assert int(np.asarray(s.atoms["formal_charge"])[protein].sum()) == 8
+
+
+def test_minimize_prepares_a_structure_straight_from_the_pdb(tmp_path):
+    """No hydrogens and a backbone cut at CA: Minimize builds the missing N, C and O
+    (each cut end a charged terminus), adds the hydrogens and minimizes; Undo takes
+    all of it back."""
+    pytest.importorskip("openmm")
+    session = viewer.Session(_bare(tmp_path, cut=True))
+    n = session.system.natoms
+    out = session.minimize(mode="all")
+    assert out["topology"] and out["energy_after"] < 0
+    assert out["prepared"]["backbone"] == ["SER60", "TRP63"]
+    s = session.system
+    fc = np.asarray(s.atoms["formal_charge"])
+    resid = np.asarray(s.residues["resid"])[np.asarray(s.atoms["residue"])]
+    q = {(int(resid[a]), str(s.atoms["name"][a])): int(fc[a]) for a in np.flatnonzero(fc)}
+    assert q[(60, "OXT")] == -1 and q[(63, "N")] == 1 and q[(13, "NZ")] == 1
+    c, o = (s.select(f"resid 60 and name {x}").ids[0] for x in ("C", "O"))
+    assert 1.1 < np.linalg.norm(s.positions[c] - s.positions[o]) < 1.4
+    session.undo()
+    assert session.system.natoms == n
+
+
+@pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
+def test_minimize_prepares_a_bare_ligand_in_a_prepared_protein(tmp_path):
+    """A protein with its hydrogens and a ligand without: only the ligand is prepared
+    (charged as at pH 7); the protein's hydrogens stay where they were."""
+    from boonza.viewer import edit
+
+    s = _bare(tmp_path, ["NCc1ccc(cc1)C(=O)O"])
+    protein = s.select("protein").ids
+    edit.protonate(s)
+    lig = s.select("resname L00").ids
+    names = [str(x) for x in s.atoms["name"][s.select("protein and hydrogen").ids]]
+    session = viewer.Session(s)
+    out = session.minimize(mode="ligand")
+    assert out["prepared"]["ligand_charges"] == ["L00: carboxylate, ammonium"]
+    assert out["prepared"]["residues"] == 0
+    after = session.system
+    assert [str(x) for x in after.atoms["name"][after.select("protein and hydrogen").ids]] == names
+    assert len(after.select("resname L00").ids) == len(lig) + 9 and len(protein)
+
+
+def test_a_lone_ion_is_charged_as_the_force_field_charges_it(tmp_path):
+    """A PDB file leaves an ion's formal charge 0; opened, the zinc bonded to Asp52 by
+    CONECT and the free sodium carry the force field's +2 and +1, and a heme's iron
+    (inside its molecule) keeps its own."""
+    from boonza.viewer.session import charge_ions
+
+    session = viewer.Session(_with_metals(tmp_path))
+    s = session.system
+    q = np.asarray(s.atoms["formal_charge"])
+    assert q[s.select("element Zn").ids].tolist() == [2]
+    assert q[s.select("element Na").ids].tolist() == [1]
+    heme = boonza.load(DATA / "1HHO.pdb")
+    fe = heme.select("element Fe").ids
+    assert len(fe) and charge_ions(heme) == 0
+    assert not np.asarray(heme.atoms["formal_charge"])[fe].any()

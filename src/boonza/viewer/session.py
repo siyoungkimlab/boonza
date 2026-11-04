@@ -197,6 +197,30 @@ def crystal_water(system) -> str | None:
     return sel if 1 - len(near) / oxygens <= WATER_FAR else None
 
 
+#: the charge of a lone ion, as the force fields give it (iron is Fe3+ in them)
+ION_CHARGES = {3: 1, 11: 1, 19: 1, 55: 1, 12: 2, 20: 2, 38: 2, 25: 2, 27: 2, 28: 2, 29: 2,
+               30: 2, 48: 2, 80: 2, 26: 3, 9: -1, 17: -1, 35: -1, 53: -1}  # fmt: skip
+
+
+def charge_ions(system) -> int:
+    """A lone ion's formal charge, as the force field charges it, in place: an atom of
+    those elements alone in its residue (bonded to nothing, or only to other residues,
+    as a metal by CONECT) whose charge is 0, as a PDB file leaves it.  A metal inside
+    its molecule (a heme's iron) keeps its own.  Returns how many were charged."""
+    anum = np.asarray(system.atoms["anum"])
+    q = np.asarray(system.atoms["formal_charge"]).copy()
+    want = np.array([ION_CHARGES.get(int(z), 0) for z in anum])
+    cand = np.flatnonzero((want != 0) & (q == 0))
+    if not len(cand):
+        return 0
+    res = np.asarray(system.atoms["residue"])
+    alone = np.bincount(res, minlength=system.nresidues)[res[cand]] == 1
+    cand = cand[alone]
+    q[cand] = want[cand]
+    system.atoms["formal_charge"] = q
+    return len(cand)
+
+
 def crystal_ions(system, run: bool = False) -> str | None:
     """The selection of a structure's crystal ions, or None if it has none.  A
     crystal's sit on the molecule, as its waters do (crystal_water).  A simulation's are
@@ -342,6 +366,8 @@ class Session:
             from ..bondorders import guess_bond_orders
 
             self.guessed_orders = guess_bond_orders(self.system)
+        if not self.cg and radii is None:
+            charge_ions(self.system)
         self.ligand = ligand
         self.carbon = carbon
         self.reps = reps
@@ -656,14 +682,8 @@ class Session:
             with self._lock:
                 self._remember()
                 try:
-                    report = edit.protonate(s)
-                    # the rest (ligands, cofactors) by valence
-                    known = self.system.select("protein or water").ids
-                    rest = np.setdiff1d(np.arange(s.natoms), known)
-                    rest = rest[np.asarray(s.atoms["anum"])[rest] > 1]
-                    before = s.natoms
-                    edit.adjust_hydrogens(s, rest.tolist())
-                    report["ligand_hydrogens"] = s.natoms - before
+                    # the rest (ligands, cofactors) by valence, charged as at pH 7
+                    report = edit.prepare(s)
                 except Exception:
                     self.system = self._undo.pop()[0]
                     raise
@@ -1222,6 +1242,46 @@ class Session:
         return {"q": np.round(out["q"], 4).tolist(), "assigned": out["assigned"],
                 "natoms": self.system.natoms, "force_field": "Amber ff19SB"}  # fmt: skip
 
+    def _ready(self, log=print):
+        """The force-field copy, the structure prepared first when it is not ready for
+        it (straight from the PDB: no hydrogens, a backbone cut at CA, a ligand without
+        its charges) -- see boonza.viewer.edit.prepare.  Returns it and what preparing
+        did (None when it was not needed).  Under the lock, after _remember."""
+        from . import edit
+
+        anum = np.asarray(self.system.atoms["anum"])
+        if (anum == 1).any():
+            try:
+                return self._parameterized(log=log), None
+            except Exception as e:  # noqa: BLE001 -- prepared below, or this is raised
+                first = e
+        else:
+            first = None
+        work = self.system.copy()
+        polymer = work.select("protein or nucleic").ids
+        bare = not (anum[polymer] == 1).any() if len(polymer) else first is None
+        before = work.natoms
+        report = edit.prepare(work, polymer=bare)
+        if work.natoms == before and not bare:  # nothing to prepare: the error stands
+            raise first
+        self.system = work
+        self._param = None
+        self.topo_version = getattr(self, "topo_version", 0) + 1
+        try:
+            p = self._parameterized(log=log)
+        except Exception as e:
+            if first is not None:
+                raise first from e
+            raise
+        return p, report
+
+    def _unready(self) -> None:
+        """A failed minimize or dynamics: back to the structure before it (preparing
+        it, too, is undone)."""
+        self.system, version = self._undo.pop()[:2]
+        if version != getattr(self, "topo_version", 0):
+            self.topo_version, self._param = version, None
+
     def _parameterized(self, log=print):
         """The force-field copy for energies, kept until the topology changes."""
         from .edit import parameterize
@@ -1382,19 +1442,20 @@ class Session:
         fixed, tethered, mobile = self._what_moves(mode, fixed, tethered, mobile, pocket)
         constrained = mode is not None or any(len(x) for x in (fixed, tethered) if x is not None)
         with self._lock:
-            p = self._parameterized()
             self._remember()
             try:
+                p, prepared = self._ready()
                 report = minimize(self.system, None if constrained else mobile,
                                   restraint=restraint, parameterized=p,
                                   fixed=fixed if constrained else None,
                                   tethered=tethered if constrained else None,
                                   path=path, rem=rem, solvent=solvent)  # fmt: skip
             except Exception:
-                self.system = self._undo.pop()[0]
+                self._unready()
                 raise
             how = mode or ("constraints" if constrained else mobile)
-            return {**self._changed(topology=False), **report, "mobile": how}
+            return {**self._changed(topology=prepared is not None), **report, "mobile": how,
+                    "prepared": prepared}  # fmt: skip
 
     def dynamics(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
                  tethered=None, mode: str | None = None, path: bool = False,
@@ -1410,9 +1471,9 @@ class Session:
         fixed, tethered, mobile = self._what_moves(mode, fixed, tethered, mobile, pocket)
         constrained = mode is not None or any(len(x) for x in (fixed, tethered) if x is not None)
         with self._lock:
-            p = self._parameterized()
             self._remember()
             try:
+                p, prepared = self._ready()
                 report = dynamics(self.system, None if constrained else mobile,
                                   restraint=restraint, parameterized=p,
                                   fixed=fixed if constrained else None,
@@ -1421,7 +1482,8 @@ class Session:
                                   temperature=temperature,
                                   minimize_first=minimize_first)  # fmt: skip
             except Exception:
-                self.system = self._undo.pop()[0]
+                self._unready()
                 raise
             how = mode or ("constraints" if constrained else mobile)
-            return {**self._changed(topology=False), **report, "mobile": how}
+            return {**self._changed(topology=prepared is not None), **report, "mobile": how,
+                    "prepared": prepared}  # fmt: skip

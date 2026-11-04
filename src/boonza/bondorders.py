@@ -127,8 +127,8 @@ def guess_bond_orders(system, atoms=None, force: bool = False) -> int:
         elif zy == 15 and oxy and oxy[0][0] < 1.55:
             set_order(oxy[0][2], 2)
         elif zy == 16:
-            for d, _, k in oxy[:2]:
-                if d < 1.50:
+            for d, _, k in oxy[:2]:  # a sulfonate or sulfate (three O or more): two, always
+                if d < 1.50 or len(oxy) >= 3:
                     set_order(k, 2)
         elif zy == 7 and oxy and oxy[0][0] < 1.30:
             set_order(oxy[0][2], 2)
