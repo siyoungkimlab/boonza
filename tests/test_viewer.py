@@ -2342,3 +2342,65 @@ def test_a_boxs_ions_are_not_drawn_and_a_bound_one_is(tmp_path):
         w.write(box.positions, box.cell)
     [rep] = _ion_rep(viewer.Session(box, boonza.open_trajectory(path, box), whole=False))
     assert len(box.select(rep["sel"])) == 2
+
+
+def test_a_bond_can_be_broken_from_the_bond_buttons():
+    """Single, Double and Triple had no way back: breaking a bond was Erase on its
+    middle, which took no selection.  No bond (order 0) does both."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    assert 'toolButton("No bond", { kind: "bond", value: 0, label: "No bond" })' in ui
+    apply = ui[ui.index("async function applyToAtoms(") :]
+    apply = apply[: apply.index("\n  }\n")]
+    assert "are not bonded" in apply and "bond broken:" in apply
+    s = boonza.load(DATA / "1LYZ.pdb")
+    session = viewer.Session(s)
+    i, j = (int(a) for a in s.select("resid 1 and name N CA").ids)
+    assert s.find_bond(i, j) is not None
+    session.edit("bond", [i, j], 0, hydrogens=False)
+    assert session.system.find_bond(i, j) is None
+
+
+def test_a_key_turns_the_selected_atom_into_that_element():
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    assert 'const ELEMENT_KEYS = { n: "N", c: "C", o: "O", f: "F", h: "H" };' in ui
+    keys = ui[ui.index("function elementKey(element)") :]
+    keys = keys[: keys.index("\n  }\n")]
+    assert "n > ELEMENT_KEY_MAX" in keys  # a key never rewrites a whole residue
+    assert 'applyToAtoms({ kind: "element", value: element }, sel)' in keys
+
+
+def test_a_ring_is_built_through_an_atom_and_fused_on_a_bond():
+    """A ring on a selected atom used to bond to it, and on a bond to the nearer atom:
+    two benzenes made biphenyl, not naphthalene.  Now the atom is the ring's first
+    atom, and the bond its first edge."""
+    from rdkit import Chem
+
+    from boonza.build import from_smiles
+    from boonza.chem import to_rdkit
+    from boonza.viewer import edit
+
+    def smiles(s):
+        return Chem.MolToSmiles(Chem.RemoveHs(to_rdkit(s, sanitize=True, implicit_hydrogens=False)))
+
+    for edge in ([0, 1], [1, 2]):  # either Kekule bond of the first ring
+        s = from_smiles("c1ccccc1")
+        edit.fuse(s, edge, "c1ccccc1")
+        assert smiles(s) == "c1ccc2ccccc2c1" and s.natoms == 18
+        heavy = s.select("not hydrogen").ids
+        p, bonds = s.positions, zip(s.bonds["i"], s.bonds["j"], strict=True)
+        lengths = [np.linalg.norm(p[i] - p[j]) for i, j in bonds if i in heavy and j in heavy]
+        assert max(abs(x - 1.39) for x in lengths) < 0.05  # one flat, fused pair of rings
+    s = from_smiles("Cc1ccccc1")
+    edit.fuse(s, [0], "c1ccccc1")  # the methyl becomes the ring's first atom
+    assert smiles(s) == "c1ccc(-c2ccccc2)cc1"
+    s = from_smiles("C1CCCCC1")
+    edit.fuse(s, [0], "C1CCCC1")
+    assert smiles(s) == "C1CCC2(CC1)CCCC2"  # spiro
+    with pytest.raises(ValueError, match="select a bond"):
+        edit.fuse(from_smiles("c1ccccc1"), [0], "c1ccccc1")  # no room on an aromatic atom
+    session = viewer.Session(from_smiles("c1ccccc1"))
+    session.edit("fuse", [0, 1], "c1ccncc1", hydrogens=False)
+    assert smiles(session.system) == "c1ccc2cnccc2c1"
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    assert "label: n, ring: true }" in ui and 'op: "fuse", atoms: hit.atoms' in ui
+    assert "formal charge ${fc > 0" in ui  # a clicked atom says its formal charge

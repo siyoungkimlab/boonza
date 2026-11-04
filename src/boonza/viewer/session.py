@@ -718,6 +718,9 @@ class Session:
                     smiles = edit.GROUPS.get(str(value), str(value))
                     edit.attach(s, anchor, leaving, smiles)
                     hydrogens = False
+                elif op == "fuse":  # a ring through an atom, or fused on a bond
+                    edit.fuse(s, atoms, str(value))
+                    hydrogens = False
                 elif op == "mutate":
                     for r in sorted({int(s.atoms["residue"][a]) for a in atoms}):
                         edit.mutate(s, r, str(value))
