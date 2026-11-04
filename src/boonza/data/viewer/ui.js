@@ -1131,14 +1131,16 @@ export function setupUI(app) {
 
   // what an atom is, with its force field: index, charge, sigma, epsilon, type
   app.describeAtom = async (m, a) => {
-    app.message(app.atomLabel(m, a));
+    const fc = m.topo.atoms.charge?.[a] ?? 0;
+    const label = `${app.atomLabel(m, a)} · formal charge ${fc > 0 ? "+" : ""}${fc}`;
+    app.message(label);
     try {
       const info = await app.getJSON(`api/atom?m=${m.index}&a=${a}`);
       const ff = info.charge === undefined
-        ? "  · no force field yet: Analyze | Assign Force Field"
-        : `  · q ${info.charge.toFixed(4)} e · σ ${info.sigma?.toFixed(3) ?? "–"} Å · ε ${info.epsilon?.toFixed(4) ?? "–"} kcal/mol`
+        ? "  · no force field yet (Minimize, or Analyze | Assign Force Field, gives one)"
+        : `  · partial charge ${info.charge.toFixed(4)} e · σ ${info.sigma?.toFixed(3) ?? "–"} Å · ε ${info.epsilon?.toFixed(4) ?? "–"} kcal/mol`
           + `${info.type ? ` · type ${info.type}` : ""}${info.force_field === "assigned" ? " (Amber ff19SB/GAFF2)" : ""}`;
-      app.message(`${app.atomLabel(m, a)}${ff}`);
+      app.message(`${label}${ff}`);
     } catch (e) { /* the label alone */ }
   };
   async function assignForceField() {
@@ -2123,7 +2125,21 @@ export function setupUI(app) {
     else if (e.key === "r" || e.key === "R") app.resetView();
     else if (e.key === "w" || e.key === "W") app.viewAll();
     else if (e.key === "F12") document.documentElement.requestFullscreen?.();
+    // n, c, o, f, h: the clicked atom becomes that element (r and w are taken by the view)
+    else if (!ctrl && !e.altKey && ELEMENT_KEYS[e.key.toLowerCase()] && app.selection().length) elementKey(ELEMENT_KEYS[e.key.toLowerCase()]);
   });
+  const ELEMENT_KEYS = { n: "N", c: "C", o: "O", f: "F", h: "H" };
+  const ELEMENT_KEY_MAX = 10;  // a key meant for one atom never rewrites a residue or a chain
+  function elementKey(element) {
+    const sel = app.selection();
+    const n = sel.reduce((k, [, ids]) => k + ids.length, 0);
+    if (sel.length > 1 || n > ELEMENT_KEY_MAX) {
+      app.message(`${element}: select at most ${ELEMENT_KEY_MAX} atoms of one model (${n} selected)`, true);
+      return;
+    }
+    if (!sel[0][0].topo.editable) { app.message("this model cannot be edited (a trajectory or a set of points)", true); return; }
+    applyToAtoms({ kind: "element", value: element }, sel);
+  }
 
   // --- the player -----------------------------------------------------------------------------------
 
@@ -2517,6 +2533,7 @@ export function setupUI(app) {
     if (t.kind === "bond") return `${t.label}: click a bond (Esc: done)`;
     if (t.kind === "charge") return `charge ${t.label}: click an atom (Esc: done)`;
     if (t.kind === "erase") return "Erase: click an atom or a bond to remove it (Esc: done)";
+    if (t.ring) return `${t.label}: click a hydrogen to grow it from, an atom to build it through, a bond to fuse it on, or empty space for a new molecule (Esc: done)`;
     return `${t.label}: click a hydrogen to grow from it, ${t.kind === "element" ? "an atom to make it " + t.value + ", " : "an atom to attach it, "}`
       + "or empty space for a new molecule (Esc: done)";
   }
@@ -2548,10 +2565,22 @@ export function setupUI(app) {
       const names = atoms.map(a => m.topo.atoms.name[a]).join("–");
       const [p, q] = atoms.map(a => app.xyz(m, a));
       const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+      if (t.value === 0) {
+        if (!m.topo.bondsOf[atoms[0]].includes(atoms[1])) { app.message(`${names} are not bonded`, true); return; }
+        if (!await serverEdit(m, "api/edit", { op: "bond", atoms, value: 0, hydrogens: autoH() })) return;
+        app.message(`bond broken: ${names} · Edit | Undo puts it back`);
+        return;
+      }
       if (!await serverEdit(m, "api/edit", { op: "bond", atoms, value: t.value, hydrogens: autoH() })) return;
       // the atoms stay where they are: a bond made across a gap is as long as the gap
       app.message(`${t.label}: ${names}, ${d.toFixed(2)} Å · Edit | Undo takes it back`
         + (d > 2.2 ? " · long for a bond, the atoms were not moved: Clean Up with them selected brings them together" : ""));
+    } else if (t.kind === "smiles" && t.ring) {
+      // a ring on a selected atom is built through it, on a selected bond fused on it
+      const A = m.topo.atoms;
+      if (atoms.length === 1 && A.element[atoms[0]] === "H") await serverEdit(m, "api/edit", { op: "attach", atoms, value: t.value, hydrogens: false });
+      else if (atoms.length > 2 || (atoms.length === 2 && !m.topo.bondsOf[atoms[0]].includes(atoms[1]))) app.message(`${t.label}: select one atom, or the two atoms of a bond (${atoms.length} selected)`, true);
+      else if (await serverEdit(m, "api/edit", { op: "fuse", atoms, value: t.value, hydrogens: false })) app.message(`${t.label} ${atoms.length === 2 ? "fused on the bond" : "built through the atom"} · Edit | Undo takes it back`);
     } else if (t.kind === "smiles") await serverEdit(m, "api/edit", { op: "attach", atoms: [atoms[0]], value: t.value, hydrogens: false });
   }
 
@@ -2589,6 +2618,10 @@ export function setupUI(app) {
           await serverEdit(m, "api/edit", { op: "bond", atoms: hit.atoms, value: t.kind === "erase" ? 0 : t.value, hydrogens: autoH() });
           return;
         }
+        if (t.ring && hit.atoms.every(a => A.element[a] !== "H")) {  // a ring fused on the bond
+          await serverEdit(m, "api/edit", { op: "fuse", atoms: hit.atoms, value: t.value, hydrogens: false });
+          return;
+        }
         atom = app.nearerAtom(hit.model, hit.atoms, x, y);
       }
       if (atom === undefined) { app.message("click an atom or a bond", true); return; }
@@ -2597,6 +2630,10 @@ export function setupUI(app) {
       if (t.kind === "charge") { await serverEdit(m, "api/edit", { op: "charge", atoms: [atom], value: t.value, hydrogens: autoH() }); return; }
       if (t.kind === "element" && A.element[atom] !== "H") {
         await serverEdit(m, "api/edit", { op: "element", atoms: [atom], value: t.value, hydrogens: autoH() });
+        return;
+      }
+      if (t.ring && A.element[atom] !== "H") {  // a ring built through the atom
+        await serverEdit(m, "api/edit", { op: "fuse", atoms: [atom], value: t.value, hydrogens: false });
         return;
       }
       const smiles = t.kind === "element" ? ELEMENT_SMILES[t.value] : t.value;
@@ -2745,13 +2782,16 @@ export function setupUI(app) {
     auto.onchange = () => localStorage.setItem("boonza.autoH", auto.checked ? "1" : "0");
     body.append(row(el("label", {}, auto, " adjust hydrogens after each edit")));
     body.append(el("h3", {}, "Bonds and charges"));
-    body.append(row(...[["Single", 1], ["Double", 2], ["Triple", 3]].map(([l, v]) => toolButton(l, { kind: "bond", value: v, label: `${l} bond` }))));
+    // No bond breaks it: the two selected atoms', or the bond clicked with it
+    const breaker = toolButton("No bond", { kind: "bond", value: 0, label: "No bond" });
+    breaker.title = "Break the bond between the two selected atoms, or click a bond with it";
+    body.append(row(...[["Single", 1], ["Double", 2], ["Triple", 3]].map(([l, v]) => toolButton(l, { kind: "bond", value: v, label: `${l} bond` })), breaker));
     body.append(row(...[["−1", -1], ["0", 0], ["+1", 1]].map(([l, v]) => toolButton(l, { kind: "charge", value: v, label: l }))));
     body.append(el("h3", {}, "Rings"));
     const rings = grid("grid wide");
     for (const [n, smi] of RINGS) {
-      const b = toolButton("", { kind: "smiles", value: smi, label: n }, "group");
-      b.title = `${n}: ${smi}`;
+      const b = toolButton("", { kind: "smiles", value: smi, label: n, ring: true }, "group");
+      b.title = `${n}: ${smi} (on a selected atom, built through it; on a bond, fused on it)`;
       b.append(el("span", {}, n), el("small", {}, smi));
       rings.append(b);
     }

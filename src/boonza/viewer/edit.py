@@ -1651,6 +1651,142 @@ def attach(s, anchor: int, leaving: int, smiles: str, length: float | None = Non
     return new
 
 
+def _kabsch(p, q):
+    """The rotation and shift laying points ``p`` onto ``q`` (rows paired)."""
+    pc, qc = p.mean(0), q.mean(0)
+    u, _, vt = np.linalg.svd((p - pc).T @ (q - qc))
+    d = np.sign(np.linalg.det(vt.T @ u.T))
+    rot = vt.T @ np.diag([1.0, 1.0, d]) @ u.T
+    return rot, qc - pc @ rot.T
+
+
+def fuse(s, shared, smiles: str) -> np.ndarray:
+    """A ring (``smiles``) built through atoms already there: one atom (``shared`` of
+    one) becomes the ring's first atom, a bond (two bonded atoms) becomes the edge
+    from its first atom to the next, as a second benzene on a benzene's edge makes
+    naphthalene.  Each shared atom keeps its bonds to the rest and takes the ring's
+    element; its hydrogens go, and the ring's hydrogens on that atom are where those
+    bonds are.  Bond orders are found again for the molecule.  Returns the new atoms."""
+    from itertools import permutations, product
+
+    shared = [int(a) for a in shared]
+    if len(shared) not in (1, 2) or len(set(shared)) != len(shared):
+        raise ValueError("select one atom, or the two atoms of a bond, to build the ring on")
+    if len(shared) == 2 and s.find_bond(*shared) is None:
+        raise ValueError("those two atoms are not bonded: select a bond to fuse the ring on")
+    anum = np.asarray(s.atoms["anum"])
+    if any(anum[a] == 1 for a in shared):
+        raise ValueError("a hydrogen grows a ring from it: select heavy atoms to build one on")
+    frag = _fragment(smiles)
+    fz = np.asarray(frag.atoms["anum"])
+    f = [0]
+    if len(shared) == 2:
+        nxt = sorted(b for b, _ in neighbors(frag, 0) if fz[b] > 1)
+        if not nxt:
+            raise ValueError(f"{smiles} has no bond from its first atom to fuse on")
+        f.append(nxt[0])
+    spos, fpos = np.asarray(s.positions, float), np.asarray(frag.positions, float)
+    others, f_h = [], []  # each shared atom's other heavy neighbours, the ring atom's H
+    for x, fk in zip(shared, f, strict=True):
+        o = [b for b, _ in neighbors(s, x) if anum[b] > 1 and b not in shared]
+        h = [b for b, _ in neighbors(frag, fk) if fz[b] == 1]
+        if len(o) > len(h):
+            name = str(s.atoms["name"][x])
+            raise ValueError(
+                f"{name} is bonded to {len(o)} other heavy atoms, and the ring's atom has "
+                f"room for {len(h)}: select a bond to fuse the ring on"
+            )
+        others.append(o)
+        f_h.append(h)
+    # lay the ring on: shared atoms on shared atoms, and the ring's hydrogens along the
+    # bonds they give way to, paired the way that fits best
+    best = None
+    for pick in product(*(permutations(h, len(o)) for h, o in zip(f_h, others, strict=True))):
+        p = [fpos[fk] for fk in f]
+        q = [spos[x] for x in shared]
+        for fk, x, hs, o in zip(f, shared, pick, others, strict=True):
+            p += [fpos[fk] + 1.5 * _unit(fpos[h] - fpos[fk]) for h in hs]
+            q += [spos[x] + 1.5 * _unit(spos[b] - spos[x]) for b in o]
+        p, q = np.array(p), np.array(q)
+        if len(p) == 1:  # one atom, nothing else bonded: only where it is
+            rot, shift = np.eye(3), q[0] - p[0]
+        else:
+            rot, shift = _kabsch(p, q)
+        err = float(np.sum((p @ rot.T + shift - q) ** 2))
+        if best is None or err < best[0]:
+            best = (err, rot, shift, pick)
+    _, rot, shift, pick = best
+    frag.positions = fpos @ rot.T + shift
+    res = int(s.atoms["residue"][shared[0]])
+    n0 = s.natoms
+    new = s.append(frag)
+    old_res = set(np.asarray(s.atoms["residue"])[new].tolist())
+    _move_to(s, new, res)
+    for r in sorted((r for r in old_res if r != res), reverse=True):
+        if not len(s.residue_atoms(r)):
+            s.delete_residues([r])
+    copy = {k: n0 + k for k in range(frag.natoms)}
+    used = {copy[h] for hs in pick for h in hs}
+    stand_in = {copy[fk]: x for fk, x in zip(f, shared, strict=True)}
+    old_h = {b for x in shared for b, _ in neighbors(s, x) if anum[b] == 1}  # before the ring's
+    # the shared atoms take the ring atoms' element and bonds
+    z = np.asarray(s.atoms["anum"]).copy()
+    for c, x in stand_in.items():
+        if z[x] != z[c]:
+            set_element(s, [x], int(z[c]))
+        q = np.asarray(s.atoms["formal_charge"]).copy()
+        q[x] = q[c]
+        s.atoms["formal_charge"] = q
+    for c, x in stand_in.items():
+        for b, order in neighbors(s, c):
+            if b in used:
+                continue
+            if b in stand_in:
+                set_bond(s, x, stand_in[b], order)
+            elif s.find_bond(x, b) is None:
+                s.add_bond(x, b, order)
+    gone = set(stand_in) | used | old_h
+    s.atoms["view_new"] = np.zeros(s.natoms, np.int64)
+    mark = np.asarray(s.atoms["view_new"]).copy()
+    kept = [a for a in new.tolist() if a not in gone]
+    mark[kept] = np.arange(1, len(kept) + 1)
+    for k, x in enumerate(shared):
+        mark[x] = -(k + 1)
+    s.atoms["view_new"] = mark
+    s.delete_atoms(sorted(gone))
+    mark = np.asarray(s.atoms["view_new"])
+    new = np.array([int(np.flatnonzero(mark == k)[0]) for k in range(1, len(kept) + 1)], np.int64)
+    shared = [int(np.flatnonzero(mark == -(k + 1))[0]) for k in range(len(shared))]
+    _unique_names(s, res, new.tolist())
+    # where the pairing leaves the ring free to turn (about the edge, or about the one
+    # bond a shared atom keeps), it turns to clash least
+    if len(shared) == 2 and not any(others):
+        _best_turn(s, shared[0], shared[1], new.tolist())
+    elif len(shared) == 1 and len(others[0]) == 1:
+        o = others[0][0] - _shift(others[0][0], gone)
+        _best_turn(s, o, shared[0], new.tolist())
+    # the orders, for the rings together (two Kekule rings fused need not agree)
+    frag_ids = s.fragment_atoms(int(s.fragids[shared[0]]))
+    if len(frag_ids) <= 300:
+        from ..chem import assign_bond_orders
+
+        assign_bond_orders(s, shared)
+    s.atoms["view_new"] = np.zeros(s.natoms, np.int64)
+    mark = np.asarray(s.atoms["view_new"]).copy()
+    mark[new] = np.arange(1, len(new) + 1)
+    s.atoms["view_new"] = mark
+    _gather(s, res)
+    mark = np.asarray(s.atoms["view_new"])
+    new = np.array([int(np.flatnonzero(mark == k)[0]) for k in range(1, len(new) + 1)], np.int64)
+    s.atoms.del_prop("view_new")
+    return new
+
+
+def _shift(a: int, gone) -> int:
+    """How far atom ``a`` moves down once the atoms ``gone`` are deleted."""
+    return sum(1 for g in gone if g < a)
+
+
 def add_molecule(s, smiles: str, centre, resname: str = "LIG") -> np.ndarray:
     """A new molecule from SMILES (with hydrogens), its centre at ``centre``."""
     frag = _fragment(smiles)
