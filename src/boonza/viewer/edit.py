@@ -272,6 +272,162 @@ def _peptide_bonds(s, known) -> None:
             s.add_bond(c, nxt, 1)
 
 
+def _complete_backbone(s, known) -> list[str]:
+    """Amino acids cut inside the backbone (at CA, with no C and O; or with no N) get
+    the missing N, CA, C and O, from an ideal residue fitted on the atoms they have
+    (and the neighbouring residue's atom bonded to them).  The cut end is then a
+    terminus, charged as any other.  Returns those residues."""
+    from ..align import kabsch
+    from ..build import peptide
+
+    want = ("N", "CA", "C", "O")
+    names = np.array([str(x) for x in s.atoms["name"]])
+    anum = np.asarray(s.atoms["anum"])
+    out, ideal = [], {}
+    for r in range(s.nresidues):
+        rname = str(s.residues["name"][r]).upper()
+        base = TEMPLATE_NAMES.get(rname, rname)
+        one = {"HIE": "HIS", "HID": "HIS", "HIP": "HIS", "CYX": "CYS", "CYM": "CYS", "ASH": "ASP",
+               "GLH": "GLU", "LYN": "LYS"}.get(base, base)  # fmt: skip
+        if base not in known or one not in ONE_LETTER:
+            continue
+        ids = s.residue_atoms(r)
+        here = {names[a]: int(a) for a in ids if anum[a] > 1}
+        missing = [x for x in want if x not in here]
+        if not missing or not here:
+            continue
+        if one not in ideal:
+            t = peptide("G" + ONE_LETTER[one] + "G", optimize=True)
+            ideal[one] = t
+        t = ideal[one]
+        tr = int(np.flatnonzero(np.asarray(t.residues["resid"]) == 2)[0])
+        tnames = {str(t.atoms["name"][a]): int(a) for a in t.residue_atoms(tr)}
+        pairs = [(tnames[n], a) for n, a in here.items() if n in tnames]
+        # the atom across a peptide bond still made: the previous C, the next N
+        adj = _bonded(s)
+        res = np.asarray(s.atoms["residue"])
+        for n, other, tother in (("N", "C", 0), ("C", "N", 2)):
+            if n in here:
+                for b, _ in adj.get(here[n], []):
+                    if res[b] != r and names[b] == other:
+                        pairs.append((_residue_atom(t, tr + tother - 1, other), int(b)))
+        if len(pairs) < 2:  # a lone atom (a CA trace): nothing to fit on
+            continue
+        tp = np.asarray(t.positions, float)
+        sp = np.asarray(s.positions, float)
+        src = tp[[p for p, _ in pairs]]
+        dst = sp[[a for _, a in pairs]]
+        rot, shift = kabsch(src, dst)
+        z = np.array([atomic_number(x[0]) for x in missing])
+        made = s.add_atoms(len(missing), residue=r, name=np.array(missing), anum=z,
+                           mass=np.array([MSYS_MASSES[k] for k in z]))  # fmt: skip
+        xyz = np.array(s.positions, float)
+        for a, n in zip(made.ids.tolist(), missing, strict=True):
+            xyz[a] = tp[tnames[n]] @ rot.T + shift
+        s.positions = xyz
+        out.append(f"{s.residues['name'][r]}{int(s.residues['resid'][r])}")
+    return out
+
+
+#: groups a ligand carries charged at pH 7, as SMARTS on its neutral form, with the
+#: atom (the first mapped one) that takes the charge
+IONIZABLE = (
+    ("carboxylate", "[CX3](=O)[OX2H1:1]", -1),
+    ("sulfonate", "[SX4](=O)(=O)[OX2H1:1]", -1),
+    ("phosphate", "[PX4](=O)[OX2H1:1]", -1),
+    ("tetrazole", "[nH1:1]1nnnc1", -1),
+    ("amidinium", "[CX3;!$(C[!#6;!#7;!#1]);!$(C(=N)N[CX3]=O)](=[NX2;!$(N[!#6;!#1]);"
+                  "!$(N[CX3]=[O,S]);!$(N[SX4]);!$(N:*):1])[NX3;!$(N[CX3]=[O,S]);!$(N[SX4])]", 1),
+    ("ammonium", "[NX3;!$(N[!#6;!#1]);!$(N[#6]=,#,:*);!$(N[#6][F,Cl,Br]):1]", 1),
+)  # fmt: skip
+
+
+def ionize(s, atoms) -> list[str]:
+    """Formal charges at pH 7 on a small molecule made of ``atoms`` (heavy atoms, its
+    bond orders set): carboxylic, sulfonic and phosphoric acids lose a proton (a free
+    phosphate keeps one: HPO4 2-), aliphatic amines, amidines and guanidines gain one.
+    Returns the groups charged."""
+    from rdkit import Chem
+
+    from ..chem import to_rdkit
+
+    atoms = [int(a) for a in atoms if s.atoms["anum"][a] > 1]
+    if not atoms:
+        return []
+    try:
+        mol = to_rdkit(s, atoms, sanitize=True, implicit_hydrogens=True, conformer=False,
+                       stereo=False, residue_info=False)  # fmt: skip
+    except Exception:  # bonds the valence rules refuse: left as it is
+        return []
+    idx = [a.GetIntProp("boonza_index") for a in mol.GetAtoms()]
+    q = np.asarray(s.atoms["formal_charge"]).copy()
+    taken, done = set(), []
+    for name, smarts, charge in IONIZABLE:
+        patt = Chem.MolFromSmarts(smarts)
+        k = next(a.GetIdx() for a in patt.GetAtoms() if a.GetAtomMapNum() == 1)
+        hits = [m[k] for m in mol.GetSubstructMatches(patt)]
+        if name == "phosphate":  # a P with three OH (phosphoric acid) keeps one
+            by_p: dict = {}
+            for h in hits:
+                p = next(n.GetIdx() for n in mol.GetAtomWithIdx(h).GetNeighbors()
+                         if n.GetAtomicNum() == 15)  # fmt: skip
+                by_p.setdefault(p, []).append(h)
+            hits = [h for hs in by_p.values() for h in (hs[:2] if len(hs) > 2 else hs)]
+        if name == "amidinium":  # one charge per group (a guanidine has three N)
+            groups: dict = {}
+            for m in mol.GetSubstructMatches(patt):
+                groups.setdefault(m[0], m[k])
+            hits = list(groups.values())
+        for h in hits:
+            if h in taken or mol.GetAtomWithIdx(h).GetFormalCharge():
+                continue
+            # a carboxylic acid's other O is no longer another acid's OH
+            taken.add(h)
+            q[idx[h]] = charge
+            done.append(name)
+    s.atoms["formal_charge"] = q
+    return done
+
+
+def prepare(s, forcefield: str = "aa.amber.ff19SB", polymer: bool = True) -> dict:
+    """A structure straight from the PDB made ready for the force field: amino acids
+    and waters by :func:`protonate` (a backbone cut at CA completed, charged termini,
+    Lys, Arg, Asp and Glu charged; not when ``polymer`` is False, for a protein
+    prepared already); every other molecule without hydrogens given bond orders from
+    its geometry, the charges of pH 7 (:func:`ionize`) and the hydrogens they ask for;
+    molecules that have hydrogens keep their state, short ones made up."""
+    from ..bondorders import guess_bond_orders
+
+    report = protonate(s, forcefield) if polymer else {
+        "residues": 0, "hydrogens": 0, "removed": 0, "incomplete": [], "skipped": [],
+        "alternates": 0, "rebuilt": [], "backbone": []}  # fmt: skip
+    known = s.select("protein or water").ids
+    rest = np.setdiff1d(np.arange(s.natoms), known)
+    anum = np.asarray(s.atoms["anum"])
+    rest = rest[anum[rest] > 1]
+    groups = []
+    frag = np.asarray(s.fragids)
+    for f in np.unique(frag[rest]).tolist():
+        mine = rest[frag[rest] == f]
+        whole = s.fragment_atoms(f)
+        if len(mine) < 2 or (anum[whole] == 1).any() or np.isin(anum[mine], METALS).any():
+            continue
+        guess_bond_orders(s, mine)
+        charged = ionize(s, mine)
+        if charged:
+            r = int(s.atoms["residue"][mine[0]])
+            groups.append(f"{s.residues['name'][r]}: {', '.join(charged)}")
+    before = s.natoms
+    if polymer:
+        adjust_hydrogens(s, rest.tolist())
+    else:  # only the molecules that had none
+        bare = [a for a in rest.tolist() if not (anum[s.fragment_atoms(frag[a])] == 1).any()]
+        adjust_hydrogens(s, bare)
+    report["ligand_hydrogens"] = s.natoms - before
+    report["ligand_charges"] = groups
+    return report
+
+
 def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
     """Every hydrogen of the amino acids and waters, as the force field's residue
     templates name and bond them: charged termini (NH3+, COO-, OXT added where
@@ -286,6 +442,7 @@ def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
     water = viparr.load_forcefield("water.tip3p").templates[0]
     dropped = _one_location(s, known)
     _peptide_bonds(s, known)
+    backbone = _complete_backbone(s, known)
     rebuilt = _complete_side_chains(s, ff)
     anum = np.asarray(s.atoms["anum"])
     names = np.array([str(x) for x in s.atoms["name"]])
@@ -416,7 +573,7 @@ def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
         guess_bond_orders(s, protein, force=True)
     return {"residues": len(plan), "hydrogens": added, "removed": removed,
             "incomplete": incomplete, "skipped": sorted(skipped),
-            "alternates": dropped, "rebuilt": rebuilt}  # fmt: skip
+            "alternates": dropped, "rebuilt": rebuilt, "backbone": backbone}  # fmt: skip
 
 
 def add_hydrogens(s, a: int, n: int) -> None:

@@ -770,7 +770,9 @@ export function setupUI(app) {
       const out = await busyEdit(m, "adding hydrogens from the force field's templates", { op: "protonate" });
       if (!out) return;
       const notes = [];
+      if (out.backbone?.length) notes.push(`backbone completed for ${out.backbone.join(", ")}`);
       if (out.rebuilt.length) notes.push(`side chains built for ${out.rebuilt.join(", ")}`);
+      if (out.ligand_charges?.length) notes.push(`charged as at pH 7: ${out.ligand_charges.join("; ")}`);
       if (out.alternates) notes.push(`${out.alternates} alternate-location atoms dropped`);
       if (out.incomplete.length) notes.push(`incomplete, left as they are: ${out.incomplete.join(", ")}`);
       if (out.skipped.length) notes.push(`${out.skipped.join(", ")} by valence (${out.ligand_hydrogens} H)`);
@@ -834,6 +836,16 @@ export function setupUI(app) {
   const heldHow = (out, restraint) => (out.mobile === "all" ? "everything free"
     : `${MIN_MODES.find(([k]) => k === out.mobile)?.[2] ?? out.mobile}, the rest's heavy atoms held `
       + `(${restraint} kcal/mol/Å², moved at most ${out.held_max} Å)`);
+  // what preparing a model for the force field did, before a minimize or dynamics
+  function preparedNote(p, model) {
+    const notes = [];
+    if (p.backbone?.length) notes.push(`backbone completed for ${p.backbone.join(", ")} (a charged terminus each)`);
+    if (p.rebuilt?.length) notes.push(`side chains built for ${p.rebuilt.join(", ")}`);
+    if (p.ligand_charges?.length) notes.push(`charged as at pH 7: ${p.ligand_charges.join("; ")}`);
+    if (p.incomplete?.length) notes.push(`incomplete residues left as they are: ${p.incomplete.join(", ")}`);
+    return `${model.name} prepared first: ${p.hydrogens} hydrogens (charged termini, Lys/Arg +, Asp/Glu −, His as HIE)`
+      + (notes.length ? `; ${notes.join("; ")}` : "") + " (Edit | Undo takes it back). ";
+  }
   async function minimize({ mode = null, restraint = null } = {}) {
     const m = actingModel();
     if (!m) return;
@@ -855,8 +867,7 @@ export function setupUI(app) {
       const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
         : heldHow(out, body.restraint)
           + (out.receptor ? ` in ${out.receptor} (whose positions stay: every design shares it)` : "");
-      const first = added ? `${out.protonated.hydrogens} hydrogens added to ${added.name} first (Edit | Undo takes them back)`
-        + (out.protonated.incomplete.length ? `, incomplete residues left as they are: ${out.protonated.incomplete.join(", ")}` : "") + ". " : "";
+      const first = added ? preparedNote(out.protonated, added) : "";
       const rem = out.rem_energy_before !== undefined
         ? ` (after REM: soft E ${out.rem_energy_before} → ${out.rem_energy_after})` : "";
       app.message(`${first}Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol${rem}; ${how}`
@@ -889,7 +900,7 @@ export function setupUI(app) {
       await app.reloadModel(m, added === m);
       const how = out.mobile === "constraints" ? `${out.fixed_atoms} frozen, ${out.held_atoms} restrained`
         : heldHow(out, body.restraint);
-      app.message(`${out.picoseconds} ps at ${out.temperature} K (${out.steps} steps): `
+      app.message(`${added ? preparedNote(out.protonated, added) : ""}${out.picoseconds} ps at ${out.temperature} K (${out.steps} steps): `
         + `E ${out.energy_before} → ${out.energy_after} kJ/mol, mean ${out.energy_mean}; ${how}`
         + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : "")
         + `; ${out.solvent_how}`);

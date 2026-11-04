@@ -541,9 +541,8 @@ class Viewer:
                                         solvent=kw.get("solvent", "rf"),
                                         pocket=kw.get("pocket", POCKET))  # fmt: skip
         protonated = _protonate_if_bare(self.session(m), m)
-        out = self.session(m).minimize(mode=mode, path=path, rem=rem, **kw)
-        if protonated:
-            out["protonated"] = protonated
+        out = _merge_prepared(self.session(m).minimize(mode=mode, path=path, rem=rem, **kw),
+                              protonated, m)  # fmt: skip
         if "path" in out:
             out["path"] = _split_path(out["path"], [(m, None)])
         return out
@@ -556,9 +555,8 @@ class Viewer:
             raise ValueError("a design in a receptor cannot be run yet: minimize it, or "
                              "open the complex itself")  # fmt: skip
         protonated = _protonate_if_bare(self.session(m), m)
-        out = self.session(m).dynamics(mode=mode, path=path, **kw)
-        if protonated:
-            out["protonated"] = protonated
+        out = _merge_prepared(self.session(m).dynamics(mode=mode, path=path, **kw),
+                              protonated, m)  # fmt: skip
         if "path" in out:
             out["path"] = _split_path(out["path"], [(m, None)])
         return out
@@ -672,10 +670,25 @@ def _protonate_if_bare(session: Session, m: int | None) -> dict | None:
     anum = np.asarray(s.atoms["anum"])
     if (anum[polymer] == 1).any() if len(polymer) else (anum == 1).any():
         return None
-    report = session.edit("protonate")
+    return _prepared(session.edit("protonate"), m)
+
+
+def _prepared(report: dict, m: int) -> dict:
+    """What preparing model ``m`` did (boonza.viewer.edit.prepare), for the page."""
     return {"m": m, "hydrogens": int(report.get("hydrogens", 0))
             + int(report.get("ligand_hydrogens", 0)),
-            "incomplete": report.get("incomplete", [])}  # fmt: skip
+            "incomplete": report.get("incomplete", []),
+            "backbone": report.get("backbone", []), "rebuilt": report.get("rebuilt", []),
+            "ligand_charges": report.get("ligand_charges", [])}  # fmt: skip
+
+
+def _merge_prepared(out: dict, protonated: dict | None, m: int) -> dict:
+    """``out`` of a minimize or dynamics with ``protonated`` (done before it) or what
+    the session prepared itself (``out["prepared"]``) as ``out["protonated"]``."""
+    prepared = out.pop("prepared", None)
+    if protonated or prepared:
+        out["protonated"] = protonated or _prepared(prepared, m)
+    return out
 
 
 def _split_path(path: dict, parts, n0: int = 0) -> dict:
