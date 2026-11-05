@@ -137,11 +137,13 @@ export function setupUI(app) {
   }
 
   // these atoms in this color wherever they are drawn
-  function colorIn(pairs, spec) {
+  // atomsOnly: the atoms' own colors, the ribbons over them left as they are
+  function colorIn(pairs, spec, atomsOnly = false) {
     for (const [m, ids] of pairs) {
       if (!m?.state) continue;
       for (const rep of m.reps) {
         if (rep.style === "surface") continue;
+        if (atomsOnly && app.isRibbon(rep)) continue;
         if (spec === "element" && app.isRibbon(rep)) continue;  // a ribbon has no element
         const mine = ids.filter(a => rep.mask[a]);
         if (!mine.length) continue;
@@ -1280,6 +1282,7 @@ export function setupUI(app) {
     { label: "Show Selection As", sub: showAsItems },
     { label: "Hide Selection", run: () => hideAtoms(app.targets()) },
     { label: "New Representation of Selection", run: () => newRepFromSelection() },
+    { label: "Color Carbons of Selection", sub: carbonItems },
     { label: "Add Surface", sub: surfaceItems },
     { label: "Labels", sub: labelItems },
     "-",
@@ -3505,6 +3508,20 @@ export function setupUI(app) {
     refreshSelRow();
     app.message("colored · the highlight is off to show it: tick (sel) to bring it back");
   }
+  // the selection's carbons in one color, every other atom (and the ribbon) as it was
+  function colorCarbons(color) {
+    const drawn = (m, a) => m.reps.some(rep => rep.mask[a] && rep.style !== "surface" && !app.isRibbon(rep));
+    const carbons = app.selection().map(([m, ids]) => [m, ids.filter(a => m.topo.atoms.element[a] === "C")]);
+    if (!carbons.some(([, ids]) => ids.length)) { app.message("no carbons selected", true); return; }
+    const sel = carbons.map(([m, ids]) => [m, ids.filter(a => drawn(m, a))]).filter(([, ids]) => ids.length);
+    if (!sel.length) { app.message("these carbons are drawn only as a ribbon: show them as sticks (Show Selection As) first", true); return; }
+    colorIn(sel, color, true);
+    state.selHidden = true;
+    app.rebuild();
+    refreshSelRow();
+    app.message(`${sel.reduce((n, [, ids]) => n + ids.length, 0)} carbons colored ${color} · the highlight is off to show it: tick (sel) to bring it back`);
+  }
+  const carbonItems = () => ATOM_COLORS.slice(2).map(([v, label]) => ({ label, run: () => colorCarbons(v) }));
   const highlightItems = () => HIGHLIGHTS.map(([v, label]) => ({ label, checked: () => state.selColor === v, run: () => {
     state.selHidden = false;
     app.setSelectionColor(v);
@@ -3512,7 +3529,7 @@ export function setupUI(app) {
   } }));
   const selMenu = () => [
     { label: "Color", sub: () => ATOM_COLORS.map(([v, label]) => ({ label, run: () => colorSelection(v) })) },
-    { label: "Color Carbons", sub: () => ATOM_COLORS.slice(2).map(([v, label]) => ({ label, run: () => colorSelection(`element/${v}`) })) },
+    { label: "Color Carbons", sub: carbonItems },
     { label: "Highlight Color", sub: highlightItems },
     "-",
     { label: "Show As", sub: showAsItems },

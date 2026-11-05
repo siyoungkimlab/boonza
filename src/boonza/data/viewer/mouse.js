@@ -214,6 +214,7 @@ export function setupMouse(app) {
     if (d.ctrl) ids = residuesOf(m, ids);
     app.select(m, ids, d.shift ? "toggle" : "set");
     if (hit.atom !== undefined) app.describeAtom(m, hit.atom);
+    else if (hit.residue !== undefined) app.message(`residue ${app.residueLabel(m, hit.residue)}`);
     else if (hit.atoms) app.message(`bond ${app.atomLabel(m, hit.atoms[0], false)} – ${app.atomLabel(m, hit.atoms[1], false)}`
       + `  (order ${m.topo.bonds.order[m.topo.bonds.i.findIndex((i, k) => (i === hit.atoms[0] && m.topo.bonds.j[k] === hit.atoms[1]) || (i === hit.atoms[1] && m.topo.bonds.j[k] === hit.atoms[0]))] ?? 1})`);
   }
