@@ -48,6 +48,7 @@ const state = {
   masks: [true, true, true, true],  // pickable: receptor, ligand, solvent, ribbons
   hydrogens: "polar",               // shown: all, polar, none
   contacts: false, meters: [], labelMode: "name", pocketNumbers: true, busy: 0,
+  colorBy: "modelchain",             // how models are told apart (colorBy below)
   selColor: localStorage.getItem("boonza.selColor") || "default",  // the selection's highlight
   pocket: +(localStorage.getItem("boonza.pocket") || 5),  // A: residues this near the ligand are its pocket
   selHidden: false,                 // (sel) unticked: still selected, not highlighted
@@ -306,6 +307,28 @@ function hydrogenFlags(topo) {
   return { h, nonpolar };
 }
 
+// how the models are told apart, over what each representation's own scheme draws:
+//   modelchain  each model's receptor (ribbon and carbons) in its own color, a shade of
+//               it per chain, the ligands as they are; one model alone keeps its colors
+//   model       every carbon and ribbon in the model's color
+//   chain       every carbon and ribbon by chain
+// a model given a color of its own (its color picker) keeps it, until a mode is chosen again
+const MODEL_HUES = ["green", "cyan", "magenta", "yellow", "salmon", "slate", "orange", "teal", "purple", "wheat"];
+function colorBy(model) {
+  const hue = MODEL_HUES[model.index % MODEL_HUES.length];
+  const mode = state.colorBy;
+  const [spec, all] = mode === "chain" ? ["chain", true] : mode === "model" ? [hue, true]
+    : live().length > 1 ? [`${hue}+chain`, false] : ["default", false];
+  model.color = spec; model.tintAll = all; model.autoColor = true;
+  for (const rep of model.reps) if (rep.tinted) colorRep(model, rep);
+}
+function setColorBy(mode) {
+  if (mode) state.colorBy = mode;
+  for (const m of live()) if (m.state && (mode || m.autoColor)) colorBy(m);
+  rebuild();
+  app.onReps(currentModel());
+}
+
 async function load(model) {
   if (model.topo) return model;
   if (!model.loading) {
@@ -326,7 +349,11 @@ async function load(model) {
         model.reps = [];
         applyReps(model, await Promise.all(pocketReps(topo, topo.reps).map(async r => ({ ...r, ids: r.ids || await selectIds(model, r.sel) }))));
       }
+      // a new model: colored as the others are; one more may set the others apart too
+      const fresh = !old && model.color === undefined;
+      if (fresh) colorBy(model);
       aggregate(model);
+      if (fresh && live().filter(m => m.state && m.autoColor).length > 1) setColorBy(null);
       // a numbered model (a pocket, a site) is labeled at its ligand -- the site's points
       // -- when it has one, not at the middle of the protein drawn with it
       if (model.label) model.labelIds = await selectIds(model, `same residue as (${topo.ligand})`).catch(() => null);
@@ -1203,7 +1230,7 @@ async function restorePage(page) {
     await load(m);
     if (m.topo.natoms !== saved.natoms) continue;
     for (const [k, Type] of Object.entries(ARRAYS)) m.state[k] = fromB64(saved.state[k], Type);
-    m.color = saved.color; m.tintAll = !!saved.tintAll;
+    m.color = saved.color; m.tintAll = !!saved.tintAll; m.autoColor = false;
     if (saved.reps) {
       m.reps = saved.reps.map(r => {
         const rep = makeRep(m, { mask: fromB64(r.mask, Uint8Array), sel: r.sel, label: r.label, style: r.style,
@@ -1235,7 +1262,7 @@ async function restorePage(page) {
 
 const app = {
   state, camera, renderer, canvas,
-  getJSON, post, busy, message, atomLabel, residueLabel,
+  getJSON, post, busy, message, atomLabel, residueLabel, setColorBy,
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
   selected, selection, targets, select, clearSelection, visibleAtom, setSelectionColor, pocketSelection, pocketReps,
   rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,

@@ -70,6 +70,11 @@ button:disabled { cursor: default; opacity: 0.45; }
 .sec-head select, .sec-head button, #reps-tools button { background: var(--button); border: 1px solid var(--line);
   border-radius: 5px; font-size: 11.5px; padding: 2px 7px; }
 .sec-head button:hover, #reps-tools button:hover { background: var(--hover); }
+#rdock-color { display: flex; gap: 4px; align-items: center; padding: 0 10px 6px; font-size: 11px; color: var(--muted); }
+#rdock-color span { margin-right: 2px; }
+#rdock-color button { background: var(--button); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; font: inherit; color: inherit; cursor: pointer; }
+#rdock-color button:hover { background: var(--hover); }
+#rdock-color button.on { border-color: var(--accent); background: var(--accent-soft); }
 #models-sec { display: flex; flex-direction: column; min-height: 80px; flex: 0 0 var(--models-h, 42%); }
 #rdock-list { overflow-y: auto; flex: 1; padding: 0 6px 4px; }
 #side-split { height: 5px; flex: none; cursor: row-resize; border-top: 1px solid var(--line); }
