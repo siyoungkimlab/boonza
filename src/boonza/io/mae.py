@@ -160,6 +160,16 @@ def _append_ct(s: System, ct: dict, ignore_unrecognized: bool, without_tables: b
     ff = ct.get("ffio_ff")
     if without_tables or particles is None or not isinstance(ff, dict):
         return
+    vdw_sites = ff.get("ffio_sites")
+    if isinstance(vdw_sites, MaeArray) and "ffio_vdwtype" in vdw_sites:
+        types = np.asarray(_column(vdw_sites, "ffio_vdwtype", vdw_sites.size, "", "s"))
+        if (types == "").any():
+            # sites without a vdW type: a force field that misses atoms (boonza view
+            # saved one after an edit added atoms to a structure that had a force field)
+            warnings.warn(f"{int((types == '').sum())} sites have no vdW type: the force "
+                          "field misses atoms, so the structure is read without it",
+                          stacklevel=3)  # fmt: skip
+            return
     _write_ffinfo(s, ff)
     sites = ff.get("ffio_atoms") if isinstance(ff.get("ffio_atoms"), MaeArray) else None
     if sites is None:
