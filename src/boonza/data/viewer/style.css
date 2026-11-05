@@ -158,6 +158,7 @@ label.mgroup input { margin: 0; }
 #ldock button.group small { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--muted); }
 #ldock button:hover { background: var(--hover); }
 #ldock .row { display: flex; gap: 4px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
+#ldock select { background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; color: var(--text); }
 #ldock input:not([type=checkbox]) { background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; min-width: 0; flex: 1; }
 #ldock .help { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 6px 0; }
 #ldock .what { color: var(--muted); width: 54px; font-size: 11px; }
