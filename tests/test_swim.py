@@ -1,6 +1,7 @@
 """boonza swim: sizes, diverse dealing, ligand force fields, placement, simulations."""
 
 import csv
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -296,3 +297,30 @@ def test_a_built_library_loads_as_ligands():
     assert [lig.name for lig in ligands[:3]] == ["R", "N", "D"]  # the sequence is the title
     assert len({lig.smiles for lig in ligands}) == 18  # eighteen different molecules
     assert all(lig.source is None for lig in ligands)  # none carries a force field: GAFF2 does
+
+
+def test_swim_charges_ligands_at_the_geometry_asked_for(tmp_path, protein, monkeypatch):
+    """--charge-geometry reaches each ligand's GAFF2 job; a patch kept from a swim
+    charged at the other geometry is made again, one at the same is kept."""
+    lib = boonza.from_smiles("CCO")
+    path = tmp_path / "small.sdf"
+    boonza.save(lib, path)
+    given = []
+
+    def job(work):
+        d, _, _, opts = work
+        given.append(opts["charge_geometry"])
+        (Path(d) / "patch").mkdir(exist_ok=True)
+        (Path(d) / "patch" / "templates").write_text("")
+        return str(Path(d) / "patch")
+
+    monkeypatch.setattr(swim, "_gaff2_job", job)
+    args = parse_arguments([str(protein), "--charge-geometry", "reference"])
+    ffs = swim._load_forcefields(args.forcefields)
+    ligands = swim.load_library(path, ffs)
+    root = tmp_path / "ligands"
+    for geometry in ("reference", "reference", "optimized"):
+        args.charge_geometry = geometry
+        swim.ligand_patches(ligands, args, ffs, root, log=quiet)
+    assert given == ["reference", "optimized"]
+    assert (root / ligands[0].code / "charge_geometry").read_text().strip() == "optimized"

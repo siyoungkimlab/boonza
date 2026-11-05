@@ -40,6 +40,8 @@ BAROSTATS = ("isotropic", "membrane", "none")
 SOLVATE_MODES = ("box", "fill", "membrane", "none")
 LIGAND_MODES = ("disabled", "auto")
 LIGAND_FORCE_FIELDS = ("gaff-2.11",)
+#: where a GAFF2 ligand's AM1-BCC charges are computed (boonza.gaff.CHARGE_GEOMETRIES)
+CHARGE_GEOMETRIES = ("optimized", "reference")
 PROTEIN_EXTENTS = ("matched", "cb")
 #: How Lennard-Jones ends at the cutoff: cut (none), CHARMM's force switch, the
 #: potential switch OpenMM builds in (OpenFF's), or GROMACS's potential shift
@@ -130,8 +132,8 @@ _SIRAH = {**_CG, "cutoff_nm": 1.2, "elastic": True, "elastic_lower_nm": 0.05}
 MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
-ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "ligand_charges", "parents",
-                 "protein_extent", "hmr")  # fmt: skip
+ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "charge_geometry", "ligand_charges",
+                 "parents", "protein_extent", "hmr")  # fmt: skip
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
@@ -167,6 +169,7 @@ DEFAULTS: dict = {
     "forcefields": None,
     "ligand_mode": "auto",
     "ligandff": "gaff-2.11",
+    "charge_geometry": "optimized",
     "ligand_charges": None,
     "parents": None,
     "protein_extent": "matched",
@@ -302,6 +305,7 @@ _CHOICES = {
     "termini": ("Charged", "Neutral", "None"),
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
+    "charge_geometry": CHARGE_GEOMETRIES,
     "protein_extent": PROTEIN_EXTENTS,
     "dihedral_restraint": DIHEDRAL_RESTRAINTS,
     "structure_bias": STRUCTURE_BIAS,
@@ -610,6 +614,15 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     )
     ff.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
                     help="GAFF release for ligands: gaff-2.11 (default)")  # fmt: skip
+    ff.add_argument(
+        "--charge-geometry",
+        dest="charge_geometry",
+        choices=CHARGE_GEOMETRIES,
+        help="where GAFF2 ligands' AM1-BCC charges are computed: optimized (default; "
+        "the pose as given, optimized by sqm: minutes for a drug-sized molecule) or "
+        "reference (one AM1 calculation at a conformer built from the bonds: under a "
+        "second, and the same charges in every pose)",
+    )
     ff.add_argument(
         "--protein-extent",
         dest="protein_extent",
@@ -1268,6 +1281,10 @@ workdir = "boonza_md"
 # GAFF2 (AM1-BCC, AmberTools) templates for ligands and covalent adducts.
 ligand_mode = "auto"
 ligandff = "gaff-2.11"
+# Where their AM1-BCC charges are computed: "optimized" (the pose as given, optimized
+# by sqm: minutes for a drug-sized molecule) or "reference" (one AM1 calculation at a
+# conformer built from the bonds alone: under a second, the same in every pose).
+charge_geometry = "optimized"
 # Formal charges of ligand residues read from files without them (PDB):
 # ligand_charges = { LIG = -1 }
 # The standard residue each modified residue comes from, where the file has no

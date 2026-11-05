@@ -413,6 +413,7 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
     """The patch directory for each ligand (None when the force fields match it),
     made once and kept in ``root/<code>/``."""
     host = forcefields[gaff.host_index(forcefields)]
+    geometry = getattr(args, "charge_geometry", None) or "optimized"
     out: list[Path | None] = [None] * len(ligands)
     todo = []
     for k, lig in enumerate(ligands):
@@ -420,7 +421,10 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
         d.mkdir(parents=True, exist_ok=True)
         save(lig.system, d / "ligand.dms")
         patch = d / "patch"
-        if (patch / "templates").is_file():
+        # a patch kept from a swim whose charges were computed elsewhere is made again
+        made = d / "charge_geometry"
+        kept = made.read_text().strip() if made.is_file() else "optimized"
+        if (patch / "templates").is_file() and (lig.source is not None or kept == geometry):
             out[k] = patch
         elif (d / "standard").is_file():
             continue
@@ -433,11 +437,11 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
         else:
             todo.append(k)
     if todo:
-        log(f"GAFF2 {args.ligandff} templates (AM1-BCC) for {len(todo)} ligands, "
-            f"{jobs} at a time...")  # fmt: skip
+        log(f"GAFF2 {args.ligandff} templates (AM1-BCC, {geometry} geometry) for "
+            f"{len(todo)} ligands, {jobs} at a time...")  # fmt: skip
         spec = [list(e) for e in args.forcefields]
         opts = dict(charges=args.ligand_charges, parents=args.parents,
-                    protein_extent=args.protein_extent)  # fmt: skip
+                    protein_extent=args.protein_extent, charge_geometry=geometry)  # fmt: skip
         work = [(str(root / ligands[k].code), ligands[k].code, spec, opts) for k in todo]
         if jobs > 1:
             with ProcessPoolExecutor(max_workers=jobs) as pool:
@@ -446,6 +450,7 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
             done = [_gaff2_job(w) for w in work]
         for k, d in zip(todo, done, strict=True):
             out[k] = Path(d)
+            (root / ligands[k].code / "charge_geometry").write_text(geometry + "\n")
     return out
 
 
