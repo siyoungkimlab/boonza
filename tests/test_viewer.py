@@ -1018,6 +1018,84 @@ def test_mutations_and_caps_stay_ff19sb():
         cap(p, 0, "C")
 
 
+def test_a_chain_grows_at_either_end_and_atoms_become_a_residue():
+    from boonza import gaff, viparr
+    from boonza.md.config import DEFAULT_FORCEFIELDS
+    from boonza.viewer import edit
+    from boonza.viewer.edit import _residue_atom, dihedral_angle, extend, neighbors
+
+    p = _peptide()
+    q = np.asarray(p.atoms["formal_charge"]).copy()  # a topology's: none; as a PDB's would be
+    q[_residue_atom(p, 0, "N")] = 1
+    q[_residue_atom(p, p.nresidues - 1, "OXT")] = -1
+    p.atoms["formal_charge"] = q
+    edit.adjust_hydrogens(p, [_residue_atom(p, 0, "N"), _residue_atom(p, p.nresidues - 1, "OXT")])
+    before = [str(p.residues["name"][r]) for r in range(p.nresidues)]
+    charge = int(p.atoms["formal_charge"].sum())
+    extend(p, 0, "C", "TRP")
+    extend(p, 0, "N", "GLU")
+    extend(p, 0, "N", "PRO")
+    names = [str(p.residues["name"][r]) for r in range(p.nresidues)]
+    assert names == ["PRO", "GLU", *before, "TRP"]  # the residue table in chain order
+    listed = [str(p.residues["name"][r]) for r in dict.fromkeys(p.atoms["residue"].tolist())]
+    assert listed == names  # and the file's
+    # the termini moved on, charged as they were; GLU's side chain charged
+    assert int(p.atoms["formal_charge"].sum()) == charge - 1
+    n0 = _residue_atom(p, 0, "N")
+    assert int(p.atoms["formal_charge"][n0]) == 1
+    assert sum(p.atoms["anum"][b] == 1 for b, _ in neighbors(p, n0)) == 2  # proline's NH2+
+    last = p.nresidues - 1
+    assert int(p.atoms["formal_charge"][_residue_atom(p, last, "OXT")]) == -1
+    assert _residue_atom(p, last - 1, "OXT") < 0
+    n1 = _residue_atom(p, 1, "N")
+    amide = [str(p.atoms["name"][b]) for b, _ in neighbors(p, n1) if p.atoms["anum"][b] == 1]
+    assert amide == ["H"]
+    pos = p.positions
+    for r in range(p.nresidues - 1):
+        c, n = _residue_atom(p, r, "C"), _residue_atom(p, r + 1, "N")
+        assert p.find_bond(c, n) is not None
+        assert 1.25 < np.linalg.norm(pos[c] - pos[n]) < 1.45
+        omega = dihedral_angle(pos, _residue_atom(p, r, "CA"), c, n, _residue_atom(p, r + 1, "CA"))
+        assert abs(abs(omega) - 180) < 20
+    ffs = [viparr.load_forcefield(b) for b, *_ in DEFAULT_FORCEFIELDS]
+    assert not gaff.find_unmatched(p, ffs)
+    # a group of a side chain as a residue of its own: at the chain's end, still bonded
+    trp = last
+    ring = [a for a in p.residue_atoms(trp) if str(p.atoms["name"][a]) in ("CZ2", "HZ2")]
+    ce2 = _residue_atom(p, trp, "CE2")
+    r = edit.split_residue(p, ring, "x1")
+    assert str(p.residues["name"][r]) == "X1" and r == p.nresidues - 1
+    assert int(p.residues["chain"][r]) == 0
+    assert p.find_bond(ce2, _residue_atom(p, r, "CZ2")) is not None
+    # the chain grows on past it, numbered after it
+    r = extend(p, 0, "C", "ALA")
+    resids = [int(p.residues["resid"][x]) for x in range(p.nresidues)]
+    assert len(set(resids)) == len(resids)
+    with pytest.raises(ValueError, match="one residue"):
+        edit.split_residue(p, [_residue_atom(p, 0, "CA"), _residue_atom(p, 1, "CA")])
+
+
+def test_extend_and_split_through_the_session():
+    p = _peptide()
+    session = viewer.Session(p, whole=False)
+    n = session.system.nresidues
+    ca = _ca(session.system, 0)
+    out = session.edit("extend", [ca], {"end": "C", "residue": "ALA"})
+    s = session.system
+    assert s.nresidues == n + 1
+    assert {int(s.atoms["residue"][a]) for a in out["made"]} == {n}
+    assert str(s.residues["name"][n]) == "ALA"
+    cb = [a for a in out["made"] if str(s.atoms["name"][a]) in ("CB", "HB1")]
+    out = session.edit("split", cb, "me")
+    assert {str(session.system.atoms["name"][a]) for a in out["made"]} == {"CB", "HB1"}
+
+
+def _ca(s, r):
+    from boonza.viewer.edit import _residue_atom
+
+    return _residue_atom(s, r, "CA")
+
+
 def test_geometry_edits_redo_and_constraints(served):
     from boonza.viewer.edit import bond_angle
 

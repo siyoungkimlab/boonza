@@ -642,6 +642,19 @@ class System:
             raise ValueError("order must be a permutation of all atoms")
         return self._retain_atoms(order)
 
+    def reorder_residues(self, order) -> np.ndarray:
+        """Renumber residues so that new residue k is old residue ``order[k]``; the
+        atoms keep their indices.  Returns the old -> new residue map."""
+        order = self._ids("residue", order)
+        if len(order) != self.nresidues or len(np.unique(order)) != self.nresidues:
+            raise ValueError("order must be a permutation of all residues")
+        rmap = np.empty(self.nresidues, np.int64)
+        rmap[order] = np.arange(len(order))
+        self._residues.keep(order)
+        self._atoms._data["residue"][: self.natoms] = rmap[self._atoms.column("residue")]
+        self._touch("residue")
+        return rmap
+
     def _retain_atoms(self, keep: np.ndarray) -> np.ndarray:
         amap = np.full(self.natoms, -1, np.int64)
         amap[keep] = np.arange(len(keep))

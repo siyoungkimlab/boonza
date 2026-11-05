@@ -2168,6 +2168,182 @@ def cap(s, chain: int, end: str) -> None:
         _place(s, new_res, r, after=True)
 
 
+def extend(s, chain: int, end: str, new: str) -> int:
+    """Add amino acid ``new`` (three letters) to the start (``end="N"``) or the end
+    (``"C"``) of ``chain``: a trans peptide bond, the new residue turned about the
+    bond to it (phi or psi of the old end) where it clashes least, its side chain to its
+    least-clashing rotamer.  The terminus moves on to it, as it was: charged (NH3+,
+    COO-) or neutral, or without hydrogens in a structure without any.  Returns the
+    new residue."""
+    from ..align import kabsch
+    from ..build import peptide
+
+    new = new.upper()
+    if new not in ONE_LETTER:
+        raise ValueError(f"{new}: one of {', '.join(sorted(ONE_LETTER))}")
+    res = [r for r in range(s.nresidues) if int(s.residues["chain"][r]) == chain
+           and _residue_atom(s, r, "CA") >= 0]  # fmt: skip
+    if not res:
+        raise ValueError("no amino acids in that chain")
+    anum = np.asarray(s.atoms["anum"])
+    bare = not (anum == 1).any()
+    names = lambda r: {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(r)}  # noqa: E731
+    if end == "C":
+        r = res[-1]
+        here = names(r)
+        if not {"CA", "C", "O"} <= set(here):
+            raise ValueError("the last residue needs CA, C and O")
+        if any(int(s.atoms["residue"][b]) != r and anum[b] > 1 for b, _ in neighbors(s, here["C"])):
+            raise ValueError("the C terminus is bonded on already (capped?)")
+        # the template: the old end as glycine, then the new residue, its acid at the end
+        t = peptide("G" + ONE_LETTER[new], conformation="extended")
+        fit, take = ("CA", "C", "O"), 1
+    elif end == "N":
+        r = res[0]
+        here = names(r)
+        if not {"N", "CA", "C"} <= set(here):
+            raise ValueError("the first residue needs N, CA and C")
+        if any(int(s.atoms["residue"][b]) != r and anum[b] > 1 for b, _ in neighbors(s, here["N"])):
+            raise ValueError("the N terminus is bonded on already (capped?)")
+        t = peptide(ONE_LETTER[new] + "G", conformation="extended")
+        fit, take = ("N", "CA", "C"), 0
+    else:
+        raise ValueError('end is "N" or "C"')
+    tres = sorted(set(np.asarray(t.residues["resid"]).tolist()))
+    keep = int(np.flatnonzero(np.asarray(t.residues["resid"]) == tres[take])[0])
+    other = int(np.flatnonzero(np.asarray(t.residues["resid"]) == tres[1 - take])[0])
+    tidx = [_residue_atom(t, other, x) for x in fit]
+    rot, shift = kabsch(t.positions[tidx], s.positions[[here[x] for x in fit]])
+    tpos = np.asarray(t.positions, float) @ rot.T + shift
+    piece_atoms = [int(a) for a in t.residue_atoms(keep)
+                   if not (bare and t.atoms["anum"][a] == 1)]  # fmt: skip
+    tname = {int(a): str(t.atoms["name"][a]) for a in piece_atoms}
+    # where the template bonds the kept residue to the other one: C-N
+    link_t = "N" if end == "C" else "C"
+
+    # the old end gives its terminus up: COO- -> C=O, NH3+ -> NH
+    if end == "C":
+        oxt = here.get("OXT", -1)
+        charged = oxt >= 0 and int(s.atoms["formal_charge"][oxt]) < 0
+        if oxt >= 0:
+            gone = [oxt] + [b for b, _ in neighbors(s, oxt) if anum[b] == 1]
+            s.delete_atoms(gone)
+            here = names(r)
+        q = np.asarray(s.atoms["formal_charge"]).copy()
+        q[here["O"]] = 0
+        s.atoms["formal_charge"] = q
+        set_bond(s, here["C"], here["O"], 2)
+    else:
+        n = here["N"]
+        charged = int(s.atoms["formal_charge"][n]) > 0
+        q = np.asarray(s.atoms["formal_charge"]).copy()
+        q[n] = 0
+        s.atoms["formal_charge"] = q
+        hs = [b for b, _ in neighbors(s, n) if anum[b] == 1]
+        if hs:
+            s.delete_atoms(hs)
+        here = names(r)
+    resid = int(s.residues["resid"][r]) + (1 if end == "C" else -1)
+    taken = {int(s.residues["resid"][x]) for x in range(s.nresidues)
+             if int(s.residues["chain"][x]) == chain}  # fmt: skip
+    if resid in taken:  # a residue made of a chain's atoms is numbered after its last
+        resid = max(taken) + 1 if end == "C" else min(taken) - 1
+    new_res = _new_residue(s, chain, new, resid)
+    piece = t.clone(piece_atoms)
+    piece.positions = tpos[piece_atoms]
+    added = s.append(piece)
+    empty = sorted(set(np.asarray(s.atoms["residue"])[added].tolist()))
+    _move_to(s, added, new_res)
+    for e in reversed(empty):
+        if e != new_res and not len(s.residue_atoms(e)):
+            s.delete_residues([e])
+    new_res = int(s.atoms["residue"][added[0]])
+    mine = {tname[a]: int(added[k]) for k, a in enumerate(piece_atoms)}
+    here = names(r)
+    if end == "C":
+        s.add_bond(here["C"], mine[link_t], 1)
+    else:
+        s.add_bond(mine[link_t], here["N"], 1)
+    q = np.asarray(s.atoms["formal_charge"]).copy()
+    for (rn, an), charge in CHARGED.items():
+        if rn == new and an in mine:
+            q[mine[an]] = charge
+    # the terminus as the old one was
+    term = mine.get("OXT") if end == "C" else mine.get("N")
+    if term is not None:
+        q[term] = (-1 if end == "C" else 1) if charged else 0
+    s.atoms["formal_charge"] = q
+    if not bare:
+        fix = [mine[a] for a in mine if s.atoms["anum"][mine[a]] > 1 and a not in BACKBONE]
+        fix += [x for x in (term, here["N"] if end == "N" else None) if x is not None]
+        adjust_hydrogens(s, fix)
+        if end == "N":
+            _name_amide_h(s, r)
+            nn = _residue_atom(s, new_res, "N")
+            hs = [b for b, _ in neighbors(s, nn) if s.atoms["anum"][b] == 1]
+            nm = np.asarray(s.atoms["name"]).astype(object)
+            for k, h in enumerate(hs):
+                nm[h] = f"H{k + 1}" if len(hs) > 1 else "H"
+            s.atoms["name"] = nm.astype(str)
+    # the new residue about the bond to it, where it clashes least
+    here = names(r)
+    here_key = (str(s.residues["name"][r]), int(s.residues["resid"][r]), chain)
+    if end == "C":
+        b, c = here["CA"], here["C"]
+    else:
+        b, c = here["CA"], here["N"]
+    adj = {k: [x for x, _ in v] for k, v in _bonded(s).items()}
+    moving = sorted(_reach(adj, c, b) - {c})
+    if moving:
+        _best_turn(s, b, c, moving, steps=24)
+    _best_rotamer(s, new_res)
+    _gather(s, r)  # the old end's new hydrogen, appended, back with its residue
+    r = int(s.atoms["residue"][_residue_atom_any_name(s, here_key)])
+    new_res = int(s.atoms["residue"][_residue_atom_any(s, new, resid, chain)])
+    _place(s, new_res, r, after=end == "C")
+    return int(s.atoms["residue"][_residue_atom_any(s, new, resid, chain)])
+
+
+def _residue_atom_any_name(s, key) -> int:
+    return _residue_atom_any(s, *key)
+
+
+def _residue_atom_any(s, name: str, resid: int, chain: int) -> int:
+    for r in range(s.nresidues):
+        if (str(s.residues["name"][r]) == name and int(s.residues["resid"][r]) == resid
+                and int(s.residues["chain"][r]) == chain):  # fmt: skip
+            return int(s.residue_atoms(r)[0])
+    raise ValueError("the new residue went missing")
+
+
+def split_residue(s, atoms, name: str = "") -> int:
+    """Make ``atoms`` (of one residue) a residue of their own, in the same chain, listed
+    after the one they leave and numbered after the chain's last; their bonds stay
+    (a group grown on a side chain becomes a covalently bound residue).  Returns it."""
+    atoms = sorted({int(a) for a in atoms})
+    if not atoms:
+        raise ValueError("select the atoms of the new residue")
+    old = {int(s.atoms["residue"][a]) for a in atoms}
+    if len(old) != 1:
+        raise ValueError("select atoms of one residue")
+    old = old.pop()
+    if len(atoms) == len(s.residue_atoms(old)):
+        raise ValueError("that is the whole residue already")
+    chain = int(s.residues["chain"][old])
+    name = (name or "UNL").strip().upper()[:4]
+    last = max(int(s.residues["resid"][r]) for r in range(s.nresidues)
+               if int(s.residues["chain"][r]) == chain)  # fmt: skip
+    end = max(
+        (r for r in range(s.nresidues) if int(s.residues["chain"][r]) == chain),
+        key=lambda r: int(s.residue_atoms(r).max()),
+    )  # the chain's last, as listed
+    new_res = _new_residue(s, chain, name, last + 1)
+    _move_to(s, atoms, new_res)
+    # at the chain's end: inside it, the residue would break the chain's run in two
+    _place(s, new_res, end, after=True)
+    return int(s.atoms["residue"][_residue_atom_any(s, name, last + 1, chain)])
+
+
 def _find(s, r: int, name: str) -> int:
     a = _residue_atom(s, r, name)
     if a < 0:
@@ -2186,6 +2362,13 @@ def _place(s, residue: int, beside: int, after: bool) -> None:
     rest = [a for a in range(s.natoms) if a not in set(mine)]
     k = rest.index(theirs[-1]) + 1 if after else rest.index(theirs[0])
     s.reorder_atoms(rest[:k] + mine + rest[k:])
+    # and the residues as the atoms list them: a chain's residues in order, so the
+    # sequence, the ribbon and its termini read it from start to end
+    first = np.full(s.nresidues, s.natoms, np.int64)
+    np.minimum.at(first, np.asarray(s.atoms["residue"]), np.arange(s.natoms))
+    order = np.argsort(first, kind="stable")
+    if (order != np.arange(s.nresidues)).any():
+        s.reorder_residues(order)
 
 
 def _rename(s, atoms, by_element: dict) -> None:

@@ -1773,6 +1773,7 @@ export function setupUI(app) {
     state.selHidden = false;  // a new selection is one to see
     refreshSelRow();
     markBuilderH();  // a selection of its own brings its hydrogens out, in the Builder
+    refreshProteinBuilder();
     ramaRefresh?.();
     footerEdit();
     footerSmiles();
@@ -2467,7 +2468,10 @@ export function setupUI(app) {
   // rest of a structure keeps the setting, so opening the Builder on a receptor no
   // longer fills the view with every C-H it has.
   function markBuilderH() {
-    const on = !$("ldock").hidden && dockTab === "builder";
+    // the Protein Builder too, for the selection's only: a mutated or added residue's
+    // hydrogens, to see they are where they should be (its ligands keep the H setting)
+    const on = !$("ldock").hidden && (dockTab === "builder" || dockTab === "protein");
+    const ligands = dockTab === "builder";
     // every loaded model, not only those shown: a hidden one keeps no stale representation
     for (const m of app.live().filter(o => o.state)) {
       const A = m.topo.atoms, mark = m.state.showH;
@@ -2483,7 +2487,7 @@ export function setupUI(app) {
           if (A.element[a] !== "H") continue;
           const heavy = m.topo.bondsOf[a][0];
           if (heavy === undefined) continue;
-          if (A.class[heavy] === 1 || m.state.sel[heavy] || m.state.sel[a]) mark[a] = 1;
+          if ((ligands && A.class[heavy] === 1) || m.state.sel[heavy] || m.state.sel[a]) mark[a] = 1;
         }
         // a selected hydrogen whose heavy atom only a ribbon draws is in no atom
         // representation at all: its residue gets one, every atom of it.  (A hydrogen
@@ -2839,22 +2843,42 @@ export function setupUI(app) {
     if (out) app.message(`cleaned up ${out.molecules} molecule${out.molecules === 1 ? "" : "s"} (${out.forcefield})`);
   }
 
-  function proteinBuilder(body) {
-    const sel = app.selection();
-    const residues = [];
-    for (const [m, ids] of sel) {
+  // the selected residues, as the Protein Builder says them
+  function selectedResidues() {
+    const out = [];
+    for (const [m, ids] of app.selection()) {
       const seen = new Set(ids.map(a => m.topo.atoms.residue[a]));
-      for (const r of seen) residues.push(`${m.topo.residues.name[r]}${m.topo.residues.resid[r]}`);
+      for (const r of seen) out.push(`${m.topo.residues.name[r]}${m.topo.residues.resid[r]}`);
     }
+    return out.length ? `Selected: ${out.slice(0, 8).join(", ")}${out.length > 8 ? "…" : ""}`
+      : "Select an atom of each residue to mutate (Ctrl-click takes the residue).";
+  }
+  let proteinSelected = null, extendWith = "ALA";
+  function refreshProteinBuilder() {
+    if (proteinSelected?.isConnected) proteinSelected.textContent = selectedResidues();
+  }
+  function proteinBuilder(body) {
     body.append(el("h3", {}, "Mutate"));
-    body.append(el("p", { className: "help" }, residues.length
-      ? `Selected: ${residues.slice(0, 8).join(", ")}${residues.length > 8 ? "…" : ""}`
-      : "Select an atom of each residue to mutate (Ctrl-click takes the residue)."));
+    proteinSelected = el("p", { className: "help" }, selectedResidues());
+    body.append(proteinSelected);
     const g = grid();
     for (const aa of AMINO) g.append(button(aa, () => mutate(aa)));
     body.append(g);
     body.append(el("p", { className: "help" }, "The backbone stays; the side chain is built and turned to the "
       + "rotamer that clashes least; Lys, Arg, Asp and Glu charged as at pH 7."));
+    body.append(el("h3", {}, "Extend"));
+    const pick = el("select", { title: "the amino acid to add" },
+      ...AMINO.map(aa => el("option", { value: aa, selected: aa === extendWith }, aa)));
+    pick.onchange = () => { extendWith = pick.value; };
+    body.append(row(pick, button("N terminus", () => extendChain("N")), button("C terminus", () => extendChain("C"))));
+    body.append(el("p", { className: "help" }, "Adds the amino acid before the first residue or after the last of the "
+      + "selected atoms' chain (not a mutation): a trans peptide bond, turned to clash least; the terminus, "
+      + "charged or not, moves on to it. The new residue is selected, its hydrogens shown, ready for the next."));
+    body.append(el("h3", {}, "Separate Residue"));
+    const resName = el("input", { placeholder: "name (UNL)", style: "width:90px", maxLength: 4 });
+    body.append(row(resName, button("Make Selection a Residue", () => splitResidue(resName.value))));
+    body.append(el("p", { className: "help" }, "The selected atoms of one residue (a group grown on a side chain, "
+      + "say) become a residue of their own, at the end of the chain, their bonds kept."));
     body.append(el("h3", {}, "Caps"));
     body.append(row(button("ACE (N terminus)", () => capChains("N")), button("NME (C terminus)", () => capChains("C"))));
     body.append(row(button("Both ends", () => capChains("both"))));
@@ -2866,6 +2890,23 @@ export function setupUI(app) {
     if (!t) return;
     const out = await busyEdit(t[0], `mutating to ${aa}`, { op: "mutate", atoms: t[1], value: aa });
     if (out) { app.message(`mutated to ${aa}`); openDock("protein"); }
+  }
+  async function extendChain(end) {
+    const t = editTarget();
+    if (!t) return;
+    const out = await busyEdit(t[0], `adding ${extendWith}`, { op: "extend", atoms: t[1], value: { end, residue: extendWith } });
+    if (!out) return;
+    if (out.made?.length) app.select(t[0], out.made);
+    app.message(`${extendWith} added at the ${end} terminus`);
+  }
+  async function splitResidue(name) {
+    const t = editTarget();
+    if (!t) return;
+    const out = await busyEdit(t[0], "making a residue", { op: "split", atoms: t[1], value: name });
+    if (!out) return;
+    if (out.made?.length) app.select(t[0], out.made);
+    const m = t[0], r = out.made?.length ? m.topo.atoms.residue[out.made[0]] : null;
+    app.message(r === null ? "made a residue" : `made residue ${app.residueLabel(m, r)}`);
   }
   async function capChains(end) {
     const sel = app.selection();

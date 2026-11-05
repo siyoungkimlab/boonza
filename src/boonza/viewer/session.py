@@ -693,6 +693,7 @@ class Session:
             self._remember()
             s.atoms["view_edit"] = np.arange(1, s.natoms + 1, dtype=np.int64)  # follows atoms
             touched = list(atoms)
+            made = None  # the atoms of a residue the edit made, for the page to select
             try:
                 if op == "element":
                     # a hydrogen made heavy grows from where it is (a C becomes CH3, at
@@ -753,6 +754,19 @@ class Session:
                         for end in {"N": "N", "C": "C", "both": "NC"}[str(value)]:
                             edit.cap(s, c, end)
                     hydrogens = False
+                elif op == "extend":  # an amino acid more at a chain's N or C terminus
+                    chains = sorted(
+                        {int(s.residues["chain"][s.atoms["residue"][a]]) for a in atoms}
+                    )
+                    if len(chains) != 1:
+                        raise ValueError("select atoms of one chain")
+                    r = edit.extend(s, chains[0], str(value["end"]), str(value["residue"]))
+                    made = s.residue_atoms(r)
+                    hydrogens = False
+                elif op == "split":  # the atoms a residue of their own
+                    r = edit.split_residue(s, atoms, str(value or ""))
+                    made = s.residue_atoms(r)
+                    hydrogens = False
                 elif op == "residue":  # name, number, chain of the atoms' residues
                     fields = ("name", "resid", "chain")
                     edit.relabel(s, atoms, **{k: value.get(k, "") for k in fields})
@@ -781,8 +795,11 @@ class Session:
             # and every atom's index before the edit (-1: new), for the page to carry
             # its representations, selection and labels over by index, not by name
             # (names repeat: chains A of protein and of water, a resid in two chains)
-            return {**self._changed(topology=True), "picked": [where.get(a, -1) for a in atoms],
-                    "was": [int(k) - 1 for k in tags]}  # fmt: skip
+            out = {**self._changed(topology=True), "picked": [where.get(a, -1) for a in atoms],
+                   "was": [int(k) - 1 for k in tags]}  # fmt: skip
+            if made is not None:
+                out["made"] = [int(a) for a in made]
+            return out
 
     def _drop(self, atoms) -> dict:
         """Delete from a trajectory's view, or points of a set of spheres: the atoms
