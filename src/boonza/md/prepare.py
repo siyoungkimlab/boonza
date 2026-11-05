@@ -273,10 +273,13 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
                 f"no force field has templates for {_label(s, groups)}; "
                 "ligand_mode = 'auto' makes GAFF2 templates for them"
             )
-        log(f"GAFF2 {args.ligandff} templates (AM1-BCC charges) for {_label(s, groups)}")
+        geometry = getattr(args, "charge_geometry", None) or "optimized"
+        log(f"GAFF2 {args.ligandff} templates (AM1-BCC charges, {geometry} geometry) for "
+            f"{_label(s, groups)}")  # fmt: skip
         patch = gaff.gaff2_patch(
             s,
             ff,
+            charge_geometry=geometry,
             charges=args.ligand_charges,
             parents=args.parents,
             workdir=workdir / "gaff2",
@@ -367,6 +370,7 @@ def write_components(path, info: dict, args) -> None:
         "forcefields": [list(x) for x in args.forcefields],
         "ligand_mode": args.ligand_mode,
         "ligandff": args.ligandff,
+        "charge_geometry": getattr(args, "charge_geometry", None) or "optimized",
         **info,
     }
     Path(path).write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")

@@ -991,3 +991,38 @@ def test_the_elastic_network_leaves_out_what_is_already_close():
                                    res_min_dist=0)  # fmt: skip
 
     assert springs(0.05) > springs(0.5) > 0
+
+
+def test_charge_geometry_reaches_gaff2(tmp_path, dipeptide, monkeypatch):
+    """--charge-geometry (or charge_geometry in the TOML) is what gaff2_patch is given,
+    and is recorded; optimized unless asked; a Martini run refuses it."""
+    from boonza import gaff
+
+    assert config.CHARGE_GEOMETRIES == gaff.CHARGE_GEOMETRIES
+    s = boonza.load(dipeptide)
+    bnz = boonza.from_smiles("c1ccccc1", name="BNZ")
+    bnz.positions = bnz.positions + s.positions.mean(0) + np.array([6.5, 0.0, 0.0])
+    s.append(bnz)
+    path = tmp_path / "complex.dms"
+    boonza.save(s, path)
+    given = []
+
+    class Stop(Exception):
+        pass
+
+    def patch(*a, **kw):
+        given.append(kw["charge_geometry"])
+        raise Stop
+
+    monkeypatch.setattr(gaff, "gaff2_patch", patch)
+    toml = tmp_path / "md.toml"
+    toml.write_text('charge_geometry = "reference"\n')
+    for argv, want in (([], "optimized"), (["--charge-geometry", "reference"], "reference"),
+                       (["--config", str(toml)], "reference")):  # fmt: skip
+        with pytest.raises(Stop):
+            build_system(parse_arguments([str(path), *argv]), tmp_path / want, log=quiet)
+        assert given[-1] == want
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--model", "martini3", "--charge-geometry", "reference"])
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--charge-geometry", "fast"])
