@@ -366,6 +366,13 @@ def _nonbonded(s, table, ff: _Block) -> None:
         raise ValueError(f"Missing nonbonded param for particle {int(np.argmax(pids < 0))}")
     vdw = np.full(s.natoms, "", dtype=object)
     vdw[table.atoms[:, 0]] = np.array(names, dtype=object)[pids]
+    if (vdw == "").any():  # a file read back would fail on the blank type
+        a = int(np.flatnonzero(vdw == "")[0])
+        raise ValueError(
+            f"{int((vdw == '').sum())} atoms (the first: atom {a}, "
+            f"{s.atoms['name'][a]}) have no vdW parameters -- added after the force field "
+            "was made? Parameterize the system again, or save it with structure_only=True"
+        )
     sites = ff.array("ffio_sites")
     sites.cols["ffio_vdwtype"] = ("s", [(s.natoms, np.array(vdw.tolist(), dtype=STR))])
 

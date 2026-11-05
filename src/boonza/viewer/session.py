@@ -637,8 +637,14 @@ class Session:
         del self._undo[: -self.UNDO]
         self._redo = []  # a new edit ends what could be redone
 
-    def _changed(self, topology: bool) -> dict:
-        """After an edit: caches dropped, versions bumped (the page reloads)."""
+    def _changed(self, topology: bool, keep_forcefield: bool = False) -> dict:
+        """After an edit: caches dropped, versions bumped (the page reloads).  A
+        topology changed leaves the force field the file came with describing atoms that
+        are not there, or missing new ones, and their charges: it goes (Minimize and
+        Dynamics parameterize afresh), unless ``keep_forcefield`` (a relabeling)."""
+        if topology and not keep_forcefield:
+            for name in list(self.system.table_names):
+                self.system.del_table(name)
         self.version += 1
         if topology:
             self.topo_version = getattr(self, "topo_version", 0) + 1
@@ -795,7 +801,9 @@ class Session:
             # and every atom's index before the edit (-1: new), for the page to carry
             # its representations, selection and labels over by index, not by name
             # (names repeat: chains A of protein and of water, a resid in two chains)
-            out = {**self._changed(topology=True), "picked": [where.get(a, -1) for a in atoms],
+            relabel = op in ("residue", "name", "split")  # the same atoms and bonds
+            out = {**self._changed(topology=True, keep_forcefield=relabel),
+                   "picked": [where.get(a, -1) for a in atoms],
                    "was": [int(k) - 1 for k in tags]}  # fmt: skip
             if made is not None:
                 out["made"] = [int(a) for a in made]
@@ -825,7 +833,11 @@ class Session:
                 self.radii = self.radii[keep]
             picked = np.full(s.natoms, -1, np.int64)
             picked[keep] = np.arange(len(keep))
-            return {**self._changed(topology=True), "picked": picked[atoms].tolist()}
+            # a clone of the rest keeps the terms among it
+            return {
+                **self._changed(topology=True, keep_forcefield=True),
+                "picked": picked[atoms].tolist(),
+            }
 
     def smiles(self, atoms=(), exact: bool = False) -> list[dict]:
         """SMILES of each molecule the atoms are in (default: every molecule that is not
@@ -1010,7 +1022,7 @@ class Session:
             self._redo.append((self.system, getattr(self, "topo_version", 0), self.ids,
                                self.radii))  # fmt: skip
             self.system, self.topo_version, self.ids, self.radii = self._undo.pop()
-            return self._changed(topology=True)
+            return self._changed(topology=True, keep_forcefield=True)  # the one it had
 
     def redo(self) -> dict:
         if not getattr(self, "_redo", None):
@@ -1019,7 +1031,7 @@ class Session:
             self._undo.append((self.system, getattr(self, "topo_version", 0), self.ids,
                                self.radii))  # fmt: skip
             self.system, self.topo_version, self.ids, self.radii = self._redo.pop()
-            return self._changed(topology=True)
+            return self._changed(topology=True, keep_forcefield=True)
 
     def _geometry_edit(self, change) -> dict:
         """A change of positions only (``change(system)`` returns a report)."""

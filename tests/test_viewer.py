@@ -1090,6 +1090,45 @@ def test_extend_and_split_through_the_session():
     assert {str(session.system.atoms["name"][a]) for a in out["made"]} == {"CB", "HB1"}
 
 
+def test_an_edit_drops_the_force_field_the_file_came_with(tmp_path):
+    """Atoms added to a parameterized structure have no parameters: saved with the old
+    force field, the MAE read back failed ("Missing vdw parameter with name ''")."""
+    import warnings
+
+    p = _peptide()
+    assert "nonbonded" in p.table_names
+    session = viewer.Session(p, whole=False)
+    session.edit("residue", [_ca(session.system, 0)], {"name": "ARN"})
+    assert "nonbonded" in session.system.table_names  # a relabeling keeps it
+    session.edit("extend", [_ca(session.system, 0)], {"end": "C", "residue": "ALA"})
+    assert not session.system.table_names
+    boonza.save(session.system, tmp_path / "edited.mae")
+    assert boonza.load(tmp_path / "edited.mae").natoms == session.system.natoms
+    session.undo()
+    assert "nonbonded" in session.system.table_names  # the version undone to has its own
+
+    # the writer refuses a force field that misses atoms; the reader takes a file
+    # written that way (by the viewer before) without its force field
+    from boonza.viewer.edit import extend
+
+    bad = _peptide()
+    extend(bad, 0, "C", "ALA")
+    with pytest.raises(ValueError, match="no vdW parameters"):
+        boonza.save(bad, tmp_path / "bad.mae")
+    boonza.save(_peptide(), tmp_path / "ok.mae")
+    text = (tmp_path / "ok.mae").read_text()
+    head, sites = text.split("ffio_sites[", 1)
+    lines = sites.split("\n")
+    k = next(i for i, line in enumerate(lines) if line.strip().startswith("1 atom"))
+    lines[k] = " ".join(lines[k].split()[:-1]) + ' ""'
+    (tmp_path / "old.mae").write_text(head + "ffio_sites[" + "\n".join(lines))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        old = boonza.load(tmp_path / "old.mae")
+    assert old.natoms == _peptide().natoms and not old.table_names
+    assert any("no vdW type" in str(w.message) for w in caught)
+
+
 def _ca(s, r):
     from boonza.viewer.edit import _residue_atom
 
