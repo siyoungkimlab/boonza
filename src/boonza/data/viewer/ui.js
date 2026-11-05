@@ -3142,6 +3142,7 @@ export function setupUI(app) {
     if (!m.state) return;
     m.color = spec;
     m.tintAll = true;
+    m.autoColor = false;  // its own, until a Color by button is pressed
     for (const rep of m.reps) {
       if (!rep.tinted) continue;
       if (spec === "chain" && rep.color !== "chain") {
@@ -3265,7 +3266,7 @@ export function setupUI(app) {
                el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"), slider, pct));
     numberRows(m, box);
     const n = app.repIds(rep).length;
-    box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color} over it` : ""}`));
+    box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color.replace("+chain", ", by chain,")} over it` : ""}`));
   }
 
   // --- filter by a number on the atoms -------------------------------------------------
@@ -3572,6 +3573,10 @@ export function setupUI(app) {
   function swatchColor(spec) {
     if (spec === "default" || !spec) return "linear-gradient(135deg,#e53935 50%,#ffd54f 50%)";
     if (spec === "chain") return "linear-gradient(135deg,#5c5 33%,#3bd 33% 66%,#e5c 66%)";
+    if (spec.endsWith("+chain")) {
+      const c = named(spec.slice(0, -6)) || [0.5, 0.5, 0.5], css = f => `rgb(${c.map(x => Math.round((f >= 0 ? x + (1 - x) * f : x * (1 + f)) * 255)).join(",")})`;
+      return `linear-gradient(135deg,${css(0.3)} 33%,${css(0)} 33% 66%,${css(-0.28)} 66%)`;
+    }
     const c = named(spec) || [0.5, 0.5, 0.5];
     return `rgb(${c.map(x => Math.round(x * 255)).join(",")})`;
   }
@@ -3602,7 +3607,7 @@ export function setupUI(app) {
       const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
         + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
       name.onclick = () => app.solo(m);
-      const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, "its own"]] : MODEL_COLORS;
+      const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, m.autoColor ? "auto" : "its own"]] : MODEL_COLORS;
       const color = picker("color", colors, () => m.color || "default", async v => {
         await app.load(m); colorModel(m, v); sw.style.background = swatchColor(m.swatch || v);
       });
@@ -3648,6 +3653,11 @@ export function setupUI(app) {
     state.sort = column ? { column, descending: desc === "1" } : null;
     modelsDock();
   };
+  // Color by: how the models are told apart (main.js colorBy)
+  const colorByBar = $("rdock-color");
+  const markColorBy = () => { for (const b of colorByBar.querySelectorAll("button")) b.classList.toggle("on", b.dataset.by === state.colorBy); };
+  for (const b of colorByBar.querySelectorAll("button")) b.onclick = () => { app.setColorBy(b.dataset.by); markColorBy(); modelsDock(); };
+  markColorBy();
   $("rdock-all").onclick = () => app.show(app.live(), true);
   $("rdock-none").onclick = () => app.show(app.live().filter(m => m.index !== state.current), false);
   app.onModels = () => {
@@ -4188,6 +4198,7 @@ export function setupUI(app) {
       m.closed = true; m.shown = false;
       state.meters = state.meters.filter(x => x.model !== m);
       const rest = app.live();
+      app.setColorBy(null);  // one model left keeps its own colors
       if (rest.length) {
         state.current = rest[0].index;
         if (!app.shownModels().length) await app.show([rest[0]]);

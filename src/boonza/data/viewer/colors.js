@@ -9,6 +9,7 @@
 //   spectrum                 blue (N-terminus) to red (C-terminus) along each chain
 //   bfactor                  blue-white-red over the selection
 //   <name> or #rrggbb        one color
+//   <name>+chain             one color, a shade of it per chain
 
 export const NAMED = {
   white: [1, 1, 1], gray: [0.6, 0.6, 0.6], black: [0.1, 0.1, 0.1],
@@ -21,14 +22,29 @@ export const NAMED = {
 
 // a chain's color follows its name, not its place in the file: deleting chain A
 // leaves chain B its color (by place, B took A's).  A..Z in order, others hashed.
-function chainColor(topo, c) {
+function chainKey(topo, c) {
   const name = (topo.chains?.name?.[c] ?? "").trim();
   let k = c;
   if (/^[A-Z]$/.test(name)) k = name.charCodeAt(0) - 65;
   else if (/^[a-z]$/.test(name)) k = name.charCodeAt(0) - 97 + 26;
   else if (/^[0-9]$/.test(name)) k = name.charCodeAt(0) - 48 + 52;
   else if (name) { k = 0; for (const ch of name) k = (k * 31 + ch.charCodeAt(0)) >>> 0; }
-  return CHAINS[k % CHAINS.length];
+  return k;
+}
+function chainColor(topo, c) {
+  return CHAINS[chainKey(topo, c) % CHAINS.length];
+}
+
+// <color>+chain: one color, a shade of it per chain (lighter, darker, ...), so models
+// told apart by color still tell their chains apart, without leaving the model's color
+const SHADES = [0.3, 0, -0.28, 0.15, -0.14, 0.45, -0.4];  // A lighter, B the color itself, C darker, ...
+function shaded(spec) {
+  const m = /^(.+)\+chain$/.exec(spec);
+  return m && named(m[1]) ? named(m[1]) : null;
+}
+function chainShade(base, topo, c) {
+  const f = SHADES[chainKey(topo, c) % SHADES.length];
+  return base.map(x => (f >= 0 ? x + (1 - x) * f : x * (1 + f)));
 }
 
 export const SCHEMES = ["element", "chain", "restype", "resname", "ss", "spectrum", "bfactor"];
@@ -96,8 +112,8 @@ export function named(text) {
 
 export function isColor(text) {
   const [scheme, carbon] = text.split("/");
-  if (scheme === "element") return carbon === undefined || carbon === "chain" || named(carbon) !== null;
-  return SCHEMES.includes(text) || named(text) !== null;
+  if (scheme === "element") return carbon === undefined || carbon === "chain" || named(carbon) !== null || shaded(carbon) !== null;
+  return SCHEMES.includes(text) || named(text) !== null || shaded(text) !== null;
 }
 
 function rainbow(t) {  // blue -> cyan -> green -> yellow -> red
@@ -117,10 +133,11 @@ export function colorAtoms(spec, ids, topo, ss, out) {
       put(out, a, CG_BACKBONE.has(A.name[a]) ? ELEMENT.C : restype(name) || byName(name));
     }
   } else if (scheme === "element") {
-    const c = carbon && carbon !== "chain" ? named(carbon) : null;
+    const c = carbon && carbon !== "chain" ? named(carbon) : null, shade = carbon ? shaded(carbon) : null;
     for (const a of ids) {
       const e = A.element[a];
       if (e === "C" && carbon === "chain") put(out, a, chainColor(topo, R.chain[A.residue[a]]));
+      else if (e === "C" && shade) put(out, a, chainShade(shade, topo, R.chain[A.residue[a]]));
       else put(out, a, e === "C" && c ? c : ELEMENT[e] || OTHER);
     }
   } else if (scheme === "chain") {
@@ -141,6 +158,8 @@ export function colorAtoms(spec, ids, topo, ss, out) {
       const t = (A.bfactor[a] - lo) / span;
       put(out, a, t < 0.5 ? [2 * t, 2 * t, 1] : [1, 2 - 2 * t, 2 - 2 * t]);
     }
+  } else if (shaded(spec)) {
+    for (const a of ids) put(out, a, chainShade(shaded(spec), topo, R.chain[A.residue[a]]));
   } else {
     const c = named(scheme) || NAMED.white;
     for (const a of ids) put(out, a, c);
@@ -155,10 +174,11 @@ function put(out, a, c) {
 export const RIBBON_SCHEMES = ["ss", "chain", "spectrum", "restype"];
 export function colorResidues(spec, residues, topo, ss, out) {
   const R = topo.residues;
-  const one = named(spec);
+  const one = named(spec), shade = shaded(spec);
   for (const r of residues) {
     let c;
-    if (spec === "ss") c = SS[ss[r]] || SS.C;
+    if (shade) c = chainShade(shade, topo, R.chain[r]);
+    else if (spec === "ss") c = SS[ss[r]] || SS.C;
     else if (spec === "chain") c = chainColor(topo, R.chain[r]);
     else if (spec === "spectrum") c = rainbow(topo.spectrum[r]);
     else if (spec === "restype") c = restype(R.name[r]) || NAMED.gray;
