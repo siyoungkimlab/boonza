@@ -140,6 +140,14 @@ function atomLabel(model, a, long = true) {
   return long ? `${where}${res} ${A.name[a]}  (${A.element[a]}${q}, atom ${a})` : `${res} ${A.name[a]}`;
 }
 
+// a residue as the messages name it: chain:NAME resid (the model first, with several open)
+function residueLabel(model, r) {
+  const { residues: R, chains: C } = model.topo;
+  const chain = C.name[R.chain[r]] || C.segid[R.chain[r]] || "-";
+  const where = state.models.filter(m => !m.closed).length > 1 ? `${model.name}  ` : "";
+  return `${where}${chain}:${R.name[r]}${R.resid[r]}${R.insertion[r].trim()}`;
+}
+
 // --- models and their state ---------------------------------------------------------
 
 const live = () => state.models.filter(m => !m.closed);
@@ -859,6 +867,9 @@ function drawnRadius(m, a) {
   if (st === STYLE.ballline || st === STYLE.ballstick || st === STYLE.space) return s * m.topo.atoms.radius[a];
   return m.state.sel[a] ? Math.max(s, 0.35) : s;
 }
+// how far (Å) from a ribbon's trace a click still picks it: about a helix's half width;
+// the trace breaks where the ribbon does (geometry.js's MAXGAP)
+const RIBBON_REACH = 1.1, MAXGAP = { 1: 4.6, 2: 8.5 };
 function pick(x, y) {
   const project = projector();
   let atom = null, atomZ = -Infinity, loose = null, looseD = 7, ribbon = null, ribbonZ = -Infinity;
@@ -872,16 +883,36 @@ function pick(x, y) {
       const p = project(m, a);
       if (!p) continue;
       const d = Math.hypot(p[0] - x, p[1] - y);
-      if (onRibbon) {
-        if (d < Math.max(6, 1.0 * p[3]) && p[2] > ribbonZ) { ribbon = { model: m, residue: r }; ribbonZ = p[2]; }
-        continue;
-      }
+      if (onRibbon) continue;  // the ribbon is picked along its trace, below
       const inside = Math.max(3, drawnRadius(m, a) * p[3]);
       if (d < inside && p[2] > atomZ) { atom = { model: m, atom: a }; atomZ = p[2]; }
       if (d < looseD) { loose = { model: m, atom: a }; looseD = d; }
     }
   }
   if (atom) return atom;
+  // a ribbon: the click within its width of the trace between two residues picks the
+  // nearer of them, the frontmost ribbon winning
+  if (state.masks[3]) for (const m of shownModels()) {
+    const R = m.topo.residues;
+    const on = r => r >= 0 && r < R.trace.length && R.trace[r] >= 0 && !m.drawn[R.trace[r]] && m.state.ribbon[r];
+    for (let r = 0; r < R.trace.length; r++) {
+      if (!on(r)) continue;
+      const p = project(m, R.trace[r]);
+      if (!p) continue;
+      const reach = Math.max(5, RIBBON_REACH * p[3]);
+      // the residue's own stretch: half way to each traced neighbour in its chain
+      for (const q of [r - 1, r + 1]) {
+        const joined = on(q) && R.chain[q] === R.chain[r] && R.kind[q] === R.kind[r]
+          && Math.hypot(...[0, 1, 2].map(k => m.pos[3 * R.trace[q] + k] - m.pos[3 * R.trace[r] + k])) <= (MAXGAP[R.kind[r]] ?? 4.6);
+        const n = joined ? project(m, R.trace[q]) : null;
+        const e = n ? [(p[0] + n[0]) / 2, (p[1] + n[1]) / 2, (p[2] + n[2]) / 2] : p;
+        const dx = e[0] - p[0], dy = e[1] - p[1], len2 = dx * dx + dy * dy;
+        const t = len2 ? Math.max(0, Math.min(1, ((x - p[0]) * dx + (y - p[1]) * dy) / len2)) : 0;
+        const d = Math.hypot(p[0] + t * dx - x, p[1] + t * dy - y), z = p[2] + t * (e[2] - p[2]);
+        if (d < reach && z > ribbonZ) { ribbon = { model: m, residue: r }; ribbonZ = z; }
+      }
+    }
+  }
   // a bond: the click near its drawn line or stick
   let bond = null, bestD = Infinity;
   for (const m of shownModels()) {
@@ -898,7 +929,7 @@ function pick(x, y) {
       if (d < reach && d < bestD) { bestD = d; bond = { model: m, atoms: [i, j] }; }
     }
   }
-  return bond || loose || ribbon;
+  return bond || ribbon || loose;
 }
 
 // atoms (and ribbon residues) drawn inside a screen rectangle: [[model, ids], ...]
@@ -1204,7 +1235,7 @@ async function restorePage(page) {
 
 const app = {
   state, camera, renderer, canvas,
-  getJSON, post, busy, message, atomLabel,
+  getJSON, post, busy, message, atomLabel, residueLabel,
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
   selected, selection, targets, select, clearSelection, visibleAtom, setSelectionColor, pocketSelection, pocketReps,
   rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
