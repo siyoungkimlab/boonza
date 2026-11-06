@@ -1029,8 +1029,11 @@ def test_two_residues_become_a_sulfono_gamma_aa_unit():
     from boonza.viewer.edit import _residue_atom, convert_sulfono, neighbors
 
     p = boonza.peptide("ALFA")
-    leu = {str(p.atoms["name"][a]): np.array(p.positions[a], float)
-           for a in p.residue_atoms(1) if str(p.atoms["name"][a]) in ("CB", "CG", "CD1", "CD2")}
+    leu = {
+        str(p.atoms["name"][a]): np.array(p.positions[a], float)
+        for a in p.residue_atoms(1)
+        if str(p.atoms["name"][a]) in ("CB", "CG", "CD1", "CD2")
+    }
     r, note = convert_sulfono(p, [2, 1], "inherit")  # order does not matter
     assert note == ""
     assert [str(n) for n in p.residues["name"]] == ["ALA", "SGA", "ALA"]
@@ -1043,8 +1046,12 @@ def test_two_residues_become_a_sulfono_gamma_aa_unit():
     # LEU's side chain never moved; PHE's benzyl is on the sulfonyl (7 new carbons)
     for name, xyz in leu.items():
         assert np.allclose(np.array(p.positions[names[name]], float), xyz)
-    ring = [a for a in p.residue_atoms(r) if p.atoms["anum"][a] == 6
-            and str(p.atoms["name"][a]) not in ("CA", "CM", "CT", "C", "CB", "CG", "CD1", "CD2")]
+    ring = [
+        a
+        for a in p.residue_atoms(r)
+        if p.atoms["anum"][a] == 6
+        and str(p.atoms["name"][a]) not in ("CA", "CM", "CT", "C", "CB", "CG", "CD1", "CD2")
+    ]
     assert len(ring) == 7
     # the chain holds together, the charge stays, nothing overlaps
     assert p.find_bond(_residue_atom(p, 0, "C"), names["N"]) is not None
