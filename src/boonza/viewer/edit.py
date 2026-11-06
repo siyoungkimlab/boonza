@@ -1306,17 +1306,18 @@ def stereocentre(s, atom: int) -> dict:
             "branches": [branches[b] for b in order], "neighbours": order}  # fmt: skip
 
 
-def set_chirality(s, atom: int, want: str, relax: bool = True, log=print) -> dict:
+def set_chirality(s, atom: int, want: str, relax: bool = False, log=print) -> dict:
     """Turn the stereocentre ``atom`` into ``want`` (``R``, ``S``, ``D`` or ``L``) in
     place, and say what it was and is.
 
     Its two smallest branches are swapped -- rigidly, by the 180 degree turn about
     their bisector, so every bond length and angle inside them is kept -- which is
     what inverts a centre without rebuilding it.  On an alpha carbon those are HA and
-    the side chain, which is the textbook D/L swap.  The rest is then relaxed with the
-    centre and its other two branches held (MMFF), and the result is read back: if it
-    did not invert, nothing is changed and this raises, since a centre that quietly
-    stays put is worse than one that refuses."""
+    the side chain, which is the textbook D/L swap.  Nothing is minimized unless
+    ``relax``: the swap keeps the geometry valid, and a relaxation that holds the rest
+    can undo it (a side chain swapped onto a neighbour turns back).  The result is
+    read back: if it did not invert, nothing is changed and this raises, since a
+    centre that quietly stays put is worse than one that refuses."""
     if want not in CHIRALITY:
         raise ValueError(f"chirality is one of {', '.join(CHIRALITY)}, not {want!r}")
     info = stereocentre(s, atom)

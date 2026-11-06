@@ -1235,7 +1235,7 @@ class Session:
 
     def set_chirality(self, atom: int, want: str) -> dict:
         """Turn a stereocentre over to ``want`` (R, S, D or L), its two smallest
-        branches swapped and the rest relaxed (:func:`edit.set_chirality`)."""
+        branches swapped, nothing minimized (:func:`edit.set_chirality`)."""
         from .edit import set_chirality
 
         self._editable()
