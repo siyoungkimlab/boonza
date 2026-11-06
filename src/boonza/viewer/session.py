@@ -608,6 +608,8 @@ class Session:
             },  # fmt: skip
             "residues": {
                 "name": [str(x) for x in R.column("name")],
+                # what a sulfono-gamma-AA unit stands for ("LF"), for the sequence bar
+                "mimics": self._mimics(s, atom_res),
                 "resid": [int(x) for x in R.column("resid")],
                 "insertion": [str(x) for x in R.column("insertion")],
                 "chain": res_chain.tolist(),
@@ -1093,6 +1095,16 @@ class Session:
 
         a, b, c = (int(x) for x in atoms)
         return self._geometry_edit(lambda s: {"value": round(set_angle(s, a, b, c, degrees), 3)})
+
+    @staticmethod
+    def _mimics(s, atom_res) -> list:
+        if "sga_pair" not in s.atoms.props:
+            return [""] * s.nresidues
+        out = [""] * s.nresidues
+        for a, pair in enumerate(np.asarray(s.atoms["sga_pair"])):
+            if pair:
+                out[int(atom_res[a])] = str(pair)
+        return out
 
     def _numbers(self) -> dict:
         """The atom properties named in ``numbers``, one value an atom, for the

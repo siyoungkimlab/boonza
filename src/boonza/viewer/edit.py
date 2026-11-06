@@ -2171,6 +2171,15 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
     else:
         smi = SULFONYL_R2.get(r2, r2)
 
+    pair = (ONE_LETTER.get(str(s.residues["name"][i]), "X")
+            + ONE_LETTER.get(name_j, "X"))  # fmt: skip
+    aim = None  # where the second residue's side chain pointed: R2 will face there
+    cbj, caj0 = _residue_atom(s, j, "CB"), _residue_atom(s, j, "CA")
+    if cbj >= 0 and caj0 >= 0:
+        v = np.asarray(s.positions, float)[cbj] - np.asarray(s.positions, float)[caj0]
+        if np.linalg.norm(v) > 0:
+            aim = v / np.linalg.norm(v)
+
     # the first residue's carbonyl O goes (C becomes the CH2 called CM), and the
     # second loses everything but its backbone: its N, CA, C, O and amide H stay
     gone = [a for a in s.residue_atoms(j) if str(s.atoms["name"][a]) not in BACKBONE]
@@ -2179,30 +2188,57 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
         gone.append(oi)
     s.delete_atoms(sorted(set(gone)))
 
-    # CM and CT fill up with hydrogens; a proline's bare N gets one to attach at
+    # the unit's names first, so the new hydrogens are named after them (HM1, HT1 ...)
     ci, nj = _residue_atom(s, i, "C"), _residue_atom(s, j, "N")
     caj = _residue_atom(s, j, "CA")
+    names = np.asarray(s.atoms["name"]).astype(object)
+    names[ci], names[nj], names[caj] = "CM", "NS", "CT"
+    s.atoms["name"] = names.astype(str)
+    # CM and CT fill up with hydrogens; a proline's bare N gets one to attach at
     adjust_hydrogens(s, [ci, caj, nj])
-    nj = _residue_atom(s, j, "N")
+    nj = _residue_atom(s, j, "NS")
     hs = [b for b, _ in neighbors(s, nj) if s.atoms["anum"][b] == 1]
     if not hs:
         raise ValueError("the second residue's nitrogen has no room for the sulfonyl")
     new = attach(s, nj, hs[0], f"S(=O)(=O){smi}")
-    # attach turned the N-S bond to clash least; R2 turns about S-C the same way
+    nj = _residue_atom(s, j, "NS")
+    # attach turned the N-S bond for heavy-atom clashes only, and a sulfonyl oxygen
+    # can still sit on a kept hydrogen (a proline ring's): both torsions, N-S and
+    # S-R2, are searched together over every atom, hydrogens included
     s1 = int(new[0])
-    root = [b for b, _ in neighbors(s, s1)
-            if b != nj and s.atoms["anum"][b] not in (1, 8)]  # fmt: skip
-    if root and len(new) > 4:
-        oxygens = {b for b, _ in neighbors(s, s1) if s.atoms["anum"][b] == 8}
-        moving = [int(a) for a in new.tolist() if a != s1 and a not in oxygens]
-        _best_turn(s, s1, int(root[0]), moving)
+    group = [int(a) for a in new.tolist()]
+    oxygens = {b for b, _ in neighbors(s, s1) if s.atoms["anum"][b] == 8}
+    root = [b for b, _ in neighbors(s, s1) if b != nj and b not in oxygens]
+    arm = [a for a in group if a != s1 and a not in oxygens] if root else []
+    pos = np.array(s.positions, float)
+    others = np.array([a for a in range(s.natoms) if a not in {*group, nj}], np.int64)
+    others = others[np.linalg.norm(pos[others] - pos[s1], axis=1) < 12.0]
+    mine = np.array(group, np.int64)
 
-    # the unit's names, then the two residues become one, SGA
-    names = np.asarray(s.atoms["name"]).astype(object)
-    names[_residue_atom(s, i, "C")] = "CM"
-    names[_residue_atom(s, j, "N")] = "NS"
-    names[_residue_atom(s, j, "CA")] = "CT"
-    s.atoms["name"] = names.astype(str)
+    def key_of(p):
+        # no overlaps first; then R2 facing where the old side chain pointed
+        # (up or down the helix face is not an arbitrary choice); then least crowding
+        d = np.linalg.norm(p[mine][:, None] - p[others][None], axis=2)
+        hard = round(float(np.clip(1.2 - d.min(), 0, None)), 2)
+        crowd = float(np.clip(2.4 - d, 0, None).__pow__(2).sum())
+        align = 0.0
+        if aim is not None and arm:
+            v = p[arm].mean(0) - p[s1]
+            if np.linalg.norm(v) > 0:
+                align = round(float(v @ aim / np.linalg.norm(v)), 1)
+        return (hard, -align, crowd)
+
+    best, best_pos = None, pos
+    for k1 in range(12):
+        p1 = rotate_about(pos, nj, s1, group, 360 * k1 / 12)
+        for k2 in range(12) if len(arm) > 1 else (0,):
+            p2 = rotate_about(p1, s1, int(root[0]), arm, 360 * k2 / 12) if arm else p1
+            c = key_of(p2)
+            if best is None or c < best:
+                best, best_pos = c, p2
+    s.positions = best_pos
+
+    # the two residues become one, SGA
     _move_to(s, s.residue_atoms(j), i)
     if not len(s.residue_atoms(j)):
         s.delete_residues([j])
@@ -2211,6 +2247,13 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
     rnames = np.asarray(s.residues["name"]).astype(object)
     rnames[i] = "SGA"
     s.residues["name"] = rnames.astype(str)
+    # the CH2 hydrogens by their carbon (HM1/HM2, HT1/HT2), whatever _free_h_name chose
+    names = np.asarray(s.atoms["name"]).astype(object)
+    for heavy, tag in ((_residue_atom(s, i, "CM"), "M"), (_residue_atom(s, i, "CT"), "T")):
+        for k, h in enumerate(sorted(b for b, _ in neighbors(s, heavy)
+                                     if s.atoms["anum"][b] == 1), start=1):  # fmt: skip
+            names[h] = f"H{tag}{k}"
+    s.atoms["name"] = names.astype(str)
     mine = [int(a) for a in s.residue_atoms(i)]
     seen: set = set()
     twice = []
@@ -2222,6 +2265,11 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
     if twice:
         _unique_names(s, i, twice)
     _gather(s, i)
+    if "sga_pair" not in s.atoms.props:
+        s.atoms["sga_pair"] = [""] * s.natoms
+    col = np.asarray(s.atoms["sga_pair"]).astype(object)
+    col[[int(a) for a in s.residue_atoms(i)]] = pair
+    s.atoms["sga_pair"] = col.astype(str)
     return i, note
 
 

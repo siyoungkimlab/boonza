@@ -3816,7 +3816,8 @@ export function setupUI(app) {
       const R = m.topo.residues, C = m.topo.chains, chains = new Map();
       for (let r = 0; r < R.name.length; r++) {
         // traced residues, and amino acids and nucleotides the trace missed (a broken backbone)
-        if (!R.kind[r] && !(R.name[r].toUpperCase() in ONE && m.topo.residueAtoms[r].length > 3)) continue;
+        if (!R.kind[r] && !(R.name[r].toUpperCase() in ONE && m.topo.residueAtoms[r].length > 3)
+            && !R.mimics?.[r]) continue;
         if (!chains.has(R.chain[r])) chains.set(R.chain[r], []);
         chains.get(R.chain[r]).push(r);
       }
@@ -3841,10 +3842,14 @@ export function setupUI(app) {
       for (const r of rs) {
         if (prev !== null && R.resid[r] - R.resid[prev] > 1)
           res.append(el("span", { className: "gap", title: `${R.resid[r] - R.resid[prev] - 1} residues not in the structure` }, "·"));
-        const s = el("span", { className: `aa ss-${ss[r] || "C"}` }, letter(R.name[r]));
+        const mim = R.mimics?.[r] || "";
+        const s = el("span", { className: `aa ss-${ss[r] || "C"}${mim ? " unit" : ""}` },
+                     mim ? mim.toLowerCase() : letter(R.name[r]));
         s.dataset.m = m.index; s.dataset.r = r;
         if (R.resid[r] % 10 === 0) s.dataset.n = R.resid[r];
-        s.title = `${R.name[r]} ${R.resid[r]}${R.insertion[r].trim()} · chain ${chain}`;
+        s.title = mim
+          ? `${R.name[r]} ${R.resid[r]} · one sulfono-\u03b3-AA unit standing for ${mim[0]} and ${mim[1]} · chain ${chain}`
+          : `${R.name[r]} ${R.resid[r]}${R.insertion[r].trim()} · chain ${chain}`;
         res.append(s);
         prev = r;
       }

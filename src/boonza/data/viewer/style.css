@@ -360,6 +360,7 @@ html.static #btn-py, html.static #btn-cancel, html.static #btn-min, html.static 
   border-bottom: 2px solid transparent; }
 .seqres .aa[data-n]::before { content: attr(data-n); position: absolute; left: 0; top: -10px;
   font: 8px Arial, sans-serif; color: var(--muted); pointer-events: none; }
+.seqres .aa.unit { width: 18px; color: #b9f; border-bottom-color: #b9f; letter-spacing: 1px; }
 .seqres .aa.ss-H { border-bottom-color: #e53935; }
 .seqres .aa.ss-E { border-bottom-color: #f2b400; }
 .seqres .aa:hover { background: var(--hover); }

@@ -1070,6 +1070,30 @@ def test_two_residues_become_a_sulfono_gamma_aa_unit():
     # residue N-ward for its cut to keep protein types too (the #164 mechanism)
     assert gaff.find_unmatched(p, ffs) == [[sga - 1, sga]]
     assert gaff.KNOWN_PARENTS["SGA"] == "GLY"
+    # the CH2 hydrogens are named for their carbon, and the unit remembers its pair
+    # (the caps above moved atoms: the names map is rebuilt)
+    names = {str(p.atoms["name"][a]): int(a) for a in p.residue_atoms(sga)}
+    h_of = lambda nm: sorted(  # noqa: E731
+        str(p.atoms["name"][b]) for b, _ in neighbors(p, names[nm]) if p.atoms["anum"][b] == 1
+    )
+    assert h_of("CM") == ["HM1", "HM2"] and h_of("CT") == ["HT1", "HT2"]
+    marked = np.asarray(p.atoms["sga_pair"])
+    assert set(marked[p.residue_atoms(sga)].tolist()) == {"LF"}
+    assert set(marked.tolist()) == {"", "LF"}  # nothing else is marked
+    # R2 faces where the replaced side chain pointed, and a proline ring next to the
+    # unit (the most crowded case) still leaves no overlap
+    q = boonza.peptide("ALFA")
+    cb, ca = (next(a for a in q.residue_atoms(2) if str(q.atoms["name"][a]) == x)
+              for x in ("CB", "CA"))  # fmt: skip
+    aim = np.asarray(q.positions[cb], float) - np.asarray(q.positions[ca], float)
+    r2u, _ = convert_sulfono(q, [1, 2], "inherit")
+    qn = {str(q.atoms["name"][a]): a for a in q.residue_atoms(r2u)}
+    v = np.asarray(q.positions[qn["C1"]], float) - np.asarray(q.positions[qn["S1"]], float)
+    assert float(v @ aim / (np.linalg.norm(v) * np.linalg.norm(aim))) > 0.3
+    crowded = boonza.peptide("APGA")
+    convert_sulfono(crowded, [1, 2], "inherit")
+    assert pdist(np.asarray(crowded.positions, float)).min() > 0.9
+
     # a second residue without a side chain falls back to methyl, and says so
     g = boonza.peptide("AGGA")
     _, said = convert_sulfono(g, [1, 2], "inherit")
