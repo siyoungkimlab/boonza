@@ -136,6 +136,23 @@ export function setupUI(app) {
     return addRep(pairs, { style, sel: what });
   }
 
+  // A new or changed residue has to be visible.  In a cartoon-only view its atoms
+  // belong to the ribbon alone, which draws no side chain, so a mutation or a
+  // conversion would land out of sight until the user adds a representation.
+  function reveal(m, ids) {
+    if (!m?.state || !ids?.length) return;
+    const A = m.topo.atoms;
+    // heavy atoms, and never the builderH representations: those hold hydrogens
+    // alone and come and go with the dock, so an edited residue whose hydrogens
+    // they carry would look drawn while its new side chain is nowhere to be seen
+    const heavy = ids.filter(a => A.element[a] !== "H");
+    if (!heavy.length) return;
+    const drawn = m.reps.some(rep => !rep.builderH && !app.isRibbon(rep)
+                                     && rep.style !== "surface"
+                                     && heavy.some(a => rep.mask[a]));
+    if (!drawn) showAs([[m, ids]], "sticks");
+  }
+
   // these atoms in this color wherever they are drawn
   // atomsOnly: the atoms' own colors, the ribbons over them left as they are
   function colorIn(pairs, spec, atomsOnly = false) {
@@ -2906,7 +2923,10 @@ export function setupUI(app) {
     const t = editTarget();
     if (!t) return;
     const out = await busyEdit(t[0], `mutating to ${aa}`, { op: "mutate", atoms: t[1], value: aa });
-    if (out) { app.message(`mutated to ${aa}`); openDock("protein"); }
+    if (!out) return;
+    if (out.made?.length) { app.select(t[0], out.made); reveal(t[0], out.made); }
+    app.message(`mutated to ${aa}`);
+    openDock("protein");
   }
   // two residues become one sulfono-gamma-AA unit (Cai lab foldamers): the first
   // keeps its side chain on the chiral carbon, the second's rides the sulfonyl
@@ -2918,7 +2938,7 @@ export function setupUI(app) {
     if (!t) return;
     const out = await busyEdit(t[0], "converting to sulfono-\u03b3-AA", { op: "sulfono", atoms: t[1], value: r2 });
     if (!out) return;
-    if (out.made?.length) app.select(t[0], out.made);
+    if (out.made?.length) { app.select(t[0], out.made); reveal(t[0], out.made); }
     app.message(out.note || "two residues became one sulfono-\u03b3-AA unit (SGA)");
     openDock("protein");
   }
@@ -2927,7 +2947,7 @@ export function setupUI(app) {
     if (!t) return;
     const out = await busyEdit(t[0], "converting to sulfono-\u03b3-AA", { op: "sulfono_run", atoms: t[1], value: { pattern, r2 } });
     if (!out) return;
-    if (out.made?.length) app.select(t[0], out.made);
+    if (out.made?.length) { app.select(t[0], out.made); reveal(t[0], out.made); }
     app.message(out.note || "the run became sulfono-\u03b3-AA units (SGA)");
     openDock("protein");
   }

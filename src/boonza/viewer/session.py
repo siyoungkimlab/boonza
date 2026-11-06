@@ -767,8 +767,12 @@ class Session:
                     edit.fuse(s, atoms, str(value))
                     hydrogens = False
                 elif op == "mutate":
-                    for r in sorted({int(s.atoms["residue"][a]) for a in atoms}):
+                    rs = sorted({int(s.atoms["residue"][a]) for a in atoms})
+                    for r in rs:
                         edit.mutate(s, r, str(value))
+                    # the page shows them: a mutated side chain in a cartoon-only
+                    # view belongs to the ribbon, which draws no side chain
+                    made = [a for r in rs for a in s.residue_atoms(r)]
                     hydrogens = False
                 elif op == "cap":
                     chains = sorted(
