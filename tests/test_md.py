@@ -2,6 +2,7 @@
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -22,6 +23,8 @@ SHORT = ["--padding-nm", "0.8", "--platform", "CPU", "--equilibration-ns", "0.00
          "--equilibration-report-interval-ns", "0.001", "--production-ns", "0.002",
          "--production-report-interval-ns", "0.001", "--checkpoint-interval-ns", "0.001",
          "--performance-interval-ns", "0.001"]  # fmt: skip
+
+DATA_1TEN = Path(__file__).parent / "data" / "1TEN.pdb"
 
 
 def quiet(*_):
@@ -304,6 +307,112 @@ def test_repulsion_keeps_molecules_apart():
     assert one.getNumForces() == 0
 
 
+def _particles(n, box=None):
+    import openmm as mm
+
+    system = mm.System()
+    for _ in range(n):
+        system.addParticle(12.0)
+    if box is not None:
+        system.setDefaultPeriodicBoxVectors(*(mm.Vec3(*row) for row in np.asarray(box)))
+    return system
+
+
+def _energy(system, positions_A):
+    import openmm as mm
+
+    ctx = mm.Context(system, mm.VerletIntegrator(0.001), mm.Platform.getPlatformByName("Reference"))
+    ctx.setPositions(np.asarray(positions_A, float) / 10)
+    return ctx.getState(getEnergy=True).getPotentialEnergy()._value
+
+
+def test_distance_restraints_tie_one_selection_to_another():
+    """Every atom of the first selection to every atom of the second, never within
+    one; at the starting distance by default, so a fresh system feels nothing."""
+    import openmm as mm
+
+    s = boonza.peptide("AAAAA")
+    pairs = [["resid 1 and name CA", "resid 3 to 4 and name CA"],
+             ["resid 5 and name CB", "resid 2 and (name N or name C)"]]  # fmt: skip
+    system = _particles(s.natoms)
+    records = restraints.add_distance_restraints(system, s, pairs, 1000.0)
+    ca = {r: int(s.select(f"resid {r} and name CA").ids[0]) for r in range(1, 6)}
+    held = {frozenset((r["atom1"], r["atom2"])) for r in records}
+    assert len(records) == 4  # 1 x 2, then 1 x 2: two sets, one per water say
+    assert frozenset((ca[1], ca[3])) in held and frozenset((ca[3], ca[4])) not in held
+    assert records[0]["label1"].endswith(":ALA1:CA") and records[0]["k_kJ_per_nm2"] == 1000.0
+    (force,) = [f for f in system.getForces() if isinstance(f, mm.HarmonicBondForce)]
+    assert force.getName() == "DistanceRestraints"
+    assert _energy(system, s.positions) == pytest.approx(0.0, abs=1e-6)
+    r = np.linalg.norm(s.positions[ca[1]] - s.positions[ca[3]]) / 10
+    assert records[0]["start_nm"] == records[0]["r0_nm"] == pytest.approx(r, abs=1e-4)
+
+    # one r0 for every spring: E = k/2 (r - r0)^2 summed over them
+    fixed = _particles(s.natoms)
+    records = restraints.add_distance_restraints(fixed, s, pairs, 1000.0, r0_nm=0.3)
+    pos = np.asarray(s.positions, float) / 10
+    want = sum(500.0 * (np.linalg.norm(pos[x["atom1"]] - pos[x["atom2"]]) - 0.3) ** 2
+               for x in records)  # fmt: skip
+    assert want > 0 and _energy(fixed, s.positions) == pytest.approx(want, rel=1e-5)
+    assert all(x["r0_nm"] == 0.3 for x in records)
+
+    # a pair named twice, or an atom in both selections, is one spring or none
+    again = restraints.add_distance_restraints(_particles(s.natoms), s,
+                                               [["resid 1 and name CA", "name CA and resid 1 to 2"],
+                                                ["resid 2 and name CA", "resid 1 and name CA"]],
+                                               1000.0)  # fmt: skip
+    assert len(again) == 1
+    with pytest.raises(ValueError, match="picks no atoms"):
+        restraints.add_distance_restraints(_particles(s.natoms), s, [["resid 99", "resid 1"]], 1.0)
+    assert not _particles(s.natoms).getNumForces()
+
+
+def test_a_distance_restraint_measures_across_the_box():
+    """Two atoms at either side of a periodic box are 0.2 nm apart, not 2.8."""
+    import openmm as mm
+
+    s = boonza.from_smiles("[Na+]", name="NA")
+    s.append(boonza.from_smiles("[Cl-]", name="CL"))
+    s.positions = np.array([[1.0, 5.0, 5.0], [29.0, 5.0, 5.0]])
+    system = _particles(2, box=np.eye(3) * 3.0)  # nm
+    walls = mm.NonbondedForce()  # a periodic force makes the system periodic
+    walls.setNonbondedMethod(mm.NonbondedForce.CutoffPeriodic)
+    walls.setCutoffDistance(1.0)
+    for _ in range(2):
+        walls.addParticle(0.0, 0.1, 0.0)
+    system.addForce(walls)
+    (rec,) = restraints.add_distance_restraints(system, s, [["resname NA", "resname CL"]], 1000.0)
+    assert rec["start_nm"] == pytest.approx(0.2)
+    assert _energy(system, s.positions) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_distance_restraints_from_the_command_line_and_a_file(tmp_path, capsys):
+    args = parse_arguments([str(DATA_1TEN),
+                            "--distance-restraint", "resid 10 and name O", "resid 20 and noh",
+                            "--distance-restraint", "resid 11 and name O", "resid 30 and noh",
+                            "--distance-restraint-nm", "0.28"])  # fmt: skip
+    assert args.distance_restraints == [["resid 10 and name O", "resid 20 and noh"],
+                                        ["resid 11 and name O", "resid 30 and noh"]]  # fmt: skip
+    assert args.distance_restraint_nm == 0.28 and args.distance_restraint_kJ == 1000.0
+    path = tmp_path / "final.toml"
+    config.write_settings(path, config.settings_of(args))
+    back = parse_arguments(["--config", str(path)])
+    assert back.distance_restraints == args.distance_restraints
+    assert back.distance_restraint_nm == 0.28
+    # boonza fep shares the parser but builds its own hybrid system: it refuses
+    # the springs rather than parse them and run without
+    from boonza.fep import cli as fep_cli
+
+    for sub in ("prep", "grow"):
+        with pytest.raises(SystemExit):
+            fep_cli.main([sub, str(DATA_1TEN), "--distance-restraint", "resid 1", "resid 2"])
+    assert "a free energy run does not hold it yet" in capsys.readouterr().err
+    bad = tmp_path / "bad.toml"
+    bad.write_text('distance_restraints = [["resid 1"]]\n')
+    with pytest.raises(ValueError, match="wrong type"):
+        config.load_configuration(bad)
+
+
 def test_monitor_measures_across_the_box(tmp_path):
     box = np.eye(3) * 3.0
     pos = np.array([[0.1, 0.0, 0.0], [2.9, 0.0, 0.0], [1.5, 1.5, 1.5]])
@@ -332,6 +441,25 @@ def test_components(two_peptides):
 
 
 # ---- simulations -------------------------------------------------------------------
+
+
+def test_a_run_holds_its_distance_restraints(tmp_path, dipeptide):
+    work = tmp_path / "run"
+    said = []
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT,
+                                  "--distance-restraint", "resname ACE and name O",
+                                  "resname NME and name CH3",
+                                  "--distance-restraint", "resname ALA and name CB",
+                                  "resname NME and name N"]), log=said.append)  # fmt: skip
+    p = RunPaths(work)
+    assert "DistanceRestraints" in p.system_xml.read_text()  # and so into restarts
+    rows = list(__import__("csv").DictReader(p.distance_restraints_csv.open()))
+    assert len(rows) == 2 and rows[0]["label1"].endswith(":O")
+    assert any(line.startswith("Distance restraints: 2 springs over 2 set(s)") for line in said)
+    with pytest.raises(ValueError, match="cannot change distance_restraint_kJ"):
+        run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003",
+                                      "--distance-restraint-kJ", "10"]), log=quiet)  # fmt: skip
+    run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003"]), log=quiet)
 
 
 def test_new_run_and_restarts(tmp_path, dipeptide):

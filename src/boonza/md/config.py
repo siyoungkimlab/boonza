@@ -222,6 +222,9 @@ DEFAULTS: dict = {
     "repulsion_selection": None,
     "repulsion_distance_nm": 0.5,
     "repulsion_kJ": 500.0,
+    "distance_restraints": None,
+    "distance_restraint_kJ": 1000.0,
+    "distance_restraint_nm": None,
     "seed": 0,
     "precision": "mixed",
     "platform": None,
@@ -291,6 +294,8 @@ _NUMBERS = {
     "detach_cutoff_nm",
     "repulsion_distance_nm",
     "repulsion_kJ",
+    "distance_restraint_kJ",
+    "distance_restraint_nm",
     "area_per_lipid",
     "water_nm",
     "shift_nm",
@@ -445,6 +450,16 @@ def check_settings(values: dict, where: str) -> dict:
             ok = isinstance(v, dict) and all(
                 isinstance(q, int) and not isinstance(q, bool) for q in v.values()
             )
+        elif key == "distance_restraints":
+            # one [first, second] per set of springs, as --distance-restraint gives them
+            ok = isinstance(v, list | tuple) and all(
+                isinstance(p, list | tuple)
+                and len(p) == 2
+                and all(isinstance(x, str) and x.strip() for x in p)
+                for p in v
+            )
+            if ok:
+                out[key] = [list(p) for p in v]
         elif key == "parents":
             ok = isinstance(v, dict) and all(isinstance(p, str) and p for p in v.values())
         else:
@@ -829,6 +844,28 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         ("--repulsion-distance-nm", "repulsion_distance_nm", "repulsion wall distance (nm)"),
         ("--repulsion-kJ", "repulsion_kJ", "repulsion strength (kJ/mol/nm^2)"),
     ])  # fmt: skip
+    hold.add_argument(
+        "--distance-restraint",
+        dest="distance_restraints",
+        nargs=2,
+        action="append",
+        metavar=("FIRST", "SECOND"),
+        help="a harmonic spring between every atom FIRST selects and every atom SECOND "
+        "selects (not within either), e.g. a crystal water to the heavy atoms around "
+        "it: 'resname HOH and resid 301 and name O' 'protein and noh and within 3.5 of "
+        "(resname HOH and resid 301)'.  Give it again for another set, one per water.  "
+        "The selections are made on the built system (solvated.dms), so name atoms by "
+        "chain, resid and name rather than by index, which the build renumbers.  The "
+        "springs are forces and no part of the topology: a held pair keeps its "
+        "nonbonded interactions.  Every spring is listed in distance_restraints.csv",
+    )
+    numbers(hold, [
+        ("--distance-restraint-kJ", "distance_restraint_kJ",
+         "how stiff each spring is (kJ/mol/nm^2), E = k/2 (r - r0)^2"),
+        ("--distance-restraint-nm", "distance_restraint_nm",
+         "the length every spring holds, r0 (nm), e.g. 0.28 for a hydrogen bond "
+         "(default: each pair's own distance in the built system)"),
+    ])  # fmt: skip
 
     stop = p.add_argument_group("stopping when a binder leaves")
     stop.add_argument(
@@ -963,7 +1000,14 @@ def finish(args) -> None:
         "contact_cutoff_nm",
         "detach_cutoff_nm",
     ]
-    for key in positive + ["cutoff_nm", "box_nm", "repulsion_distance_nm", "repulsion_kJ"]:
+    for key in positive + [
+        "cutoff_nm",
+        "box_nm",
+        "repulsion_distance_nm",
+        "repulsion_kJ",
+        "distance_restraint_kJ",
+        "distance_restraint_nm",
+    ]:
         v = getattr(args, key)
         if v is not None and (not math.isfinite(v) or v <= 0):
             raise ValueError(f"'{key}' must be positive")
@@ -1246,6 +1290,11 @@ def restore_settings(args, path) -> None:
             raise ValueError(f"cannot resume a {saved['model']} run as {args.model}: the "
                              "system was built for it, and system.xml fixes it")  # fmt: skip
         args.model = saved["model"]
+    # the springs are forces of system.xml too: a resumed run keeps the ones it has
+    for key in ("distance_restraints", "distance_restraint_kJ", "distance_restraint_nm"):
+        if key in args.specified and getattr(args, key) != saved.get(key, DEFAULTS[key]):
+            raise ValueError(f"cannot change {key} when resuming: system.xml fixes the "
+                             "springs the run was built with")  # fmt: skip
     for key in RESTARTABLE:
         if key not in args.specified and key in saved:
             setattr(args, key, saved[key])
@@ -1345,6 +1394,15 @@ seed = 0
 # repulsion_selection = "chain L"
 repulsion_distance_nm = 0.5
 repulsion_kJ = 500.0
+
+# Harmonic springs, E = k/2 (r - r0)^2, between every atom of the first selection
+# and every atom of the second, one [first, second] per set (one per water, say).
+# Selected on the built system, so by chain/resid/name, not index. r0 is each
+# pair's starting distance unless distance_restraint_nm gives one length.
+# distance_restraints = [["resname HOH and resid 301 and name O",
+#                         "protein and noh and within 3.5 of (resname HOH and resid 301)"]]
+distance_restraint_kJ = 1000.0
+# distance_restraint_nm = 0.28
 
 # GPU precision: mixed, single or double. Left out, a platform that cannot
 # honour mixed falls back to its own; set, it is an error.

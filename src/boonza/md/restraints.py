@@ -289,6 +289,77 @@ def add_repulsion(omm_system, s, selection: str, distance_nm: float, k_kj: float
     return len(molecules)
 
 
+def add_distance_restraints(omm_system, s, pairs, k_kj: float, r0_nm=None) -> list[dict]:
+    """Hold atoms of one selection to atoms of another with harmonic springs.
+
+    For each ``(first, second)`` in ``pairs``, every atom ``first`` picks is
+    tied to every atom ``second`` picks -- not to the atoms of its own
+    selection -- with E = k/2 (r - r0)^2, OpenMM's harmonic bond.  ``r0`` is
+    ``r0_nm`` when given, else each pair's distance in ``s`` (the built system,
+    before minimization).  ``k`` is in kJ/mol/nm^2.
+
+    The springs are a force of the OpenMM system, as the elastic network's are,
+    and no part of the topology: a held pair keeps its nonbonded interactions,
+    nothing is written into the structure, and ``system.xml`` carries them into
+    restarts.  Returns one record per spring.
+    """
+    import openmm as mm
+
+    xyz = np.asarray(s.positions, float) / 10.0  # A to nm
+    periodic = omm_system.usesPeriodicBoundaryConditions()
+    box = None
+    if periodic:  # the cell the run uses, in nm
+        from openmm import unit
+
+        box = np.array([v.value_in_unit(unit.nanometer)
+                        for v in omm_system.getDefaultPeriodicBoxVectors()], float)  # fmt: skip
+    force = mm.HarmonicBondForce()
+    force.setUsesPeriodicBoundaryConditions(periodic)
+    records: list[dict] = []
+    seen: set[tuple[int, int]] = set()
+    for first, second in pairs:
+        a_ids = s.select(first).ids.tolist()
+        b_ids = s.select(second).ids.tolist()
+        for sel, ids in ((first, a_ids), (second, b_ids)):
+            if not ids:
+                raise ValueError(f"distance restraint: {sel!r} picks no atoms")
+        for a in a_ids:
+            for b in b_ids:
+                key = (min(a, b), max(a, b))
+                if a == b or key in seen:
+                    continue
+                seen.add(key)
+                d = xyz[b] - xyz[a]
+                if box is not None:
+                    d = _minimum_image(d, box)
+                r = float(np.linalg.norm(d))
+                r0 = r if r0_nm is None else float(r0_nm)
+                force.addBond(int(a), int(b), r0, float(k_kj))
+                records.append({"atom1": int(a), "label1": _atom_label(s, a),
+                                "atom2": int(b), "label2": _atom_label(s, b),
+                                "start_nm": round(r, 4), "r0_nm": round(r0, 4),
+                                "k_kJ_per_nm2": float(k_kj)})  # fmt: skip
+    if not records:
+        raise ValueError("distance restraint: the selections pick no pair of different atoms")
+    force.setName("DistanceRestraints")
+    omm_system.addForce(force)
+    return records
+
+
+def _minimum_image(d, box):
+    """``d`` wrapped into the cell ``box`` (3x3 rows, nm), triclinic included."""
+    box = np.asarray(box, float).reshape(3, 3)
+    for k in (2, 1, 0):  # OpenMM's reduced form: c, then b, then a
+        d = d - box[k] * np.round(d[k] / box[k][k])
+    return d
+
+
+def _atom_label(s, a) -> str:
+    atom = s.atom(int(a))
+    res = atom.residue
+    return f"{res.chain.name}:{res.name}{res.resid}:{atom.name}"
+
+
 def write_records(path, records) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(records[0]))
