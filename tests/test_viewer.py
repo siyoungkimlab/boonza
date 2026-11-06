@@ -1156,10 +1156,25 @@ def test_a_run_becomes_sulfono_units_in_a_pattern():
         ca = next(a for a in s.residue_atoms(r) if str(s.atoms["name"][a]) == "CA")
         assert stereocentre(s, ca)["cip"] == "R"
 
+    # homogeneous D is homogeneous L's mirror: every unit's carbon turns over, which
+    # is what makes an all-foldamer mimetic right-handed where L folds left-handed
+    cips = {}
+    for pattern in ("homogeneous", "homogeneous-D"):
+        q = boonza.peptide("LFKDEY")
+        units, _ = convert_sulfono_run(q, range(6), "inherit", pattern)
+        ca_of = [next(a for a in q.residue_atoms(u) if str(q.atoms["name"][a]) == "CA")
+                 for u in units]  # fmt: skip
+        cips[pattern] = [stereocentre(q, a)["cip"] for a in ca_of]
+    assert cips["homogeneous"] == ["S", "S", "S"]
+    assert cips["homogeneous-D"] == ["R", "R", "R"]
+
     with pytest.raises(ValueError, match="consecutive run"):
         convert_sulfono_run(boonza.peptide("AAA"), [0, 2], "inherit", "homogeneous")
-    with pytest.raises(ValueError, match="at least 4"):
+    with pytest.raises(ValueError, match="keeps 2 alpha residues"):
         convert_sulfono_run(boonza.peptide("AAA"), [0, 1, 2], "inherit", "2:1")
+    # the message says what to do instead, since a pair is what a user selects first
+    with pytest.raises(ValueError, match="convert this pair on its own"):
+        convert_sulfono_run(boonza.peptide("AA"), [0, 1], "inherit", "1:1")
 
 
 def test_a_chain_grows_at_either_end_and_atoms_become_a_residue():

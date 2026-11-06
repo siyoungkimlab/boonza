@@ -2282,9 +2282,16 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
 
 
 #: how a run of amino acids becomes sulfono-gamma-AA units: alpha residues kept
-#: before each pair, and whether the unit's chiral carbon turns D (the paper's
-#: 2:1 alpha/D-sulfono hybrids; homogeneous and 1:1 are L)
-SULFONO_PATTERNS = {"homogeneous": (0, False), "1:1": (1, False), "2:1": (2, True)}
+#: before each pair, and whether the unit's chiral carbon turns D.
+#:
+#: The crystal structures fix the handedness: homogeneous L folds left-handed
+#: (4_14), the 1:1 alpha/L-sulfono and 2:1 alpha/D-sulfono hybrids right-handed
+#: (4_13 and 16-16-14).  Homogeneous D is the enantiomer of homogeneous L, so it
+#: is right-handed with the same radius and pitch -- by mirror symmetry rather
+#: than by a crystal of its own, which is why an all-foldamer right-handed
+#: mimetic is a model where the hybrids are measured.
+SULFONO_PATTERNS = {"homogeneous": (0, False), "homogeneous-D": (0, True),
+                    "1:1": (1, False), "2:1": (2, True)}  # fmt: skip
 
 
 def _chain_run(s, residues) -> list[int]:
@@ -2314,9 +2321,14 @@ def _chain_run(s, residues) -> list[int]:
 def convert_sulfono_run(s, residues, r2: str = "inherit",
                         pattern: str = "homogeneous") -> tuple[list[int], str]:  # fmt: skip
     """Convert a run of amino acids along ``pattern``: every pair a unit
-    (homogeneous), an alpha residue kept before each pair (1:1), or two kept and
-    the unit's chiral carbon turned D (2:1).  Leftover residues at the end stay
-    as they are.  Returns (the units made, notes)."""
+    (homogeneous, L or D), an alpha residue kept before each pair (1:1), or two
+    kept and the unit's chiral carbon turned D (2:1).  Leftover residues at the
+    end stay as they are.  Returns (the units made, notes).
+
+    A hybrid starts by keeping its alpha residues, so where the selection starts
+    sets the register -- which residues land second in a pair and have their side
+    chain moved onto a sulfonyl.  Starting one residue earlier or later shifts
+    every unit along the chain."""
     if pattern not in SULFONO_PATTERNS:
         raise ValueError(f"pattern is one of {', '.join(SULFONO_PATTERNS)}, not {pattern!r}")
     keep, d_unit = SULFONO_PATTERNS[pattern]
@@ -2326,8 +2338,20 @@ def convert_sulfono_run(s, residues, r2: str = "inherit",
         pairs.append((ordered[k], ordered[k + 1]))
         k += 2 + keep
     if not pairs:
-        raise ValueError(f"the {pattern} pattern needs at least {keep + 2} consecutive "
-                         "residues, the unit's two last")  # fmt: skip
+        what = (
+            (
+                f"keeps {keep} alpha residue{'s' if keep > 1 else ''} and then converts a "
+                f"pair, so it needs {keep + 2} residues"
+            )
+            if keep
+            else "converts pairs"
+        )
+        raise ValueError(
+            f"the {pattern} pattern {what}, and {len(ordered)} "
+            f"{'was' if len(ordered) == 1 else 'were'} selected.  Select "
+            f"{keep + 2} or more consecutive residues, or convert this pair on its own "
+            "(one unit)"
+        )
     notes, made = [], []
     for i, j in reversed(pairs):  # C-terminal first: a conversion deletes a residue
         if d_unit:

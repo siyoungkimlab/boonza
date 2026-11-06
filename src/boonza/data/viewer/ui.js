@@ -2869,7 +2869,8 @@ export function setupUI(app) {
     body.append(el("h3", {}, "Sulfono-\u03b3-AA"));
     const pat = el("select", { title: "the pattern along the selected run" },
       el("option", { value: "unit" }, "one unit (two residues)"),
-      el("option", { value: "homogeneous" }, "homogeneous (every pair)"),
+      el("option", { value: "homogeneous" }, "homogeneous L (left-handed)"),
+      el("option", { value: "homogeneous-D" }, "homogeneous D (right-handed)"),
       el("option", { value: "1:1" }, "1:1 \u03b1/sulfono hybrid"),
       el("option", { value: "2:1" }, "2:1 \u03b1/D-sulfono hybrid"));
     const r2 = el("select", { title: "R2, the sulfonyl's substituent" },
@@ -2877,8 +2878,9 @@ export function setupUI(app) {
     body.append(row(pat, r2));
     body.append(row(button("Convert Selection", () => pat.value === "unit" ? sulfono(r2.value) : sulfonoRun(pat.value, r2.value))));
     body.append(el("p", { className: "help" }, "Consecutive amino acids become sulfono-\u03b3-AA units (residue "
-      + "SGA): every pair, or a pair after each kept \u03b1 residue (1:1), or after two (2:1, the unit's carbon "
-      + "turned D). Each unit's first residue keeps its side chain on the chiral carbon; the second's nitrogen "
+      + "SGA): every pair, or a pair after each kept \u03b1 residue (1:1), or after two (2:1). The crystals fold "
+      + "homogeneous L left-handed and the hybrids right-handed; homogeneous D is L's mirror, so right-handed "
+      + "too. Each unit's first residue keeps its side chain on the chiral carbon; the second's nitrogen "
       + "takes the sulfonyl, carrying R2. The atoms stay on the \u03b1 trace, which is not these helices' own "
       + "fold: minimize or run boonza md (GAFF2 knows SGA) to relax it."));
     body.append(el("h3", {}, "Extend"));
@@ -3937,7 +3939,7 @@ export function setupUI(app) {
         off: () => !m.topo.editable },
       { label: "Convert to Sulfono-\u03b3-AA, sulfonyl:", sub: () => SULFONO_R2.map(([v, lab]) => ({ label: lab, run: () => sulfono(v) })),
         off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size !== 2 },
-      { label: "Convert Run to Sulfono-\u03b3-AA", sub: () => [["homogeneous", "homogeneous (every pair)"], ["1:1", "1:1 \u03b1/sulfono hybrid"], ["2:1", "2:1 \u03b1/D-sulfono hybrid"]].map(([v, lab]) => ({ label: lab, run: () => sulfonoRun(v, "inherit") })),
+      { label: "Convert Run to Sulfono-\u03b3-AA", sub: () => [["homogeneous", "homogeneous L (left-handed)"], ["homogeneous-D", "homogeneous D (right-handed)"], ["1:1", "1:1 \u03b1/sulfono hybrid"], ["2:1", "2:1 \u03b1/D-sulfono hybrid"]].map(([v, lab]) => ({ label: lab, run: () => sulfonoRun(v, "inherit") })),
         off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size < 2 },
       { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
