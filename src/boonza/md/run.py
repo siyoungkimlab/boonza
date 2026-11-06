@@ -49,6 +49,7 @@ class RunPaths:
             "pocket_json": "pocket.json",
             "dihedral_restraints_csv": "dihedral_restraints.csv",
             "dihedral_restraints_png": "dihedral_restraints.png",
+            "distance_restraints_csv": "distance_restraints.csv",
             "performance_csv": "performance.csv",
             "monitor_csv": "monitor.csv",
             "status_json": "status.json",
@@ -310,6 +311,18 @@ def _new_run(args, paths: RunPaths, src: Path, log):
         log(f"Repulsion between {n} molecules ({args.repulsion_selection}): heavy atoms of "
             f"different ones closer than {args.repulsion_distance_nm:g} nm, "
             f"k = {args.repulsion_kJ:g} kJ/mol/nm^2")  # fmt: skip
+    if getattr(args, "distance_restraints", None):
+        from .restraints import add_distance_restraints, write_records
+
+        records = add_distance_restraints(system, s, args.distance_restraints,
+                                          args.distance_restraint_kJ,
+                                          args.distance_restraint_nm)  # fmt: skip
+        write_records(paths.distance_restraints_csv, records)
+        held = ("each pair's starting distance" if args.distance_restraint_nm is None
+                else f"r0 = {args.distance_restraint_nm:g} nm")  # fmt: skip
+        log(f"Distance restraints: {len(records)} springs over "
+            f"{len(args.distance_restraints)} set(s), {held}, "
+            f"k = {args.distance_restraint_kJ:g} kJ/mol/nm^2")  # fmt: skip
     integrator = mm.LangevinMiddleIntegrator(
         args.temperature * unit.kelvin, 1 / unit.picosecond, args.integration_fs * unit.femtoseconds
     )

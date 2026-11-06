@@ -177,7 +177,9 @@ def test_place_keeps_copies_apart(protein):
 def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     work = tmp_path / "swim"
     args = parse_arguments([str(protein), "--workdir", str(work), *SHORT,
-                            "--dihedral-restraint", "bb", "--rem"])  # fmt: skip
+                            "--dihedral-restraint", "bb", "--rem",
+                            "--distance-restraint", "chain A and resname ACE and name O",
+                            "chain A and resname NME and name N"])  # fmt: skip
     sims = swim.prepare(args, peptides, types=2, copies=2, log=quiet, repel=True)
     assert [d.name for d in sims] == ["sim_000", "sim_001"]
     rows = list(csv.DictReader((work / "assignment.csv").open()))
@@ -198,6 +200,10 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     said = []
     run_workflow(settings, log=said.append)
     assert any(line.startswith("REM: soft energy") for line in said)
+    # a run-time setting too: every run holds the springs on its own built system
+    assert settings.distance_restraints == [["chain A and resname ACE and name O",
+                                             "chain A and resname NME and name N"]]  # fmt: skip
+    assert any(line.startswith("Distance restraints: 1 springs") for line in said)
     state = sims[0] / "md" / "state.csv"
     assert len(state.read_text().splitlines()) == 3
     assert "LigandRepulsion" in (sims[0] / "md" / "system.xml").read_text()
