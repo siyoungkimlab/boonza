@@ -2006,7 +2006,7 @@ export function setupUI(app) {
       }
       case "color": {
         const [c, ...sel] = rest;
-        if (!isColor(c)) { app.message("colors: element, element/green, chain, restype, resname, ss, spectrum, bfactor, or a name", true); return; }
+        if (!isColor(c)) { app.message("colors: element, element/green, element/bfactor, chain, restype, resname, ss, spectrum, bfactor, or a name", true); return; }
         colorIn(await pairsOf(sel.join(" ")), c);
         return;
       }
@@ -3197,7 +3197,8 @@ export function setupUI(app) {
 
   // the representations of the current model, and the one being edited
   const SCHEMES_ATOMS = [["element", "Element"], ["chain", "Chain"], ["restype", "Residue type"], ["resname", "Residue name"],
-                         ["ss", "Secondary structure"], ["spectrum", "Spectrum (N to C)"], ["bfactor", "B-factor"]];
+                         ["ss", "Secondary structure"], ["spectrum", "Spectrum (N to C)"], ["bfactor", "B-factor"],
+                         ["element/bfactor", "Element, carbons by B-factor"]];
   const SCHEMES_RIBBON = [["ss", "Secondary structure"], ["chain", "Chain"], ["spectrum", "Spectrum (N to C)"],
                           ["restype", "Residue type"], ["resname", "Residue name"], ["bfactor", "B-factor"]];
   const SCHEMES_SURFACE = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"]];
@@ -3206,6 +3207,7 @@ export function setupUI(app) {
   function chipColor(rep) {
     if (rep.custom) return "conic-gradient(#e53935, #ffd54f, #4d4, #3bd, #66f, #e5c, #e53935)";
     const c = rep.color, [scheme, carbon] = c.split("/");
+    if (c === "element/bfactor") return "linear-gradient(135deg, #33f, #fff 30%, #f33 55%, #3355ff 55% 75%, #ff2a2a 75%)";
     if (scheme === "element") return carbon && named(carbon) ? `linear-gradient(135deg, ${rgbCss(named(carbon))} 55%, #3355ff 55% 75%, #ff2a2a 75%)`
       : "linear-gradient(135deg, #999 55%, #3355ff 55% 75%, #ff2a2a 75%)";
     if (named(c)) return rgbCss(named(c));
@@ -3216,6 +3218,7 @@ export function setupUI(app) {
   }
   const colorName = c => {
     const [scheme, carbon] = c.split("/");
+    if (c === "element/bfactor") return "element, carbons by B-factor";
     if (scheme === "element") return carbon ? `element, ${carbon} C` : "element";
     return [...SCHEMES_ATOMS, ...SCHEMES_RIBBON, ...SCHEMES_SURFACE].find(([k]) => k === c)?.[1].toLowerCase() || c;
   };
@@ -3280,7 +3283,7 @@ export function setupUI(app) {
     const schemes = rep.style === "surface" ? SCHEMES_SURFACE : app.isRibbon(rep) ? SCHEMES_RIBBON : SCHEMES_ATOMS;
     const scheme = el("select");
     scheme.add(new Option(rep.custom ? "colors of its own" : schemes.some(([k]) => k === rep.color.split("/")[0]) ? "" : `${colorName(rep.color)}`, "", false, true));
-    for (const [k, label] of schemes) scheme.add(new Option(label, k, false, !rep.custom && (rep.color === k || (k === "element" && rep.color.startsWith("element")))));
+    for (const [k, label] of schemes) scheme.add(new Option(label, k, false, !rep.custom && (rep.color === k || (k === "element" && rep.color.startsWith("element") && rep.color !== "element/bfactor"))));
     scheme.onchange = () => scheme.value && setRepColor(m, rep, scheme.value);
     const dots = (label, names, spec, title) => {
       const d = el("div", { className: "dots" }, el("span", { className: "dots-label" }, label));
@@ -3561,9 +3564,9 @@ export function setupUI(app) {
     state.selHidden = true;
     app.rebuild();
     refreshSelRow();
-    app.message(`${sel.reduce((n, [, ids]) => n + ids.length, 0)} carbons colored ${color} · the highlight is off to show it: tick (sel) to bring it back`);
+    app.message(`${sel.reduce((n, [, ids]) => n + ids.length, 0)} carbons colored ${color === "bfactor" ? "by B-factor" : color} · the highlight is off to show it: tick (sel) to bring it back`);
   }
-  const carbonItems = () => ATOM_COLORS.slice(2).map(([v, label]) => ({ label, run: () => colorCarbons(v) }));
+  const carbonItems = () => [["bfactor", "by B-factor"], ...ATOM_COLORS.slice(2)].map(([v, label]) => ({ label, run: () => colorCarbons(v) }));
   const highlightItems = () => HIGHLIGHTS.map(([v, label]) => ({ label, checked: () => state.selColor === v, run: () => {
     state.selHidden = false;
     app.setSelectionColor(v);

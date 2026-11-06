@@ -1,5 +1,6 @@
 // Color schemes: per-atom RGB (0..1) for a representation.
-//   element, element/<name>  CPK; carbons gray, or <name> (element/chain: by chain)
+//   element, element/<name>  CPK; carbons gray, or <name> (element/chain: by chain,
+//                            element/bfactor: by B-factor over the carbons)
 //                            (coarse-grained: backbone beads gray, the rest by restype)
 //   chain                    one color per chain
 //   restype                  amino acids: hydrophobic, polar, positive, negative;
@@ -112,7 +113,7 @@ export function named(text) {
 
 export function isColor(text) {
   const [scheme, carbon] = text.split("/");
-  if (scheme === "element") return carbon === undefined || carbon === "chain" || named(carbon) !== null || shaded(carbon) !== null;
+  if (scheme === "element") return carbon === undefined || carbon === "chain" || carbon === "bfactor" || named(carbon) !== null || shaded(carbon) !== null;
   return SCHEMES.includes(text) || named(text) !== null || shaded(text) !== null;
 }
 
@@ -134,9 +135,11 @@ export function colorAtoms(spec, ids, topo, ss, out) {
     }
   } else if (scheme === "element") {
     const c = carbon && carbon !== "chain" ? named(carbon) : null, shade = carbon ? shaded(carbon) : null;
+    const bf = carbon === "bfactor" ? bfactorRamp(ids.filter(a => A.element[a] === "C"), A.bfactor) : null;
     for (const a of ids) {
       const e = A.element[a];
-      if (e === "C" && carbon === "chain") put(out, a, chainColor(topo, R.chain[A.residue[a]]));
+      if (e === "C" && bf) put(out, a, bf(a));
+      else if (e === "C" && carbon === "chain") put(out, a, chainColor(topo, R.chain[A.residue[a]]));
       else if (e === "C" && shade) put(out, a, chainShade(shade, topo, R.chain[A.residue[a]]));
       else put(out, a, e === "C" && c ? c : ELEMENT[e] || OTHER);
     }
@@ -151,19 +154,25 @@ export function colorAtoms(spec, ids, topo, ss, out) {
   } else if (scheme === "spectrum") {
     for (const a of ids) put(out, a, rainbow(topo.spectrum[A.residue[a]]));
   } else if (scheme === "bfactor") {
-    let lo = Infinity, hi = -Infinity;
-    for (const a of ids) { lo = Math.min(lo, A.bfactor[a]); hi = Math.max(hi, A.bfactor[a]); }
-    const span = hi > lo ? hi - lo : 1;
-    for (const a of ids) {
-      const t = (A.bfactor[a] - lo) / span;
-      put(out, a, t < 0.5 ? [2 * t, 2 * t, 1] : [1, 2 - 2 * t, 2 - 2 * t]);
-    }
+    const bf = bfactorRamp(ids, A.bfactor);
+    for (const a of ids) put(out, a, bf(a));
   } else if (shaded(spec)) {
     for (const a of ids) put(out, a, chainShade(shaded(spec), topo, R.chain[A.residue[a]]));
   } else {
     const c = named(scheme) || NAMED.white;
     for (const a of ids) put(out, a, c);
   }
+}
+
+// blue-white-red from the lowest to the highest B-factor among ids
+function bfactorRamp(ids, b) {
+  let lo = Infinity, hi = -Infinity;
+  for (const a of ids) { lo = Math.min(lo, b[a]); hi = Math.max(hi, b[a]); }
+  const span = hi > lo ? hi - lo : 1;
+  return a => {
+    const t = (b[a] - lo) / span;
+    return t < 0.5 ? [2 * t, 2 * t, 1] : [1, 2 - 2 * t, 2 - 2 * t];
+  };
 }
 
 function put(out, a, c) {
