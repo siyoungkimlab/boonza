@@ -543,10 +543,25 @@ class Session:
                 # Every atom of a link counts, not only those the atom-name reading
                 # finds: an edited residue inside the chain keeps its atoms' names to
                 # itself, and intersecting with the reading made an island of it
-                from ..analyze import chain_residues
+                from ..analyze import chain_residues, end_caps
 
                 linked = np.zeros(s.nresidues, bool)
                 linked[chain_residues(s, bridge=True)] = True
+                # an ACE or NME/NMA cap is bonded to the chain on one side only, but it
+                # is the chain's end: a molecule picked from the chain takes it along
+                for cap, (capped, _) in end_caps(s).items():
+                    if linked[capped]:
+                        linked[cap] = True
+                # and so is a C-terminal amide's NH2, a residue of one nitrogen bonded
+                # to a link's carbon (often named NH2 or NMA without its methyl)
+                res = np.asarray(s.atoms["residue"])
+                anum = np.asarray(s.atoms["anum"])
+                for i, j in zip(np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"]), strict=True):
+                    for n, c in ((i, j), (j, i)):
+                        rn = res[n]
+                        if (anum[n] == 7 and anum[c] == 6 and not linked[rn] and linked[res[c]]
+                                and np.count_nonzero((res == rn) & (anum > 1)) == 1):  # fmt: skip
+                            linked[rn] = True
                 ids = np.flatnonzero(linked[np.asarray(s.atoms["residue"])])
             klass[ids] = 0
             klass[s.select(solvent).ids] = 2
