@@ -220,8 +220,8 @@ export function setupMouse(app) {
   }
 
   // double-click (an atom, a bond or a ribbon): its residue; a triple click, or a
-  // double-click again on that residue: its molecule, as far as it is of the
-  // atom's class; again: the residue
+  // double-click again on that residue: its molecule, every atom bonded to it,
+  // receptor, ligand or cap alike; again: the residue
   let lastDouble = null;
   function residueOrMolecule(e, molecule) {
     if (app.toolActive?.()) return;
@@ -234,8 +234,8 @@ export function setupMouse(app) {
     const whole = molecule || (lastDouble?.model === m && lastDouble.residue === r && lastDouble.level === "residue");
     let ids = m.topo.residueAtoms[r];
     if (whole) {
-      const f = A.fragment[seed], c = A.class[seed];
-      ids = app.range(m.topo.natoms).filter(a => A.fragment[a] === f && A.class[a] === c);
+      const f = A.fragment[seed];
+      ids = app.range(m.topo.natoms).filter(a => A.fragment[a] === f);
     }
     lastDouble = { model: m, residue: r, level: whole ? "molecule" : "residue" };
     app.select(m, ids, e.shiftKey ? "add" : "set");
