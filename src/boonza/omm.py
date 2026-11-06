@@ -116,7 +116,10 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
     mass = s.atoms["mass"]
     for m in mass.tolist():
         omm.addParticle(m)
-    if s.cell.any():
+    # Without periodic boundaries the box is never used: a structure turned in the
+    # viewer (superposed, aligned) keeps a rotated box, which OpenMM refuses
+    # ("First periodic box vector must be parallel to x") though it would not need it.
+    if s.cell.any() and nonbonded_method not in ("NoCutoff", "CutoffNonPeriodic"):
         omm.setDefaultPeriodicBoxVectors(*[mm.Vec3(*(row * NM)) for row in s.cell])
     tables = s.tables
 
@@ -216,10 +219,12 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
         add(f, "posre_harm")
     if "torsiontorsion_cmap" in tables:
         _add_cmap(s, omm, mm, add)
-    return _topology(s, app, anum), omm, unit.Quantity(s.positions * NM, unit.nanometer)
+    periodic = nonbonded_method not in ("NoCutoff", "CutoffNonPeriodic")
+    return (_topology(s, app, anum, periodic), omm,
+            unit.Quantity(s.positions * NM, unit.nanometer))  # fmt: skip
 
 
-def _topology(s, app, anum):
+def _topology(s, app, anum, periodic: bool = True):
     top = app.Topology()
     names = s.chains["name"].tolist()
     res_chain = s.residues["chain"].tolist()
@@ -247,7 +252,7 @@ def _topology(s, app, anum):
     for i, j, o in zip(s.bonds["i"].tolist(), s.bonds["j"].tolist(), s.bonds["order"].tolist(),
                        strict=True):  # fmt: skip
         top.addBond(atoms[i], atoms[j], type=types.get(o), order=o or None)
-    if s.cell.any():
+    if s.cell.any() and periodic:  # a box is only for periodic boundaries (to_openmm)
         from openmm import Vec3
 
         top.setPeriodicBoxVectors([Vec3(*(row * NM)) for row in s.cell])
