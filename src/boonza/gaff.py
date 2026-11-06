@@ -466,6 +466,18 @@ class _Builder:
                             todo.add(rb)
                             self.grown.add(rb)
                             changed = True
+            # A matched residue linked to the group through two of its own atoms (one
+            # amino acid between an N-terminal acyl cap and the rest of a macrocycle,
+            # say) would be capped from both sides at once, its atoms closed with
+            # hydrogens toward bonds that are kept: it joins the group instead.
+            for rb in {self.residue[b] for r in todo for a in self.res_atoms[r]
+                       for b in self.nbrs[a]} - todo:  # fmt: skip
+                ends = {b for b in self.res_atoms[rb] if self.anum[b] > 0
+                        and any(self.residue[a] in todo for a in self.nbrs[b])}  # fmt: skip
+                if len(ends) > 1:
+                    todo.add(rb)
+                    self.grown.add(rb)
+                    changed = True
         parent = {r: r for r in todo}
 
         def root(r):
