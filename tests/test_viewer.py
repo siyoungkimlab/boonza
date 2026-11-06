@@ -1094,6 +1094,22 @@ def test_two_residues_become_a_sulfono_gamma_aa_unit():
     convert_sulfono(crowded, [1, 2], "inherit")
     assert pdist(np.asarray(crowded.positions, float)).min() > 0.9
 
+    # a residue carrying an amino acid's name over other atoms (a modified residue,
+    # a builder's naming) loses ALL of it: what stays is found by bonds, so no
+    # hydrogen named H1 on a side chain survives its carbon (it floated before)
+    odd = boonza.peptide("ALFA")
+    onames = np.asarray(odd.atoms["name"]).astype(object)
+    side = [
+        a for a in odd.residue_atoms(2) if str(onames[a]) not in ("N", "CA", "C", "O", "H", "HA")
+    ]
+    for k, a in enumerate(side, start=1):
+        onames[a] = f"C{k}" if odd.atoms["anum"][a] > 1 else f"H{k % 4}"
+    odd.atoms["name"] = onames.astype(str)
+    ro, _ = convert_sulfono(odd, [1, 2], "Methyl")
+    oanum = np.asarray(odd.atoms["anum"])
+    assert not [a for a in range(odd.natoms) if oanum[a] == 1 and not neighbors(odd, a)]
+    assert len(odd.residue_atoms(ro)) == 33  # Leu + methyl sulfonyl, nothing stranded
+
     # a second residue without a side chain falls back to methyl, and says so
     g = boonza.peptide("AGGA")
     _, said = convert_sulfono(g, [1, 2], "inherit")

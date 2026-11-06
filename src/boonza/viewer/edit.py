@@ -2180,17 +2180,25 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
         if np.linalg.norm(v) > 0:
             aim = v / np.linalg.norm(v)
 
-    # the first residue's carbonyl O goes (C becomes the CH2 called CM), and the
-    # second loses everything but its backbone: its N, CA, C, O and amide H stay
-    gone = [a for a in s.residue_atoms(j) if str(s.atoms["name"][a]) not in BACKBONE]
-    oi = _residue_atom(s, i, "O")
-    if oi >= 0:
-        gone.append(oi)
+    # the first residue's carbonyl oxygens go (C becomes the CH2 called CM), and the
+    # second loses everything but its backbone.  What stays is found by bonds, not
+    # names: a residue can carry an amino acid's name over other atoms, and deleting
+    # by name then strands its hydrogens (an H1 on a side chain is no backbone H)
+    caj, cj = _residue_atom(s, j, "CA"), _residue_atom(s, j, "C")
+    keep = {nj, caj, cj}
+    keep |= {b for b, _ in neighbors(s, cj) if s.atoms["anum"][b] == 8}  # O, OXT
+    keep |= {b for b, _ in neighbors(s, nj) if s.atoms["anum"][b] == 1}  # the amide H
+    keep |= {b for b, _ in neighbors(s, caj) if s.atoms["anum"][b] == 1}  # HA, trimmed later
+    gone = [int(a) for a in s.residue_atoms(j) if int(a) not in keep]
+    inside = set(int(a) for a in s.residue_atoms(i))
+    gone += [b for b, _ in neighbors(s, ci) if s.atoms["anum"][b] == 8 and b in inside]
     s.delete_atoms(sorted(set(gone)))
 
     # the unit's names first, so the new hydrogens are named after them (HM1, HT1 ...)
     ci, nj = _residue_atom(s, i, "C"), _residue_atom(s, j, "N")
     caj = _residue_atom(s, j, "CA")
+    if min(ci, nj, caj) < 0:
+        raise ValueError("the second residue lost its backbone in the edit")
     names = np.asarray(s.atoms["name"]).astype(object)
     names[ci], names[nj], names[caj] = "CM", "NS", "CT"
     s.atoms["name"] = names.astype(str)
