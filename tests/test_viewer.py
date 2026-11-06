@@ -1128,6 +1128,40 @@ def test_two_residues_become_a_sulfono_gamma_aa_unit():
         convert_sulfono(boonza.peptide("ALFA"), [0, 3])
 
 
+def test_a_run_becomes_sulfono_units_in_a_pattern():
+    """Homogeneous: every pair; 1:1: an alpha kept before each unit; 2:1: two kept
+    and the unit's carbon turned D.  The terminal OXT keeps its hydrogen, glycine
+    quietly keeps its missing configuration, and errors say what to select."""
+    from scipy.spatial.distance import pdist
+
+    from boonza.viewer.edit import convert_sulfono_run, neighbors, stereocentre
+
+    s = boonza.peptide("LFKDEY")
+    made, notes = convert_sulfono_run(s, range(6), "inherit", "homogeneous")
+    assert [str(x) for x in s.residues["name"]] == ["SGA", "SGA", "SGA"] and made == [0, 1, 2]
+    oxt = next(a for a in range(s.natoms) if str(s.atoms["name"][a]) == "OXT")
+    assert sum(1 for b, _ in neighbors(s, oxt) if s.atoms["anum"][b] == 1) == 1
+    assert pdist(np.asarray(s.positions, float)).min() > 0.9
+
+    s = boonza.peptide("ALFKDEY")
+    made, _ = convert_sulfono_run(s, range(7), "inherit", "1:1")
+    assert [str(x) for x in s.residues["name"]] == ["ALA", "SGA", "LYS", "SGA", "TYR"]
+    assert made == [1, 3]
+
+    s = boonza.peptide("AVLFKDEYW")
+    made, _ = convert_sulfono_run(s, range(9), "inherit", "2:1")
+    assert [str(x) for x in s.residues["name"]] == ["ALA", "VAL", "SGA", "LYS", "ASP", "SGA",
+                                                    "TRP"]  # fmt: skip
+    for r in made:  # the chiral carbon turned over: an L amino acid's S became R
+        ca = next(a for a in s.residue_atoms(r) if str(s.atoms["name"][a]) == "CA")
+        assert stereocentre(s, ca)["cip"] == "R"
+
+    with pytest.raises(ValueError, match="consecutive run"):
+        convert_sulfono_run(boonza.peptide("AAA"), [0, 2], "inherit", "homogeneous")
+    with pytest.raises(ValueError, match="at least 4"):
+        convert_sulfono_run(boonza.peptide("AAA"), [0, 1, 2], "inherit", "2:1")
+
+
 def test_a_chain_grows_at_either_end_and_atoms_become_a_residue():
     from boonza import gaff, viparr
     from boonza.md.config import DEFAULT_FORCEFIELDS

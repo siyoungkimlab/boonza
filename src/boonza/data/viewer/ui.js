@@ -2867,12 +2867,20 @@ export function setupUI(app) {
     body.append(el("p", { className: "help" }, "The backbone stays; the side chain is built and turned to the "
       + "rotamer that clashes least; Lys, Arg, Asp and Glu charged as at pH 7."));
     body.append(el("h3", {}, "Sulfono-\u03b3-AA"));
+    const pat = el("select", { title: "the pattern along the selected run" },
+      el("option", { value: "unit" }, "one unit (two residues)"),
+      el("option", { value: "homogeneous" }, "homogeneous (every pair)"),
+      el("option", { value: "1:1" }, "1:1 \u03b1/sulfono hybrid"),
+      el("option", { value: "2:1" }, "2:1 \u03b1/D-sulfono hybrid"));
     const r2 = el("select", { title: "R2, the sulfonyl's substituent" },
       ...SULFONO_R2.map(([v, lab]) => el("option", { value: v }, lab)));
-    body.append(row(r2, button("Convert 2 Residues", () => sulfono(r2.value))));
-    body.append(el("p", { className: "help" }, "Two consecutive amino acids become one sulfono-\u03b3-AA unit "
-      + "(residue SGA). The first keeps its side chain on the chiral carbon; the second's nitrogen takes the "
-      + "sulfonyl, carrying R2. boonza md knows the unit (GAFF2, parent GLY)."));
+    body.append(row(pat, r2));
+    body.append(row(button("Convert Selection", () => pat.value === "unit" ? sulfono(r2.value) : sulfonoRun(pat.value, r2.value))));
+    body.append(el("p", { className: "help" }, "Consecutive amino acids become sulfono-\u03b3-AA units (residue "
+      + "SGA): every pair, or a pair after each kept \u03b1 residue (1:1), or after two (2:1, the unit's carbon "
+      + "turned D). Each unit's first residue keeps its side chain on the chiral carbon; the second's nitrogen "
+      + "takes the sulfonyl, carrying R2. The atoms stay on the \u03b1 trace, which is not these helices' own "
+      + "fold: minimize or run boonza md (GAFF2 knows SGA) to relax it."));
     body.append(el("h3", {}, "Extend"));
     const pick = el("select", { title: "the amino acid to add" },
       ...AMINO.map(aa => el("option", { value: aa, selected: aa === extendWith }, aa)));
@@ -2910,6 +2918,15 @@ export function setupUI(app) {
     if (!out) return;
     if (out.made?.length) app.select(t[0], out.made);
     app.message(out.note || "two residues became one sulfono-\u03b3-AA unit (SGA)");
+    openDock("protein");
+  }
+  async function sulfonoRun(pattern, r2) {
+    const t = editTarget();
+    if (!t) return;
+    const out = await busyEdit(t[0], "converting to sulfono-\u03b3-AA", { op: "sulfono_run", atoms: t[1], value: { pattern, r2 } });
+    if (!out) return;
+    if (out.made?.length) app.select(t[0], out.made);
+    app.message(out.note || "the run became sulfono-\u03b3-AA units (SGA)");
     openDock("protein");
   }
   async function extendChain(end) {
@@ -3920,6 +3937,8 @@ export function setupUI(app) {
         off: () => !m.topo.editable },
       { label: "Convert to Sulfono-\u03b3-AA, sulfonyl:", sub: () => SULFONO_R2.map(([v, lab]) => ({ label: lab, run: () => sulfono(v) })),
         off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size !== 2 },
+      { label: "Convert Run to Sulfono-\u03b3-AA", sub: () => [["homogeneous", "homogeneous (every pair)"], ["1:1", "1:1 \u03b1/sulfono hybrid"], ["2:1", "2:1 \u03b1/D-sulfono hybrid"]].map(([v, lab]) => ({ label: lab, run: () => sulfonoRun(v, "inherit") })),
+        off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size < 2 },
       { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
       { label: "Center", run: () => app.centerView() },

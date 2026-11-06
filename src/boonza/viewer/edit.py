@@ -2186,9 +2186,9 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
     # by name then strands its hydrogens (an H1 on a side chain is no backbone H)
     caj, cj = _residue_atom(s, j, "CA"), _residue_atom(s, j, "C")
     keep = {nj, caj, cj}
-    keep |= {b for b, _ in neighbors(s, cj) if s.atoms["anum"][b] == 8}  # O, OXT
-    keep |= {b for b, _ in neighbors(s, nj) if s.atoms["anum"][b] == 1}  # the amide H
-    keep |= {b for b, _ in neighbors(s, caj) if s.atoms["anum"][b] == 1}  # HA, trimmed later
+    keep |= {b for b, _ in neighbors(s, cj) if s.atoms["anum"][b] == 8}  # O, and OXT at a terminus
+    # and every kept atom's hydrogens: the amide H, HA (trimmed later), a terminal OXT's
+    keep |= {b for a in list(keep) for b, _ in neighbors(s, a) if s.atoms["anum"][b] == 1}
     gone = [int(a) for a in s.residue_atoms(j) if int(a) not in keep]
     inside = set(int(a) for a in s.residue_atoms(i))
     gone += [b for b, _ in neighbors(s, ci) if s.atoms["anum"][b] == 8 and b in inside]
@@ -2279,6 +2279,71 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
     col[[int(a) for a in s.residue_atoms(i)]] = pair
     s.atoms["sga_pair"] = col.astype(str)
     return i, note
+
+
+#: how a run of amino acids becomes sulfono-gamma-AA units: alpha residues kept
+#: before each pair, and whether the unit's chiral carbon turns D (the paper's
+#: 2:1 alpha/D-sulfono hybrids; homogeneous and 1:1 are L)
+SULFONO_PATTERNS = {"homogeneous": (0, False), "1:1": (1, False), "2:1": (2, True)}
+
+
+def _chain_run(s, residues) -> list[int]:
+    """The residues ordered along their chain; they must be one consecutive run."""
+    rs = sorted({int(r) for r in residues})
+    nxt = {}
+    for r in rs:
+        c = _residue_atom(s, r, "C")
+        if c < 0:
+            continue
+        for q in rs:
+            n = _residue_atom(s, q, "N")
+            if q != r and n >= 0 and s.find_bond(c, n) is not None:
+                nxt[r] = q
+    heads = [r for r in rs if r not in set(nxt.values())]
+    out: list[int] = []
+    if len(heads) == 1:
+        r = heads[0]
+        while r is not None and r not in out:
+            out.append(r)
+            r = nxt.get(r)
+    if len(out) != len(rs):
+        raise ValueError("select one consecutive run of amino acids in a single chain")
+    return out
+
+
+def convert_sulfono_run(s, residues, r2: str = "inherit",
+                        pattern: str = "homogeneous") -> tuple[list[int], str]:  # fmt: skip
+    """Convert a run of amino acids along ``pattern``: every pair a unit
+    (homogeneous), an alpha residue kept before each pair (1:1), or two kept and
+    the unit's chiral carbon turned D (2:1).  Leftover residues at the end stay
+    as they are.  Returns (the units made, notes)."""
+    if pattern not in SULFONO_PATTERNS:
+        raise ValueError(f"pattern is one of {', '.join(SULFONO_PATTERNS)}, not {pattern!r}")
+    keep, d_unit = SULFONO_PATTERNS[pattern]
+    ordered = _chain_run(s, residues)
+    pairs, k = [], keep  # the hybrids' repeat starts with its alpha residues
+    while k + 1 < len(ordered):
+        pairs.append((ordered[k], ordered[k + 1]))
+        k += 2 + keep
+    if not pairs:
+        raise ValueError(f"the {pattern} pattern needs at least {keep + 2} consecutive "
+                         "residues, the unit's two last")  # fmt: skip
+    notes, made = [], []
+    for i, j in reversed(pairs):  # C-terminal first: a conversion deletes a residue
+        if d_unit:
+            try:
+                set_chirality(s, _residue_atom(s, i, "CA"), "D")
+            except ValueError:  # glycine has no D; an already-D residue stays D
+                name = str(s.residues["name"][i])
+                if name != "GLY":
+                    notes.append(f"{name}{s.residues['resid'][i]} kept its configuration")
+        r, note = convert_sulfono(s, [i, j], r2)
+        made.append(r)
+        if note:
+            notes.append(note)
+    # each conversion below a made unit took one residue out from under it
+    made = [r - k for k, r in enumerate(reversed(made))][::-1]
+    return sorted(made), "; ".join(notes)
 
 
 def cap(s, chain: int, end: str) -> None:

@@ -792,6 +792,14 @@ class Session:
                     r, note = edit.convert_sulfono(s, rs, str(value or "inherit"))
                     made = s.residue_atoms(r)
                     hydrogens = False
+                elif op == "sulfono_run":  # a run of amino acids becomes units, patterned
+                    rs = sorted({int(s.atoms["residue"][a]) for a in atoms})
+                    v = value or {}
+                    made_rs, note = edit.convert_sulfono_run(
+                        s, rs, str(v.get("r2") or "inherit"),
+                        str(v.get("pattern") or "homogeneous"))  # fmt: skip
+                    made = [a for r in made_rs for a in s.residue_atoms(r)]
+                    hydrogens = False
                 elif op == "split":  # the atoms a residue of their own
                     r = edit.split_residue(s, atoms, str(value or ""))
                     made = s.residue_atoms(r)
