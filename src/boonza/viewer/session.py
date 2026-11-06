@@ -715,6 +715,7 @@ class Session:
             s.atoms["view_edit"] = np.arange(1, s.natoms + 1, dtype=np.int64)  # follows atoms
             touched = list(atoms)
             made = None  # the atoms of a residue the edit made, for the page to select
+            note = ""  # a caveat of the edit, for the page to show
             try:
                 if op == "element":
                     # a hydrogen made heavy grows from where it is (a C becomes CH3, at
@@ -784,6 +785,11 @@ class Session:
                     r = edit.extend(s, chains[0], str(value["end"]), str(value["residue"]))
                     made = s.residue_atoms(r)
                     hydrogens = False
+                elif op == "sulfono":  # two amino acids become one sulfono-gamma-AA unit
+                    rs = sorted({int(s.atoms["residue"][a]) for a in atoms})
+                    r, note = edit.convert_sulfono(s, rs, str(value or "inherit"))
+                    made = s.residue_atoms(r)
+                    hydrogens = False
                 elif op == "split":  # the atoms a residue of their own
                     r = edit.split_residue(s, atoms, str(value or ""))
                     made = s.residue_atoms(r)
@@ -822,6 +828,8 @@ class Session:
                    "was": [int(k) - 1 for k in tags]}  # fmt: skip
             if made is not None:
                 out["made"] = [int(a) for a in made]
+            if note:
+                out["note"] = note
             return out
 
     def _drop(self, atoms) -> dict:

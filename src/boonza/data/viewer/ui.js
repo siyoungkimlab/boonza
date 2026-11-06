@@ -2891,6 +2891,20 @@ export function setupUI(app) {
     const out = await busyEdit(t[0], `mutating to ${aa}`, { op: "mutate", atoms: t[1], value: aa });
     if (out) { app.message(`mutated to ${aa}`); openDock("protein"); }
   }
+  // two residues become one sulfono-gamma-AA unit (Cai lab foldamers): the first
+  // keeps its side chain on the chiral carbon, the second's rides the sulfonyl
+  const SULFONO_R2 = [["inherit", "side chain of the 2nd residue"], ["Methyl", "methyl"],
+                      ["Phenyl", "phenyl"], ["Benzyl", "benzyl"],
+                      ["4-Chlorophenyl", "4-chlorophenyl"], ["2-Naphthyl", "2-naphthyl"]];
+  async function sulfono(r2) {
+    const t = editTarget();
+    if (!t) return;
+    const out = await busyEdit(t[0], "converting to sulfono-\u03b3-AA", { op: "sulfono", atoms: t[1], value: r2 });
+    if (!out) return;
+    if (out.made?.length) app.select(t[0], out.made);
+    app.message(out.note || "two residues became one sulfono-\u03b3-AA unit (SGA)");
+    openDock("protein");
+  }
   async function extendChain(end) {
     const t = editTarget();
     if (!t) return;
@@ -3892,6 +3906,8 @@ export function setupUI(app) {
     menu([
       { label: `Mutate ${what} to`, sub: () => AMINO.map(aa => ({ label: `${aa} (${ONE[aa]})`, run: () => mutate(aa) })),
         off: () => !m.topo.editable },
+      { label: "Convert to Sulfono-\u03b3-AA, sulfonyl:", sub: () => SULFONO_R2.map(([v, lab]) => ({ label: lab, run: () => sulfono(v) })),
+        off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size !== 2 },
       { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
       { label: "Center", run: () => app.centerView() },

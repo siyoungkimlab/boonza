@@ -2120,6 +2120,111 @@ def _best_rotamer(s, residue: int) -> None:
     s.positions = best_pos
 
 
+# R2 on a sulfono-gamma-AA unit's sulfonyl, bonded through its first atom
+SULFONYL_R2 = {
+    "Methyl": "C", "Phenyl": "c1ccccc1", "Benzyl": "Cc1ccccc1",
+    "4-Chlorophenyl": "c1ccc(Cl)cc1", "2-Naphthyl": "c1cc2ccccc2cc1",
+}  # fmt: skip
+# an amino acid's side chain as bonded from CB, to mount the second residue's side
+# chain on the sulfonyl; Lys, Arg, Asp and Glu charged as at pH 7, like mutate's
+SIDE_CHAIN = {
+    "ALA": "C", "VAL": "C(C)C", "LEU": "CC(C)C", "ILE": "C(C)CC", "MET": "CCSC",
+    "PHE": "Cc1ccccc1", "TRP": "Cc1c[nH]c2ccccc12", "SER": "CO", "THR": "C(O)C",
+    "CYS": "CS", "TYR": "Cc1ccc(O)cc1", "ASN": "CC(N)=O", "GLN": "CCC(N)=O",
+    "ASP": "CC(=O)[O-]", "GLU": "CCC(=O)[O-]", "LYS": "CCCC[NH3+]",
+    "ARG": "CCCNC(N)=[NH2+]", "HIS": "Cc1c[nH]cn1",
+}  # fmt: skip
+
+
+def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
+    """Turn two consecutive amino acids into one sulfono-gamma-AA unit, residue SGA
+    (Cai lab foldamers: NH-CA(R1)H-CM(H2)-N(SO2-R2)(named NS)-CT(H2)-C=O).
+
+    The first residue keeps its side chain (R1), its amide and its alpha carbon in
+    place; its carbonyl becomes the CH2 called CM.  The second residue's nitrogen is
+    sulfonylated (NS), its alpha carbon loses the side chain and becomes the CH2
+    called CT, and its carbonyl stays, bonded to the next residue as it was.  ``r2``
+    is "inherit" (the second residue's own side chain, from SIDE_CHAIN, mounted on
+    the sulfonyl), a SULFONYL_R2 name, or a SMILES bonding through its first atom.
+    GAFF2 knows the unit: KNOWN_PARENTS stands SGA on glycine's backbone.
+    Returns (the residue, a note for the page or "")."""
+    residues = sorted({int(r) for r in residues})
+    if len(residues) != 2:
+        raise ValueError("select atoms of exactly two amino acids")
+    i, j = residues
+    if s.find_bond(_residue_atom(s, i, "C"), _residue_atom(s, j, "N")) is None:
+        i, j = j, i  # selected against the chain's direction
+    for r, what in ((i, "first"), (j, "second")):
+        if any(_residue_atom(s, r, x) < 0 for x in ("N", "CA", "C")):
+            raise ValueError(f"the {what} residue needs a backbone (N, CA, C)")
+    ci, nj = _residue_atom(s, i, "C"), _residue_atom(s, j, "N")
+    if s.find_bond(ci, nj) is None:
+        raise ValueError("the two residues must follow each other in one chain "
+                         "(a peptide bond between them)")  # fmt: skip
+    note = ""
+    name_j = str(s.residues["name"][j])
+    if r2 == "inherit":
+        smi = SIDE_CHAIN.get(name_j)
+        if smi is None:
+            smi = "C"
+            note = f"{name_j} has no side chain to mount on the sulfonyl: methyl instead"
+    else:
+        smi = SULFONYL_R2.get(r2, r2)
+
+    # the first residue's carbonyl O goes (C becomes the CH2 called CM), and the
+    # second loses everything but its backbone: its N, CA, C, O and amide H stay
+    gone = [a for a in s.residue_atoms(j) if str(s.atoms["name"][a]) not in BACKBONE]
+    oi = _residue_atom(s, i, "O")
+    if oi >= 0:
+        gone.append(oi)
+    s.delete_atoms(sorted(set(gone)))
+
+    # CM and CT fill up with hydrogens; a proline's bare N gets one to attach at
+    ci, nj = _residue_atom(s, i, "C"), _residue_atom(s, j, "N")
+    caj = _residue_atom(s, j, "CA")
+    adjust_hydrogens(s, [ci, caj, nj])
+    nj = _residue_atom(s, j, "N")
+    hs = [b for b, _ in neighbors(s, nj) if s.atoms["anum"][b] == 1]
+    if not hs:
+        raise ValueError("the second residue's nitrogen has no room for the sulfonyl")
+    new = attach(s, nj, hs[0], f"S(=O)(=O){smi}")
+    # attach turned the N-S bond to clash least; R2 turns about S-C the same way
+    s1 = int(new[0])
+    root = [b for b, _ in neighbors(s, s1)
+            if b != nj and s.atoms["anum"][b] not in (1, 8)]  # fmt: skip
+    if root and len(new) > 4:
+        oxygens = {b for b, _ in neighbors(s, s1) if s.atoms["anum"][b] == 8}
+        moving = [int(a) for a in new.tolist() if a != s1 and a not in oxygens]
+        _best_turn(s, s1, int(root[0]), moving)
+
+    # the unit's names, then the two residues become one, SGA
+    names = np.asarray(s.atoms["name"]).astype(object)
+    names[_residue_atom(s, i, "C")] = "CM"
+    names[_residue_atom(s, j, "N")] = "NS"
+    names[_residue_atom(s, j, "CA")] = "CT"
+    s.atoms["name"] = names.astype(str)
+    _move_to(s, s.residue_atoms(j), i)
+    if not len(s.residue_atoms(j)):
+        s.delete_residues([j])
+        if j < i:
+            i -= 1
+    rnames = np.asarray(s.residues["name"]).astype(object)
+    rnames[i] = "SGA"
+    s.residues["name"] = rnames.astype(str)
+    mine = [int(a) for a in s.residue_atoms(i)]
+    seen: set = set()
+    twice = []
+    for a in mine:
+        nm = str(s.atoms["name"][a])
+        if nm in seen:
+            twice.append(a)
+        seen.add(nm)
+    if twice:
+        _unique_names(s, i, twice)
+    _gather(s, i)
+    return i, note
+
+
 def cap(s, chain: int, end: str) -> None:
     """ACE on a chain's first residue (``end="N"``) or NME on its last (``"C"``): a
     trans peptide bond, Amber's atom names, the terminus' charge gone."""
