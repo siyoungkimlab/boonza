@@ -2866,6 +2866,13 @@ export function setupUI(app) {
     body.append(g);
     body.append(el("p", { className: "help" }, "The backbone stays; the side chain is built and turned to the "
       + "rotamer that clashes least; Lys, Arg, Asp and Glu charged as at pH 7."));
+    body.append(el("h3", {}, "Sulfono-\u03b3-AA"));
+    const r2 = el("select", { title: "R2, the sulfonyl's substituent" },
+      ...SULFONO_R2.map(([v, lab]) => el("option", { value: v }, lab)));
+    body.append(row(r2, button("Convert 2 Residues", () => sulfono(r2.value))));
+    body.append(el("p", { className: "help" }, "Two consecutive amino acids become one sulfono-\u03b3-AA unit "
+      + "(residue SGA). The first keeps its side chain on the chiral carbon; the second's nitrogen takes the "
+      + "sulfonyl, carrying R2. boonza md knows the unit (GAFF2, parent GLY)."));
     body.append(el("h3", {}, "Extend"));
     const pick = el("select", { title: "the amino acid to add" },
       ...AMINO.map(aa => el("option", { value: aa, selected: aa === extendWith }, aa)));
