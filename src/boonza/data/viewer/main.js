@@ -202,6 +202,7 @@ function repResidues(model, rep) {
 // a ribbon's color per residue: the ribbon schemes, a color, else the scheme of its traced atoms
 function ribbonColors(model, spec, residues, out) {
   const topo = model.topo;
+  if (spec === "element/bfactor") spec = "bfactor";  // a ribbon has no carbons: its trace by B-factor
   if (RIBBON_SCHEMES.includes(spec) || named(spec)) { colorResidues(spec, residues, topo, model.ss, out); return; }
   const [scheme, carbon] = spec.split("/");
   if (scheme === "element") { colorResidues(carbon && named(carbon) ? carbon : "white", residues, topo, model.ss, out); return; }
