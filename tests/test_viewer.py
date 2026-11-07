@@ -1018,6 +1018,182 @@ def test_mutations_and_caps_stay_ff19sb():
         cap(p, 0, "C")
 
 
+def test_two_residues_become_a_sulfono_gamma_aa_unit():
+    """ALA-LEU-PHE-ALA: LEU and PHE become one SGA unit.  LEU's side chain stays
+    where it was on the chiral carbon, PHE's rides the sulfonyl, the chain and the
+    charge hold, and GAFF2 knows the unit's parent."""
+    from scipy.spatial.distance import pdist
+
+    from boonza import gaff, viparr
+    from boonza.md.config import DEFAULT_FORCEFIELDS
+    from boonza.viewer.edit import _residue_atom, convert_sulfono, neighbors
+
+    p = boonza.peptide("ALFA")
+    leu = {
+        str(p.atoms["name"][a]): np.array(p.positions[a], float)
+        for a in p.residue_atoms(1)
+        if str(p.atoms["name"][a]) in ("CB", "CG", "CD1", "CD2")
+    }
+    r, note = convert_sulfono(p, [2, 1], "inherit")  # order does not matter
+    assert note == ""
+    assert [str(n) for n in p.residues["name"]] == ["ALA", "SGA", "ALA"]
+    names = {str(p.atoms["name"][a]): int(a) for a in p.residue_atoms(r)}
+    nb = lambda a: sorted(str(p.atoms["name"][b]) for b, _ in neighbors(p, a))  # noqa: E731
+    hs = lambda a: sum(p.atoms["anum"][b] == 1 for b, _ in neighbors(p, a))  # noqa: E731
+    assert nb(names["NS"]) == ["CM", "CT", "S1"]  # sulfonylated, tertiary, no H
+    assert hs(names["CM"]) == 2 and hs(names["CT"]) == 2  # the carbonyl and CA now CH2
+    assert sorted(x for x in nb(names["S1"]) if not x.startswith("H")) == ["C1", "NS", "O1", "O2"]
+    # LEU's side chain never moved; PHE's benzyl is on the sulfonyl (7 new carbons)
+    for name, xyz in leu.items():
+        assert np.allclose(np.array(p.positions[names[name]], float), xyz)
+    ring = [
+        a
+        for a in p.residue_atoms(r)
+        if p.atoms["anum"][a] == 6
+        and str(p.atoms["name"][a]) not in ("CA", "CM", "CT", "C", "CB", "CG", "CD1", "CD2")
+    ]
+    assert len(ring) == 7
+    # the chain holds together, the charge stays, nothing overlaps
+    assert p.find_bond(_residue_atom(p, 0, "C"), names["N"]) is not None
+    assert p.find_bond(names["C"], _residue_atom(p, 2, "N")) is not None
+    assert int(np.asarray(p.atoms["formal_charge"]).sum()) == 0
+    assert pdist(np.asarray(p.positions, float)).min() > 0.8
+    # GAFF2: capped, the unit is the one unmatched residue, and its parent is known
+    from boonza.viewer.edit import cap
+
+    cap(p, 0, "N")
+    cap(p, 0, "C")
+    ffs = [viparr.load_forcefield(b) for b, *_ in DEFAULT_FORCEFIELDS]
+    (sga,) = [r for r in range(p.nresidues) if str(p.residues["name"][r]) == "SGA"]
+    # on glycine's backbone the unit's C side keeps protein types (NS-CT(H2)-C=O is
+    # glycine's own backbone), and the N side carries R1, so the group grows one
+    # residue N-ward for its cut to keep protein types too (the #164 mechanism)
+    assert gaff.find_unmatched(p, ffs) == [[sga - 1, sga]]
+    assert gaff.KNOWN_PARENTS["SGA"] == "GLY"
+    # the CH2 hydrogens are named for their carbon, and the unit remembers its pair
+    # (the caps above moved atoms: the names map is rebuilt)
+    names = {str(p.atoms["name"][a]): int(a) for a in p.residue_atoms(sga)}
+    h_of = lambda nm: sorted(  # noqa: E731
+        str(p.atoms["name"][b]) for b, _ in neighbors(p, names[nm]) if p.atoms["anum"][b] == 1
+    )
+    assert h_of("CM") == ["HM1", "HM2"] and h_of("CT") == ["HT1", "HT2"]
+    marked = np.asarray(p.atoms["sga_pair"])
+    assert set(marked[p.residue_atoms(sga)].tolist()) == {"LF"}
+    assert set(marked.tolist()) == {"", "LF"}  # nothing else is marked
+    # the unit takes the crystals' geometry: its backbone and sulfonyl lie on
+    # CRYSTAL_UNIT, which is what puts the sulfur out of the helix rather than
+    # down among the hydrogen bonds the alpha backbone keeps there
+    from boonza.align import kabsch
+    from boonza.viewer.edit import CRYSTAL_UNIT
+
+    q = boonza.peptide("ALFA")
+    r2u, _ = convert_sulfono(q, [1, 2], "inherit")
+    qn = {str(q.atoms["name"][a]): a for a in q.residue_atoms(r2u)}
+    keys = ("N", "CA", "CM", "NS", "CT", "C", "S1")
+    T = np.array([CRYSTAL_UNIT[k] for k in keys])
+    X = np.array([np.asarray(q.positions[qn[k]], float) for k in keys])
+    rot, shift = kabsch(T, X)
+    # within the crystals' own unit-to-unit spread (0.26 A); N, CA and C anchor
+    # the fit and keep the alpha positions the chain's neighbours expect
+    assert float(np.sqrt((((T @ rot.T + shift) - X) ** 2).sum(1).mean())) < 0.3
+    crowded = boonza.peptide("APGA")
+    convert_sulfono(crowded, [1, 2], "inherit")
+    assert pdist(np.asarray(crowded.positions, float)).min() > 0.9
+
+    # a residue carrying an amino acid's name over other atoms (a modified residue,
+    # a builder's naming) loses ALL of it: what stays is found by bonds, so no
+    # hydrogen named H1 on a side chain survives its carbon (it floated before)
+    odd = boonza.peptide("ALFA")
+    onames = np.asarray(odd.atoms["name"]).astype(object)
+    side = [
+        a for a in odd.residue_atoms(2) if str(onames[a]) not in ("N", "CA", "C", "O", "H", "HA")
+    ]
+    for k, a in enumerate(side, start=1):
+        onames[a] = f"C{k}" if odd.atoms["anum"][a] > 1 else f"H{k % 4}"
+    odd.atoms["name"] = onames.astype(str)
+    ro, _ = convert_sulfono(odd, [1, 2], "Methyl")
+    oanum = np.asarray(odd.atoms["anum"])
+    assert not [a for a in range(odd.natoms) if oanum[a] == 1 and not neighbors(odd, a)]
+    assert len(odd.residue_atoms(ro)) == 33  # Leu + methyl sulfonyl, nothing stranded
+
+    # a second residue without a side chain falls back to methyl, and says so
+    g = boonza.peptide("AGGA")
+    _, said = convert_sulfono(g, [1, 2], "inherit")
+    assert "methyl instead" in said
+    # every named sulfonyl builds
+    from boonza.viewer.edit import SULFONYL_R2
+
+    for r2 in SULFONYL_R2:
+        q = boonza.peptide("AAAA")
+        convert_sulfono(q, [1, 2], r2)
+        assert str(q.residues["name"][1]) == "SGA"
+        assert pdist(np.asarray(q.positions, float)).min() > 0.8, r2
+    with pytest.raises(ValueError, match="exactly two"):
+        convert_sulfono(boonza.peptide("ALFA"), [1])
+    with pytest.raises(ValueError, match="follow each other"):
+        convert_sulfono(boonza.peptide("ALFA"), [0, 3])
+
+
+def test_a_run_becomes_sulfono_units_in_a_pattern():
+    """Homogeneous: every pair; 1:1: an alpha kept before each unit; 2:1: two kept
+    and the unit's carbon turned D.  The terminal OXT keeps its hydrogen, glycine
+    quietly keeps its missing configuration, and errors say what to select."""
+
+    from boonza.viewer.edit import convert_sulfono_run, neighbors, stereocentre
+
+    s = boonza.peptide("LFKDEY")
+    made, notes = convert_sulfono_run(s, range(6), "inherit", "homogeneous")
+    assert [str(x) for x in s.residues["name"]] == ["SGA", "SGA", "SGA"] and made == [0, 1, 2]
+    oxt = next(a for a in range(s.natoms) if str(s.atoms["name"][a]) == "OXT")
+    assert sum(1 for b, _ in neighbors(s, oxt) if s.atoms["anum"][b] == 1) == 1
+    # every unit's sulfonyl stands out of the chain, as the crystals have it:
+    # the sulfur sits off the CM-NS-CT plane on the side away from the backbone.
+    # Converting every pair on an alpha trace is strained (these need relaxing),
+    # so the contacts are not the test -- the geometry at the nitrogen is.
+    for u in made:
+        nm = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(u)}
+        p = np.asarray(s.positions, float)
+        ns, cm, ct, s1 = p[nm["NS"]], p[nm["CM"]], p[nm["CT"]], p[nm["S1"]]
+        assert abs(np.linalg.norm(s1 - ns) - 1.636) < 0.01  # the crystals' N-S
+        normal = np.cross(cm - ns, ct - ns)
+        normal /= np.linalg.norm(normal)
+        tilt = np.degrees(np.arcsin(abs((s1 - ns) @ normal / np.linalg.norm(s1 - ns))))
+        assert abs(tilt - 36.7) < 5.0  # and their pyramid, within its sd of 4.3
+
+    s = boonza.peptide("ALFKDEY")
+    made, _ = convert_sulfono_run(s, range(7), "inherit", "1:1")
+    assert [str(x) for x in s.residues["name"]] == ["ALA", "SGA", "LYS", "SGA", "TYR"]
+    assert made == [1, 3]
+
+    s = boonza.peptide("AVLFKDEYW")
+    made, _ = convert_sulfono_run(s, range(9), "inherit", "2:1")
+    assert [str(x) for x in s.residues["name"]] == ["ALA", "VAL", "SGA", "LYS", "ASP", "SGA",
+                                                    "TRP"]  # fmt: skip
+    for r in made:  # the chiral carbon turned over: an L amino acid's S became R
+        ca = next(a for a in s.residue_atoms(r) if str(s.atoms["name"][a]) == "CA")
+        assert stereocentre(s, ca)["cip"] == "R"
+
+    # homogeneous D is homogeneous L's mirror: every unit's carbon turns over, which
+    # is what makes an all-foldamer mimetic right-handed where L folds left-handed
+    cips = {}
+    for pattern in ("homogeneous", "homogeneous-D"):
+        q = boonza.peptide("LFKDEY")
+        units, _ = convert_sulfono_run(q, range(6), "inherit", pattern)
+        ca_of = [next(a for a in q.residue_atoms(u) if str(q.atoms["name"][a]) == "CA")
+                 for u in units]  # fmt: skip
+        cips[pattern] = [stereocentre(q, a)["cip"] for a in ca_of]
+    assert cips["homogeneous"] == ["S", "S", "S"]
+    assert cips["homogeneous-D"] == ["R", "R", "R"]
+
+    with pytest.raises(ValueError, match="consecutive run"):
+        convert_sulfono_run(boonza.peptide("AAA"), [0, 2], "inherit", "homogeneous")
+    with pytest.raises(ValueError, match="keeps 2 alpha residues"):
+        convert_sulfono_run(boonza.peptide("AAA"), [0, 1, 2], "inherit", "2:1")
+    # the message says what to do instead, since a pair is what a user selects first
+    with pytest.raises(ValueError, match="convert this pair on its own"):
+        convert_sulfono_run(boonza.peptide("AA"), [0, 1], "inherit", "1:1")
+
+
 def test_a_chain_grows_at_either_end_and_atoms_become_a_residue():
     from boonza import gaff, viparr
     from boonza.md.config import DEFAULT_FORCEFIELDS

@@ -608,6 +608,8 @@ class Session:
             },  # fmt: skip
             "residues": {
                 "name": [str(x) for x in R.column("name")],
+                # what a sulfono-gamma-AA unit stands for ("LF"), for the sequence bar
+                "mimics": self._mimics(s, atom_res),
                 "resid": [int(x) for x in R.column("resid")],
                 "insertion": [str(x) for x in R.column("insertion")],
                 "chain": res_chain.tolist(),
@@ -715,6 +717,7 @@ class Session:
             s.atoms["view_edit"] = np.arange(1, s.natoms + 1, dtype=np.int64)  # follows atoms
             touched = list(atoms)
             made = None  # the atoms of a residue the edit made, for the page to select
+            note = ""  # a caveat of the edit, for the page to show
             try:
                 if op == "element":
                     # a hydrogen made heavy grows from where it is (a C becomes CH3, at
@@ -764,8 +767,12 @@ class Session:
                     edit.fuse(s, atoms, str(value))
                     hydrogens = False
                 elif op == "mutate":
-                    for r in sorted({int(s.atoms["residue"][a]) for a in atoms}):
+                    rs = sorted({int(s.atoms["residue"][a]) for a in atoms})
+                    for r in rs:
                         edit.mutate(s, r, str(value))
+                    # the page shows them: a mutated side chain in a cartoon-only
+                    # view belongs to the ribbon, which draws no side chain
+                    made = [a for r in rs for a in s.residue_atoms(r)]
                     hydrogens = False
                 elif op == "cap":
                     chains = sorted(
@@ -783,6 +790,19 @@ class Session:
                         raise ValueError("select atoms of one chain")
                     r = edit.extend(s, chains[0], str(value["end"]), str(value["residue"]))
                     made = s.residue_atoms(r)
+                    hydrogens = False
+                elif op == "sulfono":  # two amino acids become one sulfono-gamma-AA unit
+                    rs = sorted({int(s.atoms["residue"][a]) for a in atoms})
+                    r, note = edit.convert_sulfono(s, rs, str(value or "inherit"))
+                    made = s.residue_atoms(r)
+                    hydrogens = False
+                elif op == "sulfono_run":  # a run of amino acids becomes units, patterned
+                    rs = sorted({int(s.atoms["residue"][a]) for a in atoms})
+                    v = value or {}
+                    made_rs, note = edit.convert_sulfono_run(
+                        s, rs, str(v.get("r2") or "inherit"),
+                        str(v.get("pattern") or "homogeneous"))  # fmt: skip
+                    made = [a for r in made_rs for a in s.residue_atoms(r)]
                     hydrogens = False
                 elif op == "split":  # the atoms a residue of their own
                     r = edit.split_residue(s, atoms, str(value or ""))
@@ -822,6 +842,8 @@ class Session:
                    "was": [int(k) - 1 for k in tags]}  # fmt: skip
             if made is not None:
                 out["made"] = [int(a) for a in made]
+            if note:
+                out["note"] = note
             return out
 
     def _drop(self, atoms) -> dict:
@@ -1085,6 +1107,16 @@ class Session:
 
         a, b, c = (int(x) for x in atoms)
         return self._geometry_edit(lambda s: {"value": round(set_angle(s, a, b, c, degrees), 3)})
+
+    @staticmethod
+    def _mimics(s, atom_res) -> list:
+        if "sga_pair" not in s.atoms.props:
+            return [""] * s.nresidues
+        out = [""] * s.nresidues
+        for a, pair in enumerate(np.asarray(s.atoms["sga_pair"])):
+            if pair:
+                out[int(atom_res[a])] = str(pair)
+        return out
 
     def _numbers(self) -> dict:
         """The atom properties named in ``numbers``, one value an atom, for the

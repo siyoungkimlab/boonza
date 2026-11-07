@@ -296,6 +296,9 @@ KNOWN_PARENTS = {
     "OCS": "CYS", "CME": "CYS", "SNC": "CYS", "CSS": "CYS", "HYP": "PRO", "MLY": "LYS",
     "M3L": "LYS", "MLZ": "LYS", "ALY": "LYS", "KCX": "LYS", "LLP": "LYS", "NLE": "LEU",
     "ABA": "ALA", "AIB": "ALA", "CGU": "GLU", "HIC": "HIS", "MHS": "HIS",
+    # boonza view writes SGA (a sulfono-gamma-AA unit, two residues become one):
+    # it stands on glycine's backbone, and the rest of it gets GAFF2
+    "SGA": "GLY",
 }  # fmt: skip
 _VARIANTS = {"HID": "HIS", "HIE": "HIS", "HIP": "HIS", "HSD": "HIS", "HSE": "HIS", "HSP": "HIS",
              "CYX": "CYS", "CYM": "CYS", "ASH": "ASP", "GLH": "GLU", "LYN": "LYS"}  # fmt: skip

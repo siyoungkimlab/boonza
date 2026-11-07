@@ -2120,6 +2120,422 @@ def _best_rotamer(s, residue: int) -> None:
     s.positions = best_pos
 
 
+# The sulfonylated nitrogen of a sulfono-gamma-AA unit is pyramidal, not the
+# planar amide it replaces: measured over 46 units in ten CCDC depositions
+# (1541638-40, 1903145-48, 1976022/24/34) the sulfur sits on the bisector of
+# CM-NS-CT, tilted out of that plane, always on the side away from the helix
+# axis.  Putting it where the amide hydrogen was leaves it lying along the
+# helix instead, which is what an alpha backbone's N-H direction gives.
+NS_S_LENGTH = 1.636  # A,   sd 0.012 over those units
+NS_S_TILT = 36.7  # deg out of the CM-NS-CT plane, sd 4.3
+
+#: One sulfono-gamma-AA unit as the crystals have it, in a frame on N, CA, CM:
+#: averaged over eight interior units of CCDC 1541638 and 1541640, which agree
+#: to 0.26 A.  A unit laid on the two alpha residues it replaces fits them to
+#: 0.64 A backbone RMSD, so a conversion can take this geometry whole rather
+#: than hang a sulfonyl off atoms left where the alpha helix had them -- and it
+#: is the sulfonamide's own geometry that puts the sulfur out of the helix
+#: (3.5-3.9 A from the axis) instead of down among its hydrogen bonds.
+CRYSTAL_UNIT = {
+    "N": (0.0000, 0.0000, 0.0000),
+    "CA": (1.4642, 0.0000, 0.0000),
+    "CM": (1.9625, 1.4349, 0.0000),
+    "NS": (1.6376, 2.1325, 1.2601),
+    "CT": (2.5107, 1.7828, 2.3791),
+    "C": (1.8379, 1.2823, 3.6382),
+    "O": (2.5112, 0.9527, 4.5985),
+    "S1": (1.1975, 3.7055, 1.1509),
+    "OS1": (0.8197, 4.0942, 2.4622),
+    "OS2": (0.2835, 3.7988, 0.0681),
+    "R2": (2.6452, 4.6024, 0.6972),
+}  # fmt: skip
+
+
+# R2 on a sulfono-gamma-AA unit's sulfonyl, bonded through its first atom
+SULFONYL_R2 = {
+    "Methyl": "C", "Phenyl": "c1ccccc1", "Benzyl": "Cc1ccccc1",
+    "4-Chlorophenyl": "c1ccc(Cl)cc1", "2-Naphthyl": "c1cc2ccccc2cc1",
+}  # fmt: skip
+# an amino acid's side chain as bonded from CB, to mount the second residue's side
+# chain on the sulfonyl; Lys, Arg, Asp and Glu charged as at pH 7, like mutate's
+SIDE_CHAIN = {
+    "ALA": "C", "VAL": "C(C)C", "LEU": "CC(C)C", "ILE": "C(C)CC", "MET": "CCSC",
+    "PHE": "Cc1ccccc1", "TRP": "Cc1c[nH]c2ccccc12", "SER": "CO", "THR": "C(O)C",
+    "CYS": "CS", "TYR": "Cc1ccc(O)cc1", "ASN": "CC(N)=O", "GLN": "CCC(N)=O",
+    "ASP": "CC(=O)[O-]", "GLU": "CCC(=O)[O-]", "LYS": "CCCC[NH3+]",
+    "ARG": "CCCNC(N)=[NH2+]", "HIS": "Cc1c[nH]cn1",
+}  # fmt: skip
+
+
+def _pyramidal_sulfonyl(s, ns: int, group) -> np.ndarray:
+    """Swing the sulfonyl about NS to where the crystal structures put it.
+
+    :func:`attach` lays the sulfur along the bond it replaces, and the amide
+    N-H of an alpha helix points along the helix axis, so the sulfonyl ends up
+    lying in the backbone rather than standing out of it.  The depositions put
+    the sulfur on the bisector of CM-NS-CT, :data:`NS_S_TILT` degrees out of
+    that plane at :data:`NS_S_LENGTH`, on the side facing away from the chain.
+    The group turns rigidly about the nitrogen, keeping its own geometry."""
+    group = [int(a) for a in np.asarray(group).tolist()]
+    nbrs = [b for b, _ in neighbors(s, ns) if b not in group and s.atoms["anum"][b] > 1]
+    if len(nbrs) != 2 or not group:
+        return np.asarray(group, np.int64)
+    pos = np.array(s.positions, float)
+    o = pos[ns]
+    u1, u2 = _unit(pos[nbrs[0]] - o), _unit(pos[nbrs[1]] - o)
+    bisect = _unit(-(u1 + u2))
+    normal = np.cross(u1, u2)
+    if np.linalg.norm(normal) < 1e-6:
+        return np.asarray(group, np.int64)
+    normal = _unit(normal)
+    # a helix curls around its axis, so the local backbone's centre is inward
+    heavy = np.flatnonzero(np.asarray(s.atoms["anum"]) > 1)
+    near = [a for a in heavy.tolist()
+            if a not in group and a != ns and np.linalg.norm(pos[a] - o) < 9.0]  # fmt: skip
+    outward = _unit(o - pos[near].mean(0)) if len(near) >= 3 else bisect
+    if normal @ outward < 0:
+        normal = -normal
+    t = np.radians(NS_S_TILT)
+    want = _unit(bisect * np.cos(t) + normal * np.sin(t))
+    have = _unit(pos[group[0]] - o)
+    if np.linalg.norm(np.cross(have, want)) > 1e-8:
+        rot = _rotation_onto(have, want)
+        pos[group] = (pos[group] - o) @ rot.T + o
+    pos[group] = pos[group] + (o + want * NS_S_LENGTH - pos[group[0]])
+    s.positions = pos
+    return np.asarray(group, np.int64)
+
+
+def _branch(s, stay: int, go: int) -> list:
+    """The atoms reached from ``go`` without passing back through ``stay``."""
+    seen, stack, out = {stay, go}, [go], [go]
+    while stack:
+        a = stack.pop()
+        for b, _ in neighbors(s, a):
+            if b not in seen:
+                seen.add(b)
+                out.append(b)
+                stack.append(b)
+    return out
+
+
+def _turned_over(s, nm, before, after) -> bool:
+    """Whether moving to ``after`` inverts the unit's chiral carbon."""
+    ca, n, cm = nm.get("CA"), nm.get("N"), nm.get("CM")
+    if ca is None or n is None or cm is None:
+        return False
+    side = [b for b, _ in neighbors(s, ca)
+            if b not in (n, cm) and s.atoms["anum"][b] > 1]  # fmt: skip
+    if not side:
+        return False
+
+    def sign(p):
+        return float(np.sign(np.dot(np.cross(p[n] - p[ca], p[cm] - p[ca]),
+                                    p[side[0]] - p[ca])))  # fmt: skip
+
+    return sign(before) != 0 and sign(after) != 0 and sign(before) != sign(after)
+
+
+def _fit_crystal_unit(s, residue: int) -> None:
+    """Move a converted unit's backbone onto :data:`CRYSTAL_UNIT`.
+
+    The alpha helix a conversion starts from points its amide N-H along the
+    helix axis, into the hydrogen bonds that hold the helix together, so a
+    sulfonyl built on that nitrogen ends up inside the helix.  The crystals put
+    the same nitrogen an angstrom further out, and a crystal unit lies on the
+    two alpha residues it replaces to 0.64 A, so taking its geometry whole is a
+    small correction rather than a rebuild.
+
+    N, CA and C anchor the fit -- they carry the bonds to the neighbouring
+    residues, so they stay where the chain expects them while CM, NS, CT and the
+    sulfonyl take the crystal's places.  Hydrogens follow their heavy atom and
+    the R2 arm rides the sulfur."""
+    nm = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(residue)}
+    if not {"N", "CA", "CM", "NS", "CT", "C", "S1"} <= set(nm):
+        return
+    T = {k: np.asarray(v, float) for k, v in CRYSTAL_UNIT.items()}
+    pos = np.array(s.positions, float)
+
+    anchors = ("N", "CA", "C")
+    rot, shift = _kabsch(np.array([T[k] for k in anchors]),
+                         np.array([pos[nm[k]] for k in anchors]))  # fmt: skip
+    at = {k: v @ rot.T + shift for k, v in T.items()}
+    oxy = [b for b, _ in neighbors(s, nm["S1"]) if s.atoms["anum"][b] == 8]
+    root = [b for b, _ in neighbors(s, nm["S1"])
+            if b != nm["NS"] and b not in oxy and s.atoms["anum"][b] > 1]  # fmt: skip
+    group = _branch(s, nm["NS"], nm["S1"])
+    if root:
+        turn = _rotation_onto(_unit(pos[root[0]] - pos[nm["S1"]]),
+                              _unit(at["R2"] - at["S1"]))  # fmt: skip
+        pos[group] = (pos[group] - pos[nm["S1"]]) @ turn.T + at["S1"]
+    else:
+        pos[group] = pos[group] + (at["S1"] - pos[nm["S1"]])
+    for key in ("CM", "NS", "CT", "O"):
+        a = nm.get(key)
+        if a is None:
+            continue
+        move = at[key] - pos[a]
+        pos[a] = at[key]
+        for h, _ in neighbors(s, a):
+            if s.atoms["anum"][h] == 1:
+                pos[h] = pos[h] + move
+    # only CM of the chiral carbon's four substituents moves, so the fit can in
+    # principle turn the centre over -- a 2:1 or homogeneous-D unit was inverted
+    # on purpose, and the template is an L one.  Leave such a unit as it was.
+    if _turned_over(s, nm, np.array(s.positions, float), pos):
+        return
+    s.positions = pos
+
+
+def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
+    """Turn two consecutive amino acids into one sulfono-gamma-AA unit, residue SGA
+    (Cai lab foldamers: NH-CA(R1)H-CM(H2)-N(SO2-R2)(named NS)-CT(H2)-C=O).
+
+    The first residue keeps its side chain (R1), its amide and its alpha carbon in
+    place; its carbonyl becomes the CH2 called CM.  The second residue's nitrogen is
+    sulfonylated (NS), its alpha carbon loses the side chain and becomes the CH2
+    called CT, and its carbonyl stays, bonded to the next residue as it was.  ``r2``
+    is "inherit" (the second residue's own side chain, from SIDE_CHAIN, mounted on
+    the sulfonyl), a SULFONYL_R2 name, or a SMILES bonding through its first atom.
+    GAFF2 knows the unit: KNOWN_PARENTS stands SGA on glycine's backbone.
+    Returns (the residue, a note for the page or "")."""
+    residues = sorted({int(r) for r in residues})
+    if len(residues) != 2:
+        raise ValueError("select atoms of exactly two amino acids")
+    i, j = residues
+    if s.find_bond(_residue_atom(s, i, "C"), _residue_atom(s, j, "N")) is None:
+        i, j = j, i  # selected against the chain's direction
+    for r, what in ((i, "first"), (j, "second")):
+        if any(_residue_atom(s, r, x) < 0 for x in ("N", "CA", "C")):
+            raise ValueError(f"the {what} residue needs a backbone (N, CA, C)")
+    ci, nj = _residue_atom(s, i, "C"), _residue_atom(s, j, "N")
+    if s.find_bond(ci, nj) is None:
+        raise ValueError("the two residues must follow each other in one chain "
+                         "(a peptide bond between them)")  # fmt: skip
+    note = ""
+    name_j = str(s.residues["name"][j])
+    if r2 == "inherit":
+        smi = SIDE_CHAIN.get(name_j)
+        if smi is None:
+            smi = "C"
+            note = f"{name_j} has no side chain to mount on the sulfonyl: methyl instead"
+    else:
+        smi = SULFONYL_R2.get(r2, r2)
+
+    pair = (ONE_LETTER.get(str(s.residues["name"][i]), "X")
+            + ONE_LETTER.get(name_j, "X"))  # fmt: skip
+    aim = None  # where the second residue's side chain pointed: R2 will face there
+    cbj, caj0 = _residue_atom(s, j, "CB"), _residue_atom(s, j, "CA")
+    if cbj >= 0 and caj0 >= 0:
+        v = np.asarray(s.positions, float)[cbj] - np.asarray(s.positions, float)[caj0]
+        if np.linalg.norm(v) > 0:
+            aim = v / np.linalg.norm(v)
+
+    # the first residue's carbonyl oxygens go (C becomes the CH2 called CM), and the
+    # second loses everything but its backbone.  What stays is found by bonds, not
+    # names: a residue can carry an amino acid's name over other atoms, and deleting
+    # by name then strands its hydrogens (an H1 on a side chain is no backbone H)
+    caj, cj = _residue_atom(s, j, "CA"), _residue_atom(s, j, "C")
+    keep = {nj, caj, cj}
+    keep |= {b for b, _ in neighbors(s, cj) if s.atoms["anum"][b] == 8}  # O, and OXT at a terminus
+    # and every kept atom's hydrogens: the amide H, HA (trimmed later), a terminal OXT's
+    keep |= {b for a in list(keep) for b, _ in neighbors(s, a) if s.atoms["anum"][b] == 1}
+    gone = [int(a) for a in s.residue_atoms(j) if int(a) not in keep]
+    inside = set(int(a) for a in s.residue_atoms(i))
+    gone += [b for b, _ in neighbors(s, ci) if s.atoms["anum"][b] == 8 and b in inside]
+    s.delete_atoms(sorted(set(gone)))
+
+    # the unit's names first, so the new hydrogens are named after them (HM1, HT1 ...)
+    ci, nj = _residue_atom(s, i, "C"), _residue_atom(s, j, "N")
+    caj = _residue_atom(s, j, "CA")
+    if min(ci, nj, caj) < 0:
+        raise ValueError("the second residue lost its backbone in the edit")
+    names = np.asarray(s.atoms["name"]).astype(object)
+    names[ci], names[nj], names[caj] = "CM", "NS", "CT"
+    s.atoms["name"] = names.astype(str)
+    # CM and CT fill up with hydrogens; a proline's bare N gets one to attach at
+    adjust_hydrogens(s, [ci, caj, nj])
+    nj = _residue_atom(s, j, "NS")
+    hs = [b for b, _ in neighbors(s, nj) if s.atoms["anum"][b] == 1]
+    if not hs:
+        raise ValueError("the second residue's nitrogen has no room for the sulfonyl")
+    new = attach(s, nj, hs[0], f"S(=O)(=O){smi}")
+    nj = _residue_atom(s, j, "NS")
+    new = _pyramidal_sulfonyl(s, nj, new)
+    # attach turned the N-S bond for heavy-atom clashes only, and a sulfonyl oxygen
+    # can still sit on a kept hydrogen (a proline ring's): both torsions, N-S and
+    # S-R2, are searched together over every atom, hydrogens included
+    s1 = int(new[0])
+    group = [int(a) for a in new.tolist()]
+    oxygens = {b for b, _ in neighbors(s, s1) if s.atoms["anum"][b] == 8}
+    root = [b for b, _ in neighbors(s, s1) if b != nj and b not in oxygens]
+    arm = [a for a in group if a != s1 and a not in oxygens] if root else []
+    pos = np.array(s.positions, float)
+    others = np.array([a for a in range(s.natoms) if a not in {*group, nj}], np.int64)
+    others = others[np.linalg.norm(pos[others] - pos[s1], axis=1) < 12.0]
+    mine = np.array(group, np.int64)
+
+    # the crystals put R2 outward, away from the helix, not where the residue it
+    # came from happened to point: the local backbone's centre is the inward side
+    heavy_all = np.flatnonzero(np.asarray(s.atoms["anum"]) > 1)
+    close = [a for a in heavy_all.tolist()
+             if a not in group and np.linalg.norm(pos[a] - pos[s1]) < 9.0]  # fmt: skip
+    away = _unit(pos[s1] - pos[close].mean(0)) if len(close) >= 3 else None
+
+    def key_of(p):
+        # no overlaps first, then R2 facing out of the helix, then least crowding
+        d = np.linalg.norm(p[mine][:, None] - p[others][None], axis=2)
+        hard = round(float(np.clip(1.2 - d.min(), 0, None)), 2)
+        crowd = float(np.clip(2.4 - d, 0, None).__pow__(2).sum())
+        align = 0.0
+        ref = away if away is not None else aim
+        if ref is not None and arm:
+            v = p[arm].mean(0) - p[s1]
+            if np.linalg.norm(v) > 0:
+                align = round(float(v @ ref / np.linalg.norm(v)), 1)
+        return (hard, -align, crowd)
+
+    best, best_pos = None, pos
+    for k1 in range(12):
+        p1 = rotate_about(pos, nj, s1, group, 360 * k1 / 12)
+        for k2 in range(12) if len(arm) > 1 else (0,):
+            p2 = rotate_about(p1, s1, int(root[0]), arm, 360 * k2 / 12) if arm else p1
+            c = key_of(p2)
+            if best is None or c < best:
+                best, best_pos = c, p2
+    s.positions = best_pos
+
+    # the two residues become one, SGA
+    _move_to(s, s.residue_atoms(j), i)
+    if not len(s.residue_atoms(j)):
+        s.delete_residues([j])
+        if j < i:
+            i -= 1
+    rnames = np.asarray(s.residues["name"]).astype(object)
+    rnames[i] = "SGA"
+    s.residues["name"] = rnames.astype(str)
+    # the CH2 hydrogens by their carbon (HM1/HM2, HT1/HT2), whatever _free_h_name chose
+    names = np.asarray(s.atoms["name"]).astype(object)
+    for heavy, tag in ((_residue_atom(s, i, "CM"), "M"), (_residue_atom(s, i, "CT"), "T")):
+        for k, h in enumerate(sorted(b for b, _ in neighbors(s, heavy)
+                                     if s.atoms["anum"][b] == 1), start=1):  # fmt: skip
+            names[h] = f"H{tag}{k}"
+    s.atoms["name"] = names.astype(str)
+    mine = [int(a) for a in s.residue_atoms(i)]
+    seen: set = set()
+    twice = []
+    for a in mine:
+        nm = str(s.atoms["name"][a])
+        if nm in seen:
+            twice.append(a)
+        seen.add(nm)
+    if twice:
+        _unique_names(s, i, twice)
+    _fit_crystal_unit(s, i)
+    _gather(s, i)
+    if "sga_pair" not in s.atoms.props:
+        s.atoms["sga_pair"] = [""] * s.natoms
+    col = np.asarray(s.atoms["sga_pair"]).astype(object)
+    col[[int(a) for a in s.residue_atoms(i)]] = pair
+    s.atoms["sga_pair"] = col.astype(str)
+    return i, note
+
+
+#: how a run of amino acids becomes sulfono-gamma-AA units: alpha residues kept
+#: before each pair, and whether the unit's chiral carbon turns D.
+#:
+#: The crystal structures fix the handedness: homogeneous L folds left-handed
+#: (4_14), the 1:1 alpha/L-sulfono and 2:1 alpha/D-sulfono hybrids right-handed
+#: (4_13 and 16-16-14).  Homogeneous D is the enantiomer of homogeneous L, so it
+#: is right-handed with the same radius and pitch -- by mirror symmetry rather
+#: than by a crystal of its own, which is why an all-foldamer right-handed
+#: mimetic is a model where the hybrids are measured.
+#:
+#: The spacing also decides where the sulfonyls point, which is what a design
+#: with a binding face to keep clear cares about.  Measured round the helix
+#: axis of the depositions: 1:1 turns -90 degrees a unit, so its sulfonyls work
+#: round four faces and only every fourth unit shares one; three alpha residues
+#: between units (CCDC 1903145) turns 180, putting them on two opposite faces.
+SULFONO_PATTERNS = {"homogeneous": (0, False), "homogeneous-D": (0, True),
+                    "1:1": (1, False), "2:1": (2, True), "3:1": (3, False)}  # fmt: skip
+
+
+def _chain_run(s, residues) -> list[int]:
+    """The residues ordered along their chain; they must be one consecutive run."""
+    rs = sorted({int(r) for r in residues})
+    nxt = {}
+    for r in rs:
+        c = _residue_atom(s, r, "C")
+        if c < 0:
+            continue
+        for q in rs:
+            n = _residue_atom(s, q, "N")
+            if q != r and n >= 0 and s.find_bond(c, n) is not None:
+                nxt[r] = q
+    heads = [r for r in rs if r not in set(nxt.values())]
+    out: list[int] = []
+    if len(heads) == 1:
+        r = heads[0]
+        while r is not None and r not in out:
+            out.append(r)
+            r = nxt.get(r)
+    if len(out) != len(rs):
+        raise ValueError("select one consecutive run of amino acids in a single chain")
+    return out
+
+
+def convert_sulfono_run(s, residues, r2: str = "inherit",
+                        pattern: str = "homogeneous") -> tuple[list[int], str]:  # fmt: skip
+    """Convert a run of amino acids along ``pattern``: every pair a unit
+    (homogeneous, L or D), an alpha residue kept before each pair (1:1), or two
+    kept and the unit's chiral carbon turned D (2:1).  Leftover residues at the
+    end stay as they are.  Returns (the units made, notes).
+
+    A hybrid starts by keeping its alpha residues, so where the selection starts
+    sets the register -- which residues land second in a pair and have their side
+    chain moved onto a sulfonyl.  Starting one residue earlier or later shifts
+    every unit along the chain."""
+    if pattern not in SULFONO_PATTERNS:
+        raise ValueError(f"pattern is one of {', '.join(SULFONO_PATTERNS)}, not {pattern!r}")
+    keep, d_unit = SULFONO_PATTERNS[pattern]
+    ordered = _chain_run(s, residues)
+    pairs, k = [], keep  # the hybrids' repeat starts with its alpha residues
+    while k + 1 < len(ordered):
+        pairs.append((ordered[k], ordered[k + 1]))
+        k += 2 + keep
+    if not pairs:
+        what = (
+            (
+                f"keeps {keep} alpha residue{'s' if keep > 1 else ''} and then converts a "
+                f"pair, so it needs {keep + 2} residues"
+            )
+            if keep
+            else "converts pairs"
+        )
+        raise ValueError(
+            f"the {pattern} pattern {what}, and {len(ordered)} "
+            f"{'was' if len(ordered) == 1 else 'were'} selected.  Select "
+            f"{keep + 2} or more consecutive residues, or convert this pair on its own "
+            "(one unit)"
+        )
+    notes, made = [], []
+    for i, j in reversed(pairs):  # C-terminal first: a conversion deletes a residue
+        if d_unit:
+            try:
+                set_chirality(s, _residue_atom(s, i, "CA"), "D")
+            except ValueError:  # glycine has no D; an already-D residue stays D
+                name = str(s.residues["name"][i])
+                if name != "GLY":
+                    notes.append(f"{name}{s.residues['resid'][i]} kept its configuration")
+        r, note = convert_sulfono(s, [i, j], r2)
+        made.append(r)
+        if note:
+            notes.append(note)
+    # each conversion below a made unit took one residue out from under it
+    made = [r - k for k, r in enumerate(reversed(made))][::-1]
+    return sorted(made), "; ".join(notes)
+
+
 def cap(s, chain: int, end: str) -> None:
     """ACE on a chain's first residue (``end="N"``) or NME on its last (``"C"``): a
     trans peptide bond, Amber's atom names, the terminus' charge gone."""

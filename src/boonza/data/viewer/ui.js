@@ -136,6 +136,27 @@ export function setupUI(app) {
     return addRep(pairs, { style, sel: what });
   }
 
+  // A new or changed residue has to be visible.  In a cartoon-only view its atoms
+  // belong to the ribbon alone, which draws no side chain, so a mutation or a
+  // conversion would land out of sight until the user adds a representation.
+  function reveal(m, ids) {
+    if (!m?.state || !ids?.length) return;
+    const A = m.topo.atoms;
+    // heavy atoms, and never the builderH representations: those hold hydrogens
+    // alone and come and go with the dock, so an edited residue whose hydrogens
+    // they carry would look drawn while its new side chain is nowhere to be seen
+    const heavy = ids.filter(a => A.element[a] !== "H");
+    if (!heavy.length) return;
+    const drawn = m.reps.some(rep => !rep.builderH && !app.isRibbon(rep)
+                                     && rep.style !== "surface"
+                                     && heavy.some(a => rep.mask[a]));
+    // addRep, not showAs: showAs takes the atoms out of every representation
+    // that holds them and drops any it leaves empty, which is right for "show
+    // these instead" and wrong here -- an edited residue has to become visible
+    // without disturbing what the user already set up
+    if (!drawn) addRep([[m, ids]], { style: "sticks" });
+  }
+
   // these atoms in this color wherever they are drawn
   // atomsOnly: the atoms' own colors, the ribbons over them left as they are
   function colorIn(pairs, spec, atomsOnly = false) {
@@ -2866,6 +2887,24 @@ export function setupUI(app) {
     body.append(g);
     body.append(el("p", { className: "help" }, "The backbone stays; the side chain is built and turned to the "
       + "rotamer that clashes least; Lys, Arg, Asp and Glu charged as at pH 7."));
+    body.append(el("h3", {}, "Sulfono-\u03b3-AA"));
+    const pat = el("select", { title: "the pattern along the selected run" },
+      el("option", { value: "unit" }, "one unit (two residues)"),
+      el("option", { value: "homogeneous" }, "homogeneous L (left-handed)"),
+      el("option", { value: "homogeneous-D" }, "homogeneous D (right-handed)"),
+      el("option", { value: "1:1" }, "1:1 \u03b1/sulfono hybrid"),
+      el("option", { value: "2:1" }, "2:1 \u03b1/D-sulfono hybrid"),
+      el("option", { value: "3:1" }, "3:1 (sulfonyls on two faces)"));
+    const r2 = el("select", { title: "R2, the sulfonyl's substituent" },
+      ...SULFONO_R2.map(([v, lab]) => el("option", { value: v }, lab)));
+    body.append(row(pat, r2));
+    body.append(row(button("Convert Selection", () => pat.value === "unit" ? sulfono(r2.value) : sulfonoRun(pat.value, r2.value))));
+    body.append(el("p", { className: "help" }, "Consecutive amino acids become sulfono-\u03b3-AA units (residue "
+      + "SGA): every pair, or a pair after each kept \u03b1 residue (1:1), or after two (2:1). The crystals fold "
+      + "homogeneous L left-handed and the hybrids right-handed; homogeneous D is L's mirror, so right-handed "
+      + "too. Each unit's first residue keeps its side chain on the chiral carbon; the second's nitrogen "
+      + "takes the sulfonyl, carrying R2. The atoms stay on the \u03b1 trace, which is not these helices' own "
+      + "fold: minimize or run boonza md (GAFF2 knows SGA) to relax it."));
     body.append(el("h3", {}, "Extend"));
     const pick = el("select", { title: "the amino acid to add" },
       ...AMINO.map(aa => el("option", { value: aa, selected: aa === extendWith }, aa)));
@@ -2889,7 +2928,33 @@ export function setupUI(app) {
     const t = editTarget();
     if (!t) return;
     const out = await busyEdit(t[0], `mutating to ${aa}`, { op: "mutate", atoms: t[1], value: aa });
-    if (out) { app.message(`mutated to ${aa}`); openDock("protein"); }
+    if (!out) return;
+    if (out.made?.length) { app.select(t[0], out.made); reveal(t[0], out.made); }
+    app.message(`mutated to ${aa}`);
+    openDock("protein");
+  }
+  // two residues become one sulfono-gamma-AA unit (Cai lab foldamers): the first
+  // keeps its side chain on the chiral carbon, the second's rides the sulfonyl
+  const SULFONO_R2 = [["inherit", "side chain of the 2nd residue"], ["Methyl", "methyl"],
+                      ["Phenyl", "phenyl"], ["Benzyl", "benzyl"],
+                      ["4-Chlorophenyl", "4-chlorophenyl"], ["2-Naphthyl", "2-naphthyl"]];
+  async function sulfono(r2) {
+    const t = editTarget();
+    if (!t) return;
+    const out = await busyEdit(t[0], "converting to sulfono-\u03b3-AA", { op: "sulfono", atoms: t[1], value: r2 });
+    if (!out) return;
+    if (out.made?.length) { app.select(t[0], out.made); reveal(t[0], out.made); }
+    app.message(out.note || "two residues became one sulfono-\u03b3-AA unit (SGA)");
+    openDock("protein");
+  }
+  async function sulfonoRun(pattern, r2) {
+    const t = editTarget();
+    if (!t) return;
+    const out = await busyEdit(t[0], "converting to sulfono-\u03b3-AA", { op: "sulfono_run", atoms: t[1], value: { pattern, r2 } });
+    if (!out) return;
+    if (out.made?.length) { app.select(t[0], out.made); reveal(t[0], out.made); }
+    app.message(out.note || "the run became sulfono-\u03b3-AA units (SGA)");
+    openDock("protein");
   }
   async function extendChain(end) {
     const t = editTarget();
@@ -3795,7 +3860,8 @@ export function setupUI(app) {
       const R = m.topo.residues, C = m.topo.chains, chains = new Map();
       for (let r = 0; r < R.name.length; r++) {
         // traced residues, and amino acids and nucleotides the trace missed (a broken backbone)
-        if (!R.kind[r] && !(R.name[r].toUpperCase() in ONE && m.topo.residueAtoms[r].length > 3)) continue;
+        if (!R.kind[r] && !(R.name[r].toUpperCase() in ONE && m.topo.residueAtoms[r].length > 3)
+            && !R.mimics?.[r]) continue;
         if (!chains.has(R.chain[r])) chains.set(R.chain[r], []);
         chains.get(R.chain[r]).push(r);
       }
@@ -3820,10 +3886,14 @@ export function setupUI(app) {
       for (const r of rs) {
         if (prev !== null && R.resid[r] - R.resid[prev] > 1)
           res.append(el("span", { className: "gap", title: `${R.resid[r] - R.resid[prev] - 1} residues not in the structure` }, "·"));
-        const s = el("span", { className: `aa ss-${ss[r] || "C"}` }, letter(R.name[r]));
+        const mim = R.mimics?.[r] || "";
+        const s = el("span", { className: `aa ss-${ss[r] || "C"}${mim ? " unit" : ""}` },
+                     mim ? mim.toLowerCase() : letter(R.name[r]));
         s.dataset.m = m.index; s.dataset.r = r;
         if (R.resid[r] % 10 === 0) s.dataset.n = R.resid[r];
-        s.title = `${R.name[r]} ${R.resid[r]}${R.insertion[r].trim()} · chain ${chain}`;
+        s.title = mim
+          ? `${R.name[r]} ${R.resid[r]} · one sulfono-\u03b3-AA unit standing for ${mim[0]} and ${mim[1]} · chain ${chain}`
+          : `${R.name[r]} ${R.resid[r]}${R.insertion[r].trim()} · chain ${chain}`;
         res.append(s);
         prev = r;
       }
@@ -3892,6 +3962,10 @@ export function setupUI(app) {
     menu([
       { label: `Mutate ${what} to`, sub: () => AMINO.map(aa => ({ label: `${aa} (${ONE[aa]})`, run: () => mutate(aa) })),
         off: () => !m.topo.editable },
+      { label: "Convert to Sulfono-\u03b3-AA, sulfonyl:", sub: () => SULFONO_R2.map(([v, lab]) => ({ label: lab, run: () => sulfono(v) })),
+        off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size !== 2 },
+      { label: "Convert Run to Sulfono-\u03b3-AA", sub: () => [["homogeneous", "homogeneous L (left-handed)"], ["homogeneous-D", "homogeneous D (right-handed)"], ["1:1", "1:1 \u03b1/sulfono hybrid"], ["2:1", "2:1 \u03b1/D-sulfono hybrid"], ["3:1", "3:1 (sulfonyls on two faces)"]].map(([v, lab]) => ({ label: lab, run: () => sulfonoRun(v, "inherit") })),
+        off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size < 2 },
       { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",
       { label: "Center", run: () => app.centerView() },
