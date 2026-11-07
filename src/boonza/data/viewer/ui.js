@@ -150,7 +150,11 @@ export function setupUI(app) {
     const drawn = m.reps.some(rep => !rep.builderH && !app.isRibbon(rep)
                                      && rep.style !== "surface"
                                      && heavy.some(a => rep.mask[a]));
-    if (!drawn) showAs([[m, ids]], "sticks");
+    // addRep, not showAs: showAs takes the atoms out of every representation
+    // that holds them and drops any it leaves empty, which is right for "show
+    // these instead" and wrong here -- an edited residue has to become visible
+    // without disturbing what the user already set up
+    if (!drawn) addRep([[m, ids]], { style: "sticks" });
   }
 
   // these atoms in this color wherever they are drawn
