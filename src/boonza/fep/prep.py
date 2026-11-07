@@ -542,6 +542,29 @@ def _finish(hyb, old: System, args, complex_leg: bool, log=print):
             getattr(args, "dihedral_restraint_selection", None), None,
         )  # fmt: skip
         log(f"  dihedral restraints: {len(records)} backbone torsions over {what}")
+    if complex_leg and getattr(args, "distance_restraints", None):
+        from ..md.restraints import add_distance_restraints
+
+        # a spring on an atom that appears or disappears with lambda pulls on the
+        # very free energy the run measures: hold what both ligands share
+        changing = set(hyb.unique_old) | set(hyb.unique_new)
+        for pair in args.distance_restraints:
+            for sel in pair:
+                if any(int(a) in changing for a in old.select(sel).ids.tolist()):
+                    raise ValueError(
+                        f"distance restraint {sel!r} holds an atom that one ligand has "
+                        "and the other does not; a spring there biases the free energy "
+                        "this run measures.  Restrain atoms the two ligands share, or "
+                        "the receptor and its waters"
+                    )
+        held = add_distance_restraints(
+            hyb.system, old, args.distance_restraints, args.distance_restraint_kJ,
+            getattr(args, "distance_restraint_nm", None),
+        )  # fmt: skip
+        want = getattr(args, "distance_restraint_nm", None)
+        r0 = "each pair's starting distance" if want is None else f"r0 = {want:g} nm"
+        log(f"  distance restraints: {len(held)} springs, {r0}, "
+            f"k = {args.distance_restraint_kJ:g} kJ/mol/nm^2")  # fmt: skip
 
 
 def write_leg(directory: Path, hyb, old: System, meta: dict, positions_b=None) -> None:

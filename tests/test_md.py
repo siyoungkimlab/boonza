@@ -386,7 +386,7 @@ def test_a_distance_restraint_measures_across_the_box():
     assert _energy(system, s.positions) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_distance_restraints_from_the_command_line_and_a_file(tmp_path, capsys):
+def test_distance_restraints_from_the_command_line_and_a_file(tmp_path):
     args = parse_arguments([str(DATA_1TEN),
                             "--distance-restraint", "resid 10 and name O", "resid 20 and noh",
                             "--distance-restraint", "resid 11 and name O", "resid 30 and noh",
@@ -399,14 +399,8 @@ def test_distance_restraints_from_the_command_line_and_a_file(tmp_path, capsys):
     back = parse_arguments(["--config", str(path)])
     assert back.distance_restraints == args.distance_restraints
     assert back.distance_restraint_nm == 0.28
-    # boonza fep shares the parser but builds its own hybrid system: it refuses
-    # the springs rather than parse them and run without
-    from boonza.fep import cli as fep_cli
-
-    for sub in ("prep", "grow"):
-        with pytest.raises(SystemExit):
-            fep_cli.main([sub, str(DATA_1TEN), "--distance-restraint", "resid 1", "resid 2"])
-    assert "a free energy run does not hold it yet" in capsys.readouterr().err
+    # boonza fep takes the same springs, on its complex leg: see
+    # tests/test_fep_hybrid.py, which holds a hybrid system with them
     bad = tmp_path / "bad.toml"
     bad.write_text('distance_restraints = [["resid 1"]]\n')
     with pytest.raises(ValueError, match="wrong type"):
