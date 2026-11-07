@@ -1080,16 +1080,22 @@ def test_two_residues_become_a_sulfono_gamma_aa_unit():
     marked = np.asarray(p.atoms["sga_pair"])
     assert set(marked[p.residue_atoms(sga)].tolist()) == {"LF"}
     assert set(marked.tolist()) == {"", "LF"}  # nothing else is marked
-    # R2 faces where the replaced side chain pointed, and a proline ring next to the
-    # unit (the most crowded case) still leaves no overlap
+    # the unit takes the crystals' geometry: its backbone and sulfonyl lie on
+    # CRYSTAL_UNIT, which is what puts the sulfur out of the helix rather than
+    # down among the hydrogen bonds the alpha backbone keeps there
+    from boonza.align import kabsch
+    from boonza.viewer.edit import CRYSTAL_UNIT
+
     q = boonza.peptide("ALFA")
-    cb, ca = (next(a for a in q.residue_atoms(2) if str(q.atoms["name"][a]) == x)
-              for x in ("CB", "CA"))  # fmt: skip
-    aim = np.asarray(q.positions[cb], float) - np.asarray(q.positions[ca], float)
     r2u, _ = convert_sulfono(q, [1, 2], "inherit")
     qn = {str(q.atoms["name"][a]): a for a in q.residue_atoms(r2u)}
-    v = np.asarray(q.positions[qn["C1"]], float) - np.asarray(q.positions[qn["S1"]], float)
-    assert float(v @ aim / (np.linalg.norm(v) * np.linalg.norm(aim))) > 0.3
+    keys = ("N", "CA", "CM", "NS", "CT", "C", "S1")
+    T = np.array([CRYSTAL_UNIT[k] for k in keys])
+    X = np.array([np.asarray(q.positions[qn[k]], float) for k in keys])
+    rot, shift = kabsch(T, X)
+    # within the crystals' own unit-to-unit spread (0.26 A); N, CA and C anchor
+    # the fit and keep the alpha positions the chain's neighbours expect
+    assert float(np.sqrt((((T @ rot.T + shift) - X) ** 2).sum(1).mean())) < 0.3
     crowded = boonza.peptide("APGA")
     convert_sulfono(crowded, [1, 2], "inherit")
     assert pdist(np.asarray(crowded.positions, float)).min() > 0.9
@@ -1152,7 +1158,7 @@ def test_a_run_becomes_sulfono_units_in_a_pattern():
         normal = np.cross(cm - ns, ct - ns)
         normal /= np.linalg.norm(normal)
         tilt = np.degrees(np.arcsin(abs((s1 - ns) @ normal / np.linalg.norm(s1 - ns))))
-        assert abs(tilt - 36.7) < 1.0  # and their pyramid
+        assert abs(tilt - 36.7) < 5.0  # and their pyramid, within its sd of 4.3
 
     s = boonza.peptide("ALFKDEY")
     made, _ = convert_sulfono_run(s, range(7), "inherit", "1:1")

@@ -2129,6 +2129,27 @@ def _best_rotamer(s, residue: int) -> None:
 NS_S_LENGTH = 1.636  # A,   sd 0.012 over those units
 NS_S_TILT = 36.7  # deg out of the CM-NS-CT plane, sd 4.3
 
+#: One sulfono-gamma-AA unit as the crystals have it, in a frame on N, CA, CM:
+#: averaged over eight interior units of CCDC 1541638 and 1541640, which agree
+#: to 0.26 A.  A unit laid on the two alpha residues it replaces fits them to
+#: 0.64 A backbone RMSD, so a conversion can take this geometry whole rather
+#: than hang a sulfonyl off atoms left where the alpha helix had them -- and it
+#: is the sulfonamide's own geometry that puts the sulfur out of the helix
+#: (3.5-3.9 A from the axis) instead of down among its hydrogen bonds.
+CRYSTAL_UNIT = {
+    "N": (0.0000, 0.0000, 0.0000),
+    "CA": (1.4642, 0.0000, 0.0000),
+    "CM": (1.9625, 1.4349, 0.0000),
+    "NS": (1.6376, 2.1325, 1.2601),
+    "CT": (2.5107, 1.7828, 2.3791),
+    "C": (1.8379, 1.2823, 3.6382),
+    "O": (2.5112, 0.9527, 4.5985),
+    "S1": (1.1975, 3.7055, 1.1509),
+    "OS1": (0.8197, 4.0942, 2.4622),
+    "OS2": (0.2835, 3.7988, 0.0681),
+    "R2": (2.6452, 4.6024, 0.6972),
+}  # fmt: skip
+
 
 # R2 on a sulfono-gamma-AA unit's sulfonyl, bonded through its first atom
 SULFONYL_R2 = {
@@ -2183,6 +2204,87 @@ def _pyramidal_sulfonyl(s, ns: int, group) -> np.ndarray:
     pos[group] = pos[group] + (o + want * NS_S_LENGTH - pos[group[0]])
     s.positions = pos
     return np.asarray(group, np.int64)
+
+
+def _branch(s, stay: int, go: int) -> list:
+    """The atoms reached from ``go`` without passing back through ``stay``."""
+    seen, stack, out = {stay, go}, [go], [go]
+    while stack:
+        a = stack.pop()
+        for b, _ in neighbors(s, a):
+            if b not in seen:
+                seen.add(b)
+                out.append(b)
+                stack.append(b)
+    return out
+
+
+def _turned_over(s, nm, before, after) -> bool:
+    """Whether moving to ``after`` inverts the unit's chiral carbon."""
+    ca, n, cm = nm.get("CA"), nm.get("N"), nm.get("CM")
+    if ca is None or n is None or cm is None:
+        return False
+    side = [b for b, _ in neighbors(s, ca)
+            if b not in (n, cm) and s.atoms["anum"][b] > 1]  # fmt: skip
+    if not side:
+        return False
+
+    def sign(p):
+        return float(np.sign(np.dot(np.cross(p[n] - p[ca], p[cm] - p[ca]),
+                                    p[side[0]] - p[ca])))  # fmt: skip
+
+    return sign(before) != 0 and sign(after) != 0 and sign(before) != sign(after)
+
+
+def _fit_crystal_unit(s, residue: int) -> None:
+    """Move a converted unit's backbone onto :data:`CRYSTAL_UNIT`.
+
+    The alpha helix a conversion starts from points its amide N-H along the
+    helix axis, into the hydrogen bonds that hold the helix together, so a
+    sulfonyl built on that nitrogen ends up inside the helix.  The crystals put
+    the same nitrogen an angstrom further out, and a crystal unit lies on the
+    two alpha residues it replaces to 0.64 A, so taking its geometry whole is a
+    small correction rather than a rebuild.
+
+    N, CA and C anchor the fit -- they carry the bonds to the neighbouring
+    residues, so they stay where the chain expects them while CM, NS, CT and the
+    sulfonyl take the crystal's places.  Hydrogens follow their heavy atom and
+    the R2 arm rides the sulfur."""
+    nm = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(residue)}
+    if not {"N", "CA", "CM", "NS", "CT", "C", "S1"} <= set(nm):
+        return
+    T = {k: np.asarray(v, float) for k, v in CRYSTAL_UNIT.items()}
+    pos = np.array(s.positions, float)
+
+    anchors = ("N", "CA", "C")
+    rot, shift = _kabsch(np.array([T[k] for k in anchors]),
+                         np.array([pos[nm[k]] for k in anchors]))  # fmt: skip
+    at = {k: v @ rot.T + shift for k, v in T.items()}
+    oxy = [b for b, _ in neighbors(s, nm["S1"]) if s.atoms["anum"][b] == 8]
+    root = [b for b, _ in neighbors(s, nm["S1"])
+            if b != nm["NS"] and b not in oxy and s.atoms["anum"][b] > 1]  # fmt: skip
+    group = _branch(s, nm["NS"], nm["S1"])
+    if root:
+        turn = _rotation_onto(_unit(pos[root[0]] - pos[nm["S1"]]),
+                              _unit(at["R2"] - at["S1"]))  # fmt: skip
+        pos[group] = (pos[group] - pos[nm["S1"]]) @ turn.T + at["S1"]
+    else:
+        pos[group] = pos[group] + (at["S1"] - pos[nm["S1"]])
+    for key in ("CM", "NS", "CT", "O"):
+        a = nm.get(key)
+        if a is None:
+            continue
+        move = at[key] - pos[a]
+        pos[a] = at[key]
+        for h, _ in neighbors(s, a):
+            if s.atoms["anum"][h] == 1:
+                pos[h] = pos[h] + move
+    # only CM of the chiral carbon's four substituents moves, so the fit can in
+    # principle turn the centre over -- a 2:1 or homogeneous-D unit was inverted
+    # on purpose, and the template is an L one.  Leave such a unit as it was.
+    if _turned_over(s, nm, np.array(s.positions, float), pos):
+        return
+    s.positions = pos
 
 
 def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
@@ -2329,6 +2431,7 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
         seen.add(nm)
     if twice:
         _unique_names(s, i, twice)
+    _fit_crystal_unit(s, i)
     _gather(s, i)
     if "sga_pair" not in s.atoms.props:
         s.atoms["sga_pair"] = [""] * s.natoms
