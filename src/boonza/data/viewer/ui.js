@@ -328,6 +328,13 @@ export function setupUI(app) {
     { label: "Grow", sub: extendItems },
     { label: "Clickable", sub: () => PICKABLE.map(([label, k]) => ({ label, checked: () => state.masks[k],
       run: () => { state.masks[k] = !state.masks[k]; } })) },
+    { label: "Show Picked Residues Whole", checked: () => showSelResidues, run: () => {
+      showSelResidues = !showSelResidues;
+      try { localStorage.setItem("boonza.selResidues", showSelResidues ? "1" : "0"); } catch (e) { /* not kept */ }
+      markSelectedResidues();
+      app.rebuild();
+      app.draw();
+    } },
     "-",
     { label: "By Expression…", run: () => openCLI("select ") },
   ];
@@ -1793,6 +1800,7 @@ export function setupUI(app) {
   app.onSelection = () => {
     state.selHidden = false;  // a new selection is one to see
     refreshSelRow();
+    markSelectedResidues();  // every atom of a picked residue, ribbon or not
     markBuilderH();  // a selection of its own brings its hydrogens out, in the Builder
     refreshProteinBuilder();
     ramaRefresh?.();
@@ -2535,6 +2543,41 @@ export function setupUI(app) {
       app.aggregate(m);
     }
     app.rebuild();
+  }
+
+  // Every atom of a residue something in it is selected: a cartoon draws no side
+  // chain, so picking a residue in a ribbon otherwise shows nothing of what was
+  // picked.  One representation holds them all and is rebuilt as the selection
+  // moves, so nothing accumulates; residues already drawn as atoms are left to
+  // the representation that draws them.
+  let showSelResidues = true;
+  try { showSelResidues = localStorage.getItem("boonza.selResidues") !== "0"; } catch (e) { /* not kept */ }
+
+  function markSelectedResidues() {
+    for (const m of app.live().filter(o => o.state)) {
+      const had = m.reps.some(r => r.selResidues);
+      m.reps = m.reps.filter(r => !r.selResidues);
+      const A = m.topo.atoms, want = new Set();
+      if (showSelResidues && m.state.sel) {
+        const residues = new Set();
+        for (let a = 0; a < m.topo.natoms; a++) if (m.state.sel[a]) residues.add(A.residue[a]);
+        const drawnBy = rep => rep.on && !rep.builderH && !rep.selResidues
+                               && !app.isRibbon(rep) && rep.style !== "surface";
+        for (const r of residues) {
+          const atoms = m.topo.residueAtoms[r] || [];
+          const heavy = atoms.filter(a => A.element[a] !== "H");
+          if (!heavy.length) continue;
+          if (m.reps.some(rep => drawnBy(rep) && heavy.some(a => rep.mask[a]))) continue;
+          for (const a of atoms) want.add(a);
+        }
+      }
+      if (want.size) {
+        const rep = app.makeRep(m, { ids: [...want], label: "selected residues", style: "sticks" });
+        rep.selResidues = true;
+        m.reps.push(rep);
+      }
+      if (want.size || had) { app.aggregate(m); app.repsChanged(m); }
+    }
   }
 
   function closeDock() {
