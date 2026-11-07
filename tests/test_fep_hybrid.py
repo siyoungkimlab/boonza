@@ -140,3 +140,46 @@ def test_masses_and_order():
            for f in with_lrc.getForces()):  # fmt: skip
         with pytest.raises(ValueError, match="dispersion"):
             hybrid.build(with_lrc, with_lrc, xa, xa, *_mapping(a, a))
+
+
+def test_distance_restraints_hold_the_complex_leg():
+    """boonza md's springs, carried into a free energy run's complex leg.
+
+    A spring on an atom one ligand has and the other does not pulls on the very
+    free energy the run measures, so it is refused rather than quietly biasing
+    the answer; the solvent leg has no receptor to hold and gets none.
+    """
+    import types
+
+    from boonza.fep import prep
+
+    a, sa, xa = _system("GAG")
+    b, sb, xb = _system("GSG")
+    core, env = _mapping(a, b)
+    args = types.SimpleNamespace(
+        pressure=1.0, temperature=300.0, dihedral_restraint="none",
+        distance_restraint_kJ=1000.0, distance_restraint_nm=None,
+        distance_restraints=[["resid 1 and name N", "resid 3 and name N"]],
+    )  # fmt: skip
+    h = hybrid.build(sa, sb, xa, xb, core, env)
+    said = []
+    prep._finish(h, a, args, True, log=said.append)
+    names = [h.system.getForce(i).getName() for i in range(h.system.getNumForces())]
+    assert "DistanceRestraints" in names
+    assert any("distance restraints: 1 springs" in x for x in said)
+
+    # the solvent leg holds nothing
+    solv = hybrid.build(sa, sb, xa, xb, core, env)
+    prep._finish(solv, a, args, False, log=lambda *_: None)
+    assert "DistanceRestraints" not in [
+        solv.system.getForce(i).getName() for i in range(solv.system.getNumForces())
+    ]
+
+    # and an atom only one ligand has is refused
+    odd = sorted(h.unique_old)[0]
+    args.distance_restraints = [
+        [f"resid {int(a.atoms['residue'][odd]) + 1} and name {a.atoms['name'][odd]}",
+         "resid 3 and name N"]
+    ]  # fmt: skip
+    with pytest.raises(ValueError, match="one ligand has and the other does not"):
+        prep._finish(hybrid.build(sa, sb, xa, xb, core, env), a, args, True, log=lambda *_: None)

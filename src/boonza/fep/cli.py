@@ -39,18 +39,6 @@ FEP_DEFAULTS = {"equilibration_ns": 1.0, "production_ns": 5.0, "hmr": True,
                 "integration_fs": 4.0, "workdir": "boonza_fep"}  # fmt: skip
 
 
-#: boonza md settings the fep commands parse (they share its parser) but do not
-#: build: a hybrid system is made here, not by boonza md's run
-_MD_ONLY = ("distance_restraints",)
-
-
-def _refuse_md_only(args, parser) -> None:
-    given = [k for k in _MD_ONLY if getattr(args, k, None)]
-    if given:
-        flags = ", ".join("--" + k.removesuffix("s").replace("_", "-") for k in given)
-        parser.error(f"{flags} is boonza md's: a free energy run does not hold it yet")
-
-
 def _prep(argv) -> int:
     from .. import viparr
     from ..md.config import build_parser, parse_arguments
@@ -114,7 +102,6 @@ def _prep(argv) -> int:
                         "ligands (as they were) and the new ones; only edges that join the new "
                         "ones are built, and every edge already run is reused")  # fmt: skip
     args = parse_arguments(argv, parser)
-    _refuse_md_only(args, parser)
     for k, v in FEP_DEFAULTS.items():
         if k not in args.specified and not (k == "integration_fs" and "hmr" in args.specified
                                             and not args.hmr):  # fmt: skip
@@ -194,7 +181,6 @@ def _grow(argv) -> int:
                         "different branches: one reached a salt bridge that four others "
                         "missed.  Without explicit water a placement costs seconds")  # fmt: skip
     args = parse_arguments(argv, parser)
-    _refuse_md_only(args, parser)
     for k, v in FEP_DEFAULTS.items():
         if k not in args.specified:
             setattr(args, k, v)
