@@ -2893,7 +2893,8 @@ export function setupUI(app) {
       el("option", { value: "homogeneous" }, "homogeneous L (left-handed)"),
       el("option", { value: "homogeneous-D" }, "homogeneous D (right-handed)"),
       el("option", { value: "1:1" }, "1:1 \u03b1/sulfono hybrid"),
-      el("option", { value: "2:1" }, "2:1 \u03b1/D-sulfono hybrid"));
+      el("option", { value: "2:1" }, "2:1 \u03b1/D-sulfono hybrid"),
+      el("option", { value: "3:1" }, "3:1 (sulfonyls on two faces)"));
     const r2 = el("select", { title: "R2, the sulfonyl's substituent" },
       ...SULFONO_R2.map(([v, lab]) => el("option", { value: v }, lab)));
     body.append(row(pat, r2));
@@ -3963,7 +3964,7 @@ export function setupUI(app) {
         off: () => !m.topo.editable },
       { label: "Convert to Sulfono-\u03b3-AA, sulfonyl:", sub: () => SULFONO_R2.map(([v, lab]) => ({ label: lab, run: () => sulfono(v) })),
         off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size !== 2 },
-      { label: "Convert Run to Sulfono-\u03b3-AA", sub: () => [["homogeneous", "homogeneous L (left-handed)"], ["homogeneous-D", "homogeneous D (right-handed)"], ["1:1", "1:1 \u03b1/sulfono hybrid"], ["2:1", "2:1 \u03b1/D-sulfono hybrid"]].map(([v, lab]) => ({ label: lab, run: () => sulfonoRun(v, "inherit") })),
+      { label: "Convert Run to Sulfono-\u03b3-AA", sub: () => [["homogeneous", "homogeneous L (left-handed)"], ["homogeneous-D", "homogeneous D (right-handed)"], ["1:1", "1:1 \u03b1/sulfono hybrid"], ["2:1", "2:1 \u03b1/D-sulfono hybrid"], ["3:1", "3:1 (sulfonyls on two faces)"]].map(([v, lab]) => ({ label: lab, run: () => sulfonoRun(v, "inherit") })),
         off: () => !m.topo.editable || new Set(ids.map(a => m.topo.atoms.residue[a])).size < 2 },
       { label: "Rename or Renumber…", run: relabelPanel, off: () => !m.topo.editable },
       "-",

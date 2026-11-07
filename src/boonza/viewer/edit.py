@@ -2450,8 +2450,14 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
 #: is right-handed with the same radius and pitch -- by mirror symmetry rather
 #: than by a crystal of its own, which is why an all-foldamer right-handed
 #: mimetic is a model where the hybrids are measured.
+#:
+#: The spacing also decides where the sulfonyls point, which is what a design
+#: with a binding face to keep clear cares about.  Measured round the helix
+#: axis of the depositions: 1:1 turns -90 degrees a unit, so its sulfonyls work
+#: round four faces and only every fourth unit shares one; three alpha residues
+#: between units (CCDC 1903145) turns 180, putting them on two opposite faces.
 SULFONO_PATTERNS = {"homogeneous": (0, False), "homogeneous-D": (0, True),
-                    "1:1": (1, False), "2:1": (2, True)}  # fmt: skip
+                    "1:1": (1, False), "2:1": (2, True), "3:1": (3, False)}  # fmt: skip
 
 
 def _chain_run(s, residues) -> list[int]:
