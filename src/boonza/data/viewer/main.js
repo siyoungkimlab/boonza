@@ -922,7 +922,14 @@ function pick(x, y) {
   // nearer of them, the frontmost ribbon winning
   if (state.masks[3]) for (const m of shownModels()) {
     const R = m.topo.residues;
-    const on = r => r >= 0 && r < R.trace.length && R.trace[r] >= 0 && !m.drawn[R.trace[r]] && m.state.ribbon[r];
+    // a ribbon whose atoms are drawn is picked as atoms, not as a ribbon -- unless
+    // the only thing drawing them is the representation a selection brings up, which
+    // would otherwise take the residue you just picked out of the picker
+    const onlyPicked = a => m.reps.some(rep => rep.on && rep.selResidues && rep.mask[a])
+      && !m.reps.some(rep => rep.on && !rep.selResidues && !isRibbon(rep)
+                             && rep.style !== "surface" && rep.mask[a]);  // fmt: skip
+    const on = r => r >= 0 && r < R.trace.length && R.trace[r] >= 0 && m.state.ribbon[r]
+      && (!m.drawn[R.trace[r]] || onlyPicked(R.trace[r]));
     for (let r = 0; r < R.trace.length; r++) {
       if (!on(r)) continue;
       const p = project(m, R.trace[r]);
