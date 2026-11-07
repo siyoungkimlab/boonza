@@ -2120,6 +2120,16 @@ def _best_rotamer(s, residue: int) -> None:
     s.positions = best_pos
 
 
+# The sulfonylated nitrogen of a sulfono-gamma-AA unit is pyramidal, not the
+# planar amide it replaces: measured over 46 units in ten CCDC depositions
+# (1541638-40, 1903145-48, 1976022/24/34) the sulfur sits on the bisector of
+# CM-NS-CT, tilted out of that plane, always on the side away from the helix
+# axis.  Putting it where the amide hydrogen was leaves it lying along the
+# helix instead, which is what an alpha backbone's N-H direction gives.
+NS_S_LENGTH = 1.636  # A,   sd 0.012 over those units
+NS_S_TILT = 36.7  # deg out of the CM-NS-CT plane, sd 4.3
+
+
 # R2 on a sulfono-gamma-AA unit's sulfonyl, bonded through its first atom
 SULFONYL_R2 = {
     "Methyl": "C", "Phenyl": "c1ccccc1", "Benzyl": "Cc1ccccc1",
@@ -2134,6 +2144,45 @@ SIDE_CHAIN = {
     "ASP": "CC(=O)[O-]", "GLU": "CCC(=O)[O-]", "LYS": "CCCC[NH3+]",
     "ARG": "CCCNC(N)=[NH2+]", "HIS": "Cc1c[nH]cn1",
 }  # fmt: skip
+
+
+def _pyramidal_sulfonyl(s, ns: int, group) -> np.ndarray:
+    """Swing the sulfonyl about NS to where the crystal structures put it.
+
+    :func:`attach` lays the sulfur along the bond it replaces, and the amide
+    N-H of an alpha helix points along the helix axis, so the sulfonyl ends up
+    lying in the backbone rather than standing out of it.  The depositions put
+    the sulfur on the bisector of CM-NS-CT, :data:`NS_S_TILT` degrees out of
+    that plane at :data:`NS_S_LENGTH`, on the side facing away from the chain.
+    The group turns rigidly about the nitrogen, keeping its own geometry."""
+    group = [int(a) for a in np.asarray(group).tolist()]
+    nbrs = [b for b, _ in neighbors(s, ns) if b not in group and s.atoms["anum"][b] > 1]
+    if len(nbrs) != 2 or not group:
+        return np.asarray(group, np.int64)
+    pos = np.array(s.positions, float)
+    o = pos[ns]
+    u1, u2 = _unit(pos[nbrs[0]] - o), _unit(pos[nbrs[1]] - o)
+    bisect = _unit(-(u1 + u2))
+    normal = np.cross(u1, u2)
+    if np.linalg.norm(normal) < 1e-6:
+        return np.asarray(group, np.int64)
+    normal = _unit(normal)
+    # a helix curls around its axis, so the local backbone's centre is inward
+    heavy = np.flatnonzero(np.asarray(s.atoms["anum"]) > 1)
+    near = [a for a in heavy.tolist()
+            if a not in group and a != ns and np.linalg.norm(pos[a] - o) < 9.0]  # fmt: skip
+    outward = _unit(o - pos[near].mean(0)) if len(near) >= 3 else bisect
+    if normal @ outward < 0:
+        normal = -normal
+    t = np.radians(NS_S_TILT)
+    want = _unit(bisect * np.cos(t) + normal * np.sin(t))
+    have = _unit(pos[group[0]] - o)
+    if np.linalg.norm(np.cross(have, want)) > 1e-8:
+        rot = _rotation_onto(have, want)
+        pos[group] = (pos[group] - o) @ rot.T + o
+    pos[group] = pos[group] + (o + want * NS_S_LENGTH - pos[group[0]])
+    s.positions = pos
+    return np.asarray(group, np.int64)
 
 
 def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
@@ -2210,6 +2259,7 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
         raise ValueError("the second residue's nitrogen has no room for the sulfonyl")
     new = attach(s, nj, hs[0], f"S(=O)(=O){smi}")
     nj = _residue_atom(s, j, "NS")
+    new = _pyramidal_sulfonyl(s, nj, new)
     # attach turned the N-S bond for heavy-atom clashes only, and a sulfonyl oxygen
     # can still sit on a kept hydrogen (a proline ring's): both torsions, N-S and
     # S-R2, are searched together over every atom, hydrogens included
@@ -2223,17 +2273,24 @@ def convert_sulfono(s, residues, r2: str = "inherit") -> tuple[int, str]:
     others = others[np.linalg.norm(pos[others] - pos[s1], axis=1) < 12.0]
     mine = np.array(group, np.int64)
 
+    # the crystals put R2 outward, away from the helix, not where the residue it
+    # came from happened to point: the local backbone's centre is the inward side
+    heavy_all = np.flatnonzero(np.asarray(s.atoms["anum"]) > 1)
+    close = [a for a in heavy_all.tolist()
+             if a not in group and np.linalg.norm(pos[a] - pos[s1]) < 9.0]  # fmt: skip
+    away = _unit(pos[s1] - pos[close].mean(0)) if len(close) >= 3 else None
+
     def key_of(p):
-        # no overlaps first; then R2 facing where the old side chain pointed
-        # (up or down the helix face is not an arbitrary choice); then least crowding
+        # no overlaps first, then R2 facing out of the helix, then least crowding
         d = np.linalg.norm(p[mine][:, None] - p[others][None], axis=2)
         hard = round(float(np.clip(1.2 - d.min(), 0, None)), 2)
         crowd = float(np.clip(2.4 - d, 0, None).__pow__(2).sum())
         align = 0.0
-        if aim is not None and arm:
+        ref = away if away is not None else aim
+        if ref is not None and arm:
             v = p[arm].mean(0) - p[s1]
             if np.linalg.norm(v) > 0:
-                align = round(float(v @ aim / np.linalg.norm(v)), 1)
+                align = round(float(v @ ref / np.linalg.norm(v)), 1)
         return (hard, -align, crowd)
 
     best, best_pos = None, pos

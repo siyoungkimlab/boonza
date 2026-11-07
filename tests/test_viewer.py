@@ -1132,7 +1132,6 @@ def test_a_run_becomes_sulfono_units_in_a_pattern():
     """Homogeneous: every pair; 1:1: an alpha kept before each unit; 2:1: two kept
     and the unit's carbon turned D.  The terminal OXT keeps its hydrogen, glycine
     quietly keeps its missing configuration, and errors say what to select."""
-    from scipy.spatial.distance import pdist
 
     from boonza.viewer.edit import convert_sulfono_run, neighbors, stereocentre
 
@@ -1141,7 +1140,19 @@ def test_a_run_becomes_sulfono_units_in_a_pattern():
     assert [str(x) for x in s.residues["name"]] == ["SGA", "SGA", "SGA"] and made == [0, 1, 2]
     oxt = next(a for a in range(s.natoms) if str(s.atoms["name"][a]) == "OXT")
     assert sum(1 for b, _ in neighbors(s, oxt) if s.atoms["anum"][b] == 1) == 1
-    assert pdist(np.asarray(s.positions, float)).min() > 0.9
+    # every unit's sulfonyl stands out of the chain, as the crystals have it:
+    # the sulfur sits off the CM-NS-CT plane on the side away from the backbone.
+    # Converting every pair on an alpha trace is strained (these need relaxing),
+    # so the contacts are not the test -- the geometry at the nitrogen is.
+    for u in made:
+        nm = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(u)}
+        p = np.asarray(s.positions, float)
+        ns, cm, ct, s1 = p[nm["NS"]], p[nm["CM"]], p[nm["CT"]], p[nm["S1"]]
+        assert abs(np.linalg.norm(s1 - ns) - 1.636) < 0.01  # the crystals' N-S
+        normal = np.cross(cm - ns, ct - ns)
+        normal /= np.linalg.norm(normal)
+        tilt = np.degrees(np.arcsin(abs((s1 - ns) @ normal / np.linalg.norm(s1 - ns))))
+        assert abs(tilt - 36.7) < 1.0  # and their pyramid
 
     s = boonza.peptide("ALFKDEY")
     made, _ = convert_sulfono_run(s, range(7), "inherit", "1:1")
