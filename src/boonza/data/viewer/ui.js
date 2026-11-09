@@ -1329,12 +1329,12 @@ export function setupUI(app) {
 
   // --- series: designs of a ligand, a model each, saved together as one SDF ----------------
 
-  // a cavity pocket and what came with it (its pharmacophore, its medoid's CG frame
-  // and probe molecules), tied by rank: each offers the others in its menu, and the
-  // pocket row's md button shows the whole set together
-  const KIN = ["pockets", "pharmacophore", "frames", "probes"];
-  const kinOf = m => KIN.includes(m.group) && m.row?.rank !== undefined
-    ? app.live().filter(o => o !== m && KIN.includes(o.group) && o.row?.rank === m.row.rank) : [];
+  // a cavity pocket and what came with it (its pharmacophore and, grouped as
+  // "frame K", its medoid's CG frame and probe molecules), tied by rank: each offers
+  // the others in its menu, and the pocket row's md button shows the whole set together
+  const kinGroup = g => g === "pockets" || g === "pharmacophore" || /^frame \d+$/.test(g);
+  const kinOf = m => kinGroup(m.group) && m.row?.rank !== undefined
+    ? app.live().filter(o => o !== m && kinGroup(o.group) && o.row?.rank === m.row.rank) : [];
   function kinItems(m) {
     const kin = kinOf(m);
     if (!kin.length) return [];
@@ -1350,7 +1350,7 @@ export function setupUI(app) {
   // probe molecules shown together, every other pocket's hidden -- looked at
   async function lookAtPocket(m) {
     const mine = [m, ...kinOf(m)];
-    const away = app.live().filter(o => o.shown && KIN.includes(o.group) && !mine.includes(o));
+    const away = app.live().filter(o => o.shown && kinGroup(o.group) && !mine.includes(o));
     if (away.length) await app.show(away, false);
     state.current = m.index;
     await app.show(mine, true);
@@ -3823,7 +3823,7 @@ export function setupUI(app) {
       x.onclick = () => closeModel(m);
       const extras = [];
       if (m.group === "pockets") {  // the pocket in its MD frame, one click
-        const fr = kinOf(m).find(o => o.group === "frames");
+        const fr = kinOf(m).find(o => o.name.startsWith("frame "));
         const md = fr && /md frame (\d+)/.exec(fr.name)?.[1];
         if (fr) {
           const b = el("button", { className: "table-btn", title: `look at ${m.name} in MD frame ${md ?? "?"}: `

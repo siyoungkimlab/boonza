@@ -1246,10 +1246,11 @@ def from_cavity(d, cg_frames: bool = False) -> Viewer:
     """boonza cavity: the protein (or apo structure), its ligand, and each pocket's
     medoid site; pharmacophore hotspots, the holo structure and each pocket's
     coarse-grained protein and probes in its medoid's MD frame (frame_K_mdF,
-    probes_K_mdF) are listed, off.  ``cg_frames`` (boonza view --cg-frames) shows
-    the frames and probes from the start.  The ligand is in the file ligand.json
-    names: in the structure, it is part of that model; in holo, it is a model of
-    its own over the apo protein, and holo is off."""
+    probes_K_mdF, grouped together as "frame K") are listed, off.  ``cg_frames``
+    (boonza view --cg-frames) shows the frames and probes from the start.  The
+    ligand is in the file ligand.json names: in the structure, it is part of that
+    model; in holo, it is a model of its own over the apo protein, and holo is
+    off."""
     import json
 
     d = Path(d)
@@ -1317,14 +1318,15 @@ def from_cavity(d, cg_frames: bool = False) -> Viewer:
             pharmacophores.append(Model(f"pharmacophore {k}", hotspots, group="pharmacophore",
                                         shown=False, row={"rank": k}))  # fmt: skip
         # the coarse-grained protein in the MD frame of the pocket's medoid site, and
-        # the probe molecules near it then (boonza cavity's report writes them)
-        for stem, group in (("frame", "frames"), ("probes", "probes")):
+        # the probe molecules near it then (boonza cavity's report writes them), one
+        # group per pocket: "frame K" holds frame_K_mdF and probes_K_mdF
+        for stem in ("frame", "probes"):
             found = [f for f in sorted(d.glob(f"{stem}_{k}_md*.*")) if f.suffix != ".json"]
             if found:
                 f = found[0]
                 md = f.stem.split("_md")[-1]
                 frames.append(Model(f"{stem} {k} (md frame {md})", lambda f=f: _session(f),
-                                    group=group, shown=bool(cg_frames),
+                                    group=f"frame {k}", shown=bool(cg_frames),
                                     row={"rank": k}))  # fmt: skip
     models += pharmacophores + frames
     columns = [c for c in POCKET_COLUMNS if any(c in m.row for m in models)]
