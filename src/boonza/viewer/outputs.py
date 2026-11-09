@@ -1325,7 +1325,11 @@ def from_cavity(d, cg_frames: bool = False) -> Viewer:
             if found:
                 f = found[0]
                 md = f.stem.split("_md")[-1]
-                frames.append(Model(f"{stem} {k} (md frame {md})", lambda f=f: _session(f),
+                # probe molecules are a few beads each: sticks, a colour per probe type
+                kw = ({"reps": [{"sel": "all", "style": "sticks", "color": "resname"}]}
+                      if stem == "probes" else {})  # fmt: skip
+                frames.append(Model(f"{stem} {k} (md frame {md})",
+                                    lambda f=f, kw=kw: _session(f, **kw),
                                     group=f"frame {k}", shown=bool(cg_frames),
                                     row={"rank": k}))  # fmt: skip
     models += pharmacophores + frames
