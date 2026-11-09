@@ -301,9 +301,11 @@ body.dark .label.meter { color: #ffd34d; }
 #rdock-sel[hidden] { display: none; }
 #rdock-sel .mrow { border-color: var(--line); }
 #rdock-sel .name { font-style: italic; cursor: default; }
-.mgroup .table-btn { margin-left: 8px; text-transform: none; padding: 0 6px; font-size: 10px; line-height: 15px;
+.mrow .table-btn { flex: none; white-space: nowrap; }
+.mgroup .table-btn { margin-left: 8px; }
+.mgroup .table-btn, .mrow .table-btn { text-transform: none; padding: 0 6px; font-size: 10px; line-height: 15px;
   color: var(--text); background: var(--button); border: 1px solid var(--line); border-radius: 5px; }
-.mgroup .table-btn:hover { background: var(--hover); }
+.mgroup .table-btn:hover, .mrow .table-btn:hover { background: var(--hover); }
 .series-scroll { max-height: 70vh; max-width: 80vw; overflow: auto; }
 /* a table or plot window: drag its bottom-right corner to resize it */
 .panel.resizable { resize: both; max-height: none; min-height: 160px; }

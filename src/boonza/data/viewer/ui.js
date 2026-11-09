@@ -1330,13 +1330,34 @@ export function setupUI(app) {
   // --- series: designs of a ligand, a model each, saved together as one SDF ----------------
 
   // a cavity pocket and what came with it (its pharmacophore, its medoid's CG frame
-  // and probe molecules), tied by rank: each offers the others in its menu
+  // and probe molecules), tied by rank: each offers the others in its menu, and the
+  // pocket row's md button shows the whole set together
   const KIN = ["pockets", "pharmacophore", "frames", "probes"];
+  const kinOf = m => KIN.includes(m.group) && m.row?.rank !== undefined
+    ? app.live().filter(o => o !== m && KIN.includes(o.group) && o.row?.rank === m.row.rank) : [];
   function kinItems(m) {
-    if (!KIN.includes(m.group) || m.row?.rank === undefined) return [];
-    const kin = app.live().filter(o => o !== m && KIN.includes(o.group) && o.row?.rank === m.row.rank);
-    return kin.length ? [...kin.map(o => ({ label: `${o.shown ? "Hide" : "Show"} ${o.name}`,
-      run: () => { state.current = o.index; app.show([o], !o.shown); } })), "-"] : [];
+    const kin = kinOf(m);
+    if (!kin.length) return [];
+    const pocket = m.group === "pockets" ? m : kin.find(o => o.group === "pockets");
+    return [
+      ...(pocket ? [{ label: `Look at ${pocket.name} with Its Frame and Probes`, run: () => lookAtPocket(pocket) }] : []),
+      ...kin.map(o => ({ label: `${o.shown ? "Hide" : "Show"} ${o.name}`,
+        run: () => { state.current = o.index; app.show([o], !o.shown); } })),
+      "-",
+    ];
+  }
+  // one pocket with everything found with it -- its site, pharmacophore, CG frame and
+  // probe molecules shown together, every other pocket's hidden -- looked at
+  async function lookAtPocket(m) {
+    const mine = [m, ...kinOf(m)];
+    const away = app.live().filter(o => o.shown && KIN.includes(o.group) && !mine.includes(o));
+    if (away.length) await app.show(away, false);
+    state.current = m.index;
+    await app.show(mine, true);
+    const [c, r] = app.bounds(m, app.range(m.topo.natoms));
+    app.flyTo(c, Math.max(r, 6));
+    const rest = mine.filter(o => o !== m).map(o => o.name).join(", ");
+    app.message(rest ? `${m.name} with ${rest}` : m.name);
   }
 
   const isSeries = m => m?.group?.startsWith("series");
@@ -3800,7 +3821,18 @@ export function setupUI(app) {
       });
       const x = el("button", { className: "x", title: "close this model" }, "✕");
       x.onclick = () => closeModel(m);
-      row.append(el("div", { className: "top" }, box, sw, name, color, x));
+      const extras = [];
+      if (m.group === "pockets") {  // the pocket in its MD frame, one click
+        const fr = kinOf(m).find(o => o.group === "frames");
+        const md = fr && /md frame (\d+)/.exec(fr.name)?.[1];
+        if (fr) {
+          const b = el("button", { className: "table-btn", title: `look at ${m.name} in MD frame ${md ?? "?"}: `
+            + "the coarse-grained protein and probe molecules of its medoid, this pocket's set alone" }, md ? `md ${md}` : "md");
+          b.onclick = e => { e.stopPropagation(); lookAtPocket(m); };
+          extras.push(b);
+        }
+      }
+      row.append(el("div", { className: "top" }, box, sw, name, ...extras, color, x));
       // a click on the row (not on its controls): this model's representations below
       row.onclick = async e => {
         if (e.target.closest("button, input, .name")) return;
