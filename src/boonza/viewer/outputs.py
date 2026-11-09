@@ -427,16 +427,53 @@ class Viewer:
             return res
         return re.sub(r"\d+$", "", name).strip() or "design"
 
+    def _next_name(self, members: list[int]) -> str:
+        """What a series' next design is called: its base, numbered past every member."""
+        base = self._base(members[0])
+        numbered = re.compile(rf"{re.escape(base)}(\d+)")
+        used = [int(x.group(1)) for k in members if (x := numbered.fullmatch(self.models[k].name))]
+        return f"{base}{max(used, default=0) + 1}"
+
     def add_to_series(self, m: int) -> list[int]:
         """A new member of model ``m``'s series: a copy of ``m``, to change into the next
         design, against the same receptor."""
         group = self.models[m].group
         members = self.series(group)
-        base = self._base(members[0])
-        numbered = re.compile(rf"{re.escape(base)}(\d+)")
-        used = [int(x.group(1)) for k in members if (x := numbered.fullmatch(self.models[k].name))]
-        name = f"{base}{max(used, default=0) + 1}"
+        name = self._next_name(members)
         return [self._member(self.session(m).system.clone(), group, name, self.receptor(m))]
+
+    def join_series(self, src: int, group: str, atoms=None, frame: int = 0) -> list[int]:
+        """Model ``src`` as the next design of open series ``group``, named as its next
+        member and against its receptor.  ``atoms`` (a ligand picked out of a complex)
+        join as a copy, as does a model of several frames or of another series; a whole,
+        free, single-structure model is moved into the series as it is.  Either way the
+        design gets hydrogens when it had none."""
+        from .edit import adjust_hydrogens
+
+        members = self.series(group)
+        a = self.session(src)
+        if a.cg or a.radii is not None:
+            raise ValueError("a series is of molecules with atoms, not beads or points")
+        atoms = [int(x) for x in atoms] if atoms else None
+        name = self._next_name(members)
+        receptor = self.receptor(members[0])
+        model = self.models[src]
+        if atoms is None and a.nframes == 1 and not model.group.startswith("series"):
+            if any(not m.closed and m.receptor == src for m in self.models):
+                raise ValueError(f"{model.name} is a receptor: designs are made against it")
+            anum = np.asarray(a.system.atoms["anum"])
+            if not (anum == 1).any():
+                adjust_hydrogens(a.system, np.flatnonzero(anum > 1).tolist())
+            model.name, model.group, model.receptor = name, group, receptor
+            a.title = name
+            return [src]
+        ids = atoms if atoms is not None else list(range(a.system.natoms))
+        piece = a.system.clone(ids)
+        piece.positions = np.asarray(a.frame(min(frame, a.nframes - 1))[0], float)[ids]
+        anum = np.asarray(piece.atoms["anum"])
+        if not (anum == 1).any():
+            adjust_hydrogens(piece, np.flatnonzero(anum > 1).tolist())
+        return [self._member(piece, group, name, receptor)]
 
     def series_properties(self, group: str) -> dict[int, dict]:
         """What RDKit computes from each member of series ``group``'s structure: MW,

@@ -100,6 +100,8 @@ label.mgroup input { margin: 0; }
   max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative; border-radius: 5px; }
 .pick::after { content: "▾"; position: absolute; right: 5px; color: var(--muted); }
 .mrow .swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line); flex: none; }
+.mrow.drop-into, label.mgroup.drop-into { background: var(--accent-soft);
+  outline: 1px dashed var(--accent); outline-offset: -1px; border-radius: 6px; }
 .mrow .x, .rep .x { border: none; background: none; color: var(--muted); padding: 0 3px; }
 .mrow .x:hover, .rep .x:hover { color: var(--red); }
 .mrow .data { color: var(--muted); font-size: 10.5px; padding-left: 24px; white-space: nowrap;
