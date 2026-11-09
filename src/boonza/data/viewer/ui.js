@@ -1301,6 +1301,7 @@ export function setupUI(app) {
       { label: "Clone Molecule as New Model", run: () => cloneAtoms(c.m, c.molecule) },
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
       "-",
+      ...kinItems(c.m),
       ...(c.m.topo.atoms.class[c.a] === 1 || isSeries(c.m) ? [...seriesItems(c.m, c.molecule), "-"] : []),
     ] : [])(clicked(hit)),
     { label: "Fit All", run: () => app.viewAll(), key: "W" },
@@ -1327,6 +1328,16 @@ export function setupUI(app) {
   ], x, y);
 
   // --- series: designs of a ligand, a model each, saved together as one SDF ----------------
+
+  // a cavity pocket and what came with it (its pharmacophore, its medoid's CG frame
+  // and probe molecules), tied by rank: each offers the others in its menu
+  const KIN = ["pockets", "pharmacophore", "frames", "probes"];
+  function kinItems(m) {
+    if (!KIN.includes(m.group) || m.row?.rank === undefined) return [];
+    const kin = app.live().filter(o => o !== m && KIN.includes(o.group) && o.row?.rank === m.row.rank);
+    return kin.length ? [...kin.map(o => ({ label: `${o.shown ? "Hide" : "Show"} ${o.name}`,
+      run: () => { state.current = o.index; app.show([o], !o.shown); } })), "-"] : [];
+  }
 
   const isSeries = m => m?.group?.startsWith("series");
   const seriesGroups = () => [...new Set(app.live().filter(isSeries).map(o => o.group))];
@@ -3806,6 +3817,7 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          ...kinItems(m),
           ...(isSeries(m) ? [...seriesMemberItems(m), "-"]
             : (gs => gs.length ? [...gs.map(g => ({ label: `Add to ${g}`, run: () => joinSeries(m, null, g) })), "-"] : [])(seriesGroups())),
           { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },

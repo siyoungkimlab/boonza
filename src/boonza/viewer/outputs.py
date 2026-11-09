@@ -1220,7 +1220,7 @@ def from_triage(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
 
 #: pockets.csv columns shown in the table, those the file has, in this order
 POCKET_COLUMNS = ("rank", "p", "p_max", "p_q90_open", "occupancy", "SiteScore", "score",
-                  "volume", "PPc", "MOc", "LVC")  # fmt: skip
+                  "volume", "md_frame", "PPc", "MOc", "LVC")  # fmt: skip
 
 
 def _pharm_radii(d, k: int) -> dict[int, float]:
@@ -1244,11 +1244,12 @@ def _with_ligand(structure, ligand) -> Session:
 
 def from_cavity(d, cg_frames: bool = False) -> Viewer:
     """boonza cavity: the protein (or apo structure), its ligand, and each pocket's
-    medoid site; pharmacophore hotspots and the holo structure are listed, off.
-    ``cg_frames`` (boonza view --cg-frames): each pocket's coarse-grained protein
-    and probes in its medoid's MD frame (frame_K_mdF, probes_K_mdF) too, off.  The
-    ligand is in the file ligand.json names: in the structure, it is part of that
-    model; in holo, it is a model of its own over the apo protein, and holo is off."""
+    medoid site; pharmacophore hotspots, the holo structure and each pocket's
+    coarse-grained protein and probes in its medoid's MD frame (frame_K_mdF,
+    probes_K_mdF) are listed, off.  ``cg_frames`` (boonza view --cg-frames) shows
+    the frames and probes from the start.  The ligand is in the file ligand.json
+    names: in the structure, it is part of that model; in holo, it is a model of
+    its own over the apo protein, and holo is off."""
     import json
 
     d = Path(d)
@@ -1316,14 +1317,15 @@ def from_cavity(d, cg_frames: bool = False) -> Viewer:
             pharmacophores.append(Model(f"pharmacophore {k}", hotspots, group="pharmacophore",
                                         shown=False, row={"rank": k}))  # fmt: skip
         # the coarse-grained protein in the MD frame of the pocket's medoid site, and
-        # the probe molecules near it then (boonza cavity's report writes them): off
-        for stem, group in (("frame", "frames"), ("probes", "probes")) if cg_frames else ():
+        # the probe molecules near it then (boonza cavity's report writes them)
+        for stem, group in (("frame", "frames"), ("probes", "probes")):
             found = [f for f in sorted(d.glob(f"{stem}_{k}_md*.*")) if f.suffix != ".json"]
             if found:
                 f = found[0]
                 md = f.stem.split("_md")[-1]
                 frames.append(Model(f"{stem} {k} (md frame {md})", lambda f=f: _session(f),
-                                    group=group, shown=False, row={"rank": k}))  # fmt: skip
+                                    group=group, shown=bool(cg_frames),
+                                    row={"rank": k}))  # fmt: skip
     models += pharmacophores + frames
     columns = [c for c in POCKET_COLUMNS if any(c in m.row for m in models)]
     return Viewer(models, title=f"{d.name}: {len(ranks)} pockets", columns=columns)
