@@ -1849,6 +1849,38 @@ def test_series_of_designs(served, tmp_path):
         (-6.5, "d0"), (-7.25, "d1")]  # fmt: skip
 
 
+def test_a_ligand_joins_an_open_series(served):
+    """A ligand picked out of another model joins an open series as a copy, named as
+    the series' next design and against its receptor; a whole, free model (a clone)
+    is moved into the series as it is.  Either way it gets hydrogens when it had none."""
+    s = boonza.from_smiles("c1ccccc1O")
+    other = boonza.from_smiles("CCO")
+    bare = other.clone(np.flatnonzero(other.atoms["anum"] > 1))  # no hydrogens
+    v = viewer.Viewer([
+        viewer.Model("complex", lambda: viewer.Session(s)),
+        viewer.Model("ethanol", lambda: viewer.Session(bare, title="ethanol")),
+    ])
+    get, post = served(v)
+    post("api/series", {"m": 0, "atoms": list(range(s.natoms))})
+    # another model's picked atoms: a copy joins, the model stays as it was
+    status, out = post("api/series_join", {"m": 1, "group": "series 1", "atoms": [0, 1, 2]})
+    k = out["added"][0]
+    assert status == 200 and k == len(v.models) - 1
+    assert (out["models"][k]["name"], out["models"][k]["group"]) == ("LIG2", "series 1")
+    assert v.receptor(k) == 0 and v.models[1].group == ""
+    assert (np.asarray(v.session(k).system.atoms["anum"]) == 1).sum() == 6  # given hydrogens
+    # a whole, free model: moved in as it is, as the next design
+    status, out = post("api/series_join", {"m": 1, "group": "series 1"})
+    assert status == 200 and out["added"] == [1]
+    assert (v.models[1].name, v.models[1].group) == ("LIG3", "series 1")
+    assert v.receptor(1) == 0 and v.session(1).title == "LIG3"
+    assert (np.asarray(v.session(1).system.atoms["anum"]) == 1).sum() == 6
+    assert v.series("series 1") == [1, 2, 3]
+    # a receptor cannot become a design, and only an open series can be joined
+    assert post("api/series_join", {"m": 0, "group": "series 1"})[0] == 400
+    assert post("api/series_join", {"m": 1, "group": "series 9"})[0] == 400
+
+
 @pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
 def test_a_design_in_its_receptor(served, tmp_path):
     """A design's contacts and Minimize use its receptor (the model it came from, less

@@ -26,6 +26,9 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/series          {"m": M, "atoms": [...], "frame": N} -> a new series of designs,
                               its first member a copy of the atoms (a ligand)
     POST /api/series_add      {"m": member} -> a new member of its series, a copy of it
+    POST /api/series_join     {"m": M, "group": series, "atoms": [...], "frame": N} -> M's
+                              atoms as a copy (whole and free: M itself, moved) as the
+                              series' next design
     POST /api/series_note     {"m": member, "note": text} -> its note ("" removes it)
     POST /api/series_receptor {"group": series, "receptor": M or null} -> what its designs
                               are made against: contacts and Minimize use it
@@ -225,6 +228,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if url.path == "/api/series_add":
             added = self.viewer.add_to_series(int(body["m"]))
+            self._json({"added": added, **self.viewer.listing()})
+            return
+        if url.path == "/api/series_join":
+            added = self.viewer.join_series(int(body["m"]), str(body["group"]),
+                                            body.get("atoms") or None,
+                                            int(body.get("frame", 0)))  # fmt: skip
             self._json({"added": added, **self.viewer.listing()})
             return
         if url.path == "/api/series_note":

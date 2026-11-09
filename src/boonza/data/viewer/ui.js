@@ -1329,9 +1329,14 @@ export function setupUI(app) {
   // --- series: designs of a ligand, a model each, saved together as one SDF ----------------
 
   const isSeries = m => m?.group?.startsWith("series");
-  // a molecule's popup items: start a series from it, or (a member) the series' own
+  const seriesGroups = () => [...new Set(app.live().filter(isSeries).map(o => o.group))];
+  // a molecule's popup items: start a series from it or join an open one, or (a member)
+  // the series' own
   function seriesItems(m, atoms) {
-    if (!isSeries(m)) return [{ label: "Create Series from It", run: () => createSeries(m, atoms) }];
+    if (!isSeries(m)) return [
+      { label: "Create Series from It", run: () => createSeries(m, atoms) },
+      ...seriesGroups().map(g => ({ label: `Add to ${g}`, run: () => joinSeries(m, atoms, g) })),
+    ];
     return seriesMemberItems(m);
   }
   function seriesMemberItems(m) {
@@ -1368,11 +1373,30 @@ export function setupUI(app) {
       app.message(`${next.name}: a copy of ${m.name} · ← and → step through ${m.group}`);
     } catch (e) { app.message(e.message, true); }
   }
-  // the page's models take the server's listing (receptors, notes) as it is now
+  // a ligand becomes series ``group``'s next design: clicked atoms (or a model of
+  // frames or of another series) as a copy, a whole free model moved in as it is
+  async function joinSeries(m, atoms, group) {
+    if (m.group === group) { app.message(`${m.name} is already in ${group}`); return; }
+    try {
+      const known = state.models.length;
+      const out = await app.post("api/series_join", { m: m.index, atoms, group,
+                                                       frame: Math.min(state.frame, (m.topo?.nframes ?? 1) - 1) });
+      for (const info of out.models.slice(known)) state.models.push(app.newModel(info, state.models.length));
+      relist(out);  // a moved model's new name, group and receptor
+      const member = state.models[out.added[0]];
+      if (out.added[0] < known && member.topo) await app.reloadModel(member, true);  // hydrogens it may have gained
+      await app.solo(member);
+      app.message(out.added[0] < known ? `${group}: ${m.name} moved in as ${member.name}`
+        : `${member.name}: a copy of ${m.name}, ${group}'s next design`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  // the page's models take the server's listing (names, groups, receptors, notes) as it is now
   function relist(out) {
     out.models.forEach((info, k) => {
       const m = state.models[k];
       if (!m) return;
+      m.name = info.name;
+      m.group = info.group;
       m.row = info.row;
       if (info.receptor === undefined) delete m.receptor; else m.receptor = info.receptor;
     });
@@ -3782,7 +3806,8 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
-          ...(isSeries(m) ? [...seriesMemberItems(m), "-"] : []),
+          ...(isSeries(m) ? [...seriesMemberItems(m), "-"]
+            : (gs => gs.length ? [...gs.map(g => ({ label: `Add to ${g}`, run: () => joinSeries(m, null, g) })), "-"] : [])(seriesGroups())),
           { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },
           { label: "Copy Into", sub: copyIntoItems(m, []) },
           { label: "Clone as New Model", run: async () => { await app.load(m); cloneAtoms(m, []); } },
@@ -3794,11 +3819,35 @@ export function setupUI(app) {
           { label: "Close", run: () => closeModel(m) },
         ], e.clientX, e.clientY);
       };
+      // a row dragged onto a series (its header or a member) joins it as a design
+      row.draggable = true;
+      row.ondragstart = e => {
+        e.dataTransfer.setData("boonza/model", String(m.index));
+        e.dataTransfer.effectAllowed = "copyMove";
+      };
+      if (isSeries(m)) seriesDrop(row, m.group);
       const data = Object.entries(m.row || {}).filter(([k]) => k !== "name" && k !== "SMILES");  // a series' SMILES: in its table
       if (data.length) row.append(el("div", { className: "data", title: data.map(([k, v]) => `${k} ${cell(v)}`).join("\n") },
         data.map(([k, v]) => `${k} ${cell(v)}`).join(" · ")));
       list.append(row);
     }
+  }
+  // what a dragged model row lands on to join series ``group``
+  function seriesDrop(node, group) {
+    node.ondragover = e => {
+      if (![...e.dataTransfer.types].includes("boonza/model")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      node.classList.add("drop-into");
+    };
+    node.ondragleave = () => node.classList.remove("drop-into");
+    node.ondrop = e => {
+      if (![...e.dataTransfer.types].includes("boonza/model")) return;
+      e.preventDefault();
+      node.classList.remove("drop-into");
+      const from = state.models[+e.dataTransfer.getData("boonza/model")];
+      if (from) joinSeries(from, null, group);
+    };
   }
   $("rdock-sort").onchange = () => {
     const [column, desc] = $("rdock-sort").value.split("|");
@@ -3837,10 +3886,13 @@ export function setupUI(app) {
       sdf.onclick = e => { e.preventDefault(); e.stopPropagation(); downloadSeries(group); };
       header.append(t, sdf);
     }
-    if (isSeries({ group }) && members.length) header.oncontextmenu = e => {
-      e.preventDefault();
-      menu(seriesMemberItems(members.find(m => m.index === state.current) || members[members.length - 1]), e.clientX, e.clientY);
-    };
+    if (isSeries({ group }) && members.length) {
+      header.oncontextmenu = e => {
+        e.preventDefault();
+        menu(seriesMemberItems(members.find(m => m.index === state.current) || members[members.length - 1]), e.clientX, e.clientY);
+      };
+      seriesDrop(header, group);
+    }
     return header;
   }
 
