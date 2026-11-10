@@ -693,6 +693,78 @@ def _triage(args) -> int:
     return 0
 
 
+GBSA_FIELDS = ["run", "outcome", "frames", "model", "dg", "sem", "std", "best", "best_frame",
+               "late", "vdw", "elec", "gb", "sa", "bonded", "note"]  # fmt: skip
+
+
+def _gbsa(args) -> int:
+    """MM/GBSA binding energy of the ligand in each run, frame by frame."""
+    import csv
+    import json
+    from pathlib import Path
+
+    from .gbsa import TERMS, gbsa
+    from .trajectory import open_trajectory
+
+    if args.traj and (len(args.path) != 1 or Path(args.path[0]).is_dir()):
+        raise ValueError("--traj goes with one structure file; a run directory has its own")
+    out = Path(args.out)
+    (out / "frames").mkdir(parents=True, exist_ok=True)
+    rows = []
+    for p in args.path:
+        here = Path(p)
+        if here.is_dir():  # resolved: "." has no name of its own
+            name = here.resolve().name
+            structure, traj = here / "solvated.dms", here / "trajectory.dcd"
+            if not traj.exists():
+                traj = None
+        else:
+            name, structure, traj = here.stem, here, Path(args.traj) if args.traj else None
+        row = {"run": name, "model": args.model}
+        status = here / "status.json"
+        if status.is_file():
+            row["outcome"] = json.loads(status.read_text()).get("outcome", "")
+        if row.get("outcome") == "detached" and not args.keep_detached:
+            # the ligand left and the run stopped saying so: nothing to score
+            rows.append({**row, "note": "detached"})
+            print(f"{name}: detached", flush=True)
+            continue
+        try:
+            system = _load(structure)
+            positions = open_trajectory(traj, system) if traj else None
+            got = gbsa(system, positions, ligand=args.ligandsel, receptor=args.receptorsel,
+                       keep=args.keep, model=args.model, salt=args.salt, stride=args.stride,
+                       platform=args.platform)  # fmt: skip
+        except Exception as e:  # one unreadable run must not stop the other thousand
+            rows.append({**row, "note": f"{type(e).__name__}: {e}"[:90]})
+            print(f"{name}: {type(e).__name__}: {e}"[:100], flush=True)
+            continue
+        got_summary = got.summary()
+        row.update({k: round(v, 3) if isinstance(v, float) else v for k, v in got_summary.items()})
+        rows.append(row)
+        with open(out / "frames" / f"{name}.csv", "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["frame", "total", *TERMS, "bonded"])
+            total = got.total
+            for k in range(len(got)):
+                w.writerow([int(got.frames[k]), f"{total[k]:.3f}",
+                            *[f"{got.terms[t][k]:.3f}" for t in (*TERMS, "bonded")]])  # fmt: skip
+        parts = ", ".join(f"{t} {got_summary[t]:.1f}" for t in TERMS)
+        print(f"{name}: dG {got_summary['dg']:.1f} +/- {got_summary['sem']:.1f} kcal/mol over "
+              f"{got_summary['frames']} frame(s) ({parts}); best {got_summary['best']:.1f} at "
+              f"frame {got_summary['best_frame']}", flush=True)  # fmt: skip
+    with open(out / "summary.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, GBSA_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    done = [r for r in rows if r.get("frames")]
+    print(f"\n{len(rows)} run(s), {len(done)} scored with {args.model} -> {out / 'summary.csv'}")
+    if len(done) > 1:
+        best = min(done, key=lambda r: r["dg"])
+        print(f"lowest mean dG: {best['run']} at {best['dg']:.1f} kcal/mol")
+    return 0
+
+
 def _modes(args) -> int:
     """Group the runs into binding modes, and open one of each rather than a thousand."""
     import csv
@@ -2259,6 +2331,37 @@ def _parser() -> argparse.ArgumentParser:
                    help="fit the medoids onto this structure rather than onto the largest "
                         "mode, e.g. to overlay several ligands' modes")  # fmt: skip
     q.set_defaults(run=_modes)
+
+    from .gbsa import MODELS
+
+    q = sub.add_parser("gbsa", help="MM/GBSA binding energy of a ligand, frame by frame over "
+                                    "each run",
+                       description="Single-trajectory MM/GBSA: each frame's energy as the "
+                                   "complex, the receptor alone and the ligand alone, the water "
+                                   "replaced by a Generalized Born model, and the difference "
+                                   "is what binding is worth. For ranking poses of one "
+                                   "ligand in one protein; not an absolute binding free "
+                                   "energy.")  # fmt: skip
+    q.add_argument("path", nargs="+",
+                   help="boonza md runs (each with solvated.dms and trajectory.dcd), or "
+                        "structure files scored as they are")  # fmt: skip
+    q.add_argument("-o", "--out", default="gbsa",
+                   help="where summary.csv and frames/<run>.csv go (default: gbsa)")  # fmt: skip
+    q.add_argument("--traj", help="trajectory of a single structure file (DCD/XTC)")
+    q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="the ligand")
+    q.add_argument("--receptorsel", default=None,
+                   help="the receptor (default: everything else that is not solvent)")  # fmt: skip
+    q.add_argument("--keep", help="what counts as solute, instead of 'everything but the "
+                                  "water and ions' (e.g. to keep a structural ion)")  # fmt: skip
+    q.add_argument("--model", choices=MODELS, default="GBn2",
+                   help="the Generalized Born model, by Amber's name (default: GBn2)")  # fmt: skip
+    q.add_argument("--salt", type=float, default=0.0,
+                   help="Debye screening for this much salt, mol/L (default: none)")  # fmt: skip
+    q.add_argument("--stride", type=int, default=1, help="score every nth frame")
+    q.add_argument("--platform", help="OpenMM platform (default: CPU, else Reference)")
+    q.add_argument("--keep-detached", action="store_true",
+                   help="score runs whose ligand left and stopped them, too")  # fmt: skip
+    q.set_defaults(run=_gbsa)
 
     q = sub.add_parser("probes",
                        help="what each probe of a coarse-grained swim touches, "

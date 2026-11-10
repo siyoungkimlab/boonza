@@ -201,6 +201,13 @@ Implemented:
   Works per frame over trajectories (each frame fitted on its own).
   `boonza.drmsd` / `boonza drmsd`: pocket-ligand distance RMSD with the same
   symmetry matching, no fitting; matches the MDAnalysis `distance_array` recipe.
+- MM/GBSA binding energies (`boonza.gbsa`, `boonza gbsa`): single-trajectory
+  MM/GBSA over the frames of a `boonza md` run, or of one structure, with
+  OpenMM's Amber GB models (GBn2 by default) and Amber's radii read off the
+  elements and bonds, so a GAFF2 ligand is treated as the protein is; the
+  nonpolar term from the buried solvent-accessible surface. For ranking poses
+  of one ligand in one protein; the GB force matches OpenMM's own two
+  implementations.
 - Rings (`boonza.sssr`, `ring_systems`): msys's smallest set of smallest
   rings, or all relevant rings, with ring and atom order matching msys.
 - Validation (`boonza.validate(s, strict=True)`, `boonza.find_knots`):
@@ -220,7 +227,8 @@ Implemented:
   order (as msys dms-diff-ff), so term order and parameter sharing do not
   matter.
 - Command line: `boonza info | convert | select | validate | knots | diff |
-  describe | dssp | phipsi | rmsd | drmsd` (see `boonza --help`).
+  describe | dssp | phipsi | rmsd | drmsd | triage | modes | gbsa` (see
+  `boonza --help`).
 
 Planned: alchemical DMS.
 

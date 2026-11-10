@@ -142,8 +142,9 @@ trajectory, periodic boxes, RDKit, validation and the command line.
 15. [Alignment: superposition and sequences](guide/alignment.md)
 16. [Analysis](guide/analysis.md)
 17. [Triaging many runs of one system (`boonza triage`, `boonza modes`)](guide/triage.md)
-18. [RDKit and OpenMM](guide/bridges.md)
-19. [Command line](guide/cli.md)
+18. [MM/GBSA binding energies (`boonza gbsa`)](guide/gbsa.md)
+19. [RDKit and OpenMM](guide/bridges.md)
+20. [Command line](guide/cli.md)
 
 [API reference](reference.md) · [Verification and benchmarks](verification.md)
 
@@ -172,6 +173,7 @@ guide/geometry
 guide/alignment
 guide/analysis
 guide/triage
+guide/gbsa
 guide/summaries
 guide/bridges
 guide/cli

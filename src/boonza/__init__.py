@@ -46,6 +46,7 @@ from .draw import Drawing, common_core, draw, read_smiles  # noqa: E402
 from .exclusions import update_exclusions  # noqa: E402
 from .ffxml import OpenMMForcefield, load_openmm_forcefield, parameterize_openmm  # noqa: E402
 from .gaff import find_unmatched, gaff2_patch  # noqa: E402
+from .gbsa import GBSA, gb_force, gbsa  # noqa: E402
 from .glue import Glue, make_whole  # noqa: E402
 from .handles import Atom, AtomSel, Bond, Chain, Ct, Residue, StaleHandleError  # noqa: E402
 from .hbonds import HBonds, baker_hubbard, hbonds, wernet_nilsson  # noqa: E402
@@ -174,6 +175,9 @@ __all__ = [
     "from_openmm",
     "openmm_energies",
     "to_openmm",
+    "GBSA",
+    "gb_force",
+    "gbsa",
     "analysis",
     "radius_of_gyration",
     "rdf",

@@ -33,6 +33,10 @@ boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-s
 boonza swim protein.pdb --model martini3   # coarse-grained, with dipeptide probes
 boonza swim protein.pdb --model sirah      # the same probes, mapped onto SIRAH beads
 boonza probes --workdir boonza_swim/sim_*/md [-o probes.csv]   # what each probe touches, per residue
+boonza triage md/runs/*/ -o triage --ligandsel "chain L"   # which pose each run took, and how many took it
+boonza modes triage -o review                 # group the runs into binding modes, one session over them
+boonza gbsa md/runs/*/ -o gbsa --ligandsel "chain L" [--model GBn2] [--salt 0.15] [--stride 5]   # MM/GBSA per run
+boonza gbsa pose.mae --ligandsel "resname LIG"   # one structure, as it is
 boonza diff viparr.dms openmm.dms --canonical --no-positions   # compare two force fields
 ```
 

@@ -432,7 +432,7 @@ single molecule).  Best suited to ligands and other small molecules.
 
 ## OpenMM
 
-### `boonza.to_openmm(system, nonbonded_method: 'str' = 'NoCutoff', cutoff: 'float' = 9.0, constraints: 'bool' = True, dispersion_correction: 'bool' = True, ewald_tolerance: 'float' = 0.0005, epsilon_r: 'float' = 1.0, epsilon_rf: 'float | None' = None, lj_shift: 'bool' = False)`
+### `boonza.to_openmm(system, nonbonded_method: 'str' = 'NoCutoff', cutoff: 'float' = 9.0, constraints: 'bool' = True, dispersion_correction: 'bool' = True, ewald_tolerance: 'float' = 0.0005, epsilon_r: 'float' = 1.0, epsilon_rf: 'float | None' = None, lj_shift: 'bool' = False, lj_switch: 'str' = 'none', switch_distance: 'float | None' = None)`
 
 (Topology, System, positions) for OpenMM; cutoff in Å.
 
@@ -449,6 +449,14 @@ GROMACS adds for excluded pairs and for each charge with itself.
 ``lj_shift`` shifts every Lennard-Jones pair to zero at the cutoff.  Martini
 uses all three: ``epsilon_r=15, epsilon_rf=0, lj_shift=True``, cutoff 11 Å,
 and no dispersion correction.
+
+``lj_switch`` brings Lennard-Jones to zero between ``switch_distance`` (Å)
+and the cutoff: ``"force"`` is CHARMM's force switch (Steinbach & Brooks
+1994, CHARMM's vfswitch and GROMACS's force-switch), which tapers the force
+and so shifts the energy below the switch by a constant; ``"potential"`` is
+OpenMM's own switch, which tapers the energy (OpenFF's).  A force switch
+leaves nothing past the cutoff for a dispersion correction to stand for, so
+the two together are refused.
 
 ### `boonza.from_openmm(topology, omm_system=None, positions=None, ignore_unknown: 'bool' = False) -> 'System'`
 
@@ -468,6 +476,52 @@ of raising.
 ### `boonza.openmm_energies(system, positions=None, platform: 'str' = 'Reference', **kwargs) -> 'dict'`
 
 Energy of each translated force in kcal/mol (and the total).
+
+## MM/GBSA
+
+### `boonza.gbsa(system, positions=None, *, ligand: 'str' = 'not (polymer or water or ions) and noh', receptor: 'str | None' = None, keep: 'str | None' = None, model: 'str' = 'GBn2', salt: 'float' = 0.0, dielectric: 'float' = 78.5, surface_tension: 'float' = 0.0072, stride: 'int' = 1, platform: 'str | None' = None) -> 'GBSA'`
+
+MM/GBSA binding energy of ``ligand`` in ``system``, over ``positions``.
+
+``system`` is the run's structure, water and all: the solvent is dropped
+(everything but water and ions is kept, or ``keep`` says what is -- a
+structural ion, say), the ligand is ``ligand`` and the receptor is the
+rest, or ``receptor``.  ``positions`` is a Trajectory, a Frames block, an
+(nframes, natoms, 3) array of every atom, or None for the system's own
+coordinates; every ``stride``-th frame is scored.  Each frame is made whole
+and the ligand imaged beside the receptor first, since a trajectory is
+written wrapped.
+
+``model`` is one of :data:`MODELS`, ``salt`` in mol/L, ``surface_tension``
+in kcal/mol/A^2 over the buried solvent-accessible area, and ``platform``
+an OpenMM platform (CPU when there is one).  A ligand bonded to the
+receptor is refused: its bonded terms would not cancel, and a covalent
+complex is not what MM/GBSA measures.
+
+### `class boonza.GBSA(model: 'str', frames: 'np.ndarray', terms: 'dict[str, np.ndarray]' = <factory>, pieces: 'dict[str, dict[str, np.ndarray]]' = <factory>, areas: 'dict[str, np.ndarray]' = <factory>) -> None`
+
+A run's binding energies, frame by frame, in kcal/mol.
+
+``terms`` holds the differences, complex minus receptor minus ligand, by
+name: ``vdw``, ``elec``, ``gb`` (polar solvation), ``sa`` (nonpolar, from
+the buried surface), and ``bonded``, which is zero to the precision of the
+arithmetic and is kept as the check that it is.  ``pieces`` holds the
+energies the differences were taken from, and ``areas`` the solvent-
+accessible surface (A^2) of each piece.
+
+### `boonza.gb_force(system, topology=None, model: 'str' = 'GBn2', salt: 'float' = 0.0, dielectric: 'float' = 78.5, surface_area: 'str | None' = None)`
+
+OpenMM's ``model`` over ``system``'s atoms, ready to add to its OpenMM System.
+
+Charges come from the force-field tables.  Radii and screening come from
+the elements and bonds as Amber assigns them (mbondi3 for GBn2, mbondi2
+for the others), through OpenMM's own tables -- what OpenMM does for a
+prmtop given ``implicitSolvent=`` -- so a ligand's atoms are treated as
+the protein's are, by what they are bonded to rather than by residue
+name.  ``topology`` is the OpenMM Topology ``to_openmm`` returned, and is
+built when not given.  ``surface_area``: None, or ``"ACE"`` for OpenMM's
+analytical nonpolar term, what it simulates with; a binding energy takes
+its nonpolar term from the buried surface instead.
 
 ## Drawing molecules
 
@@ -515,7 +569,7 @@ that carries names needs nothing else to make a legible picture.
 
 ## Martini
 
-### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False, go=None, go_eps: 'float' = 9.414, go_low: 'float' = 0.3, go_up: 'float' = 1.1, go_res_dist: 'int' = 3) -> 'Martinized'`
+### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, trust_connectivity: 'bool' = False, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False, go=None, go_eps: 'float' = 9.414, go_low: 'float' = 0.3, go_up: 'float' = 1.1, go_res_dist: 'int' = 3) -> 'Martinized'`
 
 Martini beads and topology for the proteins of ``system``, as martinize2 makes them.
 
@@ -599,7 +653,7 @@ residue the tables do not hold -- a cofactor, a ligand, a water -- though
 such an atom still takes up room: it can win a point of another atom's
 sphere and so keep it from touching a third.
 
-### `boonza.martini.parameters(*names) -> list[pathlib._local.Path]`
+### `boonza.martini.parameters(*names) -> list[pathlib.Path]`
 
 Parameter files that came with boonza, by name; all of them with none.
 
@@ -805,11 +859,12 @@ acid, a modified residue) rather than refusing the structure.
 
 ### `boonza.pockets.protein_ids(system, selection: 'str | None' = None) -> 'np.ndarray'`
 
-The protein's atoms or beads, or those of ``selection``, never the probes.
+The protein's atoms or beads, or those of ``selection``, never the probes
+and never a virtual site.
 
 A coarse-grained system the ``protein`` keyword finds nothing in is taken by
 its residue names (the twenty amino acids, their protonation variants and
-SIRAH's names).
+SIRAH's names), which a site of that residue would pass for.
 
 ### `boonza.pockets.find_fpocket(path=None, program: 'str' = 'fpocket') -> 'Path'`
 
@@ -1291,7 +1346,7 @@ residue named ``name`` with atoms named C1, C2, ..., H1, ...
 
 ### `boonza.gaff`
 
-### `boonza.gaff2_patch(system: 'System', forcefields=(), *, charges=None, parents=None, gaff: 'str' = '2.11', charge_method: 'str' = 'bcc', amberhome=None, workdir=None, path=None, protein_extent: 'str' = 'matched', draw=None, tag=None) -> 'ViparrForcefield'`
+### `boonza.gaff2_patch(system: 'System', forcefields=(), *, charges=None, parents=None, gaff: 'str' = '2.11', charge_method: 'str' = 'bcc', charge_geometry: 'str' = 'optimized', amberhome=None, workdir=None, path=None, protein_extent: 'str' = 'matched', draw=None, tag=None) -> 'ViparrForcefield'`
 
 A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
 
