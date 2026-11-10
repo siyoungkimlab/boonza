@@ -941,6 +941,64 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
 
+  // --- Analyze | Binding Energy: MM/GBSA of the ligand, nothing moved ------------------------
+  // The frame shown, or every frame of a trajectory.  The force field is the file's when it
+  // carries one (a boonza md run), else the one Minimize sets up, so a structure without
+  // hydrogens gets them first and is reloaded.  A design with a receptor is scored in it.
+  const GB_MODELS = ["GBn2", "OBC2", "OBC1", "HCT", "GBn"];
+  async function gbsa({ all = false } = {}) {
+    const m = actingModel();
+    if (!m) return;
+    const body = { m: m.index, model: localStorage.getItem("boonza.gbModel") || "GBn2",
+                   salt: +(localStorage.getItem("boonza.gbSalt") || 0), frame: app.frameOf(m), all,
+                   stride: +(localStorage.getItem("boonza.gbStride") || 1) };
+    try {
+      const out = await app.busy(all ? "MM/GBSA over the frames" : "MM/GBSA (the first time may set up the force field)",
+                                 () => app.post("api/gbsa", body));
+      const added = out.protonated && state.models[out.protonated.m];
+      if (added && added !== m) await app.reloadModel(added, true);
+      if (out.topology || added === m) await app.reloadModel(m, true);
+      const f = v => (v > 0 ? "+" : "") + v.toFixed(1);
+      const terms = `vdW ${f(out.vdw)}, elec ${f(out.elec)}, GB ${f(out.gb)}, SA ${f(out.sa)}`;
+      const over = out.frames > 1
+        ? ` over ${out.frames} frames (± ${out.sem.toFixed(1)}; best ${f(out.best)} at frame ${out.best_frame + 1}, second half ${f(out.late)})`
+        : ` at frame ${body.frame + 1}`;
+      app.message(`${added ? preparedNote(out.protonated, added) : ""}ΔG ${f(out.dg)} kcal/mol${over}: ${terms}; `
+        + `${out.ligand_atoms} ligand atoms against ${out.receptor_atoms}`
+        + (out.receptor ? ` of ${out.receptor}` : "") + ` (${out.how})`);
+    } catch (e) { app.message(e.message, true); }
+  }
+
+  function gbsaPanel() {
+    panel("gbsa", "Binding Energy (MM/GBSA)", body => {
+      const m = app.currentModel();
+      const store = (key, value) => localStorage.setItem(key, value);
+      body.append(el("p", { className: "help" }, "Single-trajectory MM/GBSA: the energy of the frame as the complex, "
+        + "the receptor alone and the ligand alone, the water replaced by a Generalized Born model; the difference "
+        + "is what binding is worth. For ranking poses of one ligand in one protein, not an absolute binding free "
+        + "energy. Nothing moves; the force field is the file's, or the one Minimize sets up."));
+      const model = el("select", {});
+      const chosen = localStorage.getItem("boonza.gbModel") || "GBn2";
+      for (const k of GB_MODELS) model.append(el("option", { value: k, selected: k === chosen }, k));
+      model.onchange = () => store("boonza.gbModel", model.value);
+      const salt = el("input", { type: "number", value: localStorage.getItem("boonza.gbSalt") || 0, min: 0, step: 0.05, style: "width:60px" });
+      salt.onchange = () => store("boonza.gbSalt", salt.value);
+      body.append(row(el("span", { className: "what" }, "Model"), model,
+                      el("span", { className: "what" }, "Salt"), salt, el("span", {}, "M")));
+      body.append(row(button("ΔG of this frame", () => gbsa(), "blue")));
+      if ((m?.topo?.nframes ?? 1) > 1) {
+        const stride = el("input", { type: "number", value: localStorage.getItem("boonza.gbStride") || 1, min: 1, step: 1, style: "width:60px" });
+        stride.onchange = () => store("boonza.gbStride", stride.value);
+        body.append(row(el("span", { className: "what" }, "Every"), stride, el("span", {}, "th frame"),
+                        button("ΔG over the trajectory", () => gbsa({ all: true }), "blue")));
+      }
+      body.append(el("p", { className: "help" }, "Amber's GB models as OpenMM implements them (GBn2 is Amber's choice), "
+        + "with Amber's radii read off the elements and bonds; the nonpolar term is 0.0072 kcal/mol/Å² times the "
+        + "solvent-accessible area buried. Each frame is made whole and the ligand imaged beside the receptor first. "
+        + "A design with a receptor is scored in it."));
+    });
+  }
+
   // --- a minimization played back: the atoms as they moved, the energy by iteration ----------
   let playback = null;
   function stopPath() {
@@ -1091,6 +1149,7 @@ export function setupUI(app) {
       { label: "Minimize…", run: minimizePanel },
       { label: "Minimize Ligand Only", run: () => minimize({ mode: "ligand" }) },
       { label: "Dynamics…", run: dynamicsPanel },
+      { label: "Binding Energy (MM/GBSA)…", run: gbsaPanel },
       { label: "Torsion Profile…", run: () => profilePanel() },
       { label: "Ramachandran Plot…", run: () => ramaPanel() },
       "-",
@@ -4009,6 +4068,7 @@ export function setupUI(app) {
   };
   $("btn-min").onclick = minimizePanel;
   $("btn-md").onclick = dynamicsPanel;
+  $("btn-dg").onclick = () => gbsa();
 
   // --- the sequence, above the view: click a residue to select it (drag or Shift: a
   // run of them; Ctrl: add or take away), right click to mutate, center or show it ------

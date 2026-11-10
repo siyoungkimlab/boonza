@@ -262,3 +262,93 @@ def test_the_bonded_terms_the_check_relies_on_are_really_there(protein):
     _, omm, _ = to_openmm(s, nonbonded_method="NoCutoff", constraints=False)
     names = {f.getName() for f in omm.getForces()}
     assert "stretch_harm" in names and omm.getNumConstraints() == 0
+
+
+# --- the viewer: Analyze | Binding Energy ------------------------------------------------
+
+
+def _water_ligand(session):
+    """The water molecule nearest the protein, as the page's Set as Ligand names it."""
+    s = session.system
+    near = s.select("same residue as (water and within 3.5 of protein)").ids
+    res = int(np.asarray(s.atoms["residue"])[near[0]])
+    atoms = [int(a) for a in s.residue_atoms(res)]
+    session.set_ligand(atoms)
+    return atoms
+
+
+def test_the_viewer_scores_the_ligand_without_moving_it():
+    """The force field the file carries, the ligand the page chose -- a water
+    molecule, kept though it is solvent -- and nothing moved or edited."""
+    from boonza import viewer
+
+    g = DATA / "gmx_amber"
+    s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    session = viewer.Session(s, cg=False)
+    atoms = _water_ligand(session)
+    before = np.asarray(session.system.positions).copy()
+    out = session.gbsa()
+    assert out["frames"] == 1 and out["frame_indices"] == [0]
+    assert out["ligand_atoms"] == len(atoms) == 3
+    assert out["receptor_atoms"] == len(session.system.select("protein"))
+    assert out["bonded"] == pytest.approx(0.0, abs=1e-6)
+    assert out["dg"] == pytest.approx(out["vdw"] + out["elec"] + out["gb"] + out["sa"], abs=0.02)
+    assert out["per_frame"] == [out["dg"]] and out["best_frame"] == 0
+    assert out["how"].startswith("GBn2, no salt")
+    assert np.allclose(session.system.positions, before) and session.version == 0
+    assert "version" not in out  # nothing was prepared, so nothing to reload
+    with_salt = session.gbsa(model="OBC2", salt=0.15)
+    assert with_salt["how"].startswith("OBC2, 0.15 M salt") and with_salt["dg"] != out["dg"]
+    session.ligand = "resname XYZ"
+    with pytest.raises(ValueError, match="choose the ligand"):
+        session.gbsa()
+
+
+def test_the_viewer_scores_every_frame_of_a_trajectory(tmp_path):
+    from boonza import viewer
+
+    g = DATA / "gmx_amber"
+    s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    xyz = np.asarray(s.positions)
+    with boonza.open_writer(tmp_path / "run.dcd", natoms=s.natoms) as w:
+        for k in range(3):
+            w.write(xyz + 0.05 * k, box=s.cell)
+    session = viewer.Session(s, trajectory=boonza.open_trajectory(tmp_path / "run.dcd", s),
+                             cg=False)  # fmt: skip
+    _water_ligand(session)
+    one = session.gbsa(frame=2)
+    assert one["frames"] == 1 and one["frame_indices"] == [2] and one["best_frame"] == 2
+    every = session.gbsa(all_frames=True, stride=2)
+    assert every["frames"] == 2 and every["frame_indices"] == [0, 2]
+    assert every["best_frame"] in (0, 2) and len(every["per_frame"]) == 2
+    assert every["dg"] == pytest.approx(np.mean(every["per_frame"]), abs=0.02)
+
+
+def test_the_page_asks_for_a_binding_energy():
+    """POST /api/gbsa, with the page's token, on a served session."""
+    import threading
+    import urllib.request
+
+    from boonza import viewer
+
+    g = DATA / "gmx_amber"
+    s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
+    session = viewer.Session(s, cg=False)
+    _water_ligand(session)
+    server = viewer.make_server(session, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}/"
+        body = json.dumps({"m": 0, "model": "GBn2", "frame": 0}).encode()
+        req = urllib.request.Request(
+            base + "api/gbsa",
+            body,
+            method="POST",
+            headers={"X-Boonza-Token": server.RequestHandlerClass.token},
+        )
+        with urllib.request.urlopen(req) as r:
+            out = json.loads(r.read())
+        assert set(TERMS) <= set(out) and out["ligand_atoms"] == 3
+        assert out["dg"] == pytest.approx(session.gbsa()["dg"], abs=0.02)
+    finally:
+        server.shutdown()

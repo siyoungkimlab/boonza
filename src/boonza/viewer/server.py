@@ -53,6 +53,10 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
                               energies, and with path how it went step by step; or
                               {"m": M, "mobile": sel, "restraint": kcal/mol/A^2}; a
                               design is minimized in its receptor
+    POST /api/gbsa            {"m": M, "model": GBn2|OBC2|OBC1|HCT|GBn, "salt": mol/L,
+                              "frame": i, "all": bool, "stride": n} -> the ligand's
+                              MM/GBSA binding energy (kcal/mol) by term, on the frame
+                              shown or over a trajectory; nothing moves
 
 Trajectories stay on the server and are read one frame at a time, so a
 viewer started on a cluster node shows long runs through an SSH tunnel
@@ -341,6 +345,17 @@ class _Handler(BaseHTTPRequestHandler):
                     picoseconds=float(body.get("picoseconds", 10.0)),
                     temperature=float(body.get("temperature", 300.0)),
                     minimize_first=bool(body.get("minimize_first", True)),
+                )
+            )
+        elif url.path == "/api/gbsa":
+            self._json(
+                self.viewer.gbsa(
+                    int(body.get("m", 0)),
+                    model=body.get("model", "GBn2"),
+                    salt=float(body.get("salt", 0.0)),
+                    frame=int(body.get("frame", 0)),
+                    all_frames=bool(body.get("all")),
+                    stride=int(body.get("stride", 1)),
                 )
             )
         else:

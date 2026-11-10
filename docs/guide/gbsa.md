@@ -104,6 +104,19 @@ thousand runs are a job array either way. CUDA works too, but an OpenMM
 context is made for each of the three pieces, and a GPU held in
 `exclusive_process` mode allows a process only one.
 
+## In the viewer
+
+`boonza view` has the same number one click away: the **ΔG** button beside
+Minimize and Dynamics scores the ligand on the frame shown, and *Analyze |
+Binding Energy (MM/GBSA)…* chooses the model and the salt, or scores every
+`n`-th frame of a trajectory. The ligand is the one the page has (right-click,
+*Set as Ligand*; the default is whatever is not protein, nucleic, water, ions
+or lipid). Nothing moves. The force field is the file's when it carries one
+with its hydrogens — a `boonza md` run opened with its trajectory — and
+otherwise the one Minimize sets up, so a structure straight from the PDB gets
+its hydrogens first, as an edit Undo takes back. A design with a receptor is
+scored in it, as it is minimized in it.
+
 ## From Python
 
 ```python
