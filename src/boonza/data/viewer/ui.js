@@ -13,7 +13,10 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) e.append(k);
   return e;
 };
-const CARBONS = ["gray", "green", "cyan", "magenta", "yellow", "orange", "salmon", "purple", "white", "slate"];
+// every row of colors (carbons, one color, a model's own) in one shared order; the
+// rows differ only in what they leave out (carbons skip red and blue, an oxygen's
+// and a nitrogen's element colors)
+const CARBONS = ["white", "gray", "orange", "yellow", "green", "cyan", "slate", "purple", "magenta", "salmon"];
 const SINGLE = ["white", "gray", "red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta", "pink", "wheat"];
 const ELEMENTS = ["H", "C", "N", "O", "S", "P", "F", "Cl", "Br", "I"];
 
@@ -2566,16 +2569,17 @@ export function setupUI(app) {
     }
     app.draw();
   }
-  // While the Builder is open, the hydrogens a molecule grows from are drawn whatever
-  // the H setting says: the ligand's, and those of whatever is selected -- an edited
-  // residue of the chain, which is classed with the receptor, is reached that way.  The
-  // rest of a structure keeps the setting, so opening the Builder on a receptor no
-  // longer fills the view with every C-H it has.
+  // While a Builder tool is armed, the hydrogens a molecule grows from are drawn
+  // whatever the H setting says: the ligand's, and those of whatever is selected -- an
+  // edited residue of the chain, which is classed with the receptor, is reached that
+  // way.  The rest of a structure keeps the setting, and so does the ligand of a view
+  // whose Builder merely sits open (every view opens with it): the H button kept
+  // looking dead for ligands until the panel was closed.
   function markBuilderH() {
     // the Protein Builder too, for the selection's only: a mutated or added residue's
     // hydrogens, to see they are where they should be (its ligands keep the H setting)
     const on = !$("ldock").hidden && (dockTab === "builder" || dockTab === "protein");
-    const ligands = dockTab === "builder";
+    const ligands = dockTab === "builder" && app.toolActive();
     // every loaded model, not only those shown: a hidden one keeps no stale representation
     for (const m of app.live().filter(o => o.state)) {
       const A = m.topo.atoms, mark = m.state.showH;
@@ -2680,11 +2684,14 @@ export function setupUI(app) {
 
   function setTool(next) {
     const same = tool && next && tool.kind === next.kind && tool.value === next.value;
+    const was = !!tool;
     tool = same ? null : next;
     for (const b of document.querySelectorAll("#ldock [data-tool]")) b.classList.toggle("armed", !!tool && b.dataset.tool === `${tool.kind}:${tool.value}`);
     $("stage").classList.toggle("drawing", !!tool);
     if (tool) app.message(toolHelp(tool));
     else app.message("");
+    // a tool grows molecules at hydrogens: the ligand's come out while one is armed
+    if (!!tool !== was) markBuilderH();
   }
   function toolHelp(t) {
     if (t.kind === "bond") return `${t.label}: click a bond (Esc: done)`;
@@ -3320,8 +3327,7 @@ export function setupUI(app) {
     ["space", "Spheres", [["all", "spheres", "element"]]],
     ["surface", "Surface + ligand", [["receptor", "surface", "electrostatic"], ["ligand", "sticks", "carbon"]]],
   ];
-  const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...["green", "cyan", "magenta", "yellow",
-    "orange", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
+  const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...CARBONS.map(c => [c, c])];
 
   async function presetAtoms(m, what) {
     const A = m.topo.atoms, R = m.topo.residues, all = app.range(m.topo.natoms);
@@ -3378,10 +3384,12 @@ export function setupUI(app) {
     app.repsChanged(m);
   }
 
-  // the representations of the current model, and the one being edited
-  const SCHEMES_ATOMS = [["element", "Element"], ["chain", "Chain"], ["restype", "Residue type"], ["resname", "Residue name"],
-                         ["ss", "Secondary structure"], ["spectrum", "Spectrum (N to C)"], ["bfactor", "B-factor"],
-                         ["element/bfactor", "Element, carbons by B-factor"]];
+  // the representations of the current model, and the one being edited.  The two
+  // scheme lists hold the shared schemes in the same order (each leads with its
+  // style's usual one); a ribbon's is the atoms' without the element entries
+  const SCHEMES_ATOMS = [["element", "Element"], ["ss", "Secondary structure"], ["chain", "Chain"],
+                         ["spectrum", "Spectrum (N to C)"], ["restype", "Residue type"], ["resname", "Residue name"],
+                         ["bfactor", "B-factor"], ["element/bfactor", "Element, carbons by B-factor"]];
   const SCHEMES_RIBBON = [["ss", "Secondary structure"], ["chain", "Chain"], ["spectrum", "Spectrum (N to C)"],
                           ["restype", "Residue type"], ["resname", "Residue name"], ["bfactor", "B-factor"]];
   const SCHEMES_SURFACE = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"]];
@@ -3486,11 +3494,22 @@ export function setupUI(app) {
     for (const [k, label] of app.MATERIALS) mat.append(button(label, () => setRepMaterial(m, rep, k), rep.material === k ? "on" : ""));
     const alpha = app.repAlpha(rep);
     const slider = el("input", { type: "range", min: 5, max: 100, step: 5, value: Math.round(100 * alpha), className: "opacity" });
-    const pct = el("span", { className: "pct" }, `${Math.round(100 * alpha)}%`);
-    slider.oninput = () => { rep.opacity = +slider.value / 100; pct.textContent = `${slider.value}%`; app.rebuild(); };
+    // typed as well as dragged, like the number filters below
+    const pct = el("input", { className: "cut", type: "number", min: 5, max: 100, step: 5, value: Math.round(100 * alpha) });
+    const setAlpha = v => {
+      if (!Number.isFinite(v)) return;
+      v = Math.min(100, Math.max(5, Math.round(v)));
+      rep.opacity = v / 100;
+      slider.value = v;
+      app.rebuild();
+    };
+    slider.oninput = () => { setAlpha(+slider.value); pct.value = slider.value; };
     slider.onchange = () => app.repsChanged(m);
+    pct.onchange = () => { setAlpha(+pct.value); pct.value = Math.round(100 * app.repAlpha(rep)); app.repsChanged(m); };
+    pct.onkeydown = e => { if (e.key === "Enter") pct.blur(); e.stopPropagation(); };
     box.append(el("div", { className: "lab" }, "Material"), mat,
-               el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"), slider, pct));
+               el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"),
+                  slider, pct, el("span", { className: "pct" }, "%")));
     numberRows(m, box);
     const n = app.repIds(rep).length;
     box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color.replace("+chain", ", by chain,")} over it` : ""}`));
@@ -3725,8 +3744,8 @@ export function setupUI(app) {
   // atoms, and its right-click menu is what can be done to them.  The highlight is drawn
   // over an atom's color, so coloring takes it off to show what was done.
   const HIGHLIGHTS = [["default", "pink"], ...["yellow", "cyan", "green", "orange", "red", "blue", "magenta", "white"].map(c => [c, c])];
-  const ATOM_COLORS = [["element", "by element"], ["chain", "by chain"], ...["green", "cyan", "magenta", "yellow",
-    "orange", "red", "blue", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
+  const ATOM_COLORS = [["element", "by element"], ["chain", "by chain"], ...["white", "gray", "red", "orange",
+    "yellow", "green", "cyan", "blue", "slate", "purple", "magenta", "salmon"].map(c => [c, c])];
   function colorSelection(spec) {
     const sel = app.selection();
     if (!sel.length) return;
