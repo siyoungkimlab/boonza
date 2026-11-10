@@ -2569,16 +2569,17 @@ export function setupUI(app) {
     }
     app.draw();
   }
-  // While the Builder is open, the hydrogens a molecule grows from are drawn whatever
-  // the H setting says: the ligand's, and those of whatever is selected -- an edited
-  // residue of the chain, which is classed with the receptor, is reached that way.  The
-  // rest of a structure keeps the setting, so opening the Builder on a receptor no
-  // longer fills the view with every C-H it has.
+  // While a Builder tool is armed, the hydrogens a molecule grows from are drawn
+  // whatever the H setting says: the ligand's, and those of whatever is selected -- an
+  // edited residue of the chain, which is classed with the receptor, is reached that
+  // way.  The rest of a structure keeps the setting, and so does the ligand of a view
+  // whose Builder merely sits open (every view opens with it): the H button kept
+  // looking dead for ligands until the panel was closed.
   function markBuilderH() {
     // the Protein Builder too, for the selection's only: a mutated or added residue's
     // hydrogens, to see they are where they should be (its ligands keep the H setting)
     const on = !$("ldock").hidden && (dockTab === "builder" || dockTab === "protein");
-    const ligands = dockTab === "builder";
+    const ligands = dockTab === "builder" && app.toolActive();
     // every loaded model, not only those shown: a hidden one keeps no stale representation
     for (const m of app.live().filter(o => o.state)) {
       const A = m.topo.atoms, mark = m.state.showH;
@@ -2683,11 +2684,14 @@ export function setupUI(app) {
 
   function setTool(next) {
     const same = tool && next && tool.kind === next.kind && tool.value === next.value;
+    const was = !!tool;
     tool = same ? null : next;
     for (const b of document.querySelectorAll("#ldock [data-tool]")) b.classList.toggle("armed", !!tool && b.dataset.tool === `${tool.kind}:${tool.value}`);
     $("stage").classList.toggle("drawing", !!tool);
     if (tool) app.message(toolHelp(tool));
     else app.message("");
+    // a tool grows molecules at hydrogens: the ligand's come out while one is armed
+    if (!!tool !== was) markBuilderH();
   }
   function toolHelp(t) {
     if (t.kind === "bond") return `${t.label}: click a bond (Esc: done)`;
