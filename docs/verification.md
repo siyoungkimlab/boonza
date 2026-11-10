@@ -32,6 +32,7 @@ tool, running the real program where possible. The test suite has 463 tests.
 | knots | msys `dms-find-knot` | knot lists |
 | identical molecules | msys `FindDistinctFragments` | groups |
 | OpenMM translation | OpenMM | energies per force group (Amber prmtop, CHARMM36, CHARMM-GUI PSF, GROMACS-style forces, CMAP, impropers, restraints) |
+| MM/GBSA (`gbsa`, `gb_force`) | OpenMM's two GB implementations: `GBSAOBCForce` (OBC2, in C++, mbondi2 radii by element) and the `implicit/gbn2.xml` force field (GBn2, radii per atom type) | the GB energy of an Amber14 1TEN to 1e-5, with and without 0.15 M salt; Amber's Debye conversion; the pieces' bonded terms cancel to 1e-6, a ligand 80 Å away binds nothing, and a ligand one box over scores as the one beside the protein |
 | matchmaker, `chimerax_ss` | UCSF ChimeraX (headless) | alignment, pairs, pruning, RMSDs, transform on 5 structure pairs |
 | cealign | Biopython `CEAligner` | RMSD and transform |
 | sequence alignment | Biopython `PairwiseAligner` | optimal scores, global, local and free end gaps |

@@ -34,6 +34,7 @@ SECTIONS = [
                   "backbone_dihedrals", "backbone_hbonds"]),
     ("RDKit", ["to_rdkit", "from_rdkit", "fragments_to_rdkit", "assign_bond_orders"]),
     ("OpenMM", ["to_openmm", "from_openmm", "openmm_energies"]),
+    ("MM/GBSA", ["gbsa", "GBSA", "gb_force"]),
     ("Drawing molecules", ["draw", "Drawing", "common_core", "read_smiles"]),
     ("Martini", ["martinize", "Martinized", "martini.contact_map", "martini.parameters",
                  "martini.solvate",
