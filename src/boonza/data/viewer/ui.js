@@ -13,7 +13,10 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) e.append(k);
   return e;
 };
-const CARBONS = ["gray", "green", "cyan", "magenta", "yellow", "orange", "salmon", "purple", "white", "slate"];
+// every row of colors (carbons, one color, a model's own) in one shared order; the
+// rows differ only in what they leave out (carbons skip red and blue, an oxygen's
+// and a nitrogen's element colors)
+const CARBONS = ["white", "gray", "orange", "yellow", "green", "cyan", "slate", "purple", "magenta", "salmon"];
 const SINGLE = ["white", "gray", "red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta", "pink", "wheat"];
 const ELEMENTS = ["H", "C", "N", "O", "S", "P", "F", "Cl", "Br", "I"];
 
@@ -3320,8 +3323,7 @@ export function setupUI(app) {
     ["space", "Spheres", [["all", "spheres", "element"]]],
     ["surface", "Surface + ligand", [["receptor", "surface", "electrostatic"], ["ligand", "sticks", "carbon"]]],
   ];
-  const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...["green", "cyan", "magenta", "yellow",
-    "orange", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
+  const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...CARBONS.map(c => [c, c])];
 
   async function presetAtoms(m, what) {
     const A = m.topo.atoms, R = m.topo.residues, all = app.range(m.topo.natoms);
@@ -3378,10 +3380,12 @@ export function setupUI(app) {
     app.repsChanged(m);
   }
 
-  // the representations of the current model, and the one being edited
-  const SCHEMES_ATOMS = [["element", "Element"], ["chain", "Chain"], ["restype", "Residue type"], ["resname", "Residue name"],
-                         ["ss", "Secondary structure"], ["spectrum", "Spectrum (N to C)"], ["bfactor", "B-factor"],
-                         ["element/bfactor", "Element, carbons by B-factor"]];
+  // the representations of the current model, and the one being edited.  The two
+  // scheme lists hold the shared schemes in the same order (each leads with its
+  // style's usual one); a ribbon's is the atoms' without the element entries
+  const SCHEMES_ATOMS = [["element", "Element"], ["ss", "Secondary structure"], ["chain", "Chain"],
+                         ["spectrum", "Spectrum (N to C)"], ["restype", "Residue type"], ["resname", "Residue name"],
+                         ["bfactor", "B-factor"], ["element/bfactor", "Element, carbons by B-factor"]];
   const SCHEMES_RIBBON = [["ss", "Secondary structure"], ["chain", "Chain"], ["spectrum", "Spectrum (N to C)"],
                           ["restype", "Residue type"], ["resname", "Residue name"], ["bfactor", "B-factor"]];
   const SCHEMES_SURFACE = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"]];
@@ -3725,8 +3729,8 @@ export function setupUI(app) {
   // atoms, and its right-click menu is what can be done to them.  The highlight is drawn
   // over an atom's color, so coloring takes it off to show what was done.
   const HIGHLIGHTS = [["default", "pink"], ...["yellow", "cyan", "green", "orange", "red", "blue", "magenta", "white"].map(c => [c, c])];
-  const ATOM_COLORS = [["element", "by element"], ["chain", "by chain"], ...["green", "cyan", "magenta", "yellow",
-    "orange", "red", "blue", "salmon", "purple", "slate", "white", "gray"].map(c => [c, c])];
+  const ATOM_COLORS = [["element", "by element"], ["chain", "by chain"], ...["white", "gray", "red", "orange",
+    "yellow", "green", "cyan", "blue", "slate", "purple", "magenta", "salmon"].map(c => [c, c])];
   function colorSelection(spec) {
     const sel = app.selection();
     if (!sel.length) return;
