@@ -2336,7 +2336,26 @@ export function setupUI(app) {
   async function cloneSelection(off = false) {
     const sel = app.selection();
     if (!sel.length) { app.message("select atoms first", true); return; }
+    if (!off && sel.length > 1) return cloneMerged(sel);
     for (const [m, ids] of sel) await cloneAtoms(m, ids, off);
+  }
+  // atoms selected across several models (a CG frame and its probes, say): one new
+  // model of them all, so File | Save Model keeps them together
+  async function cloneMerged(sel) {
+    try {
+      const [first, ids] = sel[0];
+      const out = await app.post("api/clone", { m: first.index, atoms: ids,
+                                                 frame: Math.min(state.frame, first.topo.nframes - 1) });
+      for (const info of out.models.slice(state.models.length)) state.models.push(app.newModel(info, state.models.length));
+      const made = state.models[out.added[0]];
+      for (const [m, more] of sel.slice(1))  // into the clone before its first load
+        await app.post("api/copy_into", { m: m.index, into: made.index, atoms: more,
+                                           frame: Math.min(state.frame, m.topo.nframes - 1) });
+      app.clearSelection();
+      state.current = made.index;
+      await app.show([made]);
+      app.message(`${made.name}: the selection from ${sel.map(([m]) => m.name).join(", ")} as one model`);
+    } catch (e) { app.message(e.message, true); }
   }
   // A model apart into one model per chain or molecule, in a group, with the original
   // hidden and untouched: chain A of a homodimer can then be aligned onto chain B
