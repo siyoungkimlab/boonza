@@ -239,6 +239,14 @@ function colorRep(model, rep) {
   if (tint) {
     const own = model.tintAll ? ids : ids.filter(a => topo.atoms.class[a] === 0);
     colorAtoms(`element/${tint}`, own, topo, model.ss, rep.rgb);
+    // a ligand still wearing its session's default carbons takes the model's own hue,
+    // plain (no chain shading): two models' ligands both green said "model 1"
+    // wherever they appeared.  One colored by the server (a mode's) or by hand
+    // (tinted is off then) keeps its color.
+    if (!model.tintAll && rep.color === `element/${topo.carbon || "green"}`) {
+      const lig = ids.filter(a => topo.atoms.class[a] === 1);
+      if (lig.length) colorAtoms(`element/${tint.split("+")[0]}`, lig, topo, model.ss, rep.rgb);
+    }
   }
   rep.custom = false;
 }
