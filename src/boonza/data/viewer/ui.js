@@ -3494,11 +3494,22 @@ export function setupUI(app) {
     for (const [k, label] of app.MATERIALS) mat.append(button(label, () => setRepMaterial(m, rep, k), rep.material === k ? "on" : ""));
     const alpha = app.repAlpha(rep);
     const slider = el("input", { type: "range", min: 5, max: 100, step: 5, value: Math.round(100 * alpha), className: "opacity" });
-    const pct = el("span", { className: "pct" }, `${Math.round(100 * alpha)}%`);
-    slider.oninput = () => { rep.opacity = +slider.value / 100; pct.textContent = `${slider.value}%`; app.rebuild(); };
+    // typed as well as dragged, like the number filters below
+    const pct = el("input", { className: "cut", type: "number", min: 5, max: 100, step: 5, value: Math.round(100 * alpha) });
+    const setAlpha = v => {
+      if (!Number.isFinite(v)) return;
+      v = Math.min(100, Math.max(5, Math.round(v)));
+      rep.opacity = v / 100;
+      slider.value = v;
+      app.rebuild();
+    };
+    slider.oninput = () => { setAlpha(+slider.value); pct.value = slider.value; };
     slider.onchange = () => app.repsChanged(m);
+    pct.onchange = () => { setAlpha(+pct.value); pct.value = Math.round(100 * app.repAlpha(rep)); app.repsChanged(m); };
+    pct.onkeydown = e => { if (e.key === "Enter") pct.blur(); e.stopPropagation(); };
     box.append(el("div", { className: "lab" }, "Material"), mat,
-               el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"), slider, pct));
+               el("div", { className: "row", style: "margin-top:5px" }, el("span", { className: "dots-label" }, "opacity"),
+                  slider, pct, el("span", { className: "pct" }, "%")));
     numberRows(m, box);
     const n = app.repIds(rep).length;
     box.append(el("div", { className: "note" }, `${n} atom${n === 1 ? "" : "s"}${rep.tinted && m.color && m.color !== "default" ? ` · the model's ${m.color.replace("+chain", ", by chain,")} over it` : ""}`));
