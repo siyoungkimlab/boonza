@@ -598,6 +598,50 @@ class Viewer:
             out["path"] = _split_path(out["path"], [(m, None)])
         return out
 
+    def gbsa(self, m: int, model: str = "GBn2", salt: float = 0.0, frame: int = 0,
+             all_frames: bool = False, stride: int = 1) -> dict:  # fmt: skip
+        """MM/GBSA binding energy of model ``m``'s ligand (see :meth:`Session.gbsa`).
+        A design with a receptor is scored in it, as it is minimized in it: the
+        receptor's atoms that count (:meth:`_receptor_atoms`) and the design appended,
+        the design being the ligand; the force field of that pair is kept between
+        calls, as Minimize keeps it."""
+        from ..gbsa import gbsa
+        from .edit import parameterize
+        from .session import _gbsa_report
+
+        if self.receptor(m) is None:
+            protonated = _protonate_if_bare(self.session(m), m)
+            out = self.session(m).gbsa(model=model, salt=salt, frame=frame,
+                                       all_frames=all_frames, stride=stride)  # fmt: skip
+            return _merge_prepared(out, protonated, m)
+        design = self.session(m)
+        r = self.receptor(m)
+        protonated = _protonate_if_bare(self.session(r), r)
+        r, keep, pos = self._receptor_atoms(m, frame)
+        rec = self.session(r)
+        s = rec.system.clone(keep)
+        s.positions = pos[keep]
+        n0 = s.natoms
+        s.append(design.system.clone())
+        ligand = np.arange(n0, s.natoms)
+        key = (r, getattr(rec, "topo_version", 0), keep.tobytes(),
+               getattr(design, "topo_version", 0))  # fmt: skip
+        cached = getattr(design, "_in_receptor", None)
+        if cached is None or cached[0] != key:
+            design._in_receptor = (key, parameterize(s))
+        p = design._in_receptor[1]
+        order = np.asarray(p.atoms["view_index"], dtype=np.int64)
+        p.positions = np.asarray(s.positions)[order]
+        back = np.full(s.natoms, -1, dtype=np.int64)
+        back[order] = np.arange(len(order))
+        with design._lock:
+            got = gbsa(p, ligand=back[ligand], model=model, salt=salt, box=np.zeros((3, 3)))
+        out = _gbsa_report(got, [frame], model, salt)
+        out["receptor"] = self.models[r].name
+        if protonated:
+            out["protonated"] = protonated
+        return out
+
     def minimize_design(self, m: int, mode: str = "both", path: bool = False,
                         restraint: float = 10.0, rem: bool = False,
                         solvent: str = "rf", pocket: float = POCKET) -> dict:  # fmt: skip

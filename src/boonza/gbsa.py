@@ -223,6 +223,8 @@ class GBSA:
     terms: dict[str, np.ndarray] = field(default_factory=dict)
     pieces: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)
     areas: dict[str, np.ndarray] = field(default_factory=dict)
+    #: how many atoms each piece has
+    natoms: dict[str, int] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.frames)
@@ -254,14 +256,23 @@ class GBSA:
         return out
 
 
-def _frames(system, positions, stride: int):
-    """``(index, positions of every atom, box)`` for each frame asked for."""
+def _frames(system, positions, stride: int, box=None):
+    """``(index, positions of every atom, box)`` for each frame asked for.
+
+    ``box`` is for positions given as an array, which carry none of their own:
+    one (3, 3) box for every frame or one per frame; the system's cell when
+    not given, and all zeros for no periodic images at all.
+    """
     from .trajectory import Frames, Trajectory
 
     if stride < 1:
         raise ValueError(f"stride is a positive number of frames, not {stride}")
     if positions is None:
-        yield 0, np.asarray(system.positions, dtype=np.float64), system.cell
+        yield (
+            0,
+            np.asarray(system.positions, dtype=np.float64),
+            (system.cell if box is None else np.asarray(box, dtype=np.float64).reshape(3, 3)),
+        )
         return
     if isinstance(positions, Trajectory):
         for block in positions[::stride].chunks():
@@ -275,24 +286,37 @@ def _frames(system, positions, stride: int):
     xyz = np.asarray(positions, dtype=np.float64)
     if xyz.ndim == 2:
         xyz = xyz[None]
+    boxes = np.asarray(system.cell if box is None else box, dtype=np.float64)
+    if boxes.ndim == 2:
+        boxes = np.broadcast_to(boxes, (len(xyz), 3, 3))
     for k in range(0, len(xyz), stride):
-        yield k, xyz[k], system.cell
+        yield k, xyz[k], boxes[k]
 
 
-def gbsa(system, positions=None, *, ligand: str = DEFAULT_LIGAND, receptor: str | None = None,
+def _atoms(system, what) -> np.ndarray:
+    """Atom indices from a selection string or anything array-like."""
+    if isinstance(what, str):
+        return np.asarray(system.select(what).ids, dtype=np.int64)
+    return np.asarray(getattr(what, "ids", what), dtype=np.int64)
+
+
+def gbsa(system, positions=None, *, ligand=DEFAULT_LIGAND, receptor=None,
          keep: str | None = None, model: str = "GBn2", salt: float = 0.0,
          dielectric: float = EPSILON_WATER, surface_tension: float = SURFACE_TENSION,
-         stride: int = 1, platform: str | None = None) -> GBSA:  # fmt: skip
+         stride: int = 1, platform: str | None = None, box=None) -> GBSA:  # fmt: skip
     """MM/GBSA binding energy of ``ligand`` in ``system``, over ``positions``.
 
     ``system`` is the run's structure, water and all: the solvent is dropped
     (everything but water and ions is kept, or ``keep`` says what is -- a
     structural ion, say), the ligand is ``ligand`` and the receptor is the
-    rest, or ``receptor``.  ``positions`` is a Trajectory, a Frames block, an
-    (nframes, natoms, 3) array of every atom, or None for the system's own
-    coordinates; every ``stride``-th frame is scored.  Each frame is made whole
-    and the ligand imaged beside the receptor first, since a trajectory is
-    written wrapped.
+    rest, or ``receptor``; both are selections or atom indices of ``system``,
+    and the ligand is kept whatever it is made of, a water molecule included.
+    ``positions`` is a Trajectory, a Frames block, an (nframes, natoms, 3)
+    array of every atom, or None for the system's own coordinates; every
+    ``stride``-th frame is scored.  Each frame is made whole and the ligand
+    imaged beside the receptor first, since a trajectory is written wrapped;
+    an array of positions is imaged in ``box`` (the system's cell by default;
+    all zeros for a structure whose cell is a crystal's and not a box).
 
     ``model`` is one of :data:`MODELS`, ``salt`` in mol/L, ``surface_tension``
     in kcal/mol/A^2 over the buried solvent-accessible area, and ``platform``
@@ -303,19 +327,26 @@ def gbsa(system, positions=None, *, ligand: str = DEFAULT_LIGAND, receptor: str 
     from .glue import Glue
     from .shrake_rupley import sasa
 
-    ids = solute_ids(system, keep)
+    lig_all = _atoms(system, ligand)
+    if not len(lig_all):
+        raise ValueError(f"the ligand selection {ligand!r} picks no atom")
+    # the pieces are named on the whole system and carried into the solute, so an
+    # index selection means what it says whatever solvent sits before it
+    ids = np.union1d(solute_ids(system, keep), lig_all)
+    where = np.full(system.natoms, -1, dtype=np.int64)
+    where[ids] = np.arange(len(ids))
     solute = system.clone(ids)
     if "posre_harm" in solute.tables:  # a restraint is the run's, not the molecule's
         solute.del_table("posre_harm")
-    lig = np.asarray(solute.select(ligand).ids, dtype=np.int64)
-    if not len(lig):
-        raise ValueError(f"the ligand selection {ligand!r} picks no atom of the solute")
+    lig = where[lig_all]
     if receptor is None:
         rec = np.setdiff1d(np.arange(solute.natoms), lig)
     else:
-        rec = np.asarray(solute.select(receptor).ids, dtype=np.int64)
-        if np.intersect1d(rec, lig).size:
+        rec_all = _atoms(system, receptor)
+        if np.intersect1d(rec_all, lig_all).size:
             raise ValueError("the receptor and the ligand share atoms")
+        rec = where[rec_all]
+        rec = rec[rec >= 0]  # a receptor atom that is solvent is not kept
     if not len(rec):
         raise ValueError("nothing is left for the receptor")
     in_lig = np.zeros(solute.natoms, bool)
@@ -338,8 +369,8 @@ def gbsa(system, positions=None, *, ligand: str = DEFAULT_LIGAND, receptor: str 
     indices: list[int] = []
     energies = {k: {g: [] for g in _GROUPS} for k in PIECES}
     areas = {k: [] for k in PIECES}
-    for index, xyz, box in _frames(system, positions, stride):
-        pos, _ = fix(np.asarray(xyz)[ids], box)
+    for index, xyz, cell in _frames(system, positions, stride, box):
+        pos, _ = fix(np.asarray(xyz)[ids], cell)
         for piece, atoms in members.items():
             here = pos[atoms]
             for g, e in scorers[piece].energies(here).items():
@@ -348,6 +379,7 @@ def gbsa(system, positions=None, *, ligand: str = DEFAULT_LIGAND, receptor: str 
         indices.append(index)
 
     out = GBSA(model, np.asarray(indices, dtype=np.int64))
+    out.natoms = {k: int(len(v)) for k, v in members.items()}
     out.pieces = {k: {g: np.asarray(v, dtype=np.float64) for g, v in e.items()}
                   for k, e in energies.items()}  # fmt: skip
     out.areas = {k: np.asarray(v, dtype=np.float64) for k, v in areas.items()}

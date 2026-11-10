@@ -318,6 +318,22 @@ def _plain(v):
     return str(v)
 
 
+def _gbsa_report(got, which, model: str, salt: float) -> dict:
+    """What the page shows of a binding energy: the summary of boonza.gbsa.GBSA,
+    rounded, with the frame it was taken on named as the page counts frames."""
+    out = {k: round(v, 2) if isinstance(v, float) else v for k, v in got.summary().items()}
+    out["best_frame"] = int(which[out.get("best_frame", 0)]) if which else 0
+    out["frame_indices"] = [int(i) for i in which]
+    out["per_frame"] = [round(float(x), 2) for x in got.total]
+    out["model"] = model
+    out["salt"] = salt
+    out["ligand_atoms"] = got.natoms.get("ligand", 0)
+    out["receptor_atoms"] = got.natoms.get("receptor", 0)
+    out["how"] = (f"{model}, {salt:g} M salt" if salt else f"{model}, no salt") \
+        + ", nonpolar term 0.0072 kcal/mol/Å² × area buried"  # fmt: skip
+    return out
+
+
 class Session:
     """A system, optionally a trajectory, and the Glue applied to its frames.
 
@@ -1498,6 +1514,61 @@ class Session:
         if not any(len(x) for x in (fixed, tethered) if x is not None):
             mobile = mobile or pocket_selection(self.ligand or LIGAND)
         return fixed, tethered, mobile
+
+    def _forcefield_copy(self):
+        """``(p, prepared, order)``: the system with a force field on it, for energies
+        that move nothing.  The file's own when it carries one with its hydrogens (a
+        boonza md run); otherwise the one Minimize sets up, the structure prepared
+        first if it has to be (``prepared`` then says what was done, and the edit is
+        on the undo list).  ``order`` maps ``p``'s atoms to this system's.  Under the
+        lock."""
+        anum = np.asarray(self.system.atoms["anum"])
+        if {"nonbonded", "stretch_harm"} <= set(self.system.table_names) and (anum == 1).any():
+            return self.system, None, np.arange(self.system.natoms, dtype=np.int64)
+        self._remember()
+        try:
+            p, prepared = self._ready()
+        except Exception:
+            self._unready()
+            raise
+        if prepared is None:
+            self._undo.pop()  # nothing changed: nothing to undo
+        return p, prepared, np.asarray(p.atoms["view_index"], dtype=np.int64)
+
+    def gbsa(self, model: str = "GBn2", salt: float = 0.0, frame: int = 0,
+             all_frames: bool = False, stride: int = 1) -> dict:  # fmt: skip
+        """MM/GBSA binding energy of the ligand (boonza.gbsa), kcal/mol: on the frame
+        shown, or on every ``stride``-th frame of a trajectory with ``all_frames``.
+        Nothing moves.  The force field is the file's when it carries one, else the
+        one Minimize sets up, the structure prepared first if it has to be (hydrogens
+        added: an edit, undone with Undo).  ``model`` by Amber's name (boonza.gbsa.MODELS),
+        ``salt`` in mol/L."""
+        from ..gbsa import gbsa
+
+        lig = np.asarray(self.system.select(self.ligand or LIGAND).ids, dtype=np.int64)
+        if not len(lig):
+            raise ValueError("choose the ligand (right-click it, Set as Ligand)")
+        if all_frames and self.trajectory is not None:
+            which = list(range(0, self.nframes, max(int(stride), 1)))
+        else:
+            which = [int(frame)]
+        with self._lock:
+            p, prepared, order = self._forcefield_copy()
+            back = np.full(self.system.natoms, -1, dtype=np.int64)
+            back[order] = np.arange(len(order))
+            xyz, boxes = [], []
+            for i in which:
+                pos, box = self.frame(i)
+                xyz.append(np.asarray(pos, dtype=np.float64)[order])
+                # a structure's crystal cell is not a box to image in (_box)
+                boxes.append(box if self.trajectory is not None else np.zeros((3, 3)))
+            got = gbsa(p, np.asarray(xyz), ligand=back[lig], model=model, salt=salt,
+                       box=np.asarray(boxes))  # fmt: skip
+            out = _gbsa_report(got, which, model, salt)
+            if prepared is not None:
+                out.update(self._changed(topology=True))
+                out["prepared"] = prepared
+        return out
 
     def minimize(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
                  tethered=None, mode: str | None = None, path: bool = False,
