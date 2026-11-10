@@ -1301,6 +1301,7 @@ export function setupUI(app) {
       { label: "Clone Molecule as New Model", run: () => cloneAtoms(c.m, c.molecule) },
       { label: "Center on It", run: () => { const [cc, r] = app.bounds(c.m, c.molecule); app.flyTo(cc, Math.max(r, 6)); } },
       "-",
+      ...kinItems(c.m),
       ...(c.m.topo.atoms.class[c.a] === 1 || isSeries(c.m) ? [...seriesItems(c.m, c.molecule), "-"] : []),
     ] : [])(clicked(hit)),
     { label: "Fit All", run: () => app.viewAll(), key: "W" },
@@ -1327,6 +1328,37 @@ export function setupUI(app) {
   ], x, y);
 
   // --- series: designs of a ligand, a model each, saved together as one SDF ----------------
+
+  // a cavity pocket and what came with it (its pharmacophore and, grouped as
+  // "frame K", its medoid's CG frame and probe molecules), tied by rank: each offers
+  // the others in its menu, and the pocket row's md button shows the whole set together
+  const kinGroup = g => g === "pockets" || g === "pharmacophore" || /^frame \d+$/.test(g);
+  const kinOf = m => kinGroup(m.group) && m.row?.rank !== undefined
+    ? app.live().filter(o => o !== m && kinGroup(o.group) && o.row?.rank === m.row.rank) : [];
+  function kinItems(m) {
+    const kin = kinOf(m);
+    if (!kin.length) return [];
+    const pocket = m.group === "pockets" ? m : kin.find(o => o.group === "pockets");
+    return [
+      ...(pocket ? [{ label: `Look at ${pocket.name} with Its Frame and Probes`, run: () => lookAtPocket(pocket) }] : []),
+      ...kin.map(o => ({ label: `${o.shown ? "Hide" : "Show"} ${o.name}`,
+        run: () => { state.current = o.index; app.show([o], !o.shown); } })),
+      "-",
+    ];
+  }
+  // one pocket with everything found with it -- its site, pharmacophore, CG frame and
+  // probe molecules shown together, every other pocket's hidden -- looked at
+  async function lookAtPocket(m) {
+    const mine = [m, ...kinOf(m)];
+    const away = app.live().filter(o => o.shown && kinGroup(o.group) && !mine.includes(o));
+    if (away.length) await app.show(away, false);
+    state.current = m.index;
+    await app.show(mine, true);
+    const [c, r] = app.bounds(m, app.range(m.topo.natoms));
+    app.flyTo(c, Math.max(r, 6));
+    const rest = mine.filter(o => o !== m).map(o => o.name).join(", ");
+    app.message(rest ? `${m.name} with ${rest}` : m.name);
+  }
 
   const isSeries = m => m?.group?.startsWith("series");
   const seriesGroups = () => [...new Set(app.live().filter(isSeries).map(o => o.group))];
@@ -2304,7 +2336,26 @@ export function setupUI(app) {
   async function cloneSelection(off = false) {
     const sel = app.selection();
     if (!sel.length) { app.message("select atoms first", true); return; }
+    if (!off && sel.length > 1) return cloneMerged(sel);
     for (const [m, ids] of sel) await cloneAtoms(m, ids, off);
+  }
+  // atoms selected across several models (a CG frame and its probes, say): one new
+  // model of them all, so File | Save Model keeps them together
+  async function cloneMerged(sel) {
+    try {
+      const [first, ids] = sel[0];
+      const out = await app.post("api/clone", { m: first.index, atoms: ids,
+                                                 frame: Math.min(state.frame, first.topo.nframes - 1) });
+      for (const info of out.models.slice(state.models.length)) state.models.push(app.newModel(info, state.models.length));
+      const made = state.models[out.added[0]];
+      for (const [m, more] of sel.slice(1))  // into the clone before its first load
+        await app.post("api/copy_into", { m: m.index, into: made.index, atoms: more,
+                                           frame: Math.min(state.frame, m.topo.nframes - 1) });
+      app.clearSelection();
+      state.current = made.index;
+      await app.show([made]);
+      app.message(`${made.name}: the selection from ${sel.map(([m]) => m.name).join(", ")} as one model`);
+    } catch (e) { app.message(e.message, true); }
   }
   // A model apart into one model per chain or molecule, in a group, with the original
   // hidden and untouched: chain A of a homodimer can then be aligned onto chain B
@@ -3789,7 +3840,18 @@ export function setupUI(app) {
       });
       const x = el("button", { className: "x", title: "close this model" }, "✕");
       x.onclick = () => closeModel(m);
-      row.append(el("div", { className: "top" }, box, sw, name, color, x));
+      const extras = [];
+      if (m.group === "pockets") {  // the pocket in its MD frame, one click
+        const fr = kinOf(m).find(o => o.name.startsWith("frame "));
+        const md = fr && /md frame (\d+)/.exec(fr.name)?.[1];
+        if (fr) {
+          const b = el("button", { className: "table-btn", title: `look at ${m.name} in MD frame ${md ?? "?"}: `
+            + "the coarse-grained protein and probe molecules of its medoid, this pocket's set alone" }, md ? `md ${md}` : "md");
+          b.onclick = e => { e.stopPropagation(); lookAtPocket(m); };
+          extras.push(b);
+        }
+      }
+      row.append(el("div", { className: "top" }, box, sw, name, ...extras, color, x));
       // a click on the row (not on its controls): this model's representations below
       row.onclick = async e => {
         if (e.target.closest("button, input, .name")) return;
@@ -3806,6 +3868,7 @@ export function setupUI(app) {
           "-",
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
+          ...kinItems(m),
           ...(isSeries(m) ? [...seriesMemberItems(m), "-"]
             : (gs => gs.length ? [...gs.map(g => ({ label: `Add to ${g}`, run: () => joinSeries(m, null, g) })), "-"] : [])(seriesGroups())),
           { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },

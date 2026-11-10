@@ -1868,10 +1868,10 @@ def _parser() -> argparse.ArgumentParser:
                         "of several domains disagree over the whole chain however well "
                         "the domain fits, so the first one is otherwise arbitrary")  # fmt: skip
     q.add_argument("--cg-frames", dest="cg_frames", action="store_true",
-                   help="a boonza cavity folder: list each pocket's coarse-grained protein "
-                        "and probe molecules in the MD frame of its medoid site too (off "
-                        "until ticked); beads are often enough to see a pocket's "
-                        "shape")  # fmt: skip
+                   help="a boonza cavity folder: show each pocket's coarse-grained protein "
+                        "and probe molecules in the MD frame of its medoid site from the "
+                        "start (they are always listed, off until ticked; right-clicking "
+                        "a pocket offers its own)")  # fmt: skip
     q.add_argument("--ligand", help="the atoms the pocket, contacts and Minimize are "
                    "about (default: whatever is not protein, nucleic, water, ions or "
                    "lipid).  A modified residue of a chain is protein to nobody and "
