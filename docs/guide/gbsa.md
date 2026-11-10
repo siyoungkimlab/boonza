@@ -112,10 +112,10 @@ import boonza
 s = boonza.load("md/runs/run_041/solvated.dms")
 traj = boonza.open_trajectory("md/runs/run_041/trajectory.dcd", s)
 out = boonza.gbsa(s, traj, ligand="chain L", model="GBn2", salt=0.15, stride=5)
-out.total              # dG per frame scored
-out.terms["gb"]        # one array per term; out.terms["bonded"] is the check
-out.summary()          # dg, sem, best, best_frame, late, and each term's mean
-out.pieces["ligand"]   # the energies the differences were taken from
+out.total  # dG per frame scored
+out.terms["gb"]  # one array per term; out.terms["bonded"] is the check
+out.summary()  # dg, sem, best, best_frame, late, and each term's mean
+out.pieces["ligand"]  # the energies the differences were taken from
 ```
 
 `boonza.gb_force(system, model="GBn2", salt=0.15)` builds the GB force on its

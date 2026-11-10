@@ -193,7 +193,7 @@ def test_a_wrapped_frame_is_imaged_before_it_is_scored(protein):
     two.cell = np.diag([width + 60.0, 400.0, 400.0])
     here = np.asarray(two.positions)
     wrapped = here.copy()
-    wrapped[s.natoms:] -= two.cell[0]  # the ligand one box over
+    wrapped[s.natoms :] -= two.cell[0]  # the ligand one box over
     both = gbsa(two, np.stack([here, wrapped]), ligand=ligand)
     assert both.frames.tolist() == [0, 1]
     # the same pose, give or take the single precision the CPU platform sums in
