@@ -404,8 +404,10 @@ def test_distance_restraints_take_their_lengths_from_a_reference():
     pairs = [["resid 2 and name O", "resid 6 and name N"]]  # an i, i+4 hydrogen bond
     (rec,) = restraints.add_distance_restraints(_particles(s.natoms), s, pairs, 1000.0,
                                                 reference=helix)  # fmt: skip
-    assert rec["start_nm"] > 1.0 > rec["r0_nm"]  # far apart extended, bonded in the helix
-    assert abs(rec["r0_nm"] - 0.3) < 0.05
+    o, n = helix.select("resid 2 and name O").ids[0], helix.select("resid 6 and name N").ids[0]
+    in_helix = float(np.linalg.norm(helix.positions[n] - helix.positions[o])) / 10.0
+    assert rec["start_nm"] > 1.0 > rec["r0_nm"]  # far apart extended, near in the helix ...
+    assert abs(rec["r0_nm"] - in_helix) < 1e-4  # ... and held at the helix's own distance
     with pytest.raises(ValueError, match="reference has no atom"):
         short = boonza.peptide("AAA", conformation="helix")
         restraints.add_distance_restraints(_particles(s.natoms), s, pairs, 1000.0, reference=short)
