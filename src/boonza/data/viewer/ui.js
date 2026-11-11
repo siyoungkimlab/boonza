@@ -1353,8 +1353,13 @@ export function setupUI(app) {
       // otherwise: in a structure of a thousand superposed parts the cursor atom is
       // one of dozens within a few A of it, so a selection is what was meant.  The
       // item names the part either way, before it is clicked.
-      ...(c.m.topo.sources ? [(t => ({ label: `Open Source of ${t.name}`,
-                                       run: () => openSource(c.m, t.a) }))(sourceTarget(c))] : []),  // fmt: skip
+      // a triage folder written with --all-frames has each run's first and last frame
+      // beside its pose (the frame that stands for the run): any of the three
+      ...(c.m.topo.sources ? [(t => (c.m.topo.source_frames?.length
+        ? { label: `Open Source of ${t.name}`, sub: [
+            { label: "Representative Frame (the pose here)", run: () => openSource(c.m, t.a) },
+            ...c.m.topo.source_frames.map(k => ({ label: SOURCE_FRAME[k], run: () => openSource(c.m, t.a, k) }))] }
+        : { label: `Open Source of ${t.name}`, run: () => openSource(c.m, t.a) }))(sourceTarget(c))] : []),  // fmt: skip
       { label: `Delete Molecule (${c.molecule.length} atoms)`, run: () => removeAtoms(c.m, c.molecule, c.molName) },
       { label: `Delete Residue ${c.resName}`, run: () => removeAtoms(c.m, c.residue, c.resName) },
       ...(hit.atom !== undefined ? [{ label: `Delete Atom ${c.m.topo.atoms.name[c.a]}`, run: () => removeAtoms(c.m, [c.a], `atom ${c.m.topo.atoms.name[c.a]}`) }] : []),
@@ -3946,14 +3951,20 @@ export function setupUI(app) {
   }
   // every other pickedModels model onto ``ref``, each by itself: one that cannot be (a ligand
   // has no sequence to align) is named and left where it is
-  async function alignPicked(ref, method) {
+  // ``atoms`` (ca, backbone): those atoms paired in order, with no alignment at all --
+  // models of one system (a set of predictions of it) have the same atoms in the same
+  // order, and that is the quickest and the exact way to fit them
+  const PAIRED = { ca: cg => (cg ? "name BB GC" : "protein and name CA"),
+                   backbone: cg => (cg ? "name BB" : "protein and backbone") };
+  async function alignPicked(ref, method, atoms = null) {
     const mobiles = app.live().filter(m => pickedModels.has(m.index) && m !== ref);
     const done = [], failed = [];
     await app.busy("superposing", async () => {
       await Promise.all([ref, ...mobiles].map(m => app.load(m)));
       for (const m of mobiles) {
         try {
-          const out = await app.post("api/align", { m: m.index, ref: ref.index, method, ref_frame: app.frameOf(ref) });
+          const how = atoms ? { sel: PAIRED[atoms](m.topo.cg), ref_sel: PAIRED[atoms](ref.topo.cg) } : {};
+          const out = await app.post("api/align", { m: m.index, ref: ref.index, method, ...how, ref_frame: app.frameOf(ref) });
           await app.reloadModel(m, false);
           done.push([m, out.rmsd]);
         } catch (e) { failed.push(`${m.name}: ${e.message}`); }
@@ -3973,7 +3984,10 @@ export function setupUI(app) {
     return [
       { label: `Align the Other${n > 2 ? ` ${n - 1}` : ""} On This`, sub: [
         { label: "By Sequence (matchmaker)", run: () => alignPicked(ref, "matchmaker") },
-        { label: "By Structure Only (CE)", run: () => alignPicked(ref, "cealign") }] },
+        { label: "By Structure Only (CE)", run: () => alignPicked(ref, "cealign") },
+        "-",
+        { label: "Alpha Carbons, in Order (same system)", run: () => alignPicked(ref, "pair", "ca") },
+        { label: "Backbone, in Order (same system)", run: () => alignPicked(ref, "pair", "backbone") }] },
       "-",
       { label: `Show Only These ${n}`, run: async () => {
         const mine = these();
@@ -4706,7 +4720,8 @@ export function setupUI(app) {
     return { a: c.a, name: c.molName };
   }
 
-  async function openSource(m, a) {
+  const SOURCE_FRAME = { initial: "First Frame", last: "Last Frame" };
+  async function openSource(m, a, frame = null) {
     if (a === null || a === undefined) {
       app.message("select one residue, or right-click the one you want", true);
       return;
@@ -4716,6 +4731,11 @@ export function setupUI(app) {
       path = (await app.getJSON(`api/atom?m=${m.index}&a=${a}`)).properties?.source;
     } catch (e) { app.message(e.message, true); return; }
     if (!path) { app.message("this atom records no source structure", true); return; }
+    if (frame) {  // RUN_pose.mae -> RUN_last.mae
+      const at = path.lastIndexOf("_pose.");
+      if (at < path.lastIndexOf("/")) { app.message("this part has only the one frame", true); return; }
+      path = `${path.slice(0, at)}_${frame}.${path.slice(at + 6)}`;
+    }
     // the same file asked for twice is the model already open, not a second copy:
     // opening one a click piles up superposed copies of the same structure
     const name = path.split("/").pop();
@@ -4730,7 +4750,7 @@ export function setupUI(app) {
         const out = await app.post("api/align", { m: opened.index, ref: m.index, method: "matchmaker", ref_frame: app.frameOf(m) });
         await app.reloadModel(opened, false);
         app.message(`${name} onto ${m.name}: RMSD ${out.rmsd} Å over ${out.pairs} atom pairs`
-          + " \u00b7 its ligand is where the run ended, not where it started");  // fmt: skip
+          + (frame ? ` \u00b7 the run's ${SOURCE_FRAME[frame].toLowerCase()}` : " \u00b7 the frame its pose was taken from"));  // fmt: skip
       } catch (e) {  // it is open either way, in its own frame
         app.message(`${name} is open, but not superposed: ${e.message}`, true);
       }

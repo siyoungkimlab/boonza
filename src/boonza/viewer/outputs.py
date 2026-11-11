@@ -1243,6 +1243,10 @@ def from_triage(d, merge: bool = False, fit: str = "", scaffold=None) -> Viewer:
                                           fit=fit or "protein and name CA",
                                           scaffold=scaffold)  # fmt: skip
             numbers = [c for c in ("drifted", *RUN_COLUMNS, "pose") if c in system.atoms.props]
+            # the parts are residues named POS in chain L by now: the selection that
+            # found the ligand in each run (resname LIG, chain B) finds none of them,
+            # and nothing of the poses was drawn, picked or offered its source
+            sel = f"resname {MERGED_RESNAME}"
             # dicts, as a manifest gives them: a Session keeps `reps` as it is and
             # only the default path builds them out of tuples
             return Session(system, ligand=sel, numbers=numbers, reps=[

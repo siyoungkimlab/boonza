@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import threading
 from collections import OrderedDict
+from pathlib import Path
 
 import numpy as np
 
@@ -508,6 +509,19 @@ class Session:
         i, j = np.nonzero(d <= POLAR_CONTACT)
         return [[int(a[x]), int(b[y]), round(float(d[x, y]), 2)] for x, y in zip(i, j, strict=True)]
 
+    def _source_frames(self) -> list:
+        """Which other frames of a part's run can be opened beside its pose: boonza
+        triage --all-frames writes RUN_initial and RUN_last next to RUN_pose."""
+        s = self.system
+        if "source" not in s.atoms.props:
+            return []
+        first = next((str(x) for x in s.atoms["source"] if "_pose." in Path(str(x)).name), None)
+        if first is None:
+            return []
+        f = Path(first)
+        return [k for k in ("initial", "last")
+                if f.with_name(f.name.replace("_pose.", f"_{k}.")).is_file()]  # fmt: skip
+
     def topology(self) -> dict:
         """Everything the page needs once: atoms, residues, chains, bonds, defaults."""
         from ..elements import radii, symbol
@@ -604,6 +618,7 @@ class Session:
             "solvent": f"resname {CG_SOLVENT}" if self.cg else f"water or {IONS}",
             # a structure assembled from parts can say where each part came from
             "sources": "source" in s.atoms.props,
+            "source_frames": self._source_frames(),
             "numbers": self._numbers(),
             "atoms": {
                 "name": [str(x) for x in A.column("name")],

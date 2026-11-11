@@ -292,6 +292,24 @@ def test_triage_folder_merged(tmp_path):
     assert len(m.select("chain L and drifted < 2").ids) == 2 * heme
     assert len(m.select("chain L and drifted < 100").ids) == 3 * heme  # not the unmeasured one
     assert str(m.atoms["source"][parts[3][0]]).endswith("run_d_pose.pdb")
+    # the poses are drawn: the run's own ligand selection names nothing in the merged model
+    drawn = [r["sel"] for r in v.session(0).topology()["reps"]]
+    assert (
+        len(drawn) == 2
+        and len(m.select(drawn[1]).ids)
+        and set(m.select(drawn[1]).ids) <= set(lig.ids)
+    )
+    assert v.session(0).topology()["sources"]
+    # the first and last frame of a run are offered where triage --all-frames wrote them
+    assert v.session(0).topology()["source_frames"] == []
+    for run in "abcd":
+        boonza.save(s, d / "structures" / f"run_{run}_last.pdb")
+    assert viewer.from_paths([d], merge=True).session(0).topology()["source_frames"] == ["last"]
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    assert (
+        "openSource(c.m, t.a, k)" in ui
+        and "`${path.slice(0, at)}_${frame}.${path.slice(at + 6)}`" in ui
+    )
     # what other tools read: drifted as the B-factor, settled as the occupancy (0 when unmeasured)
     assert np.asarray(m.atoms["bfactor"])[parts[1][0]] == 1.5
     assert np.asarray(m.atoms["occupancy"])[parts[3][0]] == 0.0
@@ -2913,6 +2931,9 @@ def test_several_models_are_picked_and_superposed():
     align = align[: align.index("\n  }\n")]
     assert "m !== ref" in align and '"api/align"' in align
     assert "failed.push" in align  # one that cannot be aligned leaves the rest to be
+    # models of one system, fitted with no alignment: alpha carbons or backbone in order
+    assert 'alignPicked(ref, "pair", "ca")' in ui and 'alignPicked(ref, "pair", "backbone")' in ui
+    assert '"protein and name CA"' in ui and "sel: PAIRED[atoms](m.topo.cg)" in align
     assert "if (pickedModels.has(m.index) && pickedModels.size > 1) { menu(pickedMenu(m)" in ui
     # and a representation is drawn or hidden in them all at once, as one step to undo
     assert '{ label: "Representations", sub: () => pickedReps(these()) }' in ui
