@@ -2914,6 +2914,11 @@ def test_several_models_are_picked_and_superposed():
     assert "m !== ref" in align and '"api/align"' in align
     assert "failed.push" in align  # one that cannot be aligned leaves the rest to be
     assert "if (pickedModels.has(m.index) && pickedModels.size > 1) { menu(pickedMenu(m)" in ui
+    # and a representation is drawn or hidden in them all at once, as one step to undo
+    assert '{ label: "Representations", sub: () => pickedReps(these()) }' in ui
+    reps = ui[ui.index("function pickedReps(models)") :]
+    reps = reps[: reps.index("\n  }\n")]
+    assert "repKind(rep) === k" in reps and reps.count("app.rebuild()") == 1
 
 
 def test_a_hydrophobic_surface_is_a_lipophilicity_potential():
