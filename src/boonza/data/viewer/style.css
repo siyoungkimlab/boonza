@@ -416,3 +416,5 @@ html.static #btn-py, html.static #btn-cancel, html.static #btn-min, html.static 
    button style.  Minimize's choices looked dead without it */
 button.armed, .panel button.armed, #ldock button.armed { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.armed small, #ldock button.armed small { color: var(--accent-text); }
+/* what the selection is now (its formal charge), not a tool in hand: outlined, not filled */
+button.current:not(.armed), #ldock button.current:not(.armed) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }

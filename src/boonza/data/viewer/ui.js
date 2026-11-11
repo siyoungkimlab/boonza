@@ -1984,6 +1984,7 @@ export function setupUI(app) {
     refreshSelRow();
     markSelectedResidues();  // every atom of a picked residue, ribbon or not
     markBuilderH();  // a selection of its own brings its hydrogens out, in the Builder
+    markCharge();
     refreshProteinBuilder();
     ramaRefresh?.();
     footerEdit();
@@ -2828,6 +2829,19 @@ export function setupUI(app) {
   app.dropTool = () => setTool(null);
 
   // a tool's button: with atoms selected it acts on them, else it is picked up
+  // The charge buttons show the formal charge of what is selected: the one every
+  // selected atom has is outlined (none when they differ, or it is past -1..+1), so a
+  // click on an atom says what it is and a click on a button is seen to have taken
+  function markCharge() {
+    const sel = app.selection();
+    const charges = new Set(sel.flatMap(([m, atoms]) => atoms.map(a => m.topo.atoms.charge?.[a] ?? 0)));
+    const q = charges.size === 1 ? [...charges][0] : null;
+    for (const b of document.querySelectorAll('#ldock [data-tool^="charge:"]')) {
+      const is = q !== null && b.dataset.tool === `charge:${q}`;
+      b.classList.toggle("current", is);
+      b.title = is ? `the formal charge of the selected atom${sel[0][1].length > 1 || sel.length > 1 ? "s" : ""}` : "";
+    }
+  }
   function toolButton(label, next, cls = "") {
     const b = button(label, () => {
       const sel = app.selection();
@@ -3074,6 +3088,7 @@ export function setupUI(app) {
     breaker.title = "Break the bond between the two selected atoms, or click a bond with it";
     body.append(row(...[["Single", 1], ["Double", 2], ["Triple", 3]].map(([l, v]) => toolButton(l, { kind: "bond", value: v, label: `${l} bond` })), breaker));
     body.append(row(...[["−1", -1], ["0", 0], ["+1", 1]].map(([l, v]) => toolButton(l, { kind: "charge", value: v, label: l }))));
+    setTimeout(markCharge, 0);  // once the panel is in the page: what is selected now
     body.append(el("h3", {}, "Rings"));
     const rings = grid("grid wide");
     for (const [n, smi] of RINGS) {
