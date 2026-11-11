@@ -92,8 +92,9 @@ function addModel({ topo, pos, ss, state, dashes }, s, c, l, m) {
   // each representation is drawn on its own, so a bond out of one was drawn by nobody:
   // a cysteine in the binding site's and the warhead bonded to it in the ligand's, or a
   // residue over the ribbon of its chain, looked detached.  ``reach`` is what the model
-  // draws anywhere (an atom, or the ribbon its residue is under).  Such a bond is drawn
-  // from the atom shown to half way, and the other half by whatever draws the other end
+  // draws anywhere (an atom, or the atom a ribbon is traced through).  Such a bond is
+  // drawn from the atom shown to half way, and the other half by whatever draws the other
+  // end; never toward an atom nothing draws, where it would end in mid-air
   const reach = state.reach;
   for (let k = 0; k < B.i.length; k++) {
     const i = B.i[k], j = B.j[k];

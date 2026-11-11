@@ -5,6 +5,7 @@
 // on all of them if none are.
 
 import { colorAtoms, colorResidues, isColor, named } from "./colors.js";
+import { MOUSE_MODES } from "./mouse.js";
 import { GRIDS } from "./surface.js";
 
 const $ = id => document.getElementById(id);
@@ -1168,7 +1169,7 @@ export function setupUI(app) {
       { label: "Python Console", run: togglePython, key: "`", off: () => !app.PYTHON },
     ],
     Help: () => [
-      { label: "Mouse…", run: mousePanel },
+      { label: "Mouse…", run: () => mousePanel() },
       { label: "Keys…", run: () => app.message("Space: command line · Ctrl Z / Ctrl Y: undo, redo · Del: delete · ←/→: frames · ↑/↓: next model · R: reset the view · W: fit all · F12: full screen · Esc: close menus, put a message away, else select none") },
     ],
   };
@@ -3886,9 +3887,76 @@ export function setupUI(app) {
     return `rgb(${c.map(x => Math.round(x * 255)).join(",")})`;
   }
 
+  // Several models picked in the list: Shift + click takes the rows from the current
+  // model to the clicked one, Ctrl (Cmd) + click one row in or out.  A right-click on a
+  // picked row is then about all of them: the others superposed on it, shown, closed.
+  const pickedModels = new Set();
+  function pickModel(e, m) {
+    const order = sortedModels();
+    if (e.shiftKey) {
+      let i = order.findIndex(o => o.index === state.current), j = order.indexOf(m);
+      if (i < 0) i = j;
+      pickedModels.clear();
+      for (let k = Math.min(i, j); k <= Math.max(i, j); k++) pickedModels.add(order[k].index);
+    } else if (e.ctrlKey || e.metaKey) {
+      if (!pickedModels.size && order.some(o => o.index === state.current)) pickedModels.add(state.current);
+      if (pickedModels.has(m.index)) pickedModels.delete(m.index); else pickedModels.add(m.index);
+    } else {
+      return false;
+    }
+    modelsDock();
+    const n = pickedModels.size;
+    if (n > 1) app.message(`${n} models picked: right-click one of them to superpose the others on it`);
+    return true;
+  }
+  // every other pickedModels model onto ``ref``, each by itself: one that cannot be (a ligand
+  // has no sequence to align) is named and left where it is
+  async function alignPicked(ref, method) {
+    const mobiles = app.live().filter(m => pickedModels.has(m.index) && m !== ref);
+    const done = [], failed = [];
+    await app.busy("superposing", async () => {
+      await Promise.all([ref, ...mobiles].map(m => app.load(m)));
+      for (const m of mobiles) {
+        try {
+          const out = await app.post("api/align", { m: m.index, ref: ref.index, method, ref_frame: app.frameOf(ref) });
+          await app.reloadModel(m, false);
+          done.push([m, out.rmsd]);
+        } catch (e) { failed.push(`${m.name}: ${e.message}`); }
+      }
+    });
+    if (done.length) {
+      await app.show([ref, ...done.map(([m]) => m)]);
+      app.centerView();
+    }
+    const said = done.length ? `${done.length} model${done.length === 1 ? "" : "s"} onto ${ref.name}: RMSD `
+      + `${done.map(([m, r]) => `${m.name} ${r} Å`).join(", ")}. Undo puts each back.` : "";
+    app.message([said, ...failed].filter(Boolean).join(" · "), !done.length);
+  }
+  function pickedMenu(ref) {
+    const these = () => app.live().filter(m => pickedModels.has(m.index));
+    const n = pickedModels.size;
+    return [
+      { label: `Align the Other${n > 2 ? ` ${n - 1}` : ""} On This`, sub: [
+        { label: "By Sequence (matchmaker)", run: () => alignPicked(ref, "matchmaker") },
+        { label: "By Structure Only (CE)", run: () => alignPicked(ref, "cealign") }] },
+      "-",
+      { label: `Show Only These ${n}`, run: async () => {
+        const mine = these();
+        await app.show(app.live().filter(m => !mine.includes(m)), false);
+        await app.show(mine);
+      } },
+      { label: "Show", run: () => app.show(these()) },
+      { label: "Hide", run: () => app.show(these(), false) },
+      "-",
+      { label: `Close These ${n}`, run: async () => { for (const m of these()) await closeModel(m); } },
+    ];
+  }
+
   function modelsDock() {
     const list = $("rdock-list");
     list.innerHTML = "";
+    const alive = new Set(app.live().map(m => m.index));
+    for (const i of [...pickedModels]) if (!alive.has(i)) pickedModels.delete(i);
     const sort = $("rdock-sort");
     if (!sort.options.length || sort.dataset.columns !== state.columns.join("|")) {
       sort.innerHTML = "";
@@ -3904,14 +3972,15 @@ export function setupUI(app) {
         group = m.group;
         if (group) list.append(groupHeader(group));
       }
-      const row = el("div", { className: `mrow${m.shown ? " on" : ""}${m.index === state.current ? " current" : ""}` });
+      const row = el("div", { className: `mrow${m.shown ? " on" : ""}${m.index === state.current ? " current" : ""}${pickedModels.has(m.index) ? " picked" : ""}` });
       const box = el("input", { type: "checkbox", checked: m.shown, title: "show" });
       box.onchange = () => { state.current = m.index; app.show([m], box.checked); };
       const sw = el("span", { className: "swatch" });
       sw.style.background = swatchColor(m.swatch || m.color);
       const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
-        + "on the command line): click to show it alone and look at it" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
-      name.onclick = () => app.solo(m);
+        + "on the command line): click to show it alone and look at it; Shift or Ctrl + click picks several models, "
+        + "to superpose (right-click one of them)" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
+      name.onclick = e => { if (e.shiftKey || e.ctrlKey || e.metaKey) return; pickedModels.clear(); app.solo(m); };  // with a key: the row picks
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, m.autoColor ? "auto" : "its own"]] : MODEL_COLORS;
       const color = picker("color", colors, () => m.color || "default", async v => {
         await app.load(m); colorModel(m, v); sw.style.background = swatchColor(m.swatch || v);
@@ -3931,14 +4000,18 @@ export function setupUI(app) {
       }
       row.append(el("div", { className: "top" }, box, sw, name, ...extras, color, x));
       // a click on the row (not on its controls): this model's representations below
+      row.onmousedown = e => { if (e.shiftKey) e.preventDefault(); };  // Shift + click picks rows, not their text
       row.onclick = async e => {
-        if (e.target.closest("button, input, .name")) return;
+        if (e.target.closest("button, input")) return;
+        if (pickModel(e, m) || e.target.closest(".name")) return;
+        pickedModels.clear();
         state.current = m.index;
         await app.load(m);
         modelsDock(); repsPanel();
       };
       row.oncontextmenu = e => {
         e.preventDefault();
+        if (pickedModels.has(m.index) && pickedModels.size > 1) { menu(pickedMenu(m), e.clientX, e.clientY); return; }
         menu([
           { label: "Show Only This", run: () => { for (const o of app.live()) o.shown = o === m; app.solo(m); } },
           { label: m.shown ? "Hide" : "Show", run: () => { state.current = m.index; app.show([m], !m.shown); } },
@@ -4247,31 +4320,84 @@ export function setupUI(app) {
   };
 
 
-  function mousePanel() {
+  // Help | Mouse: boonza's own mouse, or the one of ChimeraX or PyMOL (mouse.js)
+  const MOUSE_ROWS = {
+    boonza: [
+      ["Left click", "select an atom (a bond: its two atoms; a ribbon: its residue)"],
+      ["Shift / Ctrl click", "toggle / the whole residue"], ["Double / triple click", "the residue / the molecule"],
+      ["Left drag", "select a box (Shift adds, Ctrl takes residues)"], ["Click away", "clear the selection"],
+      ["Middle drag", "rotate (in the perimeter: about z)"], ["Shift + middle", "pan"], ["Ctrl + middle", "zoom"],
+      ["Middle click", "center of rotation (away from atoms: reset)"], ["Wheel", "zoom"],
+      ["Alt + middle", "rotate the selected atoms"], ["Shift + Alt + middle", "translate the selected atoms"],
+      ["Alt + left drag", "turn the selected bond"], ["Right click", "the popup menu"], ["Right drag", "zoom"],
+    ],
+    chimerax: [
+      ["Left drag", "rotate (in the perimeter: about z)"], ["Middle or right drag", "move"], ["Wheel", "zoom"],
+      ["Ctrl + left click", "select an atom (a bond: its two atoms; a ribbon: its residue); away: clear"],
+      ["Ctrl + Shift + left click", "toggle"], ["Ctrl + left drag", "select a box (Shift toggles)"],
+      ["Double / triple click", "the residue / the molecule"], ["Ctrl + double-click", "the popup menu"],
+      ["Right click", "the popup menu"], ["Middle click", "center of rotation (away from atoms: reset)"],
+      ["Alt + left drag", "rotate the selected atoms"], ["Alt + middle or right drag", "translate the selected atoms"],
+      ["Shift + Alt + left drag", "turn the selected bond"],
+    ],
+    pymol: [
+      ["Left drag", "rotate (in the perimeter: about z)"], ["Middle drag", "move"], ["Right drag", "zoom"],
+      ["Left click", "a residue in or out of the selection; away: clear"],
+      ["Middle click", "center of rotation (away from atoms: reset)"], ["Right or double click", "the popup menu"],
+      ["Shift + left / middle drag", "a box added to / taken from the selection"],
+      ["Shift + right drag", "clip (up and down: the front; left and right: the back)"],
+      ["Ctrl + left drag", "move"], ["Ctrl + middle or right click", "select one atom"],
+      ["Ctrl + Shift + left click", "select one residue"], ["Ctrl + Shift + middle click", "center of rotation"],
+      ["Wheel", "the slab's thickness (Shift: move it; Ctrl: zoom)"],
+      ["Alt + left drag", "rotate the selected atoms"], ["Alt + middle drag", "translate the selected atoms"],
+      ["Shift + Alt + left drag", "turn the selected bond"],
+    ],
+  };
+  const MOUSE_NAMES = { boonza: "boonza (the default)", chimerax: "ChimeraX", pymol: "PyMOL (3-Button Viewing)" };
+  app.clipChanged = () => {  // the planes moved by the mouse: the button says so
+    const c = app.camera.zclip;
+    $("vt-clip").classList.toggle("on", c[0] < 1 || c[1] < 1);
+  };
+
+  const MOUSE_SHORT = { boonza: "boonza", chimerax: "ChimeraX", pymol: "PyMOL" };
+  app.onMouseMode = () => { $("f-mouse").textContent = `Mouse: ${MOUSE_SHORT[state.mouseMode]}`; };
+  function setMouseMode(mode) {
+    state.mouseMode = mode;
+    localStorage.setItem("boonza.mouseMode", mode);
+    app.onMouseMode();
+    const p = panels.mouse;  // its table is that mode's: an open panel is drawn again where it is
+    if (p) mousePanel([p.offsetLeft, p.offsetTop]);
+    app.message(`mouse: ${MOUSE_NAMES[mode]} · Help | Mouse lists what each button does`);
+  }
+  // the button at the bottom: the three modes, and the table of the one in use
+  $("f-mouse").onclick = () => {
+    const r = $("f-mouse").getBoundingClientRect();
+    menu([...MOUSE_MODES.map(k => ({ label: MOUSE_NAMES[k], checked: () => state.mouseMode === k, run: () => setMouseMode(k) })),
+          "-", { label: "What Each Button Does…", run: () => mousePanel() }], r.left, r.top - 110);
+  };
+
+  function mousePanel(where = null) {
     panel("mouse", "Mouse", body => {
-      const rows = [
-        ["Left click", "select an atom (a bond: its two atoms; a ribbon: its residue)"],
-        ["Shift / Ctrl click", "toggle / the whole residue"], ["Double / triple click", "the residue / the molecule"],
-        ["Left drag", "select a box (Shift adds, Ctrl takes residues)"], ["Click away", "clear the selection"],
-        ["Middle drag", "rotate (in the perimeter: about z)"], ["Shift + middle", "pan"], ["Ctrl + middle", "zoom"],
-        ["Middle click", "center of rotation (away from atoms: reset)"], ["Wheel", "zoom"],
-        ["Alt + middle", "rotate the selected atoms"], ["Shift + Alt + middle", "translate the selected atoms"],
-        ["Alt + left drag", "turn the selected bond"], ["Right click", "the popup menu"], ["Right drag", "zoom"],
-        ["Shift (hover)", "what an atom is"], ["Space", "command line"],
-      ];
+      const mode = el("select", { id: "mouse-mode" });
+      for (const k of MOUSE_MODES) mode.append(el("option", { value: k, selected: k === state.mouseMode }, MOUSE_NAMES[k]));
+      mode.onchange = () => setMouseMode(mode.value);
+      body.append(row(el("span", { className: "what" }, "Mode"), mode));
       const t = el("table", { className: "mouse-table" });
+      const rows = [...MOUSE_ROWS[state.mouseMode], ["Shift (hover)", "what an atom is"], ["Space", "command line"]];
       for (const [k, v] of rows) { const tr = t.insertRow(); tr.insertCell().textContent = k; tr.insertCell().textContent = v; }
       body.append(t);
-      const two = el("input", { type: "checkbox", checked: state.twoButton });
-      two.onchange = () => { state.twoButton = two.checked; localStorage.setItem("boonza.twoButton", two.checked ? "1" : "0"); };
-      body.append(row(el("label", {}, two, " two-button mouse: the right button is the middle one; Alt alone opens the popup")));
+      if (state.mouseMode === "boonza") {
+        const two = el("input", { type: "checkbox", checked: state.twoButton });
+        two.onchange = () => { state.twoButton = two.checked; localStorage.setItem("boonza.twoButton", two.checked ? "1" : "0"); };
+        body.append(row(el("label", {}, two, " two-button mouse: the right button is the middle one; Alt alone opens the popup")));
+      }
       const pad = el("input", { type: "checkbox", checked: state.trackpad });
       pad.onchange = () => { state.trackpad = pad.checked; localStorage.setItem("boonza.trackpad", pad.checked ? "1" : "0"); };
       body.append(row(el("label", {}, pad, " trackpad: a two-finger swipe rotates (in the perimeter: about z), "
         + "Shift + swipe pans, a pinch zooms")));
-      body.append(el("p", { className: "help" }, "On a Mac, Ctrl is Cmd and Alt is Option. Without a middle button, "
-        + "use the trackpad or two-button setting."));
-    });
+      body.append(el("p", { className: "help" }, "On a Mac, Ctrl is Cmd and Alt is Option."
+        + (state.mouseMode === "boonza" ? " Without a middle button, use the trackpad or two-button setting, or another mode." : "")));
+    }, where);
   }
 
   function fogPanel() {

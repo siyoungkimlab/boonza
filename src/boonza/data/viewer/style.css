@@ -91,6 +91,8 @@ label.mgroup input { margin: 0; }
 .mrow { padding: 4px 6px; border-radius: 6px; margin: 1px 0; border: 1px solid transparent; }
 .mrow:hover { background: var(--hover); }
 .mrow.current { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.mrow.picked { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); border-style: dashed; }
+.mrow.current.picked { border-style: solid; }
 .mrow .top { display: flex; align-items: center; gap: 5px; }
 .mrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer; font-weight: 600; }
