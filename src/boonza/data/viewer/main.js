@@ -85,7 +85,8 @@ async function post(url, body = {}) {
   const r = await fetch(url, { method: "POST", body: JSON.stringify(body),
                                headers: { "Content-Type": "application/json", "X-Boonza-Token": TOKEN } });
   const out = await r.json();
-  if (!r.ok) throw new Error(out.error || r.statusText);
+  // an error about particular atoms carries them (and their model), to be shown
+  if (!r.ok) throw Object.assign(new Error(out.error || r.statusText), { atoms: out.atoms, m: out.m });
   return out;
 }
 

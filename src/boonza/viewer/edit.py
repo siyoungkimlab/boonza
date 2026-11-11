@@ -73,15 +73,16 @@ def _bonded(s) -> dict:
     return out
 
 
-def hydrogens_wanted(s, a: int) -> int | None:
-    """How many hydrogens atom ``a`` should carry; None where there is no rule."""
+def hydrogens_wanted(s, a: int, bonded: dict | None = None) -> int | None:
+    """How many hydrogens atom ``a`` should carry; None where there is no rule.
+    ``bonded``: :func:`bonded` of ``s``, for a loop over many atoms."""
     anum = int(s.atoms["anum"][a])
     if anum <= 1:
         return None
     rules = _valences(anum, int(s.atoms["formal_charge"][a]))
     if not rules:
         return None
-    heavy = sum(max(o, 1) for b, o in neighbors(s, a) if s.atoms["anum"][b] != 1)
+    heavy = sum(max(o, 1) for b, o in neighbors(s, a, bonded) if s.atoms["anum"][b] != 1)
     for v in rules:
         if v >= heavy:
             return v - heavy
@@ -157,11 +158,14 @@ def adjust_hydrogens(s, atoms) -> np.ndarray:
     old-to-new atom index map (identity when only hydrogens were added)."""
     atoms = [int(a) for a in atoms if s.atoms["anum"][a] > 1]
     remove, add = [], []
+    # every bond walked once, not twice per atom: on a 36,000-atom model that was
+    # 0.05 s an atom, minutes for a chain (nothing changes the bonds in this loop)
+    adj = bonded(s) if atoms else {}
     for a in atoms:
-        want = hydrogens_wanted(s, a)
+        want = hydrogens_wanted(s, a, adj)
         if want is None:
             continue
-        hs = [b for b, _ in neighbors(s, a) if s.atoms["anum"][b] == 1]
+        hs = [b for b, _ in neighbors(s, a, adj) if s.atoms["anum"][b] == 1]
         if len(hs) > want:
             remove += hs[want:]
         elif len(hs) < want:
@@ -721,6 +725,15 @@ def pocket_selection(ligand: str, cutoff: float = 5.0) -> str:
             f"within {cutoff:g} of ({ligand})))")  # fmt: skip
 
 
+class AtomsError(ValueError):
+    """An error about particular atoms (``atoms``: indices in the model), which the
+    page selects and centers on."""
+
+    def __init__(self, message: str, atoms):
+        super().__init__(message)
+        self.atoms = [int(a) for a in atoms]
+
+
 def parameterize(s, forcefields=None, log=print):
     """``s`` with the force fields ``boonza md`` uses; GAFF2 (AmberTools) for what
     they have no template for, AM1-BCC charges at a reference conformer
@@ -749,7 +762,11 @@ def parameterize(s, forcefields=None, log=print):
             "force fields do not match")  # fmt: skip
         # charges at a conformer made from the bonds: a second, not minutes, and the
         # same in every pose (boonza md optimizes each molecule first)
-        patch = gaff.gaff2_patch(work, ffs, charge_geometry="reference")
+        try:
+            patch = gaff.gaff2_patch(work, ffs, charge_geometry="reference")
+        except gaff.GroupError as e:  # which residues: in s's atom order, not work's
+            index = np.asarray(work.atoms["view_index"])
+            raise AtomsError(str(e), index[e.atoms].tolist()) from e
         host = gaff.host_index(ffs)
         ffs[host] = viparr.merge_forcefields(ffs[host], patch)
     import warnings

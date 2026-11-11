@@ -2997,3 +2997,51 @@ def test_a_click_on_a_model_leaves_the_view_and_views_are_kept():
     for key in ("rot", "center", "distance", "ortho", "zclip", "pivot"):
         assert f"{key}:" in view, key  # the camera, and nothing of what is drawn
     assert "views: state.views" in main and "views: page.views || []" in main  # in a session
+
+
+def test_a_charge_edit_says_what_it_did_and_reloads_only_when_atoms_changed(served):
+    s = boonza.from_smiles("CCO")
+    session = viewer.Session(s)
+    get, post = served(session)
+    o = int(np.flatnonzero(s.atoms["anum"] == 8)[0])
+    # no hydrogen added or removed: the page keeps its topology and sets the charge
+    status, out = post("api/edit", {"op": "charge", "atoms": [o], "value": -1, "hydrogens": False})
+    assert status == 200 and out["topology"] is False and "was" not in out
+    assert out["charges"] == [[o, -1]] and out["hydrogens"] == 0 and out["natoms"] == 9
+    assert json.loads(get("api/topology")[2])["atoms"]["charge"][o] == -1
+    # hydrogens follow the charge: atoms changed, so the topology is fetched again
+    status, out = post("api/edit", {"op": "charge", "atoms": [o], "value": 1})
+    assert out["topology"] is True and out["hydrogens"] == 1 and out["natoms"] == 10
+    assert out["charges"] == [[o, 1]] and len(out["was"]) == 10
+
+
+def test_adjusting_hydrogens_of_many_atoms_walks_the_bonds_once(monkeypatch):
+    from boonza.viewer import edit
+
+    # every atom has its hydrogens already: checking them is one walk over the bonds,
+    # not two per atom (0.05 s an atom on a 36,000-atom model, minutes for a chain)
+    s = boonza.from_smiles("CCCCCCCCCC")
+    n = s.natoms
+    calls = []
+    walk = edit._bonded
+    monkeypatch.setattr(edit, "_bonded", lambda s: calls.append(1) or walk(s))
+    index = edit.adjust_hydrogens(s, list(range(n)))
+    assert len(calls) == 1 and s.natoms == n and index.tolist() == list(range(n))
+
+
+def test_an_error_about_atoms_names_them_and_their_model(served, monkeypatch):
+    from boonza.viewer import edit
+
+    session = viewer.Session(boonza.from_smiles("CCO"))
+    get, post = served(session)
+
+    def fail(s, *a, **k):
+        raise edit.AtomsError("no GAFF2 parameters for MOL1: nope", [0, 2])
+
+    monkeypatch.setattr(edit, "parameterize", fail)
+    status, out = post("api/minimize", {"m": 0, "mode": "all"})
+    assert status == 400 and out["error"].startswith("no GAFF2 parameters for MOL1")
+    assert out["atoms"] == [0, 2] and out["m"] == 0
+    # an error that names no atoms carries none
+    status, out = post("api/select", {"m": 0, "sel": "not a selection ("})
+    assert status == 400 and "atoms" not in out

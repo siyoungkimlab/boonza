@@ -747,6 +747,7 @@ class Session:
                 return {**self._changed(topology=True), **report, "picked": []}
         with self._lock:
             self._remember()
+            before = s.natoms
             s.atoms["view_edit"] = np.arange(1, s.natoms + 1, dtype=np.int64)  # follows atoms
             touched = list(atoms)
             made = None  # the atoms of a residue the edit made, for the page to select
@@ -873,6 +874,17 @@ class Session:
             out = {**self._changed(topology=True, keep_forcefield=relabel),
                    "picked": [where.get(a, -1) for a in atoms],
                    "was": [int(k) - 1 for k in tags]}  # fmt: skip
+            if op == "charge":
+                # what it did, for the page to say; and with no hydrogen added or
+                # removed the atoms and bonds are the ones the page has: it sets the
+                # charges it shows and reloads nothing (the force field above is
+                # still dropped: its charges were for the old formal charges)
+                q = s.atoms["formal_charge"]
+                out["charges"] = [[a, int(q[a])] for a in out["picked"] if a >= 0]
+                out["hydrogens"] = int(s.natoms - before)
+                if s.natoms == before and out["was"] == list(range(before)):
+                    out["topology"] = False
+                    del out["was"]
             if made is not None:
                 out["made"] = [int(a) for a in made]
             if note:
@@ -1398,7 +1410,12 @@ class Session:
         key = getattr(self, "topo_version", 0)
         cached = getattr(self, "_param", None)
         if cached is None or cached[0] != key:
-            self._param = (key, parameterize(self.system, log=log))
+            try:
+                self._param = (key, parameterize(self.system, log=log))
+            except Exception as e:
+                if getattr(e, "atoms", None):  # this model's atoms, for the page
+                    e.session = self
+                raise
         p = self._param[1]
         p.positions = np.asarray(self.system.positions)[np.asarray(p.atoms["view_index"])]
         return p
