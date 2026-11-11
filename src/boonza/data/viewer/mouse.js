@@ -20,14 +20,17 @@
 //
 //   ChimeraX   left: rotate; Ctrl + left: select (click or box; Shift toggles);
 //              middle or right: move; wheel: zoom; Ctrl + double-click: the popup
-//   PyMOL      (3-Button Viewing) left: rotate, click: a residue in or out of the
-//              selection; middle: move, click: the center of rotation; right: zoom,
-//              click: the popup; Shift + left / middle: a box added / taken away;
-//              Shift + right: clip; Ctrl + left: move; Ctrl + middle or right click:
-//              one atom; Ctrl + Shift + left click: one residue; wheel: the slab
-//              (Shift: move it; Ctrl: zoom); double-click: the popup
+//   PyMOL      (3-Button Viewing) left: rotate; middle: move, click: the center of
+//              rotation; right: zoom, click: the popup; Shift + left / middle: a box
+//              added / taken away; Shift + right: clip; Ctrl + left: move; Ctrl +
+//              middle or right click: one atom; Ctrl + Shift + left click: one
+//              residue; wheel: the slab (Shift: move it; Ctrl: zoom)
 //
-// In both, Alt edits as it does in boonza's: Alt + left rotates the selected atoms,
+// A click selects as it does in boonza's, whatever the mode: the atom under it (Shift
+// toggles it; away from atoms: nothing selected), twice its residue, three times its
+// molecule.  The other programs want a key or take a residue for that, and a click
+// that did nothing, or more than was asked, read as a selection that does not work.
+// In both, Alt edits as in boonza's too: Alt + left rotates the selected atoms,
 // Alt + middle (ChimeraX: or right) moves them, Shift + Alt + left turns a bond.
 
 const PERIMETER = 0.07;  // the band at the edges where dragging turns about z
@@ -47,7 +50,7 @@ export function binding(mode, role, shift, ctrl, alt) {
       if (alt) return { act: shift ? "dihedral" : "rotateSel", tap: "tool" };
       if (ctrl) return { act: "box", box: shift ? "toggle" : "set", tap: "select",
                          pick: { mode: shift ? "toggle" : "set", keep: shift } };
-      return { act: "rotate", tap: "tool" };
+      return { act: "rotate", tap: "select", pick: { mode: shift ? "toggle" : "set", keep: shift } };
     }
     return { act: alt ? "panSel" : "pan", tap: role === "middle" ? "pivot" : "popup" };
   }
@@ -55,9 +58,9 @@ export function binding(mode, role, shift, ctrl, alt) {
     if (role === "left") {
       if (alt) return { act: shift ? "dihedral" : "rotateSel", tap: "tool" };
       if (ctrl && shift) return { tap: "select", pick: { mode: "set", residues: true } };
-      if (shift) return { act: "box", box: "add", tap: "tool" };
+      if (shift) return { act: "box", box: "add", tap: "select", pick: { mode: "toggle", keep: true } };
       if (ctrl) return { act: "pan", tap: "tool" };
-      return { act: "rotate", tap: "select", pick: { mode: "toggle", residues: true } };
+      return { act: "rotate", tap: "select", pick: { mode: "set" } };
     }
     if (role === "middle") {
       if (alt) return { act: "panSel" };
@@ -314,17 +317,16 @@ export function setupMouse(app) {
     lastDouble = { model: m, residue: r, level: whole ? "molecule" : "residue" };
     app.select(m, ids, e.shiftKey ? "add" : "set");
   }
-  // PyMOL's double-click, and ChimeraX's with Ctrl, open the popup
+  // ChimeraX's double-click with Ctrl opens the popup
   canvas.addEventListener("dblclick", e => {
-    const mode = state.mouseMode;
-    if (mode === "pymol" || (mode === "chimerax" && (e.ctrlKey || e.metaKey))) {
+    if (state.mouseMode === "chimerax" && (e.ctrlKey || e.metaKey)) {
       if (!app.toolActive?.()) app.popup(e.clientX, e.clientY, app.pick(...local(e)));
     } else {
       residueOrMolecule(e, false);
     }
   });
   canvas.addEventListener("click", e => {
-    if (e.detail !== 3 || e.button !== 0 || state.mouseMode === "pymol") return;
+    if (e.detail !== 3 || e.button !== 0) return;
     if (state.mouseMode === "chimerax" && (e.ctrlKey || e.metaKey)) return;
     residueOrMolecule(e, true);
   });

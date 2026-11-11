@@ -2892,9 +2892,13 @@ def test_the_mouse_of_chimerax_and_pymol():
     acts = {mode: [b.get("act") for b in got[mode]] for mode in got}
     assert acts["boonza"] == ["box", "rotate", "pan", "zoom", "dihedral"]  # as it was
     assert acts["chimerax"] == ["rotate", "box", "box", "pan", "pan"]
-    assert got["chimerax"][2]["box"] == "toggle" and got["chimerax"][0]["tap"] == "tool"
+    assert got["chimerax"][2]["box"] == "toggle"
     assert acts["pymol"] == ["rotate", "pan", "zoom", "box", "box", "clip", "pan"]
-    assert got["pymol"][0]["pick"] == {"mode": "toggle", "residues": True}  # a click: a residue
+    # a click selects the atom under it in every mode, as in boonza's: ChimeraX's did
+    # nothing without Ctrl and PyMOL's took the residue, and neither read as selecting
+    for mode in got:
+        assert got[mode][0]["tap"] == "select" and got[mode][0]["pick"]["mode"] == "set", mode
+        assert not got[mode][0]["pick"].get("residues"), mode
     assert [got["pymol"][k]["box"] for k in (3, 4)] == ["add", "remove"]
 
 
