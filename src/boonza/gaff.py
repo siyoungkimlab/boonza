@@ -218,6 +218,16 @@ def _run_gaff2(fragment, net_charge, gaff, charge_method, sqm, amberhome, workdi
     return p
 
 
+class GroupError(ViparrError):
+    """A group of residues that could not be given GAFF2 parameters: ``residues`` and
+    ``atoms`` are its indices in the system, for a caller to show which it was."""
+
+    def __init__(self, message: str, residues, atoms):
+        super().__init__(message)
+        self.residues = [int(r) for r in residues]
+        self.atoms = [int(a) for a in atoms]
+
+
 def find_unmatched(system: System, forcefields, path=None) -> list[list[int]]:
     """Residue groups that ``forcefields`` cannot parameterize.
 
@@ -745,10 +755,28 @@ class _Builder:
 
     # -- one group ---------------------------------------------------------------
     def patch(self) -> ViparrForcefield:
-        for k, residues in enumerate(self.groups(), start=1):
+        groups = self.groups()
+        for k, residues in enumerate(groups, start=1):
             if self._known(residues):
                 continue
-            self._group(residues, k)
+            try:
+                self._group(residues, k)
+            except Exception as e:
+                # the error alone ("Unable to determine valence of atom 0 ...") names
+                # an atom of a fragment nobody sees: say which residues it was
+                chains = self.P.s.chains["name"]
+                rchain = self.P.s.residues["chain"]
+                where = " + ".join(
+                    f"{self.resnames[r]}{self.resid[r]}"
+                    + (f" (chain {str(chains[rchain[r]]).strip()})"
+                       if str(chains[rchain[r]]).strip() else "")
+                    for r in residues)  # fmt: skip
+                more = len(groups) - 1
+                raise GroupError(
+                    f"no GAFF2 parameters for {where}: {e}"
+                    + (f" ({more} more group{'s' if more > 1 else ''} of residues without a "
+                       "force-field template in this structure)" if more else ""),
+                    residues, [a for r in residues for a in self.res_atoms[r]]) from e  # fmt: skip
         params = {}
         for table, rows in self.rows.items():
             params[table] = [ParamRow(key, p, self.memo[key]) for key, plist in rows.items()

@@ -112,7 +112,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             handle()
         except (ValueError, IndexError, KeyError) as e:  # includes selection errors
-            self._json({"error": str(e)}, 400)
+            self._json({"error": str(e), **self._where(e)}, 400)
         except FileNotFoundError as e:
             self._json({"error": str(e)}, 404)
         except ConnectionError:  # the page went away (reload, closed tab)
@@ -120,6 +120,17 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:  # shown on the page rather than a dropped connection
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
             raise
+
+    def _where(self, e) -> dict:
+        """The atoms an error is about and the model they are in, when it names them
+        (edit.AtomsError: the residues no force field could be made for)."""
+        atoms, session = getattr(e, "atoms", None), getattr(e, "session", None)
+        if not atoms or session is None:
+            return {}
+        for m, model in enumerate(self.viewer.models):
+            if getattr(model, "_session", None) is session:
+                return {"atoms": atoms, "m": m}
+        return {}
 
     def do_GET(self) -> None:
         if not self.path.startswith("/api/"):

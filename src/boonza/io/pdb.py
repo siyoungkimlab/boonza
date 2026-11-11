@@ -365,7 +365,7 @@ def _model(lines, ters, cryst, guess_bonds: bool, records=None) -> System:
             "name": name,
             "anum": anum,
             "pos": pos,
-            "formal_charge": f.mapped(78, 80, _atoi, np.int64),
+            "formal_charge": f.mapped(78, 80, _read_charge, np.int64),
         },
     )
     s.atoms["occupancy"] = f.floats(54, 60)
@@ -451,6 +451,16 @@ def _name(nm: str) -> str:
     if len(nm) in (0, 4):
         return nm
     return " " + nm if len(nm) < 4 else nm[:3]
+
+
+def _read_charge(tok: str) -> int:
+    """Columns 79-80 as a formal charge.  The format writes the digit first and the
+    sign after it ("1-", "2+"); sign first ("-1", what :func:`_charge` writes) is read
+    too.  Read as a leading integer, "1-" was +1: a sulfonate's O- came in as O+."""
+    tok = tok.strip()
+    if len(tok) == 2 and tok[0].isdigit() and tok[1] in "+-":
+        return int(tok[1] + tok[0])
+    return _atoi(tok)
 
 
 def _charge(q: int) -> str:
