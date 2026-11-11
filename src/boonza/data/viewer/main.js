@@ -48,6 +48,7 @@ const state = {
   masks: [true, true, true, true],  // pickable: receptor, ligand, solvent, ribbons
   hydrogens: "polar",               // shown: all, polar, none
   contacts: false, meters: [], labelMode: "name", pocketNumbers: true, busy: 0,
+  views: [],                         // kept views: { name, camera } (flyToView)
   colorBy: "modelchain",             // how models are told apart (colorBy below)
   selColor: localStorage.getItem("boonza.selColor") || "default",  // the selection's highlight
   pocket: +(localStorage.getItem("boonza.pocket") || 5),  // A: residues this near the ligand are its pocket
@@ -816,6 +817,60 @@ function flyTo(center, radius, ms = 400) {
 }
 const stopFlight = () => { flight++; };
 
+// a view kept (the v1, v2 ... at the bottom left): where the camera is, not what is drawn
+const cameraView = () => ({ rot: camera.rot.slice(), center: camera.center.slice(), distance: camera.distance,
+                            radius: camera.radius, ortho: camera.ortho, zclip: camera.zclip.slice(),
+                            pivot: camera.pivot ? camera.pivot.slice() : null });
+// a rotation (row-major 3x3) as a quaternion [w, x, y, z], and back
+function quaternion(m) {
+  const t = m[0] + m[4] + m[8];
+  let q;
+  if (t > 0) { const s = 2 * Math.sqrt(t + 1); q = [s / 4, (m[7] - m[5]) / s, (m[2] - m[6]) / s, (m[3] - m[1]) / s]; }
+  else if (m[0] > m[4] && m[0] > m[8]) { const s = 2 * Math.sqrt(1 + m[0] - m[4] - m[8]); q = [(m[7] - m[5]) / s, s / 4, (m[1] + m[3]) / s, (m[2] + m[6]) / s]; }
+  else if (m[4] > m[8]) { const s = 2 * Math.sqrt(1 + m[4] - m[0] - m[8]); q = [(m[2] - m[6]) / s, (m[1] + m[3]) / s, s / 4, (m[5] + m[7]) / s]; }
+  else { const s = 2 * Math.sqrt(1 + m[8] - m[0] - m[4]); q = [(m[3] - m[1]) / s, (m[2] + m[6]) / s, (m[5] + m[7]) / s, s / 4]; }
+  return q;
+}
+function rotationOf([w, x, y, z]) {
+  return [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+          2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+          2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)];
+}
+// turn, move and zoom to a kept view, the short way round
+function flyToView(view, ms = 450) {
+  const from = cameraView(), id = ++flight;
+  const qa = quaternion(from.rot);
+  let qb = quaternion(view.rot);
+  let cos = qa.reduce((s, v, k) => s + v * qb[k], 0);
+  if (cos < 0) { qb = qb.map(v => -v); cos = -cos; }
+  const angle = Math.acos(Math.min(cos, 1));
+  camera.ortho = view.ortho;
+  camera.pivot = null;
+  const start = performance.now();
+  const step = now => {
+    if (id !== flight) return;
+    const x = ms > 0 ? Math.min((now - start) / ms, 1) : 1, e = x * x * (3 - 2 * x);
+    if (x >= 1) {
+      Object.assign(camera, { rot: view.rot.slice(), center: view.center.slice(), distance: view.distance,
+                              radius: view.radius, zclip: view.zclip.slice(), pivot: view.pivot ? view.pivot.slice() : null });
+    } else {
+      const sa = angle > 1e-4 ? Math.sin((1 - e) * angle) / Math.sin(angle) : 1 - e;
+      const sb = angle > 1e-4 ? Math.sin(e * angle) / Math.sin(angle) : e;
+      const q = qa.map((v, k) => sa * v + sb * qb[k]), len = Math.hypot(...q);
+      camera.rot = rotationOf(q.map(v => v / len));
+      camera.center = from.center.map((v, d) => v + (view.center[d] - v) * e);
+      camera.distance = from.distance * Math.pow(view.distance / from.distance, e);
+      camera.radius = from.radius + (view.radius - from.radius) * e;
+      camera.zclip = from.zclip.map((v, d) => v + (view.zclip[d] - v) * e);
+    }
+    renderer.draw(camera);
+    placeLabels();
+    if (x < 1) requestAnimationFrame(step);
+    else app.clipChanged?.();
+  };
+  requestAnimationFrame(step);
+}
+
 // the atoms drawn, as flat xyz (subsampled), for fitting the view
 function drawnXYZ(only = null) {
   const out = [];
@@ -1204,7 +1259,7 @@ function pageState() {
               ortho: camera.ortho, zclip: camera.zclip, pivot: camera.pivot },
     theme: document.body.className, current: state.current, frame: state.frame,
     hydrogens: state.hydrogens, contacts: state.contacts, labelMode: state.labelMode, masks: state.masks,
-    fog: renderer.fog, cell: !!state.cell,
+    fog: renderer.fog, cell: !!state.cell, views: state.views,
     meters: state.meters.map(x => ({ m: x.model.index, atoms: x.atoms })), models,
   };
 }
@@ -1265,7 +1320,8 @@ async function restorePage(page) {
   state.meters = (page.meters || []).map(x => ({ model: state.models[where(x.m)], atoms: x.atoms })).filter(x => x.model);
   Object.assign(state, { hydrogens: page.hydrogens ?? state.hydrogens, contacts: !!page.contacts,
                          labelMode: page.labelMode || state.labelMode, masks: page.masks || state.masks,
-                         cell: !!page.cell });
+                         cell: !!page.cell, views: page.views || [] });
+  app.onViews?.();
   if (page.fog) Object.assign(renderer.fog, page.fog);
   if (page.theme) app.setTheme?.(page.theme);
   const c = page.camera;
@@ -1283,7 +1339,7 @@ const app = {
   getJSON, post, busy, message, atomLabel, residueLabel, setColorBy,
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
   selected, selection, targets, select, clearSelection, visibleAtom, setSelectionColor, pocketSelection, pocketReps,
-  rebuild, draw, flyTo, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
+  rebuild, draw, flyTo, flyToView, cameraView, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
   setFrame, play, nframes, frameOf, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
   range, STYLE, pageState, restorePage, PYTHON, withPictureScene,

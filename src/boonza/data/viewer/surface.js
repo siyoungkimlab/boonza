@@ -15,9 +15,14 @@
 // through 0 (white) to +10 kcal/(mol e) (blue).  Every charge counts, unless
 // that would be slow (a large system): then those within 15 A.  It is worked
 // out on a 1 A grid where the surface reads it, and interpolated.
-// Hydrophobicity: the atoms' signs (properties.py) averaged with Gaussian
-// weights (sigma 1.5 A) at each point; dark cyan (hydrophilic), white, goldenrod
-// (hydrophobic), as ChimeraX colors it.
+// Hydrophobicity: the molecular lipophilicity potential, as ChimeraX's mlp colors
+// it.  Each atom has a share of log P (properties.py); at a point of the surface
+// they add up, each falling off as exp(-d) with its distance d in A (Fauchere's
+// function), over the atoms within 5 A: 100 sum(f exp(-d)).  From -20 (dark cyan,
+// hydrophilic) through 0 (white) to +20 (dark goldenrod, lipophilic).  It is summed
+// at each point itself, not on a grid, so the colors run as smoothly as the surface.
+// Beads have no such shares: their signs (properties.py), averaged with Gaussian
+// weights (sigma 1.5 A), in the same colors.
 
 export const GRIDS = [[1.0, "Coarse (1.0 Å)"], [0.5, "Standard (0.5 Å)"], [0.3, "Fine (0.3 Å)"]];
 const PROBE = 1.4;        // A, a water
@@ -28,10 +33,13 @@ const SCALE = 10;         // kcal/(mol e) at full color
 const REACH = 15;         // A, the potential's, for a large system
 const ALL_PAIRS = 3e8;    // points x charges above which REACH applies
 const PHI_GRID = 1.0;     // A, the potential's grid, interpolated to the vertices
-const SIGMA = 1.5;        // A, hydrophobicity's smoothing
+const SIGMA = 1.5;        // A, the beads' hydrophobicity's smoothing
+const MLP_REACH = 5;      // A, the atoms a point's lipophilicity is summed over
+const MLP_SCALE = 20;     // the lipophilicity potential at full color
 
 const RED = [0.84, 0.19, 0.15], WHITE = [1, 1, 1], BLUE = [0.19, 0.38, 0.86];
-const CYAN = [0, 0.55, 0.55], GOLD = [0.85, 0.65, 0.13], PLAIN = [0.86, 0.86, 0.88];
+const CYAN = [0, 139 / 255, 139 / 255], GOLD = [184 / 255, 134 / 255, 11 / 255];  // dark cyan, dark goldenrod
+const PLAIN = [0.86, 0.86, 0.88];
 
 // the six tetrahedra of a cube, by its corners (x + 2y + 4z)
 const TETS = [[0, 5, 1, 7], [0, 1, 3, 7], [0, 3, 2, 7], [0, 2, 6, 7], [0, 6, 4, 7], [0, 4, 5, 7]];
@@ -184,8 +192,9 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
 
   const nv = position.length / 3;
   const normal = new Float32Array(3 * nv), color = new Float32Array(3 * nv);
-  const q = topo.atoms.q, lipo = topo.atoms.lipo;
-  const near = neighbors(pos, ids, 3 * SIGMA);
+  const q = topo.atoms.q, lipo = topo.atoms.lipo, fi = topo.atoms.fi;
+  const mlp = kind === "hydrophobic" && fi;
+  const near = mlp ? neighbors(pos, ids.filter(a => fi[a]), MLP_REACH) : neighbors(pos, ids, 3 * SIGMA);
   // the potential: on a grid of its own (it varies slowly), made where it is read
   let potential = null;
   if (kind === "electrostatic" && q) {
@@ -233,6 +242,15 @@ export function surface(model, ids, kind = "electrostatic", grid = 0.5) {
       c = t < 0 ? mix(WHITE, RED, -t) : mix(WHITE, BLUE, t);
     } else if (kind === "electrostatic") {
       c = WHITE;
+    } else if (mlp) {
+      let sum = 0;
+      near(x, y, z, a => {
+        const dx = x - pos[3 * a], dy = y - pos[3 * a + 1], dz = z - pos[3 * a + 2];
+        const r2 = dx * dx + dy * dy + dz * dz;
+        if (r2 < MLP_REACH * MLP_REACH) sum += fi[a] * Math.exp(-Math.sqrt(r2));
+      });
+      const t = Math.max(-1, Math.min(1, 100 * sum / MLP_SCALE));
+      c = t < 0 ? mix(WHITE, CYAN, -t) : mix(WHITE, GOLD, t);
     } else if (kind === "hydrophobic" && lipo) {
       let wsum = 0, lsum = 0;
       near(x, y, z, a => {

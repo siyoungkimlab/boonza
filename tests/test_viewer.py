@@ -2914,3 +2914,58 @@ def test_several_models_are_picked_and_superposed():
     assert "m !== ref" in align and '"api/align"' in align
     assert "failed.push" in align  # one that cannot be aligned leaves the rest to be
     assert "if (pickedModels.has(m.index) && pickedModels.size > 1) { menu(pickedMenu(m)" in ui
+
+
+def test_a_hydrophobic_surface_is_a_lipophilicity_potential():
+    """Hydrophobic colored a surface by each atom's sign, three values and no more.  It
+    is the molecular lipophilicity potential now, as ChimeraX's mlp draws it: each atom's
+    share of log P (Wildman-Crippen, typed from the bonds), summed with exp(-d)."""
+    from boonza.viewer.properties import lipophilicity
+
+    session = viewer.Session(boonza.load(DATA / "2TRX.pdb"))
+    s = session.system
+    fi = lipophilicity(s)
+    names = [str(x) for x in s.atoms["name"]]
+    rnames = [str(s.residues["name"][r]) for r in s.atoms["residue"]]
+
+    def of(res, name):
+        got = [fi[a] for a in range(s.natoms) if rnames[a] == res and names[a] == name]
+        assert got
+        return float(np.median(got))
+
+    assert of("LEU", "CD1") > 0.4 and of("PHE", "CZ") > 0.2  # a methyl, an aromatic CH
+    assert of("ALA", "N") < -0.3 and of("SER", "OG") < -0.3  # an amide N, a hydroxyl
+    # a structure does not say what is charged: typed as written, an aspartate is the acid
+    assert of("ASP", "OD1") <= -0.55 and of("ASP", "OD2") <= -0.55 and of("LYS", "NZ") <= -0.8
+    assert of("MPD", "C1") > 0.4 and of("MPD", "O2") < -0.3  # not an amino acid: typed all the same
+    assert np.all(fi[np.asarray(s.atoms["anum"]) == 1] == 0)  # hydrogens': on their atoms
+    atoms = session.topology()["atoms"]
+    assert len(atoms["fi"]) == s.natoms
+    cg = viewer.Session(boonza.load(DATA / "martini" / "2TRX" / "cg.pdb.gz")).topology()
+    assert "fi" not in cg["atoms"] and "lipo" in cg["atoms"]  # beads keep their signs
+    surface = (Path(boonza.__file__).parent / "data/viewer/surface.js").read_text()
+    assert "sum += fi[a] * Math.exp(-Math.sqrt(r2))" in surface  # Fauchere's function
+    assert "const MLP_REACH = 5;" in surface and "const MLP_SCALE = 20;" in surface
+    assert "CYAN = [0, 139 / 255, 139 / 255], GOLD = [184 / 255, 134 / 255, 11 / 255]" in surface
+
+
+def test_a_click_on_a_model_leaves_the_view_and_views_are_kept():
+    """A click on a model's name showed it alone and moved the view, with no way back.
+    That takes a double-click now, and + View at the bottom left keeps where the camera
+    is as v1, v2 ..., to come back to."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    ui, main = (here / "ui.js").read_text(), (here / "main.js").read_text()
+    assert (
+        "name.onclick"
+        not in ui[ui.index("function modelsDock()") :].split("function seriesDrop")[0]
+    )
+    assert '$("rdock-list").ondblclick' in ui and "if (m && !m.closed) app.solo(m);" in ui
+    assert 'id="views-save"' in (here / "index.html").read_text()
+    save = ui[ui.index("function saveView()") :]
+    save = save[: save.index("\n  }\n")]
+    assert "camera: app.cameraView()" in save and "`v${k}`" in save
+    view = main[main.index("const cameraView = () =>") :]
+    view = view[: view.index(";\n")]
+    for key in ("rot", "center", "distance", "ortho", "zclip", "pivot"):
+        assert f"{key}:" in view, key  # the camera, and nothing of what is drawn
+    assert "views: state.views" in main and "views: page.views || []" in main  # in a session
