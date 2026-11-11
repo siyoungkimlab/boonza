@@ -10,9 +10,17 @@ Charges, from the first of these a structure has:
    ends +1 and -1), ions by element; beads (a Martini structure without its
    topology) on the charged side-chain bead (Asp, Glu SC1; Lys, Arg SC2).
 
-Hydrophobicity is a sign per atom, no scale fitted: +1 for carbon and sulfur
-with no N or O on them and for Cl, Br and I; -1 for N and O and for anything
-charged; 0 for carbon on N or O.  Hydrogens take their atom's.  Beads (coarse
+Lipophilicity (all-atom structures) is each heavy atom's share of log P, by
+Wildman and Crippen's atom types (J. Chem. Inf. Comput. Sci. 1999, 39, 868;
+RDKit's), its hydrogens' shares added to it.  The page sums them over the
+atoms near each point of a surface into a molecular lipophilicity potential,
+as ChimeraX's mlp does with its own table for amino acids; typed from the
+bonds, ligands, nucleic acids and modified residues have theirs too.
+
+Hydrophobicity (all a bead has, with no atom types) is a sign per atom, no
+scale fitted: +1 for carbon and sulfur with no N or O on them and for Cl, Br
+and I; -1 for N and O and for anything charged; 0 for carbon on N or O.
+Hydrogens take their atom's.  Beads (coarse
 grained) by their residue: side chains of Ala, Val, Leu, Ile, Met, Phe, Trp,
 Pro and Cys +1, Tyr and Gly 0, other side chains -1; the backbone's amide -0.5.
 """
@@ -62,6 +70,12 @@ def charges(system, cg: bool = False) -> np.ndarray:
     q = np.asarray(system.atoms["charge"], float).copy()
     if np.any(q != 0):
         return q
+    return group_charges(system, cg)
+
+
+def group_charges(system, cg: bool = False) -> np.ndarray:
+    """The charged groups alone (2 and 3 of the module's list): where the charges
+    sit, whatever partial charges a force field has spread over the rest."""
     anum = np.asarray(system.atoms["anum"])
     formal = np.asarray(system.atoms["formal_charge"], float)
     nbrs = _neighbours(system)
@@ -75,6 +89,14 @@ def charges(system, cg: bool = False) -> np.ndarray:
                           and sum(anum[y] > 1 for y in nbrs[x]) == 1]  # fmt: skip
             q[mates] += formal[a] / len(mates)
         return q
+    return template_charges(system, cg)
+
+
+def template_charges(system, cg: bool = False) -> np.ndarray:
+    """Charged residues at pH 7 by name, chain ends and ions (3 of the module's list)."""
+    anum = np.asarray(system.atoms["anum"])
+    nbrs = _neighbours(system)
+    q = np.zeros(system.natoms)
     res = np.asarray(system.atoms["residue"])
     names = [str(x) for x in system.atoms["name"]]
     rnames = [residue_name(str(x)) for x in system.residues["name"]]
@@ -143,4 +165,111 @@ def hydrophobicity(system, q=None, cg: bool = False) -> np.ndarray:
             out[a] = out[nbrs[a][0]]
     heavy = anum > 1
     out[heavy & (np.abs(q) >= 0.3)] = -1
+    return out
+
+
+#: an atom RDKit could not type (a residue it cannot make sense of), by element
+LIPO_ELEMENT = {6: 0.3, 7: -0.6, 8: -0.3, 15: -0.1, 16: 0.5, 9: 0.4, 17: 0.7, 35: 0.8, 53: 0.9}
+
+
+def lipophilicity(system) -> np.ndarray:
+    """Each heavy atom's share of log P (Wildman-Crippen), its hydrogens' with it.
+
+    A structure rarely says which groups are charged, and typed as written an
+    aspartate is the acid, with an oxygen as lipophilic as a carbon.  An atom
+    of a charged group (group_charges) is therefore no more lipophilic than
+    -0.3 - 0.5 |q|: -0.55 for each oxygen of a carboxylate, -0.8 for a lysine's N.
+
+    A residue is typed with the atoms up to two bonds outside it, so that a
+    peptide's N and C are the amide's they are, and once for all residues
+    alike (same names, same bonds): a protein is twenty-odd small molecules
+    to type, and one residue RDKit refuses costs only itself.
+    """
+    from rdkit import Chem, RDLogger
+    from rdkit.Chem import rdMolDescriptors
+
+    n = system.natoms
+    out = np.zeros(n)
+    anum = np.asarray(system.atoms["anum"]).tolist()
+    formal = np.asarray(system.atoms["formal_charge"]).tolist()
+    res = np.asarray(system.atoms["residue"]).tolist()
+    names = [str(x) for x in system.atoms["name"]]
+    rnames = [str(x) for x in system.residues["name"]]
+    bi = np.asarray(system.bonds["i"]).tolist()
+    bj = np.asarray(system.bonds["j"]).tolist()
+    order = np.asarray(system.bonds["order"]).tolist()
+    nbrs: list[list[tuple[int, float]]] = [[] for _ in range(n)]
+    for i, j, o in zip(bi, bj, order, strict=True):
+        nbrs[i].append((j, o))
+        nbrs[j].append((i, o))
+    kinds = {1: Chem.BondType.SINGLE, 2: Chem.BondType.DOUBLE, 3: Chem.BondType.TRIPLE,
+             1.5: Chem.BondType.AROMATIC}  # fmt: skip
+    members: list[list[int]] = [[] for _ in rnames]
+    for a in range(n):
+        members[res[a]].append(a)
+    cache: dict = {}
+    RDLogger.DisableLog("rdApp.*")
+    try:
+        for r, own in enumerate(members):
+            if not own:
+                continue
+            if len(own) == 1 and not nbrs[own[0]]:  # an ion: hydrophilic
+                out[own[0]] = -0.5 if anum[own[0]] in IONS else LIPO_ELEMENT.get(anum[own[0]], 0)
+                continue
+            inside = set(own)
+            first = [x for a in own for x, _ in nbrs[a] if x not in inside]
+            second = [y for x in first for y, _ in nbrs[x] if y not in inside]
+            atoms = own + sorted(set(first) | set(second))
+            local = {a: k for k, a in enumerate(atoms)}
+            bonds = sorted({(min(local[a], local[x]), max(local[a], local[x]), o)
+                            for a in atoms for x, o in nbrs[a] if x in local})  # fmt: skip
+            key = (rnames[r], tuple(names[a] for a in own),
+                   tuple((anum[a], formal[a]) for a in atoms), tuple(bonds))  # fmt: skip
+            if key not in cache:
+                cache[key] = _crippen([anum[a] for a in atoms], [formal[a] for a in atoms],
+                                      bonds, len(own), kinds, Chem, rdMolDescriptors)  # fmt: skip
+            got = cache[key]
+            if got is None:  # by element, hydrogens nothing
+                got = [LIPO_ELEMENT.get(anum[a], 0.0) if anum[a] > 1 else 0.0 for a in own]
+                for k, a in enumerate(own):  # carbon on N or O: neither
+                    if anum[a] == 6 and any(anum[x] in (7, 8) for x, _ in nbrs[a]):
+                        got[k] = 0.0
+            out[own] = got
+    finally:
+        RDLogger.EnableLog("rdApp.*")
+    # by name too: a file with a formal charge on its metal alone says nothing of its aspartates
+    q = np.maximum(np.abs(group_charges(system)), np.abs(template_charges(system)))
+    charged = (q >= 0.3) & (np.asarray(anum) > 1)
+    out[charged] = np.minimum(out[charged], -0.3 - 0.5 * np.minimum(q[charged], 1))
+    return out
+
+
+def _crippen(anum, formal, bonds, nown, kinds, Chem, rdMolDescriptors):
+    """The first ``nown`` atoms' shares of log P, hydrogens' on their atoms; None
+    if RDKit cannot make a molecule of them (bond orders missing, a metal's bonds)."""
+    rw = Chem.RWMol()
+    for z, q in zip(anum, formal, strict=True):
+        if z < 1:
+            return None
+        atom = Chem.Atom(int(z))
+        atom.SetFormalCharge(int(q))
+        rw.AddAtom(atom)
+    for i, j, o in bonds:
+        if o not in kinds:
+            return None
+        rw.AddBond(i, j, kinds[o])
+    try:
+        mol = rw.GetMol()
+        Chem.SanitizeMol(mol)
+        mol = Chem.AddHs(mol)
+        shares = rdMolDescriptors._CalcCrippenContribs(mol)
+    except Exception:  # noqa: BLE001  (RDKit raises its own kinds)
+        return None
+    out = [0.0] * nown
+    for atom in mol.GetAtoms():
+        k = atom.GetIdx()
+        if atom.GetAtomicNum() == 1 and atom.GetDegree():
+            k = atom.GetNeighbors()[0].GetIdx()
+        if k < nown:
+            out[k] += shares[atom.GetIdx()][0]
     return out

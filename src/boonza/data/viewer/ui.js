@@ -451,7 +451,7 @@ export function setupUI(app) {
     app.message(surfaceNote(kind));
   }
   const surfaceNote = kind => kind === "electrostatic" ? "electrostatic surface: red −10 to blue +10 kcal/(mol·e) (Coulomb, ε = 4r, 1.4 Å off the surface)"
-    : kind === "hydrophobic" ? "hydrophobic surface: dark cyan hydrophilic, goldenrod hydrophobic" : "molecular surface";
+    : kind === "hydrophobic" ? "hydrophobic surface: the lipophilicity potential, dark cyan −20 (hydrophilic) to dark goldenrod +20 (lipophilic)" : "molecular surface";
   // an electrostatic surface's charges: the force field's (Amber ff19SB, hydrogens
   // added on a copy), once per topology, for a structure that has none of its own
   async function forceFieldCharges(m) {
@@ -1877,6 +1877,41 @@ export function setupUI(app) {
   $("vt-center").onclick = () => app.centerView();
   $("vt-site").onclick = () => focusLigand();
   $("vt-reset").onclick = () => app.resetView();
+
+  // Kept views, at the bottom left: + View keeps where the camera is (its angle, center
+  // and zoom, not what is drawn) as v1, v2 ...; a click on one turns the view back to it.
+  // They are saved with a session.
+  function drawViews(current = null) {
+    const bar = $("views");
+    for (const b of [...bar.querySelectorAll("button.kept")]) b.remove();
+    for (const v of state.views) {
+      const b = el("button", { className: `kept${v === current ? " on" : ""}`,
+                               title: `${v.name}: click to look from here again · right-click: update, rename, delete` }, v.name);
+      b.onclick = () => { app.flyToView(v.camera); drawViews(v); };
+      b.oncontextmenu = e => {
+        e.preventDefault();
+        menu([
+          { label: "Update to the View Now", run: () => { v.camera = app.cameraView(); drawViews(v); app.message(`${v.name}: the view now`); } },
+          { label: "Rename…", run: () => { const name = prompt("The view's name", v.name)?.trim(); if (name) { v.name = name; drawViews(current); } } },
+          { label: "Delete", run: () => { state.views = state.views.filter(o => o !== v); drawViews(); } },
+          "-",
+          { label: "Delete All Views", run: () => { state.views = []; drawViews(); } },
+        ], e.clientX, e.clientY - 110);
+      };
+      bar.append(b);
+    }
+  }
+  function saveView() {
+    const taken = new Set(state.views.map(v => v.name));
+    let k = state.views.length + 1;
+    while (taken.has(`v${k}`)) k++;
+    const v = { name: `v${k}`, camera: app.cameraView() };
+    state.views.push(v);
+    drawViews(v);
+    app.message(`view ${v.name} kept: click it at the bottom left to look from here again`);
+  }
+  $("views-save").onclick = saveView;
+  app.onViews = () => drawViews();
   $("vt-2d").onclick = () => toggle2D();
   $("vt-fog").onclick = fogPanel;
   $("vt-clip").onclick = zclipPanel;
@@ -3464,7 +3499,7 @@ export function setupUI(app) {
     if (named(c)) return rgbCss(named(c));
     return { chain: "linear-gradient(135deg,#5c5 33%,#3bd 33% 66%,#e5c 66%)", ss: "linear-gradient(135deg,#e53935 50%,#ffd54f 50%)",
              spectrum: "linear-gradient(90deg,#3355ff,#33ddff,#4d4,#fe3,#f43)", electrostatic: "linear-gradient(90deg,#d63027,#fff,#3061db)",
-             hydrophobic: "linear-gradient(90deg,#008c8c,#fff,#d9a621)", bfactor: "linear-gradient(90deg,#33f,#fff,#f33)" }[c]
+             hydrophobic: "linear-gradient(90deg,#008b8b,#fff,#b8860b)", bfactor: "linear-gradient(90deg,#33f,#fff,#f33)" }[c]
       || "linear-gradient(135deg,#ccc 50%,#888 50%)";
   }
   const colorName = c => {
@@ -3952,6 +3987,17 @@ export function setupUI(app) {
     ];
   }
 
+  // a double-click on a model's row: that model alone, and the view on it.  One click
+  // only makes it the current model: the view stays where it was put (a click used to
+  // move it, with no way back).  The list hears it, since a click draws the rows again
+  $("rdock-list").ondblclick = e => {
+    const row = e.target.closest(".mrow");
+    if (!row || row.dataset.model === undefined || e.target.closest("button, input")) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+    const m = state.models[+row.dataset.model];
+    if (m && !m.closed) app.solo(m);
+  };
+
   function modelsDock() {
     const list = $("rdock-list");
     list.innerHTML = "";
@@ -3973,14 +4019,14 @@ export function setupUI(app) {
         if (group) list.append(groupHeader(group));
       }
       const row = el("div", { className: `mrow${m.shown ? " on" : ""}${m.index === state.current ? " current" : ""}${pickedModels.has(m.index) ? " picked" : ""}` });
+      row.dataset.model = m.index;
       const box = el("input", { type: "checkbox", checked: m.shown, title: "show" });
       box.onchange = () => { state.current = m.index; app.show([m], box.checked); };
       const sw = el("span", { className: "swatch" });
       sw.style.background = swatchColor(m.swatch || m.color);
       const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
-        + "on the command line): click to show it alone and look at it; Shift or Ctrl + click picks several models, "
+        + "on the command line): double-click to show it alone and look at it; Shift or Ctrl + click picks several models, "
         + "to superpose (right-click one of them)" }, el("span", { className: "num" }, `${m.index + 1}`), m.name);
-      name.onclick = e => { if (e.shiftKey || e.ctrlKey || e.metaKey) return; pickedModels.clear(); app.solo(m); };  // with a key: the row picks
       const colors = m.color && !MODEL_COLORS.some(([v]) => v === m.color) ? [...MODEL_COLORS, [m.color, m.autoColor ? "auto" : "its own"]] : MODEL_COLORS;
       const color = picker("color", colors, () => m.color || "default", async v => {
         await app.load(m); colorModel(m, v); sw.style.background = swatchColor(m.swatch || v);
@@ -4003,8 +4049,9 @@ export function setupUI(app) {
       row.onmousedown = e => { if (e.shiftKey) e.preventDefault(); };  // Shift + click picks rows, not their text
       row.onclick = async e => {
         if (e.target.closest("button, input")) return;
-        if (pickModel(e, m) || e.target.closest(".name")) return;
+        if (pickModel(e, m)) return;
         pickedModels.clear();
+        if (m.index === state.current && e.detail > 1) return;  // the second click of a double-click
         state.current = m.index;
         await app.load(m);
         modelsDock(); repsPanel();

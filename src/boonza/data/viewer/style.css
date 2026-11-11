@@ -207,6 +207,15 @@ body.dark .label.meter { color: #ffd34d; }
 #viewtools { position: absolute; right: 10px; bottom: 10px; z-index: 6; display: flex; align-items: center; gap: 2px;
   padding: 3px; border-radius: 9px; background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--line); }
+/* the saved views (v1, v2 ...), bottom left */
+#views { position: absolute; left: 10px; bottom: 10px; z-index: 6; display: flex; align-items: center; gap: 2px;
+  flex-wrap: wrap; max-width: 45%; padding: 3px; border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); }
+#views button { background: none; border: none; border-radius: 6px; padding: 3px 8px; color: var(--muted); font-size: 11.5px; }
+#views button:hover { background: var(--hover); color: var(--text); }
+#views button.on { color: var(--accent); }
+#stage:has(#player:not([hidden])) #views { bottom: 46px; }
+#stage:has(#views) #lig2d { bottom: 48px; }
 #viewtools button { background: none; border: none; border-radius: 6px; padding: 3px 8px; color: var(--muted); font-size: 11.5px; }
 #viewtools button:hover { background: var(--hover); color: var(--text); }
 #viewtools button.on { color: var(--accent); }

@@ -511,7 +511,7 @@ class Session:
     def topology(self) -> dict:
         """Everything the page needs once: atoms, residues, chains, bonds, defaults."""
         from ..elements import radii, symbol
-        from .properties import charges, hydrophobicity
+        from .properties import charges, hydrophobicity, lipophilicity
 
         s = self.system
         A, R, C = s._atoms, s._residues, s._chains
@@ -619,6 +619,8 @@ class Session:
                 # what a surface is coloured by (properties.py)
                 "q": np.round(q, 3).tolist(),
                 "lipo": np.round(hydrophobicity(s, q, self.cg), 2).tolist(),
+                # atoms: each one's share of log P, for the lipophilicity potential
+                **({} if self.cg else {"fi": np.round(lipophilicity(s), 3).tolist()}),
                 "class": klass.tolist(),
                 "fragment": np.asarray(s.fragids, dtype=np.int64).tolist(),
             },  # fmt: skip
