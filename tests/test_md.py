@@ -83,6 +83,10 @@ def test_settings_precedence(tmp_path):
     assert sel.dihedral_restraint_selection == "chain A"
     toml.write_text('dihedral_restraint_selection = "chain A"\n')  # and in a settings file
     assert config.load_configuration(toml)["dihedral_restraint_selection"] == "chain A"
+    ref = parse_arguments(["x", "--dihedral-restraint-reference", "xtal.dms"])
+    assert ref.dihedral_restraint_reference == "xtal.dms"
+    toml.write_text('dihedral_restraint_reference = "xtal.dms"\n')
+    assert config.load_configuration(toml)["dihedral_restraint_reference"] == "xtal.dms"
 
 
 @pytest.mark.parametrize("argv", [
@@ -219,6 +223,33 @@ def test_restraints_bb_and_ss_on_a_helix():
         (s.positions + np.random.default_rng(0).normal(0, 0.3, s.positions.shape)) / 10
     )
     assert ctx.getState(getEnergy=True).getPotentialEnergy()._value > e0 + 10
+
+
+def test_restraints_follow_a_reference():
+    import openmm as mm
+
+    helix = boonza.peptide("AAAAAAAAAAAA", conformation="helix")
+    s = boonza.peptide("AAAAAAAAAAAA", conformation="extended")
+
+    def held(mode, reference):
+        system = mm.System()
+        for _ in range(s.natoms):
+            system.addParticle(12.0)
+        return restraints.add_dihedral_restraints(system, s, mode, 20.0, reference=reference)[0]
+
+    with pytest.raises(ValueError, match="no backbone torsions"):  # extended: no helix, no sheet
+        held("ss", None)
+    records = held("ss", helix)
+    assert len(records) == 20  # the reference's DSSP picks the residues ...
+    phi = [r for r in records if r["angle"] == "phi"]
+    assert all(-80 < r["reference_degrees"] < -40 for r in phi)  # ... and gives the targets
+    assert all(abs(r["input_degrees"]) > 150 for r in phi)  # where the input is not
+    assert len(held("bb", helix)) == 22
+    other = helix.copy()  # a chain named otherwise still pairs residues by number and name
+    other.chains["name"] = np.array(["X"])
+    assert len(held("ss", other)) == 20
+    short = boonza.peptide("AAAAAA", conformation="helix")  # residues it lacks are left free
+    assert 0 < len(held("bb", short)) < 22
 
 
 @pytest.fixture(scope="module")
@@ -365,6 +396,19 @@ def test_distance_restraints_tie_one_selection_to_another():
     with pytest.raises(ValueError, match="picks no atoms"):
         restraints.add_distance_restraints(_particles(s.natoms), s, [["resid 99", "resid 1"]], 1.0)
     assert not _particles(s.natoms).getNumForces()
+
+
+def test_distance_restraints_take_their_lengths_from_a_reference():
+    helix = boonza.peptide("AAAAAAAAAAAA", conformation="helix")
+    s = boonza.peptide("AAAAAAAAAAAA", conformation="extended")
+    pairs = [["resid 2 and name O", "resid 6 and name N"]]  # an i, i+4 hydrogen bond
+    (rec,) = restraints.add_distance_restraints(_particles(s.natoms), s, pairs, 1000.0,
+                                                reference=helix)  # fmt: skip
+    assert rec["start_nm"] > 1.0 > rec["r0_nm"]  # far apart extended, bonded in the helix
+    assert abs(rec["r0_nm"] - 0.3) < 0.05
+    with pytest.raises(ValueError, match="reference has no atom"):
+        short = boonza.peptide("AAA", conformation="helix")
+        restraints.add_distance_restraints(_particles(s.natoms), s, pairs, 1000.0, reference=short)
 
 
 def test_a_distance_restraint_measures_across_the_box():

@@ -198,6 +198,7 @@ DEFAULTS: dict = {
     "dihedral_restraint": "none",
     "dihedral_restraint_kJ": 20.0,
     "dihedral_restraint_selection": None,
+    "dihedral_restraint_reference": None,
     "cofactors": False,
     "cofactor_kJ": 700.0,
     "cofactor_nm": 1.2,
@@ -223,6 +224,7 @@ DEFAULTS: dict = {
     "repulsion_distance_nm": 0.5,
     "repulsion_kJ": 500.0,
     "distance_restraints": None,
+    "distance_restraint_reference": None,
     "distance_restraint_kJ": 1000.0,
     "distance_restraint_nm": None,
     "seed": 0,
@@ -328,6 +330,7 @@ RESTARTABLE = (
     "hmr",
     "dihedral_restraint",
     "dihedral_restraint_kJ",
+    "dihedral_restraint_reference",
     "equilibration_ns",
     "equilibration_report_interval_ns",
     "production_report_interval_ns",
@@ -753,6 +756,17 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "selects, e.g. 'chain A' or 'not chain LIG' (default: every peptide chain in "
         "the system, a bound peptide included); on its own it does nothing",
     )
+    hold.add_argument(
+        "--dihedral-restraint-reference",
+        dest="dihedral_restraint_reference",
+        metavar="STRUCTURE",
+        help="with --dihedral-restraint, hold phi/psi at their values in this structure "
+        "of the same protein (a crystal structure, say) instead of the input's, and "
+        "with ss pick the residues from its helices and sheets: a backmapped or "
+        "predicted model is held to the structure it came from, not to its own "
+        "backbone; residues pair by chain, number and name, and one the reference "
+        "lacks is left free; on its own it does nothing",
+    )
     numbers(hold, [("--dihedral-restraint-kJ", "dihedral_restraint_kJ",
                     "restraint strength (kJ/mol)")])  # fmt: skip
     hold.add_argument(
@@ -858,6 +872,15 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "chain, resid and name rather than by index, which the build renumbers.  The "
         "springs are forces and no part of the topology: a held pair keeps its "
         "nonbonded interactions.  Every spring is listed in distance_restraints.csv",
+    )
+    hold.add_argument(
+        "--distance-restraint-reference",
+        dest="distance_restraint_reference",
+        metavar="STRUCTURE",
+        help="with --distance-restraint, hold each pair at its distance in this structure "
+        "of the same molecules (a crystal structure, say) rather than in the input: "
+        "atoms pair by residue number, name and atom name, and one the reference lacks "
+        "is an error; --distance-restraint-nm overrides it; on its own it does nothing",
     )
     numbers(hold, [
         ("--distance-restraint-kJ", "distance_restraint_kJ",
@@ -1291,7 +1314,8 @@ def restore_settings(args, path) -> None:
                              "system was built for it, and system.xml fixes it")  # fmt: skip
         args.model = saved["model"]
     # the springs are forces of system.xml too: a resumed run keeps the ones it has
-    for key in ("distance_restraints", "distance_restraint_kJ", "distance_restraint_nm"):
+    for key in ("distance_restraints", "distance_restraint_kJ", "distance_restraint_nm",
+                "distance_restraint_reference"):  # fmt: skip
         if key in args.specified and getattr(args, key) != saved.get(key, DEFAULTS[key]):
             raise ValueError(f"cannot change {key} when resuming: system.xml fixes the "
                              "springs the run was built with")  # fmt: skip
@@ -1387,6 +1411,8 @@ dihedral_restraint = "none"
 dihedral_restraint_kJ = 20.0
 # Hold only the torsions whose atoms this selects (boonza swim: not the ligands):
 # dihedral_restraint_selection = "not chain LIG"
+# Hold phi/psi at another structure's (a crystal's) and, with ss, its helices and sheets:
+# dihedral_restraint_reference = "crystal.pdb"
 seed = 0
 
 # Keep the molecules a selection picks (ligand copies) from sticking together:

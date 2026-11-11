@@ -612,6 +612,9 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
         settings = {**settings_of(args), "input_structure": str((d / "input.dms").resolve()),
                     "workdir": str((d / "md").resolve()), "forcefields": spec,
                     "box_nm": round(edge / 10.0, 4)}  # fmt: skip
+        if settings.get("dihedral_restraint_reference"):  # md runs from elsewhere
+            settings["dihedral_restraint_reference"] = str(
+                Path(settings["dihedral_restraint_reference"]).resolve())  # fmt: skip
         # swim starts from boonza md's defaults, so neither is on unless asked
         # for; what swim does add is the selection each one wants here
         if repel and "repulsion_selection" not in args.specified:

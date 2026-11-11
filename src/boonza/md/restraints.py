@@ -116,8 +116,83 @@ def dihedral(pos, atoms) -> float:
     return math.atan2(float(np.dot(np.cross(b1, v), w)), float(np.dot(v, w)))
 
 
+def residue_keys(s, chains: bool = True) -> list[tuple]:
+    """What names each residue of ``s`` across structures: (chain name, residue
+    number, insertion code, residue name), or the last three without the chain."""
+    names = s.chains["name"]
+    res = s.residues
+    ins = res["insertion"] if "insertion" in res else np.full(len(res), "")
+    out = []
+    for c, n, i, nm in zip(res["chain"], res["resid"], ins, res["name"], strict=True):
+        key = (int(n), str(i).strip(), str(nm))
+        out.append((str(names[c]),) + key if chains else key)
+    return out
+
+
+def paired_residue_keys(s, reference) -> tuple[list[tuple], list[tuple]]:
+    """:func:`residue_keys` of ``s`` and of ``reference``, with the chain when
+    the two share a chain name and without it otherwise, as a crystal's chain A
+    and a model's chain of another name are the same chain."""
+    mine, theirs = residue_keys(s), residue_keys(reference)
+    if not set(mine) & set(theirs):
+        mine, theirs = residue_keys(s, chains=False), residue_keys(reference, chains=False)
+    return mine, theirs
+
+
+def reference_distances(s, reference, pairs) -> list[float]:
+    """The distance (nm) in ``reference`` of each atom pair ``(a, b)`` of ``s``,
+    atoms paired by residue (:func:`paired_residue_keys`) and atom name; an
+    atom the reference lacks is an error, since a spring needs its length."""
+    mine, theirs = paired_residue_keys(s, reference)
+    where = {}
+    names = reference.atoms["name"]
+    for a, r in enumerate(reference.atoms["residue"].tolist()):
+        where.setdefault((theirs[r], str(names[a])), a)
+    out = []
+    for a, b in pairs:
+        atoms = []
+        for i in (a, b):
+            key = (mine[int(s.atoms["residue"][i])], str(s.atoms["name"][i]))
+            if key not in where:
+                raise ValueError(f"distance restraint: the reference has no atom "
+                                 f"{_atom_label(s, i)!r} to measure a spring on")  # fmt: skip
+            atoms.append(where[key])
+        p, q = reference.positions[atoms[0]], reference.positions[atoms[1]]
+        out.append(float(np.linalg.norm(q - p)) / 10.0)  # A to nm
+    return out
+
+
+def reference_targets(s, reference, torsions, mode: str) -> dict:
+    """{(residue of ``s``, "phi" or "psi"): angle} the ``torsions`` of ``s`` are
+    held at, read off ``reference``, another structure of the same protein.
+
+    Residues pair by chain name, number, insertion code and residue name -- or,
+    when the two share no chain name, by number, code and name alone, as a
+    crystal's chain A and a model's chain of another name are the same chain.
+    Under "ss" the residues DSSP puts in the reference's helices and sheets are
+    held, so a model is held to the structure it came from and not to its own
+    backbone.  A torsion whose residue the reference lacks is left free.
+    """
+    from ..secondary import dssp
+
+    mine, theirs = paired_residue_keys(s, reference)
+    ref = {}
+    for r, kind, atoms in backbone_torsions(reference):
+        ref[(theirs[r], kind)] = dihedral(reference.positions, atoms)
+    structured = None
+    if mode == "ss":
+        codes = dssp(reference, simplified=True)[0]
+        structured = {theirs[r] for r, code in enumerate(codes.tolist()) if code in ("H", "E")}
+    out = {}
+    for r, kind, _ in torsions:
+        key = mine[r]
+        if (key, kind) in ref and (structured is None or key in structured):
+            out[(r, kind)] = ref[(key, kind)]
+    return out
+
+
 def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, selection=None,
-                            secondary=None):  # fmt: skip
+                            secondary=None, reference=None):  # fmt: skip
     """Restrain the backbone torsions of ``s`` (``mode`` "bb" or "ss") to their
     values in its positions, only torsions whose atoms ``selection`` picks when
     given; returns (records, description).
@@ -127,6 +202,12 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
     ``mode`` "ss" needs ``secondary``, the DSSP codes of the protein's
     residues, since DSSP cannot read beads; boonza writes them beside the
     topology it builds.
+
+    ``reference``, another structure of the same protein (a crystal structure,
+    say), gives every torsion its target instead of the positions of ``s``,
+    and under "ss" the residues DSSP picks (:func:`reference_targets`): a
+    backmapped or predicted model is held to the structure it came from, not
+    to its own backbone.
     """
     import openmm as mm
 
@@ -138,7 +219,18 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
         picked = np.zeros(s.natoms, bool)
         picked[s.select(selection).ids] = True
         torsions = [t for t in torsions if picked[list(t[2])].all()]
-    if mode == "ss":
+    targets = None
+    if reference is not None:
+        if beads:
+            raise ValueError("dihedral_restraint_reference holds an all-atom backbone at "
+                             "another structure's phi and psi; a coarse-grained run has "
+                             "neither")  # fmt: skip
+        targets = reference_targets(s, reference, torsions, mode)
+        torsions = [t for t in torsions if (t[0], t[1]) in targets]
+        held = len({t[0] for t in torsions})
+        description = (f"{held} residues in the reference's helices and sheets" if mode == "ss"
+                       else f"{held} protein residues the reference has")  # fmt: skip
+    elif mode == "ss":
         if beads:
             if not secondary:
                 raise ValueError("dihedral_restraint = 'ss' needs the secondary structure of a "
@@ -171,7 +263,8 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
     chains = s.chains["name"]
     records = []
     for r, kind, atoms in torsions:
-        ref = dihedral(pos, atoms)
+        here = dihedral(pos, atoms)
+        ref = targets[(r, kind)] if targets is not None else here
         for n, k in fourier_terms(strength_kj):
             force.addTorsion(*atoms, n, (n * (ref + math.pi)) % (2 * math.pi), k)
         records.append(
@@ -183,6 +276,7 @@ def add_dihedral_restraints(omm_system, s, mode: str, strength_kj: float, select
                 "atom_indices": " ".join(map(str, atoms)),
                 "atom_names": " ".join(str(s.atoms["name"][a]) for a in atoms),
                 "reference_degrees": round(math.degrees(ref), 3),
+                "input_degrees": round(math.degrees(here), 3),
             }
         )
     omm_system.addForce(force)
@@ -289,14 +383,18 @@ def add_repulsion(omm_system, s, selection: str, distance_nm: float, k_kj: float
     return len(molecules)
 
 
-def add_distance_restraints(omm_system, s, pairs, k_kj: float, r0_nm=None) -> list[dict]:
+def add_distance_restraints(omm_system, s, pairs, k_kj: float, r0_nm=None,
+                            reference=None) -> list[dict]:  # fmt: skip
     """Hold atoms of one selection to atoms of another with harmonic springs.
 
     For each ``(first, second)`` in ``pairs``, every atom ``first`` picks is
     tied to every atom ``second`` picks -- not to the atoms of its own
     selection -- with E = k/2 (r - r0)^2, OpenMM's harmonic bond.  ``r0`` is
-    ``r0_nm`` when given, else each pair's distance in ``s`` (the built system,
-    before minimization).  ``k`` is in kJ/mol/nm^2.
+    ``r0_nm`` when given, else each pair's distance in ``reference`` (another
+    structure of the same molecules, a crystal structure say, atoms paired by
+    residue and name: :func:`reference_distances`) when that is given, else
+    each pair's distance in ``s`` (the built system, before minimization).
+    ``k`` is in kJ/mol/nm^2.
 
     The springs are a force of the OpenMM system, as the elastic network's are,
     and no part of the topology: a held pair keeps its nonbonded interactions,
@@ -317,6 +415,7 @@ def add_distance_restraints(omm_system, s, pairs, k_kj: float, r0_nm=None) -> li
     force.setUsesPeriodicBoundaryConditions(periodic)
     records: list[dict] = []
     seen: set[tuple[int, int]] = set()
+    springs: list[tuple[int, int]] = []
     for first, second in pairs:
         a_ids = s.select(first).ids.tolist()
         b_ids = s.select(second).ids.tolist()
@@ -329,16 +428,19 @@ def add_distance_restraints(omm_system, s, pairs, k_kj: float, r0_nm=None) -> li
                 if a == b or key in seen:
                     continue
                 seen.add(key)
-                d = xyz[b] - xyz[a]
-                if box is not None:
-                    d = _minimum_image(d, box)
-                r = float(np.linalg.norm(d))
-                r0 = r if r0_nm is None else float(r0_nm)
-                force.addBond(int(a), int(b), r0, float(k_kj))
-                records.append({"atom1": int(a), "label1": _atom_label(s, a),
-                                "atom2": int(b), "label2": _atom_label(s, b),
-                                "start_nm": round(r, 4), "r0_nm": round(r0, 4),
-                                "k_kJ_per_nm2": float(k_kj)})  # fmt: skip
+                springs.append((int(a), int(b)))
+    lengths = reference_distances(s, reference, springs) if reference is not None else None
+    for n, (a, b) in enumerate(springs):
+        d = xyz[b] - xyz[a]
+        if box is not None:
+            d = _minimum_image(d, box)
+        r = float(np.linalg.norm(d))
+        r0 = float(r0_nm) if r0_nm is not None else lengths[n] if lengths else r
+        force.addBond(a, b, r0, float(k_kj))
+        records.append({"atom1": a, "label1": _atom_label(s, a),
+                        "atom2": b, "label2": _atom_label(s, b),
+                        "start_nm": round(r, 4), "r0_nm": round(r0, 4),
+                        "k_kJ_per_nm2": float(k_kj)})  # fmt: skip
     if not records:
         raise ValueError("distance restraint: the selections pick no pair of different atoms")
     force.setName("DistanceRestraints")

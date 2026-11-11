@@ -22,6 +22,9 @@ is the right selection when you do ask: `--dihedral-restraint ss` holds the
 protein's helices and sheets but sets
 `dihedral_restraint_selection = "not chain LIG"`, so peptide ligands swim
 free, and `--repulsion` keeps the ligand copies apart (see below).
+`--dihedral-restraint-reference crystal.pdb` holds the protein at that
+structure's angles and secondary structure instead of the input's, as in
+`boonza md`.
 
 `--ligands` takes a file of your own (SDF or DMS), or the name of a probe
 library boonza builds (`SingleAminoAcid18`, `Dipeptide105`, `Dipeptide196`).
