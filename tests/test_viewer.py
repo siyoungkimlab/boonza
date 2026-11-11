@@ -2934,6 +2934,8 @@ def test_several_models_are_picked_and_superposed():
     # models of one system, fitted with no alignment: alpha carbons or backbone in order
     assert 'alignPicked(ref, "pair", "ca")' in ui and 'alignPicked(ref, "pair", "backbone")' in ui
     assert '"protein and name CA"' in ui and "sel: PAIRED[atoms](m.topo.cg)" in align
+    # the scene is built once, after the last model, not once a model
+    assert "await app.reloadModel(m, false, null, true)" in align and "await app.redraw()" in align
     assert "if (pickedModels.has(m.index) && pickedModels.size > 1) { menu(pickedMenu(m)" in ui
     # and a representation is drawn or hidden in them all at once, as one step to undo
     assert '{ label: "Representations", sub: () => pickedReps(these()) }' in ui

@@ -725,10 +725,10 @@ export function setupUI(app) {
     if (changed.length) remember({ look: changed });
   };
   const reloadModel = app.reloadModel;
-  app.reloadModel = async (m, topology, was = null) => {
+  app.reloadModel = async (m, topology, was = null, later = false) => {
     if (!replaying) remember({ edit: m, before: m.state ? snapshot(m) : null });
-    const out = await reloadModel(m, topology, was);
-    markBuilderH();  // new hydrogens, and a state built again: mark them once more
+    const out = await reloadModel(m, topology, was, later);
+    if (!later) markBuilderH();  // new hydrogens, and a state built again: mark them once more
     return out;
   };
   // a model just loaded again takes a look its atoms fit (what an edit undone or redone had)
@@ -3965,10 +3965,13 @@ export function setupUI(app) {
         try {
           const how = atoms ? { sel: PAIRED[atoms](m.topo.cg), ref_sel: PAIRED[atoms](ref.topo.cg) } : {};
           const out = await app.post("api/align", { m: m.index, ref: ref.index, method, ...how, ref_frame: app.frameOf(ref) });
-          await app.reloadModel(m, false);
+          // drawn once, after the last: drawing after each one builds the whole scene
+          // again every time, which was all of the wait (forty models: half a minute)
+          await app.reloadModel(m, false, null, true);
           done.push([m, out.rmsd]);
         } catch (e) { failed.push(`${m.name}: ${e.message}`); }
       }
+      if (done.length) await app.redraw();
     });
     if (done.length) {
       await app.show([ref, ...done.map(([m]) => m)]);

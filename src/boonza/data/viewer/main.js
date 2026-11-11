@@ -453,7 +453,9 @@ function carryOver(old, model) {
 
 // after an edit: positions again, and with new atoms the topology too
 // ``was``: each atom's index before the edit (-1: new), when the server sent it
-async function reloadModel(model, topology, was = null) {
+// ``later``: nothing is drawn again here -- the caller moves many models and draws
+// them once (app.redraw), since each drawing builds the whole scene over
+async function reloadModel(model, topology, was = null, later = false) {
   model.frames.clear();
   if (topology) {
     const st = model.state, topo = model.topo;
@@ -466,6 +468,9 @@ async function reloadModel(model, topology, was = null) {
     const f = await getFrame(model, 0);
     model.pos = f.pos; model.box = f.box;
   }
+  if (!later) await redraw();
+}
+async function redraw() {
   await refreshContacts();
   rebuild();
   app.onSelection();
@@ -1339,7 +1344,7 @@ const app = {
   getJSON, post, busy, message, atomLabel, residueLabel, setColorBy,
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
   selected, selection, targets, select, clearSelection, visibleAtom, setSelectionColor, pocketSelection, pocketReps,
-  rebuild, draw, flyTo, flyToView, cameraView, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
+  rebuild, redraw, draw, flyTo, flyToView, cameraView, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
   setFrame, play, nframes, frameOf, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
   range, STYLE, pageState, restorePage, PYTHON, withPictureScene,
