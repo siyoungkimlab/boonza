@@ -728,9 +728,11 @@ def test_a_bond_between_two_representations_is_drawn():
     body = body[: body.index("\n}\n")]
     assert "ribbon: noRibbon, reach }" in body  # each representation knows what the rest draw
     assert "visibleAtom(m, a)) reach[a] = 1" in body  # a hidden hydrogen is no end of a bond
-    # nor is a hydrogen under a ribbon, which draws none: a "noh" selection over the
-    # cartoon grew a short open cylinder toward each hydrogen it left out
-    assert "if (!topo.flags.h[a]) reach[a] = 1" in body
+    # under a ribbon, only the atom it is traced through: "backbone or name H" over the
+    # cartoon grew a short open cylinder from each CA toward the CB it left out (and a
+    # "noh" selection one toward each hydrogen), ending in mid-air
+    assert "if (R.trace[r] >= 0) reach[R.trace[r]] = 1" in body
+    assert "for (const a of topo.residueAtoms[r]) if (!topo.flags.h[a]) reach[a] = 1" not in body
     ui = (here / "ui.js").read_text()
     apply = ui[ui.index("async function applyToAtoms(") :]
     apply = apply[: apply.index("\n  }\n")]
@@ -1856,10 +1858,12 @@ def test_a_ligand_joins_an_open_series(served):
     s = boonza.from_smiles("c1ccccc1O")
     other = boonza.from_smiles("CCO")
     bare = other.clone(np.flatnonzero(other.atoms["anum"] > 1))  # no hydrogens
-    v = viewer.Viewer([
-        viewer.Model("complex", lambda: viewer.Session(s)),
-        viewer.Model("ethanol", lambda: viewer.Session(bare, title="ethanol")),
-    ])
+    v = viewer.Viewer(
+        [
+            viewer.Model("complex", lambda: viewer.Session(s)),
+            viewer.Model("ethanol", lambda: viewer.Session(bare, title="ethanol")),
+        ]
+    )
     get, post = served(v)
     post("api/series", {"m": 0, "atoms": list(range(s.natoms))})
     # another model's picked atoms: a copy joins, the model stays as it was
@@ -2846,3 +2850,63 @@ def test_a_lone_ion_is_charged_as_the_force_field_charges_it(tmp_path):
     fe = heme.select("element Fe").ids
     assert len(fe) and charge_ions(heme) == 0
     assert not np.asarray(heme.atoms["formal_charge"])[fe].any()
+
+
+def test_the_mouse_of_chimerax_and_pymol():
+    """Help | Mouse (and the button at the bottom) offers ChimeraX's and PyMOL's buttons
+    beside boonza's own, which stays the default.  One table says what a button does."""
+    import shutil
+    import subprocess
+
+    here = Path(boonza.__file__).parent / "data/viewer"
+    mouse, ui = (here / "mouse.js").read_text(), (here / "ui.js").read_text()
+    assert 'MOUSE_MODES = ["boonza", "chimerax", "pymol"]' in mouse
+    assert 'MOUSE_MODES.includes(saved) ? saved : "boonza"' in mouse  # the default
+    assert 'id="f-mouse"' in (here / "index.html").read_text()
+    assert "f-mouse" in ui and "MOUSE_ROWS[state.mouseMode]" in ui
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node runs the table")
+    cases = {
+        "boonza": [["left"], ["middle"], ["middle", True], ["right"], ["left", False, False, True]],
+        "chimerax": [["left"], ["left", False, True], ["left", True, True], ["middle"], ["right"]],
+        "pymol": [
+            ["left"],
+            ["middle"],
+            ["right"],
+            ["left", True],
+            ["middle", True],
+            ["right", True],
+            ["left", False, True],
+        ],
+    }  # the button, then Shift, Ctrl, Alt
+    script = f"""
+      import {{ binding }} from {json.dumps((here / "mouse.js").as_uri())};
+      const out = {{}};
+      for (const [mode, list] of Object.entries({json.dumps(cases)}))
+        out[mode] = list.map(a => binding(mode, ...a));
+      console.log(JSON.stringify(out));
+    """
+    run = [node, "--input-type=module", "-e", script]
+    got = json.loads(subprocess.run(run, capture_output=True, text=True, check=True).stdout)
+    acts = {mode: [b.get("act") for b in got[mode]] for mode in got}
+    assert acts["boonza"] == ["box", "rotate", "pan", "zoom", "dihedral"]  # as it was
+    assert acts["chimerax"] == ["rotate", "box", "box", "pan", "pan"]
+    assert got["chimerax"][2]["box"] == "toggle" and got["chimerax"][0]["tap"] == "tool"
+    assert acts["pymol"] == ["rotate", "pan", "zoom", "box", "box", "clip", "pan"]
+    assert got["pymol"][0]["pick"] == {"mode": "toggle", "residues": True}  # a click: a residue
+    assert [got["pymol"][k]["box"] for k in (3, 4)] == ["add", "remove"]
+
+
+def test_several_models_are_picked_and_superposed():
+    """Shift (a run) or Ctrl (one) + click in the Models list picks several models; a
+    right-click on one of them superposes the others on it."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    pick = ui[ui.index("function pickModel(e, m)") :]
+    pick = pick[: pick.index("\n  }\n")]
+    assert "e.shiftKey" in pick and "e.ctrlKey || e.metaKey" in pick
+    align = ui[ui.index("async function alignPicked(ref, method)") :]
+    align = align[: align.index("\n  }\n")]
+    assert "m !== ref" in align and '"api/align"' in align
+    assert "failed.push" in align  # one that cannot be aligned leaves the rest to be
+    assert "if (pickedModels.has(m.index) && pickedModels.size > 1) { menu(pickedMenu(m)" in ui

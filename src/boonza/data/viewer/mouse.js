@@ -14,8 +14,73 @@
 // opens the popup when Alt is pressed and released alone.  A trackpad (Help | Mouse)
 // rotates with a two-finger swipe (in the perimeter: about z), pans with Shift and
 // zooms with a pinch.
+//
+// That is the default, boonza's own.  Help | Mouse has two more modes, for hands that
+// know another program (binding() below is the whole table):
+//
+//   ChimeraX   left: rotate; Ctrl + left: select (click or box; Shift toggles);
+//              middle or right: move; wheel: zoom; Ctrl + double-click: the popup
+//   PyMOL      (3-Button Viewing) left: rotate, click: a residue in or out of the
+//              selection; middle: move, click: the center of rotation; right: zoom,
+//              click: the popup; Shift + left / middle: a box added / taken away;
+//              Shift + right: clip; Ctrl + left: move; Ctrl + middle or right click:
+//              one atom; Ctrl + Shift + left click: one residue; wheel: the slab
+//              (Shift: move it; Ctrl: zoom); double-click: the popup
+//
+// In both, Alt edits as it does in boonza's: Alt + left rotates the selected atoms,
+// Alt + middle (ChimeraX: or right) moves them, Shift + Alt + left turns a bond.
 
 const PERIMETER = 0.07;  // the band at the edges where dragging turns about z
+
+export const MOUSE_MODES = ["boonza", "chimerax", "pymol"];
+
+// What a button does, with the keys held when it went down:
+//   act    a drag: box, rotate, pan, zoom, clip, dihedral, rotateSel, panSel
+//   box    what a box does to the selection: set, add, toggle, remove
+//   tap    a click without a drag: select, pivot, popup, tool (a builder tool's click)
+//   pick   how a tap selects: mode (set, toggle), residues (whole ones), keep (a click
+//          away from atoms leaves the selection)
+//   zoom   +1: down zooms out; -1: down zooms in
+export function binding(mode, role, shift, ctrl, alt) {
+  if (mode === "chimerax") {
+    if (role === "left") {
+      if (alt) return { act: shift ? "dihedral" : "rotateSel", tap: "tool" };
+      if (ctrl) return { act: "box", box: shift ? "toggle" : "set", tap: "select",
+                         pick: { mode: shift ? "toggle" : "set", keep: shift } };
+      return { act: "rotate", tap: "tool" };
+    }
+    return { act: alt ? "panSel" : "pan", tap: role === "middle" ? "pivot" : "popup" };
+  }
+  if (mode === "pymol") {
+    if (role === "left") {
+      if (alt) return { act: shift ? "dihedral" : "rotateSel", tap: "tool" };
+      if (ctrl && shift) return { tap: "select", pick: { mode: "set", residues: true } };
+      if (shift) return { act: "box", box: "add", tap: "tool" };
+      if (ctrl) return { act: "pan", tap: "tool" };
+      return { act: "rotate", tap: "select", pick: { mode: "toggle", residues: true } };
+    }
+    if (role === "middle") {
+      if (alt) return { act: "panSel" };
+      if (ctrl && shift) return { tap: "pivot" };
+      if (shift) return { act: "box", box: "remove" };
+      if (ctrl) return { tap: "select", pick: { mode: "set" } };
+      return { act: "pan", tap: "pivot" };
+    }
+    if (shift) return { act: "clip" };
+    if (ctrl) return { tap: "select", pick: { mode: "set" } };
+    return { act: "zoom", zoom: -1, tap: "popup" };
+  }
+  if (role === "left") {
+    if (alt) return { act: "dihedral" };
+    return { act: "box", box: shift && ctrl ? "toggle" : shift || ctrl ? "add" : "set", residues: ctrl,
+             tap: "select", pick: { mode: shift ? "toggle" : "set", residues: ctrl, keep: shift || ctrl } };
+  }
+  if (role === "middle") {
+    if (alt) return { act: shift ? "panSel" : "rotateSel", tap: "pivot" };
+    return { act: shift ? "pan" : ctrl ? "zoom" : "rotate", zoom: 1, tap: "pivot" };
+  }
+  return { act: "zoom", zoom: -1, tap: "popup" };  // right-drag: up out, down in
+}
 
 export function setupMouse(app) {
   const { canvas, camera, state } = app;
@@ -24,6 +89,9 @@ export function setupMouse(app) {
   const bubble = document.getElementById("bubble");
   state.twoButton = localStorage.getItem("boonza.twoButton") === "1";
   state.trackpad = localStorage.getItem("boonza.trackpad") === "1";
+  const saved = localStorage.getItem("boonza.mouseMode");
+  state.mouseMode = MOUSE_MODES.includes(saved) ? saved : "boonza";
+  app.onMouseMode?.();
 
   let drag = null;
   const local = e => {
@@ -37,8 +105,16 @@ export function setupMouse(app) {
   const role = button => {
     if (button === 0) return "left";
     if (button === 1) return "middle";
-    return state.twoButton ? "middle" : "right";
+    return twoButton() ? "middle" : "right";
   };
+  // the two-button setting is boonza's own: the other modes use both buttons already
+  const twoButton = () => state.twoButton && state.mouseMode === "boonza";
+  const clamp = v => Math.min(Math.max(v, 0.02), 1);
+  function clipBy(front, back) {  // the clipping planes, as Display | Clipping sets them
+    const c = camera.zclip;
+    c[0] = clamp(c[0] + front); c[1] = clamp(c[1] + back);
+    app.clipChanged?.();
+  }
 
   canvas.addEventListener("contextmenu", e => e.preventDefault());
 
@@ -49,20 +125,21 @@ export function setupMouse(app) {
     app.stopFlight();
     altAlone = false;
     const [x, y] = local(e);
-    drag = { role: role(e.button), x0: x, y0: y, x, y, moved: false, shift: e.shiftKey,
-             ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, perimeter: inPerimeter(x, y) };
+    const r = role(e.button), ctrl = e.ctrlKey || e.metaKey;
+    drag = { ...binding(state.mouseMode, r, e.shiftKey, ctrl, e.altKey),
+             role: r, x0: x, y0: y, x, y, moved: false, perimeter: inPerimeter(x, y) };
     if (drag.role === "left") app.message("");  // a click in the view puts a message away
     canvas.setPointerCapture(e.pointerId);
-    if (drag.role === "left" && drag.alt) startDihedral();
+    if (drag.act === "dihedral") startDihedral();
     e.preventDefault();
   });
 
-  // Alt + left: two bonded atoms selected turn the bond
+  // Alt + left (the other modes: with Shift): two bonded atoms selected turn the bond
   async function startDihedral() {
     const sel = app.selection();
     const d = drag;
     if (sel.length !== 1 || sel[0][1].length !== 2) {
-      app.message("Alt-drag turns a bond: select its two atoms first", true);
+      app.message("turning a bond: select its two atoms first", true);
       d.dihedral = "none";
       return;
     }
@@ -88,43 +165,41 @@ export function setupMouse(app) {
     drag.x = x; drag.y = y;
     bubble.hidden = true;
 
-    if (drag.role === "left") {
-      if (drag.alt) {
-        const d = drag.dihedral;
-        if (d && typeof d === "object") {
-          d.now += dx * 0.6;
-          d.now = ((d.now + 540) % 360) - 180;
-          app.turnDihedral(d, d.now);
-          app.message(`dihedral ${d.now.toFixed(1)}°`);
-        }
-        return;
+    const act = drag.act;
+    if (act === "dihedral") {
+      const d = drag.dihedral;
+      if (d && typeof d === "object") {
+        d.now += dx * 0.6;
+        d.now = ((d.now + 540) % 360) - 180;
+        app.turnDihedral(d, d.now);
+        app.message(`dihedral ${d.now.toFixed(1)}°`);
       }
+      return;
+    }
+    if (act === "box") {
       const x0 = Math.min(drag.x0, x), y0 = Math.min(drag.y0, y);
       Object.assign(rubber.style, { left: `${x0}px`, top: `${y0}px`,
                                     width: `${Math.abs(x - drag.x0)}px`, height: `${Math.abs(y - drag.y0)}px` });
       rubber.hidden = false;
       return;
     }
-    if (drag.role === "right") {  // right-drag zooms: up out, down in (a right click opens the popup)
-      camera.zoom(Math.exp(-dy * 0.01));
-      app.draw();
-      return;
-    }
-    if (drag.role !== "middle") return;
-
-    if (drag.alt) {  // the selected atoms move
+    if (act === "rotateSel" || act === "panSel") {  // the selected atoms move
       if (!drag.moving) drag.moving = app.beginMove() ? "yes" : "no";
       if (drag.moving !== "yes") return;
-      if (drag.shift) app.translateSelected(dx, dy);
+      if (act === "panSel") app.translateSelected(dx, dy);
       else if (drag.perimeter) app.rotateSelected(0, 0, 1, zTurn(x, y, dx, dy));
       else app.rotateSelected(dy, dx, 0, Math.hypot(dx, dy) * 0.01);
       return;
     }
-    if (drag.shift) {
+    if (act === "pan") {
       const scale = 2 * camera.distance * Math.tan(camera.fov / 2) / canvas.clientHeight;
       camera.pan(dx * scale, -dy * scale);
-    } else if (drag.ctrl) {
-      camera.zoom(Math.exp(dy * 0.01));
+    } else if (act === "zoom") {
+      camera.zoom(Math.exp(drag.zoom * dy * 0.01));
+    } else if (act === "clip") {  // up and down: the front plane; left and right: the back
+      clipBy(dy * 0.004, dx * 0.004);
+    } else if (act !== "rotate") {
+      return;
     } else if (drag.perimeter) {
       camera.rotate(0, 0, 1, zTurn(x, y, dx, dy));
     } else {
@@ -146,7 +221,7 @@ export function setupMouse(app) {
     const [x, y] = local(e);
     rubber.hidden = true;
 
-    if (d.role === "left" && d.alt) {
+    if (d.act === "dihedral") {
       const t = d.dihedral;
       if (t && typeof t === "object" && d.moved) {
         try {
@@ -154,34 +229,33 @@ export function setupMouse(app) {
           await app.reloadModel(t.model, false);
         } catch (err) { app.message(err.message, true); }
       }
-      return;
+      if (d.moved || !d.tap) return;
     }
-    if (d.role === "left" && d.moved) {  // a box
+    if (d.moving === "yes") { await app.endMove(); return; }
+    if (d.moved) {
+      if (d.act !== "box") return;
       const found = app.inRect(Math.min(d.x0, x), Math.min(d.y0, y), Math.max(d.x0, x), Math.max(d.y0, y));
-      if (!d.shift && !d.ctrl) app.clearSelection();
+      if (d.box === "set") app.clearSelection();
       for (const [m, ids] of found) {
-        const atoms = d.ctrl ? residuesOf(m, ids) : ids;
-        app.select(m, atoms, d.shift && d.ctrl ? "toggle" : "add");
+        app.select(m, d.residues ? residuesOf(m, ids) : ids, d.box === "set" ? "add" : d.box);
       }
       if (!found.length) { app.rebuild(); app.onSelection(); }
       return;
     }
-    if (d.role === "left") { click(x, y, d); return; }
-    if (d.role === "middle") {
-      if (d.moving === "yes") { await app.endMove(); return; }
-      if (!d.moved) {  // the center of rotation
-        const hit = app.pick(x, y);
-        if (hit && hit.atom !== undefined) {
-          camera.pivot = app.xyz(hit.model, hit.atom);
-          app.message(`center of rotation: ${app.atomLabel(hit.model, hit.atom, false)}`);
-        } else {
-          camera.pivot = null;
-          app.message("center of rotation: the view's");
-        }
+    if (d.tap === "select") { click(x, y, d.pick); return; }
+    if (d.tap === "tool") { if (app.toolActive?.()) app.applyTool(app.pick(x, y), x, y); return; }
+    if (d.tap === "pivot") {  // the center of rotation
+      const hit = app.pick(x, y);
+      if (hit && hit.atom !== undefined) {
+        camera.pivot = app.xyz(hit.model, hit.atom);
+        app.message(`center of rotation: ${app.atomLabel(hit.model, hit.atom, false)}`);
+      } else {
+        camera.pivot = null;
+        app.message("center of rotation: the view's");
       }
       return;
     }
-    if (d.role === "right" && !d.moved) app.popup(e.clientX, e.clientY, app.pick(x, y));
+    if (d.tap === "popup") app.popup(e.clientX, e.clientY, app.pick(x, y));
   });
 
   // a drag the browser takes away (a trackpad gesture, a window switch): it ends
@@ -202,17 +276,17 @@ export function setupMouse(app) {
     return [...out];
   }
 
-  function click(x, y, d) {
+  function click(x, y, p) {
     const hit = app.pick(x, y);
     if (app.applyTool?.(hit, x, y)) return;  // a builder tool in hand takes the click
     if (!hit) {
-      if (!d.shift && !d.ctrl) { app.clearSelection(); app.rebuild(); app.onSelection(); }
+      if (!p.keep) { app.clearSelection(); app.rebuild(); app.onSelection(); }
       return;
     }
     const m = hit.model;
     let ids = hit.atom !== undefined ? [hit.atom] : hit.atoms || m.topo.residueAtoms[hit.residue];
-    if (d.ctrl) ids = residuesOf(m, ids);
-    app.select(m, ids, d.shift ? "toggle" : "set");
+    if (p.residues) ids = residuesOf(m, ids);
+    app.select(m, ids, p.mode);
     if (hit.atom !== undefined) app.describeAtom(m, hit.atom);
     else if (hit.residue !== undefined) app.message(`residue ${app.residueLabel(m, hit.residue)}`);
     else if (hit.atoms) app.message(`bond ${app.atomLabel(m, hit.atoms[0], false)} – ${app.atomLabel(m, hit.atoms[1], false)}`
@@ -240,8 +314,20 @@ export function setupMouse(app) {
     lastDouble = { model: m, residue: r, level: whole ? "molecule" : "residue" };
     app.select(m, ids, e.shiftKey ? "add" : "set");
   }
-  canvas.addEventListener("dblclick", e => residueOrMolecule(e, false));
-  canvas.addEventListener("click", e => { if (e.detail === 3 && e.button === 0) residueOrMolecule(e, true); });
+  // PyMOL's double-click, and ChimeraX's with Ctrl, open the popup
+  canvas.addEventListener("dblclick", e => {
+    const mode = state.mouseMode;
+    if (mode === "pymol" || (mode === "chimerax" && (e.ctrlKey || e.metaKey))) {
+      if (!app.toolActive?.()) app.popup(e.clientX, e.clientY, app.pick(...local(e)));
+    } else {
+      residueOrMolecule(e, false);
+    }
+  });
+  canvas.addEventListener("click", e => {
+    if (e.detail !== 3 || e.button !== 0 || state.mouseMode === "pymol") return;
+    if (state.mouseMode === "chimerax" && (e.ctrlKey || e.metaKey)) return;
+    residueOrMolecule(e, true);
+  });
 
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
@@ -259,6 +345,10 @@ export function setupMouse(app) {
       } else if (dx || dy) {
         camera.rotate(dy, dx, 0, Math.hypot(dx, dy) * 0.008);
       }
+    } else if (state.mouseMode === "pymol" && !e.ctrlKey && !e.metaKey) {
+      const turn = e.deltaY || e.deltaX;  // with Shift, some browsers turn the wheel sideways
+      if (e.shiftKey) clipBy(turn * 0.0008, -turn * 0.0008);  // the slab moves
+      else { const f = Math.exp(-turn * 0.0015), c = camera.zclip; clipBy(c[0] * f - c[0], c[1] * f - c[1]); }
     } else {
       camera.zoom(Math.exp(e.deltaY * 0.0015));
     }
@@ -285,7 +375,7 @@ export function setupMouse(app) {
   window.addEventListener("pointermove", e => { last = [e.clientX, e.clientY]; });
   window.addEventListener("keydown", e => { altAlone = e.key === "Alt" && !e.repeat; });
   window.addEventListener("keyup", e => {
-    if (e.key === "Alt" && altAlone && state.twoButton && !drag) app.popup(...last);
+    if (e.key === "Alt" && altAlone && twoButton() && !drag) app.popup(...last);
     altAlone = false;
   });
 }

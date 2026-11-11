@@ -634,8 +634,10 @@ function modelItems(m) {
   const reach = new Uint8Array(n);
   for (const rep of m.reps) {
     if (!rep.on || rep.style === "surface") continue;
-    // a ribbon draws no hydrogens: a bond to one would end in a stub, in mid-air
-    if (isRibbon(rep)) { for (const r of repResidues(m, rep)) for (const a of topo.residueAtoms[r]) if (!topo.flags.h[a]) reach[a] = 1; continue; }
+    // a ribbon draws one atom of a residue, the one it is traced through: half a bond to
+    // any other (a backbone's CA to the CB left out, a C to the next N) ends in mid-air,
+    // a cylinder out of nowhere.  A side chain over the ribbon still meets it, at its CA
+    if (isRibbon(rep)) { for (const r of repResidues(m, rep)) if (R.trace[r] >= 0) reach[R.trace[r]] = 1; continue; }
     for (let a = 0; a < n; a++) if (rep.mask[a] && visibleAtom(m, a)) reach[a] = 1;
   }
   for (const rep of m.reps) {
