@@ -2927,7 +2927,7 @@ def test_several_models_are_picked_and_superposed():
     pick = ui[ui.index("function pickModel(e, m)") :]
     pick = pick[: pick.index("\n  }\n")]
     assert "e.shiftKey" in pick and "e.ctrlKey || e.metaKey" in pick
-    align = ui[ui.index("async function alignPicked(ref, method)") :]
+    align = ui[ui.index("async function alignPicked(ref, method, atoms = null)") :]
     align = align[: align.index("\n  }\n")]
     assert "m !== ref" in align and '"api/align"' in align
     assert "failed.push" in align  # one that cannot be aligned leaves the rest to be
