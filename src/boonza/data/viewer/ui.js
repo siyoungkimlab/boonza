@@ -3982,9 +3982,45 @@ export function setupUI(app) {
       } },
       { label: "Show", run: () => app.show(these()) },
       { label: "Hide", run: () => app.show(these(), false) },
+      { label: "Representations", sub: () => pickedReps(these()) },
       "-",
       { label: `Close These ${n}`, run: async () => { for (const m of these()) await closeModel(m); } },
     ];
+  }
+
+  // the representations of the picked models, one entry for each kind (a style and what
+  // it draws: Sticks · binding site), ticked where every model that has it draws it.
+  // Choosing one hides it in them all, or draws it in them all if none had it drawn
+  const repKind = rep => `${rep.style}|${rep.label || rep.sel}`;
+  function pickedReps(models) {
+    const kinds = new Map();
+    for (const m of models) for (const rep of m.reps) {
+      const k = repKind(rep);
+      if (!kinds.has(k)) kinds.set(k, { label: `${STYLE_LABEL[rep.style]} · ${rep.label || rep.sel}`, reps: [] });
+      kinds.get(k).reps.push(rep);
+    }
+    const waiting = models.filter(m => !m.topo).length;
+    const set = async (k, on) => {
+      await Promise.all(models.map(m => app.load(m)));  // one not opened yet has its own to hide
+      let n = 0;
+      for (const m of models) {
+        const mine = m.reps.filter(rep => (k === null || repKind(rep) === k) && rep.on !== on);
+        if (!mine.length) continue;
+        for (const rep of mine) rep.on = on;
+        if (m.state) app.aggregate(m);
+        n++;
+      }
+      app.rebuild();  // once for them all: one step to undo
+      app.onReps(app.currentModel());
+      app.message(n ? `${on ? "drawn" : "hidden"} in ${n} model${n > 1 ? "s" : ""}` : "nothing to change");
+    };
+    const items = [...kinds].map(([k, kind]) => ({
+      label: kind.label, checked: () => kind.reps.every(rep => rep.on),
+      run: () => set(k, !kind.reps.some(rep => rep.on)) }));
+    if (!items.length) items.push({ label: waiting ? "not opened yet: Show them first" : "none", off: () => true });
+    return [...items, "-",
+      { label: "Draw Them All", run: () => set(null, true) },
+      { label: "Hide Them All", run: () => set(null, false) }];
   }
 
   // a double-click on a model's row: that model alone, and the view on it.  One click
