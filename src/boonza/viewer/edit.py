@@ -1383,9 +1383,21 @@ def set_chirality(s, atom: int, want: str, relax: bool = False, log=print) -> di
             "moved": len(moving), "alpha": got["alpha"]}  # fmt: skip
 
 
-def rotating_side(s, b: int, c: int) -> tuple[np.ndarray, int]:
-    """The atoms that turn about the b-c bond, and +1 if they are c's side, -1 if b's
-    (the smaller side turns, so a protein stays put and its side chain moves)."""
+#: which side of a bond ``rotating_side`` may be asked for
+SIDES = ("smaller", "larger", "b", "c")
+
+
+def rotating_side(s, b: int, c: int, side: str = "smaller") -> tuple[np.ndarray, int]:
+    """The atoms that turn about the b-c bond, and +1 if they are c's side, -1 if b's.
+
+    ``side``: ``smaller`` (the default: a protein stays put and its side chain moves),
+    ``larger``, or ``b`` or ``c`` to name the end that moves outright.  The geometry is
+    the same whichever turns -- the dihedral ends up at the angle asked for either way
+    -- but everything on the moving side is carried along, so which to turn is a
+    question of what you want to leave where it is.
+    """
+    if side not in SIDES:
+        raise ValueError(f"side is one of {', '.join(SIDES)}, not {side!r}")
     if s.find_bond(b, c) is None:
         raise ValueError("the middle two atoms must be bonded")
     adj = {k: [x for x, _ in v] for k, v in _bonded(s).items()}
@@ -1393,7 +1405,8 @@ def rotating_side(s, b: int, c: int) -> tuple[np.ndarray, int]:
     if b in side_c:
         raise ValueError("that bond is in a ring: it cannot turn")
     side_b = _reach(adj, b, c)
-    if len(side_c) <= len(side_b):
+    if side == "c" or (side == "smaller" and len(side_c) <= len(side_b)) \
+            or (side == "larger" and len(side_c) > len(side_b)):  # fmt: skip
         return np.array(sorted(side_c - {c}), np.int64), 1
     return np.array(sorted(side_b - {b}), np.int64), -1
 
@@ -1409,9 +1422,13 @@ def rotate_about(pos, b: int, c: int, atoms, degrees: float) -> np.ndarray:
     return out
 
 
-def set_dihedral(s, a: int, b: int, c: int, d: int, degrees: float) -> float:
-    """Turn the smaller side of the b-c bond until a-b-c-d is ``degrees``."""
-    atoms, sign = rotating_side(s, b, c)
+def set_dihedral(s, a: int, b: int, c: int, d: int, degrees: float,
+                 side: str = "smaller") -> float:  # fmt: skip
+    """Turn one side of the b-c bond until a-b-c-d is ``degrees``.
+
+    ``side`` says which of the two turns (:func:`rotating_side`); the smaller by
+    default."""
+    atoms, sign = rotating_side(s, b, c, side)
     pos = np.asarray(s.positions, float)
     delta = degrees - dihedral_angle(pos, a, b, c, d)
     s.positions = rotate_about(pos, b, c, atoms, sign * delta)
@@ -1419,7 +1436,7 @@ def set_dihedral(s, a: int, b: int, c: int, d: int, degrees: float) -> float:
 
 
 def dihedral_scan(s, a: int, b: int, c: int, d: int, parameterized, step: float = 10.0,
-                  alone=None) -> dict:  # fmt: skip
+                  alone=None, side: str = "smaller") -> dict:  # fmt: skip
     """Energy (kcal/mol, from the lowest) as a-b-c-d turns, the rest rigid: the torsion
     terms alone (periodic and CMAP), the whole system's energy (``total``: in its
     surroundings, clashes and all) and, with ``alone`` (atoms of ``s``: the residue or
@@ -1437,7 +1454,7 @@ def dihedral_scan(s, a: int, b: int, c: int, d: int, parameterized, step: float 
                                      openmm.CustomTorsionForce))  # fmt: skip
         force.setForceGroup(1 if torsion else 0)
     context = openmm.Context(omm_system, openmm.VerletIntegrator(0.001))
-    atoms, sign = rotating_side(s, b, c)
+    atoms, sign = rotating_side(s, b, c, side)
     pos = np.asarray(s.positions, float)
     now = dihedral_angle(pos, a, b, c, d)
     angles = np.arange(-180.0, 180.0 + step / 2, step)

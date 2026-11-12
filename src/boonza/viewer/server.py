@@ -44,9 +44,12 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/align           {"m": mobile, "ref": reference, "method", "sel", "ref_sel",
                                "chain", "ref_chain", "ref_frame"}; method:
                                matchmaker|cealign|superpose|pair
-    POST /api/dihedral        {"m": M, "atoms": [a, b, c, d]} -> angle, atoms that turn
-    POST /api/set_dihedral    {"m": M, "atoms": [...], "angle": degrees}
-    POST /api/dihedral_scan   {"m": M, "atoms": [...], "step": 10} -> energy profiles
+    POST /api/dihedral        {"m": M, "atoms": [a, b, c, d], "side":
+                              smaller|larger|b|c} -> angle, the atoms that turn, and
+                              "other": the side that did not
+    POST /api/set_dihedral    {"m": M, "atoms": [...], "angle": degrees, "side": ...}
+    POST /api/dihedral_scan   {"m": M, "atoms": [...], "step": 10, "side": ...} ->
+                              energy profiles
     POST /api/minimize        {"m": M, "mode": both|all|ligand|pocket|protein, "pocket": A,
                               "path": bool, "rem":
                               bool (soft nonbonded interactions first)} -> the
@@ -321,11 +324,13 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/save":
             self._json(session.save(body["path"]))
         elif url.path == "/api/dihedral":
-            self._json(session.dihedral(body["atoms"]))
+            self._json(session.dihedral(body["atoms"], body.get("side", "smaller")))
         elif url.path == "/api/set_dihedral":
-            self._json(session.set_dihedral(body["atoms"], float(body["angle"])))
+            self._json(session.set_dihedral(body["atoms"], float(body["angle"]),
+                                            body.get("side", "smaller")))  # fmt: skip
         elif url.path == "/api/dihedral_scan":
-            self._json(session.dihedral_scan(body["atoms"], float(body.get("step", 10))))
+            self._json(session.dihedral_scan(body["atoms"], float(body.get("step", 10)),
+                                             body.get("side", "smaller")))  # fmt: skip
         elif url.path == "/api/minimize":
             self._json(
                 self.viewer.minimize(

@@ -480,6 +480,61 @@ def test_dihedrals():
         rotating_side(ring, 0, 3)
 
 
+def test_a_dihedral_can_turn_either_side_of_its_bond():
+    """The smaller side turns by default, so a protein stays put and its side chain
+    moves.  `side` turns the other one instead: the angle comes out the same, and what
+    moves is the other half of the molecule."""
+    from boonza.viewer.edit import rotating_side, set_dihedral
+
+    s = boonza.from_smiles("CCCCCCO")  # a long tail one side of the middle bond
+    c = [int(x) for x in np.flatnonzero(s.atoms["anum"] == 6)]
+    a, b, cc, d = c[0], c[1], c[2], c[3]
+    small, small_sign = rotating_side(s, b, cc)
+    big, big_sign = rotating_side(s, b, cc, "larger")
+    assert len(small) < len(big) and small_sign == -big_sign
+    assert not set(small.tolist()) & set(big.tolist())
+    # naming an end picks it outright, whichever is the smaller
+    assert rotating_side(s, b, cc, "b")[1] == -1
+    assert rotating_side(s, b, cc, "c")[1] == 1
+    assert sorted(rotating_side(s, b, cc, "b" if small_sign < 0 else "c")[0]) == sorted(small)
+    with pytest.raises(ValueError, match="side is one of"):
+        rotating_side(s, b, cc, "left")
+
+    # the angle is the angle whichever side turns
+    was = s.positions.copy()
+    assert abs(set_dihedral(s, a, b, cc, d, 60.0) - 60.0) < 1e-6
+    moved_small = np.flatnonzero(np.abs(s.positions - was).max(axis=1) > 1e-6)
+    s.positions = was.copy()
+    assert abs(set_dihedral(s, a, b, cc, d, 60.0, side="larger") - 60.0) < 1e-6
+    moved_big = np.flatnonzero(np.abs(s.positions - was).max(axis=1) > 1e-6)
+    assert set(moved_small.tolist()) <= set(small.tolist())
+    assert set(moved_big.tolist()) <= set(big.tolist())
+    assert len(moved_big) > len(moved_small)
+    for i, j in zip(s.bonds["i"], s.bonds["j"], strict=True):  # still rigid
+        assert (
+            abs(np.linalg.norm(was[i] - was[j]) - np.linalg.norm(s.positions[i] - s.positions[j]))
+            < 1e-6
+        )
+
+
+def test_the_dihedral_endpoint_offers_both_sides_of_the_bond(served):
+    """The viewer gets the side that turns and the one that does not, so it can swap
+    without asking again."""
+    s = boonza.from_smiles("CCCCCCO")
+    session = viewer.Session(s)
+    c = [int(x) for x in np.flatnonzero(s.atoms["anum"] == 6)][:4]
+    d = session.dihedral(c)
+    assert d["side"] in ("b", "c") and d["other"]["side"] != d["side"]
+    assert d["sign"] == -d["other"]["sign"]
+    assert len(d["moving"]) <= len(d["other"]["moving"])  # the smaller one by default
+    assert not set(d["moving"]) & set(d["other"]["moving"])
+    named = session.dihedral(c, side=d["other"]["side"])
+    assert named["moving"] == d["other"]["moving"] and named["side"] == d["other"]["side"]
+    assert named["other"]["moving"] == d["moving"]
+    out = session.set_dihedral(c, -75.0, side="larger")
+    assert abs(out["angle"] + 75.0) < 0.01
+
+
 def test_session_edits_undo_and_save(tmp_path, served):
     s = boonza.from_smiles("CCO")
     session = viewer.Session(s)
