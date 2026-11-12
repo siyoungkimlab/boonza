@@ -1641,11 +1641,14 @@ class Session:
     def dynamics(self, mobile: str | None = None, restraint: float = 10.0, fixed=None,
                  tethered=None, mode: str | None = None, path: bool = False,
                  solvent: str = "rf", picoseconds: float = 10.0, temperature: float = 300.0,
-                 minimize_first: bool = True, pocket: float = POCKET) -> dict:  # fmt: skip
+                 minimize_first: bool = True, pocket: float = POCKET,
+                 seed: int = 0) -> dict:  # fmt: skip
         """Molecular dynamics instead of minimization, with the same choice of what
         moves (``mobile``, ``mode``, or Constrain's ``fixed`` and ``tethered``) and the
         same ``solvent``.  ``picoseconds`` at ``temperature`` K, minimized first unless
-        told otherwise, so a barrier the minimizer cannot cross can be crossed here."""
+        told otherwise, so a barrier the minimizer cannot cross can be crossed here.
+        ``seed``: the thermostat's random numbers, for a run that repeats (0: a new
+        one each time)."""
         from .edit import dynamics
 
         self._editable()
@@ -1661,7 +1664,7 @@ class Session:
                                   tethered=tethered if constrained else None,
                                   path=path, solvent=solvent, picoseconds=picoseconds,
                                   temperature=temperature,
-                                  minimize_first=minimize_first)  # fmt: skip
+                                  minimize_first=minimize_first, seed=seed)  # fmt: skip
             except Exception:
                 self._unready()
                 raise
