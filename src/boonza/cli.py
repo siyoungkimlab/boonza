@@ -1903,6 +1903,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
     sub.add_parser("swim", help="ligands swimming around a protein, many simulations "
                    "(boonza swim --help)")  # fmt: skip
+    sub.add_parser("ctmd", help="rank docked poses by the reversible work it takes to break "
+                   "them, with well-tempered metadynamics (boonza ctmd --help)")  # fmt: skip
     sub.add_parser("fep", help="relative binding free energies: boonza fep prep, run, "
                    "result (boonza fep prep --help)")  # fmt: skip
     sub.add_parser("pockets", help="fpocket on coarse-grained proteins, one structure or a "
@@ -2475,6 +2477,10 @@ def main(argv=None) -> int:
         from .md.swim import main as swim_main
 
         return swim_main(argv[1:])
+    if argv and argv[0] == "ctmd":  # its own parser: run and score
+        from .ctmd.cli import main as ctmd_main
+
+        return ctmd_main(argv[1:])
     if argv and argv[0] == "fep":
         from .fep.cli import main as fep_main
 

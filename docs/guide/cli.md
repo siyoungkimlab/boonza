@@ -29,6 +29,8 @@ boonza martinize protein.pdb cg --elastic --solvate [--salt 0.15]   # ... in wat
 boonza md protein.pdb --workdir run   # prepare and run MD; the same command resumes it
 boonza md p.pdb --model martini3 --solvate membrane --upper POPC:7,CHOL:3 --opm   # in a membrane
 boonza md topol.top --model sirah   # a SIRAH topology, coarse-grained with PME
+boonza ctmd run equilibrated.dms -r docked.mae -w out/lig1   # metadynamics c(t) of one docked pose
+boonza ctmd score out/* --hits hits.csv   # ... rank the poses, with enrichment against known binders
 boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-swimming runs
 boonza swim protein.pdb --model martini3   # coarse-grained, with dipeptide probes
 boonza swim protein.pdb --model sirah      # the same probes, mapped onto SIRAH beads

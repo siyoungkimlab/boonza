@@ -10,6 +10,7 @@ __version__ = "0.1.0.dev0"
 
 from . import (  # noqa: E402
     analysis,
+    ctmd,  # noqa: E402  (light: openmm is loaded only when it runs)
     gaff,
     pbc,
     viparr,  # noqa: E402
@@ -238,6 +239,7 @@ __all__ = [
     "CEResult",
     "MatchResult",
     "Martinized",
+    "ctmd",
     "martinize",
     "ce_align",
     "cealign",
