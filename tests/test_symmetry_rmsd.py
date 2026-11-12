@@ -373,9 +373,11 @@ def test_drmsd_matches_mdanalysis_script_and_brute_force(tmp_path):
     order = np.arange(ref.natoms)
     order[lig] = rng.permutation(lig)
     ref.reorder_atoms(order)
-    other = drmsd(s, ref, ligand="resname LIG", positions=frames[:, :, :], periodic=True)
+    # the same 5 A as above: these are compared with r, so they measure the same pocket
+    other = drmsd(s, ref, ligand="resname LIG", cutoff=5.0, positions=frames[:, :, :],
+                  periodic=True)  # fmt: skip
     s_frames = boonza.trajectory.Frames(np.arange(8), frames, boxes, np.zeros(8), np.zeros(8))
-    with_boxes = drmsd(s, ref, ligand="resname LIG", positions=s_frames)
+    with_boxes = drmsd(s, ref, ligand="resname LIG", cutoff=5.0, positions=s_frames)
     np.testing.assert_allclose(with_boxes.drmsd, r.drmsd, atol=1e-4)
     assert other.drmsd.shape == (8,)
     with pytest.raises(ValueError, match="no protein atoms"):
