@@ -570,6 +570,24 @@ A line is a SMILES and, after whitespace, an optional name; ``#`` starts
 a comment.  The name is what a grid labels the molecule with, so a file
 that carries names needs nothing else to make a legible picture.
 
+## Backmapping
+
+### `boonza.backmap(cg, reference=None, positions=None, *, model: 'str' = 'auto', **options)`
+
+The all-atom structure of a coarse-grained frame.
+
+``cg`` is the coarse-grained system and ``positions`` its beads' positions for
+the frame wanted (default: its own); ``reference`` the all-atom structure the
+run was built from, where the model can use one.  ``model``: ``sirah``,
+``martini``, or ``auto`` to read it from the bead names
+(:func:`detect_model`).  The other ``options`` are the model's own:
+:func:`boonza.sirah.backmap` for SIRAH.  Martini is not turned back yet.
+
+### `boonza.detect_model(cg) -> 'str | None'`
+
+Which model ``cg``'s beads are: ``sirah`` (its backbone beads GN, GC, GO, or a
+nucleotide's PX), ``martini`` (a BB bead), or None when it is neither.
+
 ## Martini
 
 ### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, trust_connectivity: 'bool' = False, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False, go=None, go_eps: 'float' = 9.414, go_low: 'float' = 0.3, go_up: 'float' = 1.1, go_res_dist: 'int' = 3) -> 'Martinized'`

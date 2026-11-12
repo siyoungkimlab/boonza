@@ -36,6 +36,7 @@ SECTIONS = [
     ("OpenMM", ["to_openmm", "from_openmm", "openmm_energies"]),
     ("MM/GBSA", ["gbsa", "GBSA", "gb_force"]),
     ("Drawing molecules", ["draw", "Drawing", "common_core", "read_smiles"]),
+    ("Backmapping", ["backmap", "detect_model"]),
     ("Martini", ["martinize", "Martinized", "martini.contact_map", "martini.parameters",
                  "martini.solvate",
                  "martini.bilayer", "martini.lipid_templates", "martini.equilibrate",

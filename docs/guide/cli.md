@@ -32,7 +32,7 @@ boonza md topol.top --model sirah   # a SIRAH topology, coarse-grained with PME
 boonza swim protein.pdb --ligands lib.sdf --types 5 --copies 3   # many ligand-swimming runs
 boonza swim protein.pdb --model martini3   # coarse-grained, with dipeptide probes
 boonza swim protein.pdb --model sirah      # the same probes, mapped onto SIRAH beads
-boonza backmap run/sirah/cg.dms aa.mae -c run/trajectory.dcd -r protein.mae   # a SIRAH frame back to atoms
+boonza backmap run/sirah/cg.dms aa.mae -c run/trajectory.dcd -r protein.mae   # a coarse-grained frame back to atoms (SIRAH)
 boonza probes --workdir boonza_swim/sim_*/md [-o probes.csv]   # what each probe touches, per residue
 boonza triage md/runs/*/ -o triage --ligandsel "chain L"   # which pose each run took, and how many took it
 boonza modes triage -o review                 # group the runs into binding modes, one session over them

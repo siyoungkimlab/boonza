@@ -1740,9 +1740,12 @@ def _backmap(args) -> int:
     from pathlib import Path
 
     import boonza
-    from boonza.sirah import backmap
 
     cg = _load(args.cg)
+    model = boonza.detect_model(cg) if args.model == "auto" else args.model
+    if model is None:
+        raise ValueError(f"{args.cg}: neither SIRAH's beads nor Martini's by their names; "
+                         "say which with --model")  # fmt: skip
     reference = _load(args.reference) if args.reference else None
     frames = args.frame or [-1]
     if args.coordinates:
@@ -1761,9 +1764,10 @@ def _backmap(args) -> int:
         frame = None if f is None else trajectory[f]
         positions, box = (None, None) if frame is None else (frame.positions, frame.box)
         where = out if len(picked) == 1 else out.with_name(f"{out.stem}_{f:05d}{out.suffix}")
-        print(f"{args.cg}" + ("" if f is None else f" frame {f}") + f" -> {where}")
-        aa = backmap(cg, reference, positions, box=box, minimize=not args.no_minimize,
-                     restraint=args.restraint, log=lambda *a: print(" ", *a))  # fmt: skip
+        print(f"{args.cg} ({model})" + ("" if f is None else f" frame {f}") + f" -> {where}")
+        aa = boonza.backmap(cg, reference, positions, model=model, box=box,
+                            minimize=not args.no_minimize, restraint=args.restraint,
+                            log=lambda *a: print(" ", *a))  # fmt: skip
         boonza.save(aa, str(where))
     return 0
 
@@ -2124,8 +2128,11 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--no-labels", action="store_true", help="no names under the molecules")
     q.set_defaults(run=_draw)
 
-    q = sub.add_parser("backmap", help="SIRAH beads back to an all-atom structure")
-    q.add_argument("cg", help="the coarse-grained system (a run's sirah/cg.dms)")
+    q = sub.add_parser("backmap", help="coarse-grained beads back to an all-atom structure "
+                       "(SIRAH; Martini is not turned back yet)")  # fmt: skip
+    q.add_argument("cg", help="the coarse-grained system (a SIRAH run's sirah/cg.dms)")
+    q.add_argument("--model", default="auto", choices=("auto", "sirah", "martini"),
+                   help="which model the beads are (default: read from their names)")  # fmt: skip
     q.add_argument("output", help="all-atom structure to write (.mae, .dms, .pdb); with "
                    "several frames, one file a frame: NAME_00010.mae")  # fmt: skip
     q.add_argument("-c", "--coordinates", help="the run's trajectory, to take frames from "
@@ -2135,8 +2142,8 @@ def _parser() -> argparse.ArgumentParser:
                    "several (default: the last)")  # fmt: skip
     q.add_argument("-r", "--reference", help="the all-atom structure the run was built from: "
                    "its residues are laid on the beads, so names, protonation states, ligands "
-                   "and caps are its own. Without it amino acids are built from the bead "
-                   "names (proteins only, default protonation states)")  # fmt: skip
+                   "and caps are its own. Without it (SIRAH) proteins and DNA are built from "
+                   "the bead names, with default protonation states")  # fmt: skip
     q.add_argument(
         "--no-minimize",
         action="store_true",

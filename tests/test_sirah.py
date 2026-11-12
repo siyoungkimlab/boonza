@@ -1268,3 +1268,30 @@ def test_backmap_keeps_hands_and_trans_bonds_against_the_beads():
     out = backmap(cg, aa, frame)
     assert _hands(out) == _hands(aa)
     assert np.nanmin(np.abs(boonza.backbone_dihedrals(out)[2][0])) > 150
+
+
+def test_backmap_is_one_entry_for_every_model(tmp_path, capsys):
+    from boonza.cli import main
+    from boonza.sirah import sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    assert boonza.detect_model(cg) == "sirah" and boonza.detect_model(aa) is None
+    dna = sirahize(boonza.load(DATA / "dna_duplex.pdb"), atoms="nucleic").system()
+    assert boonza.detect_model(dna) == "sirah"
+    out = boonza.backmap(cg, aa, minimize=False)  # found by its beads, and SIRAH's options
+    np.testing.assert_allclose(out.positions, aa.positions, atol=1e-6)
+    martini = boonza.martinize(aa).system()
+    assert boonza.detect_model(martini) == "martini"
+    with pytest.raises(ValueError, match="Martini beads cannot be turned back"):
+        boonza.backmap(martini)
+    with pytest.raises(ValueError, match="neither SIRAH's nor Martini's"):
+        boonza.backmap(aa)
+    with pytest.raises(ValueError, match="model is one of"):
+        boonza.backmap(cg, model="other")
+    boonza.save(cg, str(tmp_path / "cg.dms"))
+    args = ["backmap", str(tmp_path / "cg.dms"), str(tmp_path / "aa.mae"),
+            "-r", str(DATA / "1CRN_ph7.pdb"), "--no-minimize"]  # fmt: skip
+    assert main(args) == 0 and "(sirah)" in capsys.readouterr().out
+    assert main([*args, "--model", "martini"]) == 1
+    assert "Martini beads cannot be turned back" in capsys.readouterr().err

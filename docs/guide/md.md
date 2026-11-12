@@ -450,7 +450,11 @@ are in SIRAH's AMBER release rather than this one.
 
 ### Back to atoms
 
-`boonza backmap` turns a SIRAH frame back into an all-atom structure. A SIRAH
+`boonza backmap` turns a coarse-grained frame back into an all-atom structure.
+It is the one command for every model: `--model` says which, and by default
+the bead names do (`boonza.backmap` and `boonza.detect_model` from Python).
+Only SIRAH is turned back so far; Martini's beads are recognized and refused.
+A SIRAH
 bead sits on one atom, so a frame says where those atoms are; the rest is put
 back in one of two ways.
 
