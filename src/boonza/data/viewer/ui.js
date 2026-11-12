@@ -4134,8 +4134,24 @@ export function setupUI(app) {
       }
       const row = el("div", { className: `mrow${m.shown ? " on" : ""}${m.index === state.current ? " current" : ""}${pickedModels.has(m.index) ? " picked" : ""}` });
       row.dataset.model = m.index;
-      const box = el("input", { type: "checkbox", checked: m.shown, title: "show" });
-      box.onchange = () => { state.current = m.index; app.show([m], box.checked); };
+      // with several models picked, the box of any one of them shows or hides them all
+      const withPicked = pickedModels.has(m.index) && pickedModels.size > 1;
+      const box = el("input", { type: "checkbox", checked: m.shown,
+                                title: withPicked ? `show or hide the ${pickedModels.size} picked models`
+                                                  : "show" });  // fmt: skip
+      box.onchange = async () => {
+        state.current = m.index;
+        const these = pickedModels.has(m.index) && pickedModels.size > 1
+          ? app.live().filter(x => pickedModels.has(x.index)) : [m];  // fmt: skip
+        if (box.checked && these.length > 50
+            && !confirm(`Show all ${these.length} picked models? Each one loads.`)) {
+          box.checked = false;
+          return;
+        }
+        await app.show(these, box.checked);
+        if (these.length > 1)
+          app.message(`${these.length} models ${box.checked ? "shown" : "hidden"}`);
+      };
       const sw = el("span", { className: "swatch" });
       sw.style.background = swatchColor(m.swatch || m.color);
       const name = el("span", { className: "name", title: `${m.name} (model ${m.index + 1}, for "in ${m.index + 1}" `
