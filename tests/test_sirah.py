@@ -1277,7 +1277,9 @@ def _fragments(s, chain="LIG"):
     for r in np.flatnonzero(rc == chain):
         mine = np.flatnonzero(res == r)
         out[str(s.residues["name"][r]).strip()] = (
-            {str(s.atoms["name"][a]).strip() for a in mine}, int(fc[mine].sum()))
+            {str(s.atoms["name"][a]).strip() for a in mine},
+            int(fc[mine].sum()),
+        )
     return out
 
 
