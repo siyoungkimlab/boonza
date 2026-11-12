@@ -492,6 +492,65 @@ A swim's probes are not in the reference, so they are built from their beads
 either way: each as the amino acids its name spells, with an ACE and an NME
 cap, since a probe's ends are neutral beads.
 
+### A probe's side chain on its own
+
+`--probe-side-chain-only` keeps the side chain of a **single-amino-acid** probe
+and drops the rest of it. Such a probe is a vehicle for its side chain: the
+backbone is there because SIRAH parameterizes amino acids, not because that
+amide belongs in whatever you design against the map. The flag leaves the
+chemistry that did the binding and nothing else.
+
+A **dipeptide probe is left exactly as it is**, caps and backbone and all. Its
+two side chains are one molecule, and cutting it would make two that no longer
+record having been tethered.
+
+The probe is laid on its beads first and only then cut, so a side chain sits
+where the whole residue put it. The caps go, the backbone goes atom by atom,
+and whatever closed a valence is replaced by a hydrogen on the atom it was
+bonded to, where it stood, so no radical is left behind: CA becomes the
+hydrogen on CB.
+
+**A ring is kept whole.** Proline's ring runs back through N and CA, so they
+are side chain as much as backbone; cutting at CA would leave propane, which
+says nothing about proline. N and CA are kept and capped at both ends instead,
+which makes the fragment pyrrolidine. Its ring nitrogen is an amine where the
+probe had an amide, so it will donate a hydrogen bond the probe could not --
+read a proline fragment as the ring, not as its nitrogen.
+
+**Only the cut is neutral.** The side chain keeps the charge it came with, as a
+probe's own ends are neutral and its side chains are what carry charge:
+
+| probe | fragment | charge |
+|---|---|---|
+| glutamate | propanoate | −1 |
+| aspartate | acetate | −1 |
+| lysine | butylammonium | +1 |
+| arginine | guanidinium | +1 |
+| serine | methanol | 0 |
+| proline | pyrrolidine | 0 |
+
+Each fragment is a closed molecule and no amino acid, so the protein force
+field has no template for it and the minimization parameterizes it with
+**GAFF2, which needs AmberTools**. The probe residues make at most that many
+distinct fragments however many probes a frame holds, and a fragment is run
+through antechamber once (charges at a reference conformer, keyed by the bond
+graph), so the cost does not grow with the number of probes.
+
+What holds a fragment in place is its side-chain beads, since its backbone
+beads no longer have atoms; they are reported as not turned back. (Proline is
+the exception again: keeping N and CA keeps GN and GC on atoms, so it is held
+by those too.) SIRAH gives every probe residue one to five side-chain beads --
+five for tryptophan, four for arginine, one for leucine, methionine,
+isoleucine and proline -- which is enough: on crambin with a probe of each,
+the fragments ended 0.00-0.53 A from where the placement put them, and the
+bead RMSD came out *better* than for whole probes (0.07 A against 0.22 A),
+there being no backbone to strain.
+
+A cap residue has no beads of its own, so ACE and NME are not held to anything
+and can swing a couple of angstroms during the minimization. That is true of
+any backmapped probe, cut or whole, and matters only if you read cap
+positions, which are an artifact of the construction in either case.
+
 A coarse-grained frame has no chirality and no cis or trans. Where its beads
 sit as a D residue or a cis peptide bond would, following them would make
 one, so the alpha carbons' hands and the peptide bonds are held through the
@@ -504,7 +563,8 @@ whole across the box and brought beside each other.
 
 `--frame` counts from 0, negative from the end, and can be repeated: several
 frames are written as `NAME_00010.mae`. `--no-minimize` stops after the rigid
-placement. From Python: `boonza.sirah.backmap(cg, reference, positions)`.
+placement. From Python: `boonza.sirah.backmap(cg, reference, positions)`, with
+`probe_side_chains=True` for the flag above.
 
 ## Backbone restraints
 
