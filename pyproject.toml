@@ -34,7 +34,7 @@ version = { attr = "boonza.__version__" }
 
 [tool.setuptools.package-data]
 boonza = ["data/*.dms", "data/*.zip", "data/cg_radii/*.csv",
-          "data/pockets/*.json",
+          "data/pockets/*.json", "data/sirah/*.json",
           "data/cavity/presets/*.json", "data/viewer/*",
           "data/martini/LICENSE",
           "data/martini/README.md", "data/martini/*.gro",

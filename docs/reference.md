@@ -479,18 +479,21 @@ Energy of each translated force in kcal/mol (and the total).
 
 ## MM/GBSA
 
-### `boonza.gbsa(system, positions=None, *, ligand: 'str' = 'not (polymer or water or ions) and noh', receptor: 'str | None' = None, keep: 'str | None' = None, model: 'str' = 'GBn2', salt: 'float' = 0.0, dielectric: 'float' = 78.5, surface_tension: 'float' = 0.0072, stride: 'int' = 1, platform: 'str | None' = None) -> 'GBSA'`
+### `boonza.gbsa(system, positions=None, *, ligand='not (polymer or water or ions) and noh', receptor=None, keep: 'str | None' = None, model: 'str' = 'GBn2', salt: 'float' = 0.0, dielectric: 'float' = 78.5, surface_tension: 'float' = 0.0072, stride: 'int' = 1, platform: 'str | None' = None, box=None) -> 'GBSA'`
 
 MM/GBSA binding energy of ``ligand`` in ``system``, over ``positions``.
 
 ``system`` is the run's structure, water and all: the solvent is dropped
 (everything but water and ions is kept, or ``keep`` says what is -- a
 structural ion, say), the ligand is ``ligand`` and the receptor is the
-rest, or ``receptor``.  ``positions`` is a Trajectory, a Frames block, an
-(nframes, natoms, 3) array of every atom, or None for the system's own
-coordinates; every ``stride``-th frame is scored.  Each frame is made whole
-and the ligand imaged beside the receptor first, since a trajectory is
-written wrapped.
+rest, or ``receptor``; both are selections or atom indices of ``system``,
+and the ligand is kept whatever it is made of, a water molecule included.
+``positions`` is a Trajectory, a Frames block, an (nframes, natoms, 3)
+array of every atom, or None for the system's own coordinates; every
+``stride``-th frame is scored.  Each frame is made whole and the ligand
+imaged beside the receptor first, since a trajectory is written wrapped;
+an array of positions is imaged in ``box`` (the system's cell by default;
+all zeros for a structure whose cell is a crystal's and not a box).
 
 ``model`` is one of :data:`MODELS`, ``salt`` in mol/L, ``surface_tension``
 in kcal/mol/A^2 over the buried solvent-accessible area, and ``platform``
@@ -498,7 +501,7 @@ an OpenMM platform (CPU when there is one).  A ligand bonded to the
 receptor is refused: its bonded terms would not cancel, and a covalent
 complex is not what MM/GBSA measures.
 
-### `class boonza.GBSA(model: 'str', frames: 'np.ndarray', terms: 'dict[str, np.ndarray]' = <factory>, pieces: 'dict[str, dict[str, np.ndarray]]' = <factory>, areas: 'dict[str, np.ndarray]' = <factory>) -> None`
+### `class boonza.GBSA(model: 'str', frames: 'np.ndarray', terms: 'dict[str, np.ndarray]' = <factory>, pieces: 'dict[str, dict[str, np.ndarray]]' = <factory>, areas: 'dict[str, np.ndarray]' = <factory>, natoms: 'dict[str, int]' = <factory>) -> None`
 
 A run's binding energies, frame by frame, in kcal/mol.
 
@@ -566,6 +569,24 @@ overlap.  Needs two molecules; one molecule is its own core.
 A line is a SMILES and, after whitespace, an optional name; ``#`` starts
 a comment.  The name is what a grid labels the molecule with, so a file
 that carries names needs nothing else to make a legible picture.
+
+## Backmapping
+
+### `boonza.backmap(cg, reference=None, positions=None, *, model: 'str' = 'auto', **options)`
+
+The all-atom structure of a coarse-grained frame.
+
+``cg`` is the coarse-grained system and ``positions`` its beads' positions for
+the frame wanted (default: its own); ``reference`` the all-atom structure the
+run was built from, where the model can use one.  ``model``: ``sirah``,
+``martini``, or ``auto`` to read it from the bead names
+(:func:`detect_model`).  The other ``options`` are the model's own:
+:func:`boonza.sirah.backmap` for SIRAH.  Martini is not turned back yet.
+
+### `boonza.detect_model(cg) -> 'str | None'`
+
+Which model ``cg``'s beads are: ``sirah`` (its backbone beads GN, GC, GO, or a
+nucleotide's PX), ``martini`` (a BB bead), or None when it is neither.
 
 ## Martini
 
@@ -809,6 +830,72 @@ water box when it fills one) and has no business in a run directory.
 ``everything`` writes the release as it ships instead, documentation and
 all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
 the residue libraries.
+
+### `boonza.sirah.backmap(cg, reference=None, positions=None, *, box=None, minimize: 'bool' = True, restraint: 'float' = 50.0, forcefields=None, log=None)`
+
+The all-atom structure of a SIRAH frame.
+
+``cg`` is the coarse-grained system (a run's ``sirah/cg.dms``); ``positions``
+its beads' positions in A for the frame wanted (default: its own).
+``reference`` is the all-atom structure the run was built from: a copy of it is
+returned with every residue laid on its beads -- matched by chain, residue
+number and insertion code -- and, with ``minimize``, relaxed with the mapped
+atoms held to their beads by ``restraint`` kcal/mol/A^2 springs (it needs its
+hydrogens for that).  Residues of the reference with no beads go with the
+residue they are bonded to (ACE and NME caps, which SIRAH drops), and are left
+out otherwise (water, a ligand that was not coarse-grained).  Solvent beads are
+not turned back.
+
+Without ``reference``, amino acids are built from the bead names
+(:func:`from_beads`) and then treated the same way: default protonation states
+and no ligands, and only for proteins.
+
+``box``: the frame's cell.  A trajectory is written wrapped, so with a box the
+solute's molecules are made whole and brought beside each other first (default:
+``cg``'s own cell when the positions are its own; none for ``positions`` given).
+
+``forcefields``: as :func:`boonza.viewer.edit.parameterize` takes them
+(default: boonza md's, with :data:`NUCLEIC_FORCEFIELD` added for a nucleic acid;
+GAFF2 for a ligand, which needs AmberTools).
+
+### `boonza.sirah.from_beads(cg, positions=None, log=None, rules: 'str' = 'sirah', residues=None)`
+
+The all-atom structure built from bead names alone, hydrogens included.
+Nothing is minimized here.
+
+``rules="sirah"`` follows SIRAH Tools' backmapping table (:func:`read_table`):
+the atoms that sit on beads, and the others placed from them by a distance, an
+angle and a dihedral.  Amino acids and DNA; an amino acid the table lacks is
+built the other way.  ``rules="ideal"`` lays an ideal residue
+(:func:`boonza.peptide`'s) on its beads as a rigid body: amino acids only.
+
+Either way the hydrogens and charged termini are the Amber templates', the
+protonation states SIRAH's own (:data:`BUILT_AS`: its neutral epsilon histidine
+is HIE), and two bonded sulfur beads are a disulfide.  What the table has no
+way to finish here (lipids, glycans, modified residues) and cofactors are
+reported and left out: they need the structure the run was built from.
+
+A swim probe, whose beads are named by its sequence, is built as the amino
+acids it is, with an ACE and an NME cap: its ends are neutral beads, and a lone
+amino acid has no Amber template without them.  ``residues``: only these
+residues of ``cg``.
+
+### `boonza.sirah.bead_atoms(cg, aa) -> 'tuple[np.ndarray, np.ndarray]'`
+
+Which atom of ``aa`` each bead of ``cg`` sits on: ``(beads, atoms)``, indices
+paired.  Residues are matched by chain, number and insertion code; a residue
+SIRAH's map knows by its map (the first of a bead's atom names the residue
+has), any other (a cofactor, a bead a heavy atom) by the atoms' own names.
+Solvent beads and beads of residues ``aa`` does not have are left out.
+
+### `boonza.sirah.read_table() -> 'dict'`
+
+SIRAH Tools' backmapping table, ``{coarse-grained residue: entry}``: the
+all-atom residue it stands for (``name``), the atoms that sit on beads and the
+ones placed from three others by a distance, an angle and a dihedral
+(``build``), what changes at a chain's ends (``first``, ``last``) and the atoms
+written (``print``).  It is SIRAH Tools' own (``sirah_vmdtk.tcl``, GPL v2),
+read from its Tcl by ``scripts/gen_sirah_backmap.py``.
 
 ## Pockets
 
