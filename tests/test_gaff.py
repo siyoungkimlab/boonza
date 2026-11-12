@@ -537,3 +537,58 @@ def test_reference_charges_are_the_same_in_every_pose():
     assert sum(a.atoms["charge"]) == pytest.approx(0, abs=1e-2)  # antechamber's rounding
     with pytest.raises(ValueError, match="charge_geometry"):
         gaff.run_gaff2(s, 0, charge_geometry="crystal", amberhome=AMBERHOME)
+
+
+@needs_amber
+def test_a_stripped_swim_probe_side_chain_is_a_gaff2_molecule():
+    """``boonza backmap --probe-side-chain-only``: with its backbone gone a probe's
+    side chain is no amino acid, so the protein force field has no template for it and
+    it goes to GAFF2 -- which is the point, since a minimization needs parameters for
+    it.  The springs that follow hold it by its side-chain beads alone, and it stays
+    where the beads put it."""
+    from pathlib import Path
+
+    from boonza.sirah import backmap, bead_atoms, sirahize
+    from boonza.sirah.probes import probe
+
+    data = Path(__file__).parent / "data" / "sirah"
+    aa = boonza.load(data / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    centre = np.asarray(aa.positions).mean(axis=0)
+    radius = np.linalg.norm(np.asarray(aa.positions) - centre, axis=1).max()
+    for k, sequence in enumerate(("E", "R", "P", "S")):  # charged, neutral, and a ring
+        p = probe(sequence).system()
+        angle = 2 * np.pi * k / 4
+        where = centre + np.array([np.cos(angle), np.sin(angle), 0.3]) * (radius + 5.0)
+        p.positions = np.asarray(p.positions) - np.asarray(p.positions).mean(axis=0) + where
+        p.chains["name"] = np.array(["LIG"] * p.nchains)
+        p.residues["resid"] = np.asarray(p.residues["resid"]) + 900 + 10 * k
+        cg.append(p)
+
+    # the fragments are what the protein force field cannot place
+    placed = backmap(cg, aa, minimize=False, probe_side_chains=True)
+    from boonza.md.config import DEFAULT_FORCEFIELDS
+
+    ffs = [viparr.load_forcefield(b) for b, *_ in DEFAULT_FORCEFIELDS]
+    unmatched = gaff.find_unmatched(placed, ffs)
+    chain = np.array([str(x).strip() for x in placed.chains["name"]])
+    lig = set(np.flatnonzero(chain[np.asarray(placed.residues["chain"])] == "LIG").tolist())
+    assert unmatched and {int(r) for g in unmatched for r in g} == lig
+
+    # and GAFF2 does place them: the minimization runs and leaves them on their beads
+    said = []
+    out = backmap(cg, aa, minimize=True, probe_side_chains=True, log=said.append)
+    assert any("GAFF2 templates" in line for line in said)
+    beads, atoms = bead_atoms(cg, out)
+    off = np.linalg.norm(np.asarray(out.positions)[atoms] - np.asarray(cg.positions)[beads],
+                         axis=1)  # fmt: skip
+    assert np.sqrt((off**2).mean()) < 0.3 and off.max() < 1.0
+    # only the side-chain beads are left to hold them: the backbone's have no atoms
+    kept = {str(cg.atoms["name"][b]).strip() for b in beads}
+    assert not {"GN", "GC", "GO"} & {
+        str(cg.atoms["name"][b]).strip()
+        for b in beads
+        if str(cg.residues["name"][int(np.asarray(cg.atoms["residue"])[b])]).strip()
+        in {"E", "R", "P", "S"}
+    }
+    assert kept & {"BCG", "BOG"}

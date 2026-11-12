@@ -1249,6 +1249,83 @@ def test_backmap_builds_swim_probes_the_reference_does_not_have():
     assert out.natoms > aa.natoms and _hands(out)[: len(_hands(aa))] == _hands(aa)
 
 
+def _probes_on(aa, sequences, cg):
+    """``cg`` with a probe of each sequence set around the protein's surface, far
+    enough out to be clear of it and of each other."""
+    from boonza.sirah.probes import probe
+
+    centre = np.asarray(aa.positions).mean(axis=0)
+    radius = np.linalg.norm(np.asarray(aa.positions) - centre, axis=1).max()
+    for k, sequence in enumerate(sequences):
+        p = probe(sequence).system()
+        angle = 2 * np.pi * k / len(sequences)
+        where = centre + np.array([np.cos(angle), np.sin(angle), 0.3]) * (radius + 5.0)
+        p.positions = np.asarray(p.positions) - np.asarray(p.positions).mean(axis=0) + where
+        p.chains["name"] = np.array(["LIG"] * p.nchains)
+        p.residues["resid"] = np.asarray(p.residues["resid"]) + 900 + 10 * k
+        cg.append(p)
+    return cg
+
+
+def _fragments(s, chain="LIG"):
+    """{residue name: (atom names, formal charge)} of each residue of ``chain``."""
+    names = np.array([str(x).strip() for x in s.chains["name"]])
+    rc = names[np.asarray(s.residues["chain"])]
+    res = np.asarray(s.atoms["residue"])
+    fc = np.asarray(s.atoms["formal_charge"])
+    out = {}
+    for r in np.flatnonzero(rc == chain):
+        mine = np.flatnonzero(res == r)
+        out[str(s.residues["name"][r]).strip()] = (
+            {str(s.atoms["name"][a]).strip() for a in mine}, int(fc[mine].sum()))
+    return out
+
+
+def test_backmap_cuts_swim_probes_down_to_their_side_chains():
+    """``probe_side_chains``: the probe is laid on its beads whole, then its caps and
+    backbone go and CA stays as the hydrogen closing CB.  What is left is the side
+    chain as a small molecule, at its formal charge."""
+    from boonza.sirah import backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = _probes_on(aa, ("E", "K", "P", "S", "EK"), sirahize(aa).system())
+    said = []
+    out = backmap(cg, aa, minimize=False, probe_side_chains=True, log=said.append)
+    assert any("backbones and caps dropped" in line for line in said)
+    frags = _fragments(out)
+    assert set(frags) == {"GLU", "LYS", "PRO", "SER"}  # no ACE, no NME
+    # glutamate is propanoate: CB a methyl where CA was, and the charge is the
+    # side chain's own
+    assert frags["GLU"] == ({"HCB", "CB", "HB2", "HB3", "CG", "HG2", "HG3", "CD", "OE1",
+                             "OE2"}, -1)  # fmt: skip
+    assert frags["LYS"][1] == 1 and frags["SER"][1] == 0
+    assert frags["SER"][0] == {"HCB", "CB", "HB2", "HB3", "OG", "HG"}  # methanol
+    # proline's ring runs back through N, so it needs a second cap hydrogen -- and the
+    # two of them must not be left bonded to each other, as N and CA were
+    assert frags["PRO"] == ({"HCB", "HCD", "CB", "HB2", "HB3", "CG", "HG2", "HG3", "CD",
+                             "HD2", "HD3"}, 0)  # propane  # fmt: skip
+    names = [str(x).strip() for x in out.atoms["name"]]
+    anum = np.asarray(out.atoms["anum"])
+    for b in out.bonds:
+        pair = {names[b.first.id], names[b.second.id]}
+        assert pair != {"HCB", "HCD"}, "the cap hydrogens are still bonded to each other"
+    for a in range(out.natoms):  # no hydrogen with two bonds anywhere
+        if anum[a] == 1:
+            assert len(np.asarray(out.bonded_atoms(a)).ravel()) == 1
+    # the side-chain beads still have their atoms; the backbone beads no longer do
+    assert any("not turned back" in line for line in said)
+
+
+def test_backmap_says_when_there_are_no_probes_to_cut_down():
+    from boonza.sirah import backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    said = []
+    backmap(cg, aa, minimize=False, probe_side_chains=True, log=said.append)
+    assert any("no probes here to cut down" in line for line in said)
+
+
 def test_backmap_keeps_hands_and_trans_bonds_against_the_beads():
     from boonza.sirah import backmap, sirahize
 

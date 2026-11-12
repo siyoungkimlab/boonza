@@ -1767,6 +1767,7 @@ def _backmap(args) -> int:
         print(f"{args.cg} ({model})" + ("" if f is None else f" frame {f}") + f" -> {where}")
         aa = boonza.backmap(cg, reference, positions, model=model, box=box,
                             minimize=not args.no_minimize, restraint=args.restraint,
+                            probe_side_chains=args.probe_side_chain_only,
                             log=lambda *a: print(" ", *a))  # fmt: skip
         boonza.save(aa, str(where))
     return 0
@@ -2154,6 +2155,11 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--restraint", type=float, default=50.0, metavar="K",
                    help="springs holding the mapped atoms to their beads while minimizing, "
                    "kcal/mol/A^2 (default 50)")  # fmt: skip
+    q.add_argument("--probe-side-chain-only", action="store_true",
+                   help="keep a swim probe's side chains alone: the whole probe is laid on "
+                   "its beads, then its caps and backbone are dropped, CA staying as the "
+                   "hydrogen on CB. What is left is parameterized with GAFF2 (AmberTools) "
+                   "and held by its side-chain beads (SIRAH)")  # fmt: skip
     q.set_defaults(run=_backmap)
 
     q = sub.add_parser("martinize", help="Martini beads and topology for proteins, as martinize2")
