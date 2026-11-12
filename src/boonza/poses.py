@@ -158,7 +158,7 @@ def _check_pocket(pocket, positions) -> None:
 
 
 def pose_distances(system, positions=None, reference=None, ligand: str = DEFAULT_LIGAND,
-                   protein: str = "protein and name CA", pocket_cutoff: float = 5.0,
+                   protein: str = "protein and name CA", pocket_cutoff: float = 8.0,
                    pocket=None, symmetry: bool = True, heavy_only: bool = True,
                    bond_orders: bool = False, periodic: bool = True) -> np.ndarray:  # fmt: skip
     """The (nframes, nframes) dRMSD matrix of a trajectory, in A.
@@ -324,10 +324,18 @@ def _cut(merges, n: int, height: float) -> np.ndarray:
 def poses(system, positions=None, reference=None, cutoff: float = 1.5,
           min_population: float = 0.02,
           ligand: str = DEFAULT_LIGAND, protein: str = "protein and name CA",
-          pocket_cutoff: float = 5.0, pocket=None, symmetry: bool = True,
+          pocket_cutoff: float = 8.0, pocket=None, symmetry: bool = True,
           heavy_only: bool = True, bond_orders: bool = False,
           periodic: bool = True) -> PoseSet:  # fmt: skip
     """The poses a trajectory holds, most populated first.
+
+    ``pocket_cutoff`` is 8 A, as :func:`boonza.drmsd`'s is: an alpha carbon sits
+    behind its own side chain, so 5 leaves too thin a frame to fix a pose in
+    space.  It is the frame poses are measured against, not a contact distance
+    -- :func:`pocket_contacts` keeps 5 A, where a contact means something.
+    ``cutoff`` below is in dRMSD, so it does not follow: widening the pocket
+    lowers the dRMSD a given motion gives by about 5%, which makes the same
+    ``cutoff`` group very slightly more freely than it did at 5 A.
 
     Frames within ``cutoff`` A dRMSD of one another (average linkage) are one
     pose; a pose holding less than ``min_population`` of the frames, or fewer

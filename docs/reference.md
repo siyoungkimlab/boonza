@@ -1366,12 +1366,22 @@ most rather than the middle of where it sat -- which is the same number for
 a round pocket and a smaller one for a long or a merged one.  Reported
 beside DCA rather than in place of it: the benchmarks are quoted on DCA.
 
-### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
+### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 8.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
 
 Distance RMSD (Å) between pocket atoms and ligand atoms, against a reference.
 
 The pocket is the ``protein`` atoms within ``cutoff`` Å of the ligand in
-the reference.  For every frame, the (pocket x ligand) distance matrix
+the reference.  8 Å, not 5: an alpha carbon sits behind its own side chain,
+so 5 leaves very few of them -- a 51-heavy-atom ligand in PANX1's pore had
+3 within 5 Å against 20 within 8.  A handful of pairs still measures the
+drift, but which of them falls inside the cutoff is then a knife-edge, so
+two ligands in one pocket can end up measured against different atoms, and
+the spread of what protein motion alone contributes was three times wider
+(±0.10 Å against ±0.045 Å under 0.3 Å of backbone jitter).  Widening
+further dilutes instead: the answer to 1 Å of ligand falls 0.59, 0.56, 0.55
+Å as the cutoff goes 5, 8, 10, for pair counts of 153, 1020 and 2295.
+
+For every frame, the (pocket x ligand) distance matrix
 ``d`` is compared with the reference matrix: ``sqrt(mean((d - d_ref)**2))``.
 No superposition is needed, and the ligand's internal distances are not
 included.
@@ -1727,7 +1737,7 @@ atoms.  The per-frame count says whether the ligand is bound at all,
 without caring which pose it is in; the per-atom share says which atoms a
 pocket is really made of, over the whole run rather than in one frame.
 
-### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
+### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 8.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
 
 The (nframes, nframes) dRMSD matrix of a trajectory, in A.
 
@@ -1754,9 +1764,17 @@ per pair, which is what keeps this quadratic in frames but linear in
 symmetry searches; when two frames would rather be compared through
 different mappings the distance between them is an upper bound.
 
-### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
+### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 8.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
 
 The poses a trajectory holds, most populated first.
+
+``pocket_cutoff`` is 8 A, as :func:`boonza.drmsd`'s is: an alpha carbon sits
+behind its own side chain, so 5 leaves too thin a frame to fix a pose in
+space.  It is the frame poses are measured against, not a contact distance
+-- :func:`pocket_contacts` keeps 5 A, where a contact means something.
+``cutoff`` below is in dRMSD, so it does not follow: widening the pocket
+lowers the dRMSD a given motion gives by about 5%, which makes the same
+``cutoff`` group very slightly more freely than it did at 5 A.
 
 Frames within ``cutoff`` A dRMSD of one another (average linkage) are one
 pose; a pose holding less than ``min_population`` of the frames, or fewer

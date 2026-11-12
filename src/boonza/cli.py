@@ -2331,7 +2331,7 @@ def _parser() -> argparse.ArgumentParser:
                    "(default: the frame whose ligand touches the most protein)")  # fmt: skip
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms")
     q.add_argument("--proteinsel", default="protein and name CA", help="pocket candidates")
-    q.add_argument("--pocket-cutoff", type=float, default=5.0, help="pocket cutoff (A)")
+    q.add_argument("--pocket-cutoff", type=float, default=8.0, help="pocket cutoff (A)")
     q.add_argument("--pocketsel", default=None,
                    help="the pocket atoms themselves; --proteinsel, --pocket-cutoff and the "
                         "reference then decide nothing")  # fmt: skip
