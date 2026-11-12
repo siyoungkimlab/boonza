@@ -2315,7 +2315,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--ref-ligandsel", default=None,
                    help="reference ligand (default: --ligandsel)")  # fmt: skip
     q.add_argument("--proteinsel", default="protein and name CA", help="pocket candidates")
-    q.add_argument("--cutoff", type=float, default=5.0, help="pocket cutoff (A)")
+    q.add_argument("--cutoff", type=float, default=8.0, help="pocket cutoff (A)")
     q.add_argument("--no-symmetry", action="store_true", help="pair ligand atoms in order")
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.set_defaults(run=_drmsd)
