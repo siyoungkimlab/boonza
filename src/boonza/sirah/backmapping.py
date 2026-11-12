@@ -38,6 +38,8 @@ PROBE_BACKBONE = {"N", "H", "H1", "H2", "H3", "CA", "HA", "HA2", "HA3", "C", "O"
 PROBE_CAPS = {"ACE", "NME", "NMA"}
 #: the C-H a cap hydrogen is given, A
 CAP_H = 1.09
+#: the bond a hydrogen is given to the element it hangs off, A
+BOND_H = {6: 1.09, 7: 1.01, 8: 0.97, 16: 1.34}
 
 #: what holds a peptide bond trans and an alpha carbon's hand while minimizing,
 #: kJ/mol/rad^2: a turned-over bond costs thousands of kJ/mol, against the hundred or
@@ -150,19 +152,124 @@ def _place(aa, pairs_of: dict[int, tuple[np.ndarray, np.ndarray]], log) -> tuple
     return out, left
 
 
-def _side_chains_only(aa, residues, log) -> np.ndarray:
-    """``aa``'s ``residues`` cut down to their side chains, in place.
+def _molecules_of(aa, residues) -> list[list[int]]:
+    """``residues`` grouped into the molecules they are bonded into, each sorted."""
+    from ..graph import connected_components
 
-    The caps go whole and the backbone goes atom by atom, except that a backbone atom
-    bonded to a side-chain atom is kept as the hydrogen standing in for it, so the
-    fragment closes its own valence instead of leaving a radical: CA becomes the
-    hydrogen on CB, and proline, whose ring runs back through N, gets a second one on
-    CD.  The bonds such an atom had to anything but its host are cut, or proline's two
-    cap hydrogens would be left bonded to each other.
+    mine = {int(r) for r in residues}
+    order = sorted(mine)
+    at = {r: k for k, r in enumerate(order)}
+    res = np.asarray(aa.atoms["residue"])
+    bi, bj = [], []
+    for b in aa.bonds:
+        u, v = int(res[b.first.id]), int(res[b.second.id])
+        if u != v and u in mine and v in mine:
+            bi.append(at[u])
+            bj.append(at[v])
+    label, _ = connected_components(len(order), np.asarray(bi, int), np.asarray(bj, int))
+    out: dict[int, list[int]] = {}
+    for r, g in zip(order, np.asarray(label).tolist(), strict=True):
+        out.setdefault(int(g), []).append(r)
+    return [sorted(v) for _, v in sorted(out.items())]
+
+
+def _on_a_ring(aa, atoms) -> set[int]:
+    """Those of ``atoms`` that lie on a ring made of bonds within ``atoms``.
+
+    A bond is on a ring when its ends are still connected without it, so this is the
+    bond-removal test, run over the handful of bonds one residue has.
+    """
+    mine = {int(a) for a in atoms}
+    edges = [(b.first.id, b.second.id) for b in aa.bonds
+             if b.first.id in mine and b.second.id in mine]  # fmt: skip
+    if not edges:
+        return set()
+    near: dict[int, list[int]] = {a: [] for a in mine}
+    for u, v in edges:
+        near[u].append(v)
+        near[v].append(u)
+    out: set[int] = set()
+    for u, v in edges:
+        if u in out and v in out:
+            continue
+        seen, stack = {u}, [u]  # u to v without this bond
+        found = False
+        while stack:
+            x = stack.pop()
+            for y in near[x]:
+                if (x, y) in ((u, v), (v, u)) and y not in seen:
+                    continue  # the bond itself, once
+                if y == v:
+                    found = True
+                    stack = []
+                    break
+                if y not in seen:
+                    seen.add(y)
+                    stack.append(y)
+        if found:
+            out |= {u, v}
+    return out
+
+
+def _names_in(aa, residue: int) -> set:
+    """The atom names already used in ``residue``: a new hydrogen must not repeat one."""
+    res = np.asarray(aa.atoms["residue"])
+    return {str(aa.atoms["name"][int(a)]).strip() for a in np.flatnonzero(res == residue)}
+
+
+def _add_hydrogen(aa, pos, host: int, towards, taken: set):
+    """A hydrogen on ``host``, in ``host``'s own residue, :data:`BOND_H` away in the
+    direction of the point ``towards``.  Returns ``pos`` with its position appended.
+
+    A new atom rather than a retyped one, so it is bonded to its host and to nothing
+    else: two of them on atoms that used to be bonded (proline's N and CA) would
+    otherwise be left bonded to each other.
+    """
+    anum = int(np.asarray(aa.atoms["anum"])[host])
+    u = np.asarray(towards, float) - pos[host]
+    n = float(np.linalg.norm(u))
+    u = u / n if n > 1e-6 else _any_normal(np.array([0.0, 0.0, 1.0]))
+    name = _free_name("H" + str(aa.atoms["name"][host]).strip(), taken)
+    taken.add(name)
+    h = aa.add_atom(residue=int(np.asarray(aa.atoms["residue"])[host]), name=name, anum=1,
+                    formal_charge=0)  # fmt: skip
+    aa.add_bond(host, h.id)
+    return np.vstack([pos, pos[host] + u * BOND_H.get(anum, CAP_H)])
+
+
+def _any_normal(u) -> np.ndarray:
+    v = np.array([1.0, 0.0, 0.0]) if abs(u[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    v = v - np.dot(v, u) * u
+    return v / np.linalg.norm(v)
+
+
+def _free_name(wanted: str, taken: set) -> str:
+    if wanted not in taken:
+        return wanted
+    return next(f"{wanted}{k}" for k in range(1, 100) if f"{wanted}{k}" not in taken)
+
+
+def _side_chains_only(aa, residues, log) -> None:
+    """``aa``'s single-amino-acid probes among ``residues`` cut down to their side
+    chains, in place.
+
+    A dipeptide probe is left exactly as it is: its two side chains belong to one
+    molecule, and cutting it would make two that no longer record having been tethered.
+
+    For a lone amino acid the caps go and the backbone goes atom by atom, except that a
+    backbone atom bonded to a side-chain atom is replaced by a hydrogen on that atom,
+    where it stood, so the fragment closes its own valence instead of leaving a
+    radical: CA becomes the hydrogen on CB.  A backbone atom on a ring with the side
+    chain stays as itself, so proline keeps N and CA and comes out pyrrolidine rather
+    than propane.
+
+    Only the cut is neutral.  The side chain keeps the charge it came with, as a
+    probe's own ends are neutral and its side chains are what carry charge
+    (:mod:`boonza.sirah.probes`): arginine and lysine come out +1, aspartate and
+    glutamate -1.
 
     What is left is no amino acid, so the protein force field has no template for it
-    and :func:`boonza.parameterize` sends it to GAFF2.  Returns the old-to-new atom
-    index map (-1 for the atoms dropped).
+    and :func:`boonza.parameterize` sends it to GAFF2.
     """
     say = log or (lambda *a: None)
     pos = np.array(aa.positions, float)
@@ -170,52 +277,49 @@ def _side_chains_only(aa, residues, log) -> np.ndarray:
     resname = [str(x).strip() for x in aa.residues["name"]]
     members = _residue_atoms(aa)
     drop: list[int] = []
-    host_of: dict[int, int] = {}
     kinds: dict[str, int] = {}
-    for r in residues:
-        mine = members[r]
-        if resname[r] in PROBE_CAPS or not len(mine):
-            drop.extend(int(a) for a in mine)
+    whole: dict[str, int] = {}
+    for group in _molecules_of(aa, residues):
+        acids = [r for r in group if resname[r] not in PROBE_CAPS]
+        if len(acids) != 1:  # a dipeptide probe, or whatever else: left as it is
+            kind = "-".join(resname[r] for r in acids) or "no amino acid"
+            whole[kind] = whole.get(kind, 0) + 1
             continue
-        keep = {int(a) for a in mine if names[int(a)] not in PROBE_BACKBONE}
-        if not keep:  # glycine, or whatever else is backbone alone
-            drop.extend(int(a) for a in mine)
-            bare = resname[r] + " (no side chain)"
+        r = acids[0]
+        mine = [int(a) for a in members[r]]
+        side = {a for a in mine if names[a] not in PROBE_BACKBONE}
+        if not side:  # glycine, alanine: nothing but backbone
+            drop.extend(int(a) for a in (x for g in group for x in members[g]))
+            bare = f"{resname[r]} (no side chain)"
             kinds[bare] = kinds.get(bare, 0) + 1
             continue
-        taken = {names[int(a)] for a in mine}
-        for a in (int(x) for x in mine):
+        # proline: its ring runs through N and CA, so they are side chain too
+        ring = _on_a_ring(aa, mine)
+        keep = set(side)
+        keep |= {a for a in ring if np.asarray(aa.atoms["anum"])[a] > 1 and ring & side}
+        keep |= {int(b) for a in list(keep) for b in np.asarray(aa.bonded_atoms(a)).ravel()
+                 if np.asarray(aa.atoms["anum"])[int(b)] == 1 and int(b) in mine}  # fmt: skip
+        taken = _names_in(aa, r)
+        caps = []
+        for a in (x for g in group for x in members[g]):
+            a = int(a)
             if a in keep:
                 continue
             hosts = [int(b) for b in np.asarray(aa.bonded_atoms(a)).ravel() if int(b) in keep]
-            if not hosts:
-                drop.append(a)
-                continue
-            h = hosts[0]
-            d = pos[a] - pos[h]
-            n = float(np.linalg.norm(d))
-            pos[a] = pos[h] + (d / n if n else np.array([1.0, 0.0, 0.0])) * CAP_H
-            name = f"H{names[h]}"
-            if name in taken:  # never seen on an amino acid, but do not make a duplicate
-                name = next(f"H{names[h]}{k}" for k in range(1, 10)
-                            if f"H{names[h]}{k}" not in taken)  # fmt: skip
-            taken.add(name)
-            aa.atoms["anum"][a] = 1
-            aa.atoms["name"][a] = name
-            aa.atoms["formal_charge"][a] = 0
-            host_of[a] = h
+            if hosts:  # it closes a valence: a hydrogen takes its place, where it stood
+                caps.append((hosts[0], np.array(pos[a])))
+            drop.append(a)
+        for h, where in caps:
+            pos = _add_hydrogen(aa, pos, h, where, taken)
         kinds[resname[r]] = kinds.get(resname[r], 0) + 1
-    if host_of:  # a cap hydrogen keeps only the bond to its host
-        stray = [b.id for b in aa.bonds
-                 if (b.first.id in host_of and b.second.id != host_of[b.first.id])
-                 or (b.second.id in host_of and b.first.id != host_of[b.second.id])]  # fmt: skip
-        if stray:
-            aa.delete_bonds(stray)
     aa.positions = pos
     if kinds:
         say("probe side chains kept, their backbones and caps dropped: "
             + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())))  # fmt: skip
-    return aa.delete_atoms(sorted(set(drop)))
+    if whole:
+        say("probes left whole, being no lone amino acid: "
+            + ", ".join(f"{n} {k}" for k, n in sorted(whole.items())))  # fmt: skip
+    aa.delete_atoms(sorted(set(drop)))
 
 
 def _dihedral(pos, a, b, c, d) -> float:
@@ -398,15 +502,15 @@ def backmap(cg, reference=None, positions=None, *, box=None, minimize: bool = Tr
                 kinds[str(n).strip()] = kinds.get(str(n).strip(), 0) + 1
             say("not in the all-atom structure, built from their beads: "
                 + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())))  # fmt: skip
-            first = aa.nresidues
+            first, mine = aa.nresidues, aa.natoms
             aa.append(built)
-            # no reference for these: their peptide bonds are held trans
-            was = np.vstack([was, np.full((aa.natoms - len(was), 3), np.nan)])
             probes = list(range(first, aa.nresidues))
             if probe_side_chains:
-                index = _side_chains_only(aa, probes, log)
-                was = was[index >= 0]
+                # this adds atoms as well as dropping them, so `was` is built after
+                _side_chains_only(aa, probes, log)
                 stripped = True
+            # no reference for these: their peptide bonds are held trans
+            was = np.vstack([was[:mine], np.full((aa.natoms - mine, 3), np.nan)])
             beads, atoms = bead_atoms(cg, aa)
             used = set(beads.tolist())
     if probe_side_chains and not stripped:

@@ -2156,10 +2156,12 @@ def _parser() -> argparse.ArgumentParser:
                    help="springs holding the mapped atoms to their beads while minimizing, "
                    "kcal/mol/A^2 (default 50)")  # fmt: skip
     q.add_argument("--probe-side-chain-only", action="store_true",
-                   help="keep a swim probe's side chains alone: the whole probe is laid on "
-                   "its beads, then its caps and backbone are dropped, CA staying as the "
-                   "hydrogen on CB. What is left is parameterized with GAFF2 (AmberTools) "
-                   "and held by its side-chain beads (SIRAH)")  # fmt: skip
+                   help="keep the side chain of a single-amino-acid swim probe alone: it is "
+                   "laid on its beads whole, then its caps and backbone are dropped and a "
+                   "hydrogen takes the place of CA. A ring is kept whole, so proline comes "
+                   "out pyrrolidine; the side chain keeps its own charge, only the cut being "
+                   "neutral. A dipeptide probe is left as it is. What is left is "
+                   "parameterized with GAFF2 (AmberTools) (SIRAH)")  # fmt: skip
     q.set_defaults(run=_backmap)
 
     q = sub.add_parser("martinize", help="Martini beads and topology for proteins, as martinize2")

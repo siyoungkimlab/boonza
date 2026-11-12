@@ -1282,38 +1282,76 @@ def _fragments(s, chain="LIG"):
 
 
 def test_backmap_cuts_swim_probes_down_to_their_side_chains():
-    """``probe_side_chains``: the probe is laid on its beads whole, then its caps and
-    backbone go and CA stays as the hydrogen closing CB.  What is left is the side
-    chain as a small molecule, at its formal charge."""
+    """``probe_side_chains``: a lone amino acid is laid on its beads whole, then its
+    caps and backbone go and a hydrogen takes the place of whatever closed a valence.
+    The side chain keeps its own charge; only the cut is neutral."""
     from boonza.sirah import backmap, sirahize
 
     aa = boonza.load(DATA / "1CRN_ph7.pdb")
-    cg = _probes_on(aa, ("E", "K", "P", "S", "EK"), sirahize(aa).system())
+    cg = _probes_on(aa, ("E", "K", "S", "V"), sirahize(aa).system())
     said = []
     out = backmap(cg, aa, minimize=False, probe_side_chains=True, log=said.append)
     assert any("backbones and caps dropped" in line for line in said)
     frags = _fragments(out)
-    assert set(frags) == {"GLU", "LYS", "PRO", "SER"}  # no ACE, no NME
-    # glutamate is propanoate: CB a methyl where CA was, and the charge is the
-    # side chain's own
+    assert set(frags) == {"GLU", "LYS", "SER", "VAL"}  # no ACE, no NME
+    # glutamate is propanoate: a methyl where CA was, and the side chain's own -1
     assert frags["GLU"] == ({"HCB", "CB", "HB2", "HB3", "CG", "HG2", "HG3", "CD", "OE1",
                              "OE2"}, -1)  # fmt: skip
-    assert frags["LYS"][1] == 1 and frags["SER"][1] == 0
-    assert frags["SER"][0] == {"HCB", "CB", "HB2", "HB3", "OG", "HG"}  # methanol
-    # proline's ring runs back through N, so it needs a second cap hydrogen -- and the
-    # two of them must not be left bonded to each other, as N and CA were
-    assert frags["PRO"] == ({"HCB", "HCD", "CB", "HB2", "HB3", "CG", "HG2", "HG3", "CD",
-                             "HD2", "HD3"}, 0)  # propane  # fmt: skip
-    names = [str(x).strip() for x in out.atoms["name"]]
-    anum = np.asarray(out.atoms["anum"])
-    for b in out.bonds:
-        pair = {names[b.first.id], names[b.second.id]}
-        assert pair != {"HCB", "HCD"}, "the cap hydrogens are still bonded to each other"
-    for a in range(out.natoms):  # no hydrogen with two bonds anywhere
-        if anum[a] == 1:
+    assert frags["SER"] == ({"HCB", "CB", "HB2", "HB3", "OG", "HG"}, 0)  # methanol
+    assert frags["LYS"][1] == 1  # butylammonium: a probe's charge is its side chain's
+    assert frags["VAL"][1] == 0
+    for name, (atoms, _) in frags.items():  # the cut end is a hydrogen, named for it
+        assert "HCB" in atoms, name
+        assert not atoms & {"N", "CA", "C", "O", "HA"}, name
+    for a in range(out.natoms):  # no hydrogen with two bonds, no radical left behind
+        if np.asarray(out.atoms["anum"])[a] == 1:
             assert len(np.asarray(out.bonded_atoms(a)).ravel()) == 1
-    # the side-chain beads still have their atoms; the backbone beads no longer do
-    assert any("not turned back" in line for line in said)
+
+
+def test_backmap_leaves_a_probes_ring_whole_so_proline_stays_proline():
+    """Proline's ring runs back through N and CA, so they are side chain as much as
+    backbone: cutting at CA would leave propane, which says nothing about proline.  The
+    ring is kept and capped at both ends instead, which makes it pyrrolidine."""
+    from boonza.sirah import backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = _probes_on(aa, ("P",), sirahize(aa).system())
+    out = backmap(cg, aa, minimize=False, probe_side_chains=True)
+    frags = _fragments(out)
+    assert set(frags) == {"PRO"}
+    atoms, charge = frags["PRO"]
+    # pyrrolidine: the five ring atoms, a hydrogen where the carbonyl was and another
+    # where the preceding residue was, and no carbonyl
+    assert atoms == {"N", "CA", "CB", "CG", "CD", "HA", "HB2", "HB3", "HG2", "HG3",
+                     "HD2", "HD3", "HN", "HCA"}  # fmt: skip
+    assert charge == 0
+    ring = {"N", "CA", "CB", "CG", "CD"}
+    names = [str(x).strip() for x in out.atoms["name"]]
+    rn = [str(x).strip() for x in out.residues["name"]]
+    kept = [a for a in range(out.natoms) if rn[int(out.atoms["residue"][a])] == "PRO"]
+    bonds = {frozenset((names[b.first.id], names[b.second.id])) for b in out.bonds
+             if b.first.id in kept and b.second.id in kept}  # fmt: skip
+    for pair in (("N", "CA"), ("CA", "CB"), ("CB", "CG"), ("CG", "CD"), ("CD", "N")):
+        assert frozenset(pair) in bonds, f"the ring is broken at {pair}"
+    assert frozenset(("HN", "HCA")) not in bonds  # not bonded to each other, as N-CA was
+    assert {names[a] for a in kept} & ring == ring
+
+
+def test_backmap_leaves_a_dipeptide_probe_whole():
+    """``probe_side_chains`` is for lone amino acids.  A dipeptide's two side chains
+    are one molecule, and cutting it would make two that no longer record having been
+    tethered, so it is left exactly as it is -- caps, backbone and all."""
+    from boonza.sirah import backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = _probes_on(aa, ("EK", "S"), sirahize(aa).system())
+    said = []
+    out = backmap(cg, aa, minimize=False, probe_side_chains=True, log=said.append)
+    assert any("left whole, being no lone amino acid" in line for line in said)
+    frags = _fragments(out)
+    assert set(frags) == {"ACE", "GLU", "LYS", "NME", "SER"}
+    assert {"N", "CA", "C", "O"} <= frags["GLU"][0]  # its backbone is still there
+    assert frags["SER"][0] == {"HCB", "CB", "HB2", "HB3", "OG", "HG"}  # the lone one cut
 
 
 def test_backmap_says_when_there_are_no_probes_to_cut_down():

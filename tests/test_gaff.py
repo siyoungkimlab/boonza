@@ -583,12 +583,15 @@ def test_a_stripped_swim_probe_side_chain_is_a_gaff2_molecule():
     off = np.linalg.norm(np.asarray(out.positions)[atoms] - np.asarray(cg.positions)[beads],
                          axis=1)  # fmt: skip
     assert np.sqrt((off**2).mean()) < 0.3 and off.max() < 1.0
-    # only the side-chain beads are left to hold them: the backbone's have no atoms
-    kept = {str(cg.atoms["name"][b]).strip() for b in beads}
-    assert not {"GN", "GC", "GO"} & {
-        str(cg.atoms["name"][b]).strip()
-        for b in beads
-        if str(cg.residues["name"][int(np.asarray(cg.atoms["residue"])[b])]).strip()
-        in {"E", "R", "P", "S"}
-    }
-    assert kept & {"BCG", "BOG"}
+    # a cut probe is held by its side-chain beads, its backbone's having no atoms left
+    # -- except proline's, whose N and CA are kept with the ring
+    cg_res = np.asarray(cg.atoms["residue"])
+    on_probes = {}
+    for b in beads:
+        name = str(cg.residues["name"][int(cg_res[b])]).strip()
+        if name in {"E", "R", "P", "S"}:
+            on_probes.setdefault(name, set()).add(str(cg.atoms["name"][b]).strip())
+    for name in ("E", "R", "S"):
+        assert not {"GN", "GC", "GO"} & on_probes[name], name
+    assert {"GN", "GC"} <= on_probes["P"]  # proline keeps them, so they hold it too
+    assert on_probes["E"] and on_probes["R"] & {"BCG", "BCZ"}
