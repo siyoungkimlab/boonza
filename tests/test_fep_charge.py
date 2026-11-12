@@ -61,6 +61,34 @@ def _net_charge(system, x):
     return q
 
 
+def test_a_charge_change_runs_as_long_as_any_other_edge(tmp_path):
+    """The lengths are the same for every edge.  openfe runs a charge change for 20 ns,
+    which is hours of GPU per window before anything is known; here it runs for
+    --production-ns like the rest, and --charge-production-ns lengthens it alone."""
+    from boonza.fep.cli import FEP_DEFAULTS
+    from boonza.fep.prep import CHARGE_PRODUCTION_NS
+
+    assert FEP_DEFAULTS["equilibration_ns"] == 0.1 and FEP_DEFAULTS["production_ns"] == 0.5
+    assert CHARGE_PRODUCTION_NS is None  # none of its own: --production-ns
+
+    sdf = tmp_path / "two.sdf"
+    phenol = _ligands(sdf)
+    _receptor(tmp_path / "receptor.pdb", phenol.GetConformer().GetPositions().mean(0))
+    work = tmp_path / "work"
+    # no --charge-production-ns: the edge takes --production-ns like the rest
+    assert cli.main(["prep", str(tmp_path / "receptor.pdb"), "--ligands", str(sdf),
+                     "--workdir", str(work), "--windows", "3", "--charge-windows", "5",
+                     "--repeats", "1", "--iteration-ps", "0.02",
+                     "--equilibration-ns", "0.00002",
+                     "--production-ns", "0.0001"]) == 0  # fmt: skip
+    for leg in ("complex", "solvent"):
+        meta = json.loads((work / "edges" / "phenol~phenolate" / leg / "leg.json").read_text())
+        assert meta["charge_change"] == -1  # it is the hard kind of edge
+        assert meta["production_ns"] == 0.0001  # and it still runs for --production-ns
+        assert meta["equilibration_ns"] == 0.00002
+        assert len(meta["lambdas"]) == 5  # the denser schedule is kept, only the length is not
+
+
 def test_charge_change_with_a_receptor(tmp_path, capsys):
     sdf = tmp_path / "two.sdf"
     phenol = _ligands(sdf)
