@@ -19,7 +19,16 @@ it means the published width and range of the coordinate are worth checking befo
 trusting a ranking (see the guide).
 """
 
-from .cv import CUTOFF, POCKET, CVError, drmsd_force, drmsd_of, drmsd_pairs
+from .cv import (
+    CUTOFF,
+    MIN_POCKET,
+    POCKET,
+    CVError,
+    drmsd_force,
+    drmsd_of,
+    drmsd_pairs,
+    drmsd_response,
+)
 from .meta import Settings, bias_grid, reversible_work, run
 from .score import (
     Pose,
@@ -37,6 +46,7 @@ from .score import (
 
 __all__ = [
     "CUTOFF",
+    "MIN_POCKET",
     "POCKET",
     "CVError",
     "Pose",
@@ -47,6 +57,7 @@ __all__ = [
     "drmsd_force",
     "drmsd_of",
     "drmsd_pairs",
+    "drmsd_response",
     "enrichment_factor",
     "escape_index",
     "rank",

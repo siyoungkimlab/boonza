@@ -577,7 +577,7 @@ The bias V(s,t) in kJ/mol, from what ``Metadynamics`` reports as free energy.
 ``getFreeEnergy`` returns ``-gamma/(gamma - 1) * V``, so this undoes that rather
 than reaching into the object.
 
-### `boonza.ctmd.drmsd_force(system, reference=None, *, ligand: 'str | None' = None, pocket: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, periodic: 'bool' = True, index=None)`
+### `boonza.ctmd.drmsd_force(system, reference=None, *, ligand: 'str | None' = None, pocket: 'str' = 'protein and name CA', cutoff: 'float' = 8.0, periodic: 'bool' = True, index=None)`
 
 An OpenMM force whose energy is the pocket-ligand drmsd in nm.
 
@@ -592,7 +592,7 @@ in its ``view_index`` column).  Without it the two are taken to agree.
 
 Returns ``(force, npairs)``.
 
-### `boonza.ctmd.drmsd_pairs(system, reference=None, ligand: 'str | None' = None, pocket: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, periodic: 'bool' = True)`
+### `boonza.ctmd.drmsd_pairs(system, reference=None, ligand: 'str | None' = None, pocket: 'str' = 'protein and name CA', cutoff: 'float' = 8.0, periodic: 'bool' = True)`
 
 The pairs the coordinate is built from: ``(pocket atoms, ligand atoms, distances)``.
 

@@ -94,6 +94,71 @@ Two consequences:
   the ligand selection all change the coordinate's scale, so a ranking is only
   meaningful if every ligand was measured the same way.
 
+### Which protein atoms, and how wide
+
+`boonza.drmsd`'s own defaults are the ligand's heavy atoms against `protein and name
+CA` within **5 Å**. That is right for an analysis and far too tight for a coordinate
+to be biased along, because an alpha carbon sits behind its own side chain. Measured
+on PANX1 with Brilliant Blue FCF, a 51-heavy-atom ligand in the pore:
+
+| pocket rule | atoms | pairs |
+|---|---|---|
+| CA within 5 Å (`boonza.drmsd`'s default) | 3 | 153 |
+| **CA within 8 Å** (`boonza ctmd`'s default) | 20 | 1020 |
+| CA within 10 Å | 45 | 2295 |
+| all heavy atoms within 5 Å | 43 | 2193 |
+
+Three atoms is not too few for want of signal — that was the obvious guess and it is
+wrong. A 1 Å displacement of the ligand moves the coordinate 0.59 Å across those 3
+atoms against 0.55 Å across 45, and jittering the protein by 0.3 Å moves it no
+further in the mean (0.26 Å against 0.29 Å), so the signal-to-noise is if anything
+better with 3. What a thin frame costs is **reproducibility and comparability**: the
+spread of that spurious motion was ±0.104 Å across 3 atoms against ±0.045 Å across
+20 and ±0.036 Å across 45, and whether a given alpha carbon falls inside the cutoff
+is a knife-edge, so two ligands in one pocket can end up measured against different
+atoms. A ranking across ligands cannot afford either. `boonza ctmd` therefore refuses
+fewer than `MIN_POCKET` = 8 pocket atoms rather than quietly carrying on.
+
+8 Å rather than 10 because widening also **dilutes**: the coordinate is a mean over
+every pair, and a second-shell atom barely answers the ligand at all, so 1 Å of
+ligand gives 0.59 Å of coordinate across the 3 atoms within 5 Å, 0.56 across the 20
+within 8, and 0.55 across the 45 within 10 — for more than twice the pairs. Twenty
+atoms clears the floor comfortably and costs half as much to evaluate. On the one
+system measured, 10 Å is very slightly steadier (±0.036 against ±0.045); that is not
+worth the dilution or the cost, and it is one system's evidence.
+
+### Calibrating the width, the grid and the cutoff
+
+The coordinate is a mean over pairs, most of which lie off the direction of travel,
+so it moves **less than one-for-one** with the ligand. On that same pocket:
+
+| ligand moved | drmsd |
+|---|---|
+| 0.5 Å | 0.28 Å |
+| 1 Å | 0.56 Å |
+| 2 Å | 1.11 Å |
+| 5 Å | 2.64 Å |
+| 8 Å | 4.04 Å |
+
+about 0.56 Å of coordinate per Å of ligand, and close to linear. The published hill
+width, grid and escape cutoff are for an aligned RMSD, which moves one-for-one, so
+carrying them over means scaling them by roughly that factor — and it is a property
+of the pocket and the ligand, so measure it per system:
+
+```python
+from boonza.ctmd import drmsd_response
+
+print(drmsd_response(system))  # nm of coordinate per A of ligand
+```
+
+Two things that follow. The published escape cutoff of 0.6 nm would, on this
+coordinate, take an 11 Å displacement rather than the 6 Å it means on an aligned
+RMSD, so it fires far too late. And the published hill width of 0.15 Å is *below*
+the coordinate's own noise floor here — 0.3 Å of backbone jitter already moves it
+0.26 Å — which is an argument for a wider hill rather than a narrower one. Neither
+number is changed in the defaults, since the defaults are the paper's; both are
+reasons to calibrate before trusting a ranking.
+
 The symmetry-corrected drmsd that `boonza drmsd` reports by default is **not** used
 here, and cannot be: its correction is a discrete minimum over atom mappings, which
 is not differentiable and so cannot sit inside a biasing force. The coordinate uses

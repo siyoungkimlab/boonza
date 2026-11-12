@@ -18,13 +18,31 @@ from __future__ import annotations
 
 import numpy as np
 
-#: how the pocket is defined, as in :func:`boonza.drmsd`: the alpha carbons within
-#: CUTOFF A of the ligand in the reference.  Backbone rather than every atom, since a
-#: side chain swinging about would move the coordinate without the ligand going
-#: anywhere
+#: the atoms the ligand is measured against: alpha carbons, as :func:`boonza.drmsd`
+#: has them.  Backbone rather than every atom, since a side chain swinging about would
+#: move the coordinate without the ligand going anywhere -- what the published
+#: protocol gets by superposing the protein and measuring only the ligand
 POCKET = "protein and name CA"
-#: A of the ligand a pocket atom must be within
-CUTOFF = 5.0
+#: A of the ligand a pocket atom must be within.  Not :func:`boonza.drmsd`'s 5, which
+#: is right for an analysis of a few pairs and far too tight for a coordinate to be
+#: biased along: an alpha carbon sits behind its side chain, so a real pocket may have
+#: only a handful that close (PANX1 with Brilliant Blue FCF, a 51-atom ligand in the
+#: pore: 3 within 5 A, 20 within 8, 45 within 10).  8 rather than 10 because widening
+#: dilutes: the mean runs over every pair, and a second-shell one barely answers the
+#: ligand at all, so 1 A of ligand gives 0.59 A of coordinate across the 3 atoms
+#: within 5 A, 0.56 across the 20 within 8, and 0.55 across the 45 within 10 -- at a
+#: pair count that more than doubles
+CUTOFF = 8.0
+#: fewer pocket atoms than this and the coordinate rests on too thin a frame.  Not for
+#: want of signal: measured on the PANX1 pocket, 3 atoms answer a 1 A displacement as
+#: strongly as 45 do, and jittering the protein by 0.3 A moves them no further in the
+#: mean.  What a thin frame costs is reproducibility and comparability -- the spread of
+#: that spurious motion was 0.104 A across 3 atoms against 0.045 across 20 and 0.036
+#: across 45, and
+#: whether a given alpha carbon falls inside the cutoff is a knife-edge, so two ligands
+#: in one pocket can end up measured against different atoms, which a ranking across
+#: ligands cannot afford
+MIN_POCKET = 8
 
 
 class CVError(ValueError):
@@ -59,6 +77,10 @@ def drmsd_pairs(system, reference=None, ligand: str | None = None, pocket: str =
     near = (d.min(1) <= cutoff) & ~np.isin(prot, lig)
     if not near.any():
         raise CVError(f"no pocket atom within {cutoff:g} A of the ligand in the reference")
+    if near.sum() < MIN_POCKET:
+        raise CVError(f"only {int(near.sum())} pocket atoms within {cutoff:g} A of the ligand, "
+                      f"too few to measure against ({MIN_POCKET} is the least this will "
+                      "take): widen the cutoff, or name the pocket yourself")  # fmt: skip
     return prot[near], lig, d[near] / 10.0  # A -> nm
 
 
@@ -96,6 +118,36 @@ def drmsd_force(system, reference=None, *, ligand: str | None = None, pocket: st
     force.addCollectiveVariable("msd", square)
     force.setName("drmsd")
     return force, npairs
+
+
+def drmsd_response(system, reference=None, displacement: float = 1.0, **kwargs) -> float:
+    """How much the coordinate moves (nm) per A the ligand is displaced.
+
+    The ligand is translated bodily by ``displacement`` A along each axis in turn and
+    the coordinate averaged, so this is the factor between a distance a chemist would
+    quote and the coordinate a hill is deposited along.  It is well under 1: a pair
+    far from the direction of travel hardly changes, and the coordinate is a mean over
+    all of them (about 0.55 for Brilliant Blue FCF in PANX1's pore).
+
+    The published hill width, grid and escape cutoff are for an aligned RMSD, which
+    moves 1 A per A.  Multiplying them by this is how to carry them over; it is a
+    property of the pocket and the ligand, so it is worth measuring per system.
+    """
+    lig = system.select(kwargs.get("ligand") or _default_ligand()).ids
+    whole = system.select("same residue as index " + " ".join(str(int(a)) for a in lig)).ids
+    pos = np.asarray((system if reference is None else reference).positions, float)
+    out = []
+    for axis in range(3):
+        moved = pos.copy()
+        moved[whole, axis] += displacement
+        out.append(drmsd_of(system, moved, reference=reference, **kwargs))
+    return float(np.mean(out) / displacement)
+
+
+def _default_ligand() -> str:
+    from ..symmetry import DEFAULT_LIGAND
+
+    return DEFAULT_LIGAND
 
 
 def drmsd_of(system, positions=None, **kwargs) -> float:

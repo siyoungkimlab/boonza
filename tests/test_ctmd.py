@@ -83,14 +83,18 @@ def test_reversible_work_matches_the_ratio_it_is_defined_as():
 
 def test_the_drmsd_coordinate_is_boonzas_own():
     s = _complex()
-    pocket, ligand, dref = drmsd_pairs(s, periodic=False)
+    # the same pocket on both sides, and wide enough for either: boonza.drmsd keeps 5 A,
+    # where this fixture has only 4 alpha carbons and ctmd asks for 8
+    same = {"cutoff": 10.0, "periodic": False}
+    pocket, ligand, dref = drmsd_pairs(s, **same)
     assert dref.shape == (len(pocket), len(ligand)) and dref.size
     assert not np.isin(pocket, ligand).any()
-    assert drmsd_of(s, periodic=False) == pytest.approx(0.0, abs=1e-6)  # at its reference
+    assert drmsd_of(s, **same) == pytest.approx(0.0, abs=1e-6)  # at its reference
     moved = np.asarray(s.positions, float).copy()
     moved[s.select("not (polymer or water or ions)").ids] += [1.0, 0.0, 0.0]
-    mine = drmsd_of(s, moved, periodic=False) * 10.0  # nm -> A
-    theirs = boonza.drmsd(s, reference=s, positions=moved, symmetry=False, periodic=False)
+    mine = drmsd_of(s, moved, **same) * 10.0  # nm -> A
+    theirs = boonza.drmsd(s, reference=s, positions=moved, symmetry=False, cutoff=10.0,
+                          periodic=False)  # fmt: skip
     assert mine == pytest.approx(theirs.drmsd, rel=1e-5)
 
 
@@ -100,12 +104,12 @@ def test_the_drmsd_coordinate_ignores_moving_the_whole_system():
     s = _complex()
     moved = np.asarray(s.positions, float).copy()
     moved[s.select("not (polymer or water or ions)").ids] += [0.7, -0.2, 0.1]
-    before = drmsd_of(s, moved, periodic=False)
+    before = drmsd_of(s, moved, cutoff=10.0, periodic=False)
     assert before > 0.01
     turn = np.linalg.qr(np.random.default_rng(1).normal(size=(3, 3)))[0]
     turn *= np.sign(np.linalg.det(turn))
     rigid = moved @ turn.T + [31.0, -7.0, 4.0]
-    assert drmsd_of(s, rigid, periodic=False) == pytest.approx(before, rel=1e-6)
+    assert drmsd_of(s, rigid, cutoff=10.0, periodic=False) == pytest.approx(before, rel=1e-6)
 
 
 def test_the_coordinate_says_what_it_cannot_be_built_from():
@@ -114,6 +118,10 @@ def test_the_coordinate_says_what_it_cannot_be_built_from():
         drmsd_of(s, ligand="resname NOPE", periodic=False)
     with pytest.raises(CVError, match="no pocket atom within"):
         drmsd_of(s, cutoff=0.01, periodic=False)
+    # 5 A, boonza.drmsd's own cutoff, leaves 4 alpha carbons here: enough to measure
+    # with and too thin to bias along
+    with pytest.raises(CVError, match="only 4 pocket atoms"):
+        drmsd_of(s, cutoff=5.0, periodic=False)
     with pytest.raises(CVError, match="pairs them by index"):
         drmsd_of(s, reference=boonza.load(DATA / "1TEN.pdb"), periodic=False)
 
@@ -266,7 +274,7 @@ def test_ctmd_runs_the_filter_and_the_replicas(tmp_path):
     cfg = Settings(
         replicas=2, nanoseconds=0.001, filter_nanoseconds=0.0005, stride=0.1, pace=0.1,
         bins=40, cutoff=5.0, commit=50.0, seed=7, pressure=None,
-        cv={"ligand": "resid 3 and noh", "pocket": "protein and name CA and resid 1 2",
+        cv={"ligand": "resid 3 and noh", "pocket": "protein and noh and resid 1 2",
             "cutoff": 12.0},
     )  # fmt: skip
     said = []
@@ -362,3 +370,16 @@ def test_a_pose_with_no_data_is_left_out_rather_than_ranked(tmp_path, capsys):
     # nothing to rank at all is an error
     assert main(["ctmd", "score", str(empty)]) == 1
     assert "none of these folders" in capsys.readouterr().err
+
+
+def test_the_coordinate_moves_less_than_one_for_one_with_the_ligand():
+    from boonza.ctmd import drmsd_response
+
+    # a mean over pairs, most of them off the direction of travel: the coordinate moves
+    # well under 1 nm per 10 A, which is what the published widths assume
+    s = _complex()
+    per_angstrom = drmsd_response(s, cutoff=10.0, periodic=False)
+    assert 0.0 < per_angstrom < 0.1  # nm per A, i.e. under one-for-one
+    # and close enough to linear that one factor carries
+    far = drmsd_response(s, displacement=3.0, cutoff=10.0, periodic=False)
+    assert far == pytest.approx(per_angstrom, rel=0.35)
