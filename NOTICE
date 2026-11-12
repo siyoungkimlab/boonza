@@ -308,3 +308,26 @@ everything=True)` writes the release as it ships, documentation and all.
 The release states no licence beyond that notice.  Please cite SIRAH when
 you use it; `src/boonza/data/sirah/README.md` lists the references the
 release asks for, as does the `0README` inside the archive.
+
+------------------------------------------------------------------------
+src/boonza/data/sirah/backmap.json is SIRAH Tools' backmapping table: for
+every coarse-grained residue, the all-atom residue it stands for, the atoms
+that sit on its beads, and the distance, angle and dihedral each other atom
+is placed by.  It is the table the `sirah_mapdb` procedure of
+`sirah_vmdtk.tcl` builds (SIRAH Tools 2.4.0, March 2026, distributed with
+sirah_x2.4_26-03.amber), written out as JSON by
+`scripts/gen_sirah_backmap.py`, which runs that procedure with tclsh; the
+values are unchanged.  Nothing else of `sirah_vmdtk.tcl` is included.
+
+  SIRAH Tools: mapping, backmapping and visualization of CG models
+  Original version by Matias Machado, current version by Lucianna Silva
+  Reference: Machado M, Pantano S. Bioinformatics (2016),
+  doi:10.1093/bioinformatics/btw020
+
+SIRAH Tools is free software under the GNU General Public License,
+version 2 or (at your option) any later version, and this file, a work
+derived from it, is distributed under the same licence: see
+LICENSES/GPL-2.0.txt.  Unlike the rest of boonza, it is not under the MIT
+licence.  boonza reads it as data (`boonza.sirah.backmap` without a
+reference structure, `boonza.sirah.from_beads`); the code that follows its
+instructions, `src/boonza/sirah/backmapping.py`, is boonza's own.

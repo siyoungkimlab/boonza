@@ -813,21 +813,24 @@ def test_dynamics_moves_further_than_minimizing_and_plays_back():
     s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
     session = viewer.Session(s, atoms="protein", cg=False)
     before = session.system.positions.copy()
+    # seeded, so a run repeats on one machine (threads and platforms still differ)
     out = session.dynamics("resid 2", restraint=10.0, picoseconds=2.0, temperature=300.0,
-                           path=True)  # fmt: skip
+                           path=True, seed=5)  # fmt: skip
     assert out["steps"] == 2000 and out["picoseconds"] == 2.0
     assert 50.0 < out["temperature"] < 450.0  # a mean over a run that starts cold
     assert out["mobile_atoms"] == len(session.system.select("resid 2")) > 0
     held = session.system.select("not (resid 2) and not hydrogen").ids
     after = session.system.positions
-    # the springs still hold the rest, while the free part has moved on
     assert np.linalg.norm(after[held] - before[held], axis=1).max() == pytest.approx(
         out["held_max"], abs=1e-3
     )
-    # over the whole set, not its single furthest atom: the springs are soft (10
-    # kJ/mol/Å²) and there are far more held atoms than free ones, so the largest
-    # held displacement beats the largest free one often enough on its own
-    assert out["mobile_rmsd"] > out["held_rmsd"]
+    # the springs still hold the rest, while the free part has moved.  Each against a
+    # bound of its own, not against the other: over twelve seeds the held atoms'
+    # RMSD was 0.27-0.36 A (10 kcal/mol/A^2 springs at 300 K allow about 0.42) and the
+    # free residue's 0.28-1.67 A, so "free further than held" fails one run in twelve
+    # (0.319 against 0.319 A on CI, 0.284 against 0.271 with seed 7)
+    assert out["held_rmsd"] < 0.6
+    assert out["mobile_rmsd"] > 0.1
     path = out["path"]
     assert 1 < len(path["frames"]) <= 61
     assert len(path["frames"]) == len(path["iterations"]) == len(set(path["iterations"]))

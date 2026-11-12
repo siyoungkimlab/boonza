@@ -690,6 +690,24 @@ A line is a SMILES and, after whitespace, an optional name; ``#`` starts
 a comment.  The name is what a grid labels the molecule with, so a file
 that carries names needs nothing else to make a legible picture.
 
+## Backmapping
+
+### `boonza.backmap(cg, reference=None, positions=None, *, model: 'str' = 'auto', **options)`
+
+The all-atom structure of a coarse-grained frame.
+
+``cg`` is the coarse-grained system and ``positions`` its beads' positions for
+the frame wanted (default: its own); ``reference`` the all-atom structure the
+run was built from, where the model can use one.  ``model``: ``sirah``,
+``martini``, or ``auto`` to read it from the bead names
+(:func:`detect_model`).  The other ``options`` are the model's own:
+:func:`boonza.sirah.backmap` for SIRAH.  Martini is not turned back yet.
+
+### `boonza.detect_model(cg) -> 'str | None'`
+
+Which model ``cg``'s beads are: ``sirah`` (its backbone beads GN, GC, GO, or a
+nucleotide's PX), ``martini`` (a BB bead), or None when it is neither.
+
 ## Martini
 
 ### `boonza.martinize(system, atoms: 'str' = 'protein', *, ss: 'str | None' = None, trust_connectivity: 'bool' = False, elastic: 'bool' = False, elastic_selection: 'str | None' = None, elastic_fc: 'float' = 700.0, elastic_lower: 'float' = 0.0, elastic_upper: 'float' = 9.0, elastic_decay: 'float' = 0.0, elastic_power: 'float' = 0.0, elastic_min_fc: 'float' = 0.0, res_min_dist: 'int | None' = None, cys: 'str | float' = 'auto', neutral_termini: 'bool' = False, scfix: 'bool' = True, extdih: 'bool' = False, forcefield: 'str' = 'martini3001', cofactors: 'bool' = False, cofactor_fc: 'float' = 700.0, cofactor_neighbours=None, cofactor_tethers=None, cofactor_reach: 'float' = 12.0, cofactor_anchors: 'bool' = True, cofactor_side_chains: 'bool' = False, go=None, go_eps: 'float' = 9.414, go_low: 'float' = 0.3, go_up: 'float' = 1.1, go_res_dist: 'int' = 3) -> 'Martinized'`
@@ -932,6 +950,72 @@ water box when it fills one) and has no business in a run directory.
 ``everything`` writes the release as it ships instead, documentation and
 all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
 the residue libraries.
+
+### `boonza.sirah.backmap(cg, reference=None, positions=None, *, box=None, minimize: 'bool' = True, restraint: 'float' = 50.0, forcefields=None, log=None)`
+
+The all-atom structure of a SIRAH frame.
+
+``cg`` is the coarse-grained system (a run's ``sirah/cg.dms``); ``positions``
+its beads' positions in A for the frame wanted (default: its own).
+``reference`` is the all-atom structure the run was built from: a copy of it is
+returned with every residue laid on its beads -- matched by chain, residue
+number and insertion code -- and, with ``minimize``, relaxed with the mapped
+atoms held to their beads by ``restraint`` kcal/mol/A^2 springs (it needs its
+hydrogens for that).  Residues of the reference with no beads go with the
+residue they are bonded to (ACE and NME caps, which SIRAH drops), and are left
+out otherwise (water, a ligand that was not coarse-grained).  Solvent beads are
+not turned back.
+
+Without ``reference``, amino acids are built from the bead names
+(:func:`from_beads`) and then treated the same way: default protonation states
+and no ligands, and only for proteins.
+
+``box``: the frame's cell.  A trajectory is written wrapped, so with a box the
+solute's molecules are made whole and brought beside each other first (default:
+``cg``'s own cell when the positions are its own; none for ``positions`` given).
+
+``forcefields``: as :func:`boonza.viewer.edit.parameterize` takes them
+(default: boonza md's, with :data:`NUCLEIC_FORCEFIELD` added for a nucleic acid;
+GAFF2 for a ligand, which needs AmberTools).
+
+### `boonza.sirah.from_beads(cg, positions=None, log=None, rules: 'str' = 'sirah', residues=None)`
+
+The all-atom structure built from bead names alone, hydrogens included.
+Nothing is minimized here.
+
+``rules="sirah"`` follows SIRAH Tools' backmapping table (:func:`read_table`):
+the atoms that sit on beads, and the others placed from them by a distance, an
+angle and a dihedral.  Amino acids and DNA; an amino acid the table lacks is
+built the other way.  ``rules="ideal"`` lays an ideal residue
+(:func:`boonza.peptide`'s) on its beads as a rigid body: amino acids only.
+
+Either way the hydrogens and charged termini are the Amber templates', the
+protonation states SIRAH's own (:data:`BUILT_AS`: its neutral epsilon histidine
+is HIE), and two bonded sulfur beads are a disulfide.  What the table has no
+way to finish here (lipids, glycans, modified residues) and cofactors are
+reported and left out: they need the structure the run was built from.
+
+A swim probe, whose beads are named by its sequence, is built as the amino
+acids it is, with an ACE and an NME cap: its ends are neutral beads, and a lone
+amino acid has no Amber template without them.  ``residues``: only these
+residues of ``cg``.
+
+### `boonza.sirah.bead_atoms(cg, aa) -> 'tuple[np.ndarray, np.ndarray]'`
+
+Which atom of ``aa`` each bead of ``cg`` sits on: ``(beads, atoms)``, indices
+paired.  Residues are matched by chain, number and insertion code; a residue
+SIRAH's map knows by its map (the first of a bead's atom names the residue
+has), any other (a cofactor, a bead a heavy atom) by the atoms' own names.
+Solvent beads and beads of residues ``aa`` does not have are left out.
+
+### `boonza.sirah.read_table() -> 'dict'`
+
+SIRAH Tools' backmapping table, ``{coarse-grained residue: entry}``: the
+all-atom residue it stands for (``name``), the atoms that sit on beads and the
+ones placed from three others by a distance, an angle and a dihedral
+(``build``), what changes at a chain's ends (``first``, ``last``) and the atoms
+written (``print``).  It is SIRAH Tools' own (``sirah_vmdtk.tcl``, GPL v2),
+read from its Tcl by ``scripts/gen_sirah_backmap.py``.
 
 ## Pockets
 
@@ -1404,12 +1488,22 @@ most rather than the middle of where it sat -- which is the same number for
 a round pocket and a smaller one for a long or a merged one.  Reported
 beside DCA rather than in place of it: the benchmarks are quoted on DCA.
 
-### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 5.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
+### `boonza.drmsd(system, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', cutoff: 'float' = 8.0, positions=None, reference_ligand=None, reference_protein=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'DRMSD'`
 
 Distance RMSD (Å) between pocket atoms and ligand atoms, against a reference.
 
 The pocket is the ``protein`` atoms within ``cutoff`` Å of the ligand in
-the reference.  For every frame, the (pocket x ligand) distance matrix
+the reference.  8 Å, not 5: an alpha carbon sits behind its own side chain,
+so 5 leaves very few of them -- a 51-heavy-atom ligand in PANX1's pore had
+3 within 5 Å against 20 within 8.  A handful of pairs still measures the
+drift, but which of them falls inside the cutoff is then a knife-edge, so
+two ligands in one pocket can end up measured against different atoms, and
+the spread of what protein motion alone contributes was three times wider
+(±0.10 Å against ±0.045 Å under 0.3 Å of backbone jitter).  Widening
+further dilutes instead: the answer to 1 Å of ligand falls 0.59, 0.56, 0.55
+Å as the cutoff goes 5, 8, 10, for pair counts of 153, 1020 and 2295.
+
+For every frame, the (pocket x ligand) distance matrix
 ``d`` is compared with the reference matrix: ``sqrt(mean((d - d_ref)**2))``.
 No superposition is needed, and the ligand's internal distances are not
 included.
@@ -1765,7 +1859,7 @@ atoms.  The per-frame count says whether the ligand is bound at all,
 without caring which pose it is in; the per-atom share says which atoms a
 pocket is really made of, over the whole run rather than in one frame.
 
-### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
+### `boonza.pose_distances(system, positions=None, reference=None, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 8.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'np.ndarray'`
 
 The (nframes, nframes) dRMSD matrix of a trajectory, in A.
 
@@ -1792,9 +1886,17 @@ per pair, which is what keeps this quadratic in frames but linear in
 symmetry searches; when two frames would rather be compared through
 different mappings the distance between them is an upper bound.
 
-### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 5.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
+### `boonza.poses(system, positions=None, reference=None, cutoff: 'float' = 1.5, min_population: 'float' = 0.02, ligand: 'str' = 'not (polymer or water or ions) and noh', protein: 'str' = 'protein and name CA', pocket_cutoff: 'float' = 8.0, pocket=None, symmetry: 'bool' = True, heavy_only: 'bool' = True, bond_orders: 'bool' = False, periodic: 'bool' = True) -> 'PoseSet'`
 
 The poses a trajectory holds, most populated first.
+
+``pocket_cutoff`` is 8 A, as :func:`boonza.drmsd`'s is: an alpha carbon sits
+behind its own side chain, so 5 leaves too thin a frame to fix a pose in
+space.  It is the frame poses are measured against, not a contact distance
+-- :func:`pocket_contacts` keeps 5 A, where a contact means something.
+``cutoff`` below is in dRMSD, so it does not follow: widening the pocket
+lowers the dRMSD a given motion gives by about 5%, which makes the same
+``cutoff`` group very slightly more freely than it did at 5 A.
 
 Frames within ``cutoff`` A dRMSD of one another (average linkage) are one
 pose; a pose holding less than ``min_population`` of the frames, or fewer

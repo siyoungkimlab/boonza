@@ -31,6 +31,7 @@ from .analysis import (  # noqa: E402
     sasa,
     settled,
 )
+from .backmapping import backmap, detect_model  # noqa: E402
 from .bondorders import guess_bond_orders  # noqa: E402
 from .build import (  # noqa: E402
     from_smiles,
@@ -241,6 +242,8 @@ __all__ = [
     "Martinized",
     "ctmd",
     "martinize",
+    "backmap",
+    "detect_model",
     "ce_align",
     "cealign",
     "chimerax_ss",
