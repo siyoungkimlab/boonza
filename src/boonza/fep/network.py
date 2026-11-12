@@ -21,7 +21,10 @@ Each ligand left on one edge then gets its next best within the cap -- past
 ``max_change`` if nothing smaller is left, since a check that samples less well
 is better than none -- so every ligand sits in a cycle and a bad edge shows as a
 cycle that does not close.
-Whatever scored the pairs, an edge is built from its 3D mapping.
+Whatever scored the pairs, an edge is built from the mapping that scored it:
+the graphs' (``mapping_method="graph"``, the default, which moves B onto the atoms
+it shares with A), or the poses' (``"pose"``, which pairs only atoms already on top
+of each other and leaves every ligand where it is).
 
 Values: the ΔG of each ligand (relative to their mean, or to a reference) by
 weighted least squares over the edges' ΔΔG -- the maximum likelihood estimate
@@ -34,7 +37,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .mapping import map_atoms, score
+from .mapping import MAPPING_METHOD, map_atoms, map_graph, score
 
 #: heavy atoms an edge may change before it is taken only where no smaller route is
 MAX_CHANGE = 8
@@ -79,11 +82,13 @@ def mcs_heavy(a, b, timeout: int = 10) -> int:
     return int(res.numAtoms)
 
 
-def _pair(a, b, i, j, method, max_distance, charge_change, log) -> Edge | None:
+def _pair(a, b, i, j, method, max_distance, charge_change, log,
+          mapping_method: str = MAPPING_METHOD) -> Edge | None:  # fmt: skip
     """The scored edge between ligands ``a`` (index i) and ``b`` (j), or None."""
     from rdkit import Chem
 
-    m = map_atoms(a, b, max_distance=max_distance)
+    m = (map_graph(a, b) if mapping_method == "graph"
+         else map_atoms(a, b, max_distance=max_distance))  # fmt: skip
     if not m:
         return None
     s = score(a, b, m, charge_change)
@@ -184,7 +189,7 @@ def _unjoined(n, pairs) -> list[list[int]]:
 def edges(ligands, redundant: bool = True, max_distance: float = 0.95,
           charge_change: float = 0.0, method: str = "3d", max_change: int = MAX_CHANGE,
           max_degree: int = MAX_DEGREE, reference: int | None = None,
-          log=None) -> list[Edge]:  # fmt: skip
+          mapping_method: str = MAPPING_METHOD, log=None) -> list[Edge]:  # fmt: skip
     """The edges to run between posed ``ligands`` (RDKit molecules with hydrogens),
     under the module's rules.  A change of net charge scores ``charge_change``
     times LOMAP's score (boonza.fep.mapping.score): 0 never takes one.  Pairs that
@@ -197,10 +202,13 @@ def edges(ligands, redundant: bool = True, max_distance: float = 0.95,
         raise ValueError("a network needs at least two ligands")
     if method not in ("3d", "2d"):
         raise ValueError(f"method is 3d or 2d, not {method!r}")
+    if mapping_method not in ("pose", "graph"):
+        raise ValueError(f"mapping_method is pose or graph, not {mapping_method!r}")
     scored = {}
     for i in range(n):
         for j in range(i + 1, n):
-            e = _pair(ligands[i], ligands[j], i, j, method, max_distance, charge_change, log)
+            e = _pair(ligands[i], ligands[j], i, j, method, max_distance, charge_change, log,
+                      mapping_method)  # fmt: skip
             if e is not None:
                 scored[i, j] = e
     parts = _unjoined(n, scored)
@@ -217,7 +225,7 @@ def edges(ligands, redundant: bool = True, max_distance: float = 0.95,
 def extend(ligands, existing, new, redundant: bool = True, max_distance: float = 0.95,
            charge_change: float = 0.0, method: str = "3d", max_change: int = MAX_CHANGE,
            max_degree: int = MAX_DEGREE, reference: int | None = None,
-           log=None) -> list[Edge]:  # fmt: skip
+           mapping_method: str = MAPPING_METHOD, log=None) -> list[Edge]:  # fmt: skip
     """The edges that join ligands ``new`` (indices) to a network already run:
     ``existing`` its (a, b) pairs, kept as they are and counted against the cap.
     Only pairs with a new ligand are scored; the rest as :func:`edges` does."""
@@ -230,7 +238,8 @@ def extend(ligands, existing, new, redundant: bool = True, max_distance: float =
             if i == j or (i in new and i > j):
                 continue
             a, b = min(i, j), max(i, j)
-            e = _pair(ligands[a], ligands[b], a, b, method, max_distance, charge_change, log)
+            e = _pair(ligands[a], ligands[b], a, b, method, max_distance, charge_change, log,
+                      mapping_method)  # fmt: skip
             if e is not None:
                 scored[a, b] = e
     have = {tuple(sorted(p)) for p in existing}

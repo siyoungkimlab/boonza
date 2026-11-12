@@ -16,6 +16,13 @@ topology needs are applied until none is broken:
 
 ``score`` rates a mapping as LOMAP does, exp(-0.1 x heavy atoms that change),
 for choosing which ligands to join in a network.
+
+``map_graph`` pairs atoms by the two graphs' maximum common substructure
+instead, for ligands that bind alike but are not posed on top of each other (a
+series docked or grown in different frames), where the 3D mapping finds little
+or nothing to pair.  The poses still decide between a substructure's symmetric
+matches, and ``fit_on_core`` then moves B onto A over the pair, since a hybrid
+topology needs the atoms it pairs in one place.
 """
 
 from __future__ import annotations
@@ -23,6 +30,14 @@ from __future__ import annotations
 import numpy as np
 
 MAX_DISTANCE = 0.95  # A
+#: how atoms are paired between two ligands by default (boonza fep prep --map): by
+#: the ligands' graphs (``map_graph``), B then moved onto the atoms they share, since
+#: a series' poses need not sit on top of each other for the same part of two ligands
+#: to be the same part.  Where they do, it pairs what the poses pair and leaves B
+#: where it is.  "pose" is ``map_atoms``, the poses alone (kartograf's way)
+MAPPING_METHOD = "graph"
+#: symmetric matches of one substructure tried, among which the poses choose
+MAX_SYMMETRY = 200
 
 
 def _graph(mol):
@@ -57,6 +72,13 @@ def map_atoms(a, b, max_distance: float = MAX_DISTANCE, element_change: bool = T
     cost = np.where(ok, d, 1e6)
     rows, cols = linear_sum_assignment(cost)
     mapping = {int(i): int(j) for i, j in zip(rows, cols, strict=True) if ok[i, j]}
+    return _refine(mapping, ga, gb, d, xa, xb)
+
+
+def _refine(mapping: dict, ga, gb, d, xa, xb) -> dict:
+    """The rules a hybrid topology needs, applied until none is broken (the module
+    docstring).  ``d``: how far every pair of atoms is apart, which decides which
+    atom of a pair breaking a rule is dropped."""
     while True:
         before = dict(mapping)
         mapping = _rings(mapping, ga, gb)
@@ -66,6 +88,88 @@ def map_atoms(a, b, max_distance: float = MAX_DISTANCE, element_change: bool = T
         mapping = _connected(mapping, ga)
         if mapping == before:
             return mapping
+
+
+def _kabsch(p, q):
+    """The rotation and translation that move ``p`` (n, 3) onto ``q`` by least squares."""
+    pc, qc = p.mean(0), q.mean(0)
+    u, _, vt = np.linalg.svd((p - pc).T @ (q - qc))
+    flip = np.sign(np.linalg.det(vt.T @ u.T))  # a rotation, never a reflection
+    r = vt.T @ np.diag([1.0, 1.0, flip]) @ u.T
+    return r, qc - r @ pc
+
+
+def fit_on_core(a, b, core: dict) -> np.ndarray:
+    """B's positions (Å) moved rigidly so the atoms ``core`` pairs sit on A's.
+
+    A graph mapping says which atoms correspond, not where they are, and a hybrid
+    topology needs them in one place: a core atom is one particle at A's position,
+    while a bond from it to one of B's own atoms is kept as it is, so B's pose has
+    to meet A's or the bond starts stretched across the gap.  Fewer than three
+    pairs fix no rotation, and B is left where it is."""
+    xb = np.asarray(b.GetConformer().GetPositions(), float)
+    if len(core) < 3:
+        return xb
+    xa = np.asarray(a.GetConformer().GetPositions(), float)
+    pairs = sorted(core.items())
+    r, t = _kabsch(xb[[j for _, j in pairs]], xa[[i for i, _ in pairs]])
+    return (r @ xb.T).T + t
+
+
+def map_graph(a, b, element_change: bool = True, timeout: int = 10) -> dict:
+    """{atom of A: atom of B} from the two graphs' maximum common substructure
+    (rings whole) rather than from the poses, for ligands that are not posed on top
+    of each other.  Which of that substructure's symmetric matches (a ring's flip,
+    two like substituents) is taken is still the poses' to decide: the one whose
+    atoms fit A's best once B is moved rigidly onto them.  The rules
+    :func:`map_atoms` applies are applied here too, over that fitted geometry, so
+    what a hybrid is built from is a mapping of the same kind -- with
+    :func:`fit_on_core` for the positions it implies."""
+    from rdkit import Chem
+    from rdkit.Chem import rdFMCS
+    from scipy.optimize import linear_sum_assignment
+    from scipy.spatial.distance import cdist
+
+    ga, gb = _graph(a), _graph(b)
+    heavy_a = [i for i, z in enumerate(ga[2]) if z > 1]
+    heavy_b = [i for i, z in enumerate(gb[2]) if z > 1]
+    ha, hb = Chem.RemoveHs(a), Chem.RemoveHs(b)  # heavy atoms keep their order
+    res = rdFMCS.FindMCS(
+        [ha, hb], ringMatchesRingOnly=True, completeRingsOnly=True,
+        atomCompare=(rdFMCS.AtomCompare.CompareAny if element_change
+                     else rdFMCS.AtomCompare.CompareElements),
+        bondCompare=rdFMCS.BondCompare.CompareAny,  # _bonds drops single <-> triple
+        timeout=timeout,
+    )  # fmt: skip
+    if not res.numAtoms:
+        return {}
+    pattern = Chem.MolFromSmarts(res.smartsString)
+    in_a = ha.GetSubstructMatches(pattern, uniquify=False, maxMatches=MAX_SYMMETRY)
+    in_b = hb.GetSubstructMatches(pattern, uniquify=False, maxMatches=MAX_SYMMETRY)
+    if not in_a or not in_b:
+        return {}
+    xa = np.asarray(a.GetConformer().GetPositions(), float)
+    xb = np.asarray(b.GetConformer().GetPositions(), float)
+    best = None
+    for match_a in in_a:
+        p = xa[[heavy_a[k] for k in match_a]]
+        for match_b in in_b:
+            q = xb[[heavy_b[k] for k in match_b]]
+            r, t = _kabsch(q, p)
+            rmsd = float(np.sqrt((((r @ q.T).T + t - p) ** 2).sum(1).mean()))
+            if best is None or rmsd < best[0]:
+                best = (rmsd, match_a, match_b)
+    core = {heavy_a[k]: heavy_b[x] for k, x in zip(best[1], best[2], strict=True)}
+    xb = fit_on_core(a, b, core)
+    d = cdist(xa, xb)
+    for i, j in list(core.items()):  # a pair's hydrogens, by where the fit leaves them
+        hi = [k for k in ga[0][i] if ga[2][k] == 1]
+        hj = [k for k in gb[0][j] if gb[2][k] == 1]
+        if not hi or not hj:
+            continue
+        rows, cols = linear_sum_assignment(d[np.ix_(hi, hj)])
+        core.update({hi[r]: hj[c] for r, c in zip(rows, cols, strict=True)})
+    return _refine(core, ga, gb, d, xa, xb)
 
 
 def _rings(m, ga, gb):
