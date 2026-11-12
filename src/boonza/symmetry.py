@@ -460,14 +460,24 @@ def _boxed_blocks(system, positions, atoms):
 
 
 def drmsd(system, reference=None, ligand: str = DEFAULT_LIGAND,
-          protein: str = "protein and name CA", cutoff: float = 5.0, positions=None,
+          protein: str = "protein and name CA", cutoff: float = 8.0, positions=None,
           reference_ligand=None, reference_protein=None,
           symmetry: bool = True, heavy_only: bool = True, bond_orders: bool = False,
           periodic: bool = True) -> DRMSD:  # fmt: skip
     """Distance RMSD (Å) between pocket atoms and ligand atoms, against a reference.
 
     The pocket is the ``protein`` atoms within ``cutoff`` Å of the ligand in
-    the reference.  For every frame, the (pocket x ligand) distance matrix
+    the reference.  8 Å, not 5: an alpha carbon sits behind its own side chain,
+    so 5 leaves very few of them -- a 51-heavy-atom ligand in PANX1's pore had
+    3 within 5 Å against 20 within 8.  A handful of pairs still measures the
+    drift, but which of them falls inside the cutoff is then a knife-edge, so
+    two ligands in one pocket can end up measured against different atoms, and
+    the spread of what protein motion alone contributes was three times wider
+    (±0.10 Å against ±0.045 Å under 0.3 Å of backbone jitter).  Widening
+    further dilutes instead: the answer to 1 Å of ligand falls 0.59, 0.56, 0.55
+    Å as the cutoff goes 5, 8, 10, for pair counts of 153, 1020 and 2295.
+
+    For every frame, the (pocket x ligand) distance matrix
     ``d`` is compared with the reference matrix: ``sqrt(mean((d - d_ref)**2))``.
     No superposition is needed, and the ligand's internal distances are not
     included.
