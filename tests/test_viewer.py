@@ -1140,6 +1140,53 @@ def test_capping_through_the_session_shows_the_caps_and_skips_what_has_no_termin
         session.edit("cap", [], "both")
 
 
+def test_a_chain_cut_in_the_middle_caps_the_termini_the_cut_made():
+    """Capping worked on the chain's first and last residue, so a cut in the middle --
+    which makes two termini of its own -- was capped at the far end of the chain
+    instead (on a 435-residue chain, 400 residues from the cut)."""
+    from boonza.viewer.edit import _residue_atom, neighbors, pieces
+
+    p = _peptide()
+    session = viewer.Session(p, whole=False)
+    s = session.system
+    aa = [r for r in range(s.nresidues) if _residue_atom(s, r, "CA") >= 0]
+    session.edit("bond", [_residue_atom(s, aa[0], "C"), _residue_atom(s, aa[1], "N")], 0)
+    s = session.system
+    assert [len(x) for x in pieces(s, 0)] == [1, len(aa) - 1]
+    out = session.edit("cap", [], "both")
+    s = session.system
+    caps = sorted({int(s.atoms["residue"][a]) for a in out["made"]})
+    assert sorted(str(s.residues["name"][r]) for r in caps) == ["ACE", "ACE", "NME", "NME"]
+    # each cap is bonded to one amino acid, and no two residues share a number
+    for r in caps:
+        joined = {int(s.atoms["residue"][y]) for x in s.residue_atoms(r)
+                  for y, _ in neighbors(s, x)} - {r}  # fmt: skip
+        assert len(joined) == 1
+    resids = [int(s.residues["resid"][r]) for r in range(s.nresidues)]
+    assert len(set(resids)) == len(resids)
+
+
+def test_capping_what_is_picked_caps_that_piece_alone():
+    """A pick says which piece to cap: the one its atoms are in, not the chain's end."""
+    from boonza.viewer.edit import _residue_atom, pieces
+
+    p = _peptide()
+    session = viewer.Session(p, whole=False)
+    s = session.system
+    aa = [r for r in range(s.nresidues) if _residue_atom(s, r, "CA") >= 0]
+    session.edit("bond", [_residue_atom(s, aa[0], "C"), _residue_atom(s, aa[1], "N")], 0)
+    s = session.system
+    second = pieces(s, 0)[1]
+    out = session.edit("cap", [_residue_atom(s, second[0], "CA")], "N")
+    s = session.system
+    made = {int(s.atoms["residue"][a]) for a in out["made"]}
+    assert len(made) == 1
+    cap_res = made.pop()
+    assert str(s.residues["name"][cap_res]) == "ACE"
+    # the piece that was picked, not the one the chain starts with
+    assert cap_res > min(r for r in range(s.nresidues) if _residue_atom(s, r, "CA") >= 0)
+
+
 def test_two_residues_become_a_sulfono_gamma_aa_unit():
     """ALA-LEU-PHE-ALA: LEU and PHE become one SGA unit.  LEU's side chain stays
     where it was on the chiral carbon, PHE's rides the sulfonyl, the chain and the

@@ -815,25 +815,53 @@ class Session:
                     # every chain, where nothing is picked: water, ions and ligands have
                     # no terminus to cap and are no reason to fail: what can be capped is
                     cname = lambda c: str(s.chains["name"][c]).strip() or "?"  # noqa: E731
-                    capped, why = [], []
+                    ends = {"N": "N", "C": "C", "both": "NC"}[str(value)]
+                    # a chain cut in the middle, or one with a gap, is more than one
+                    # piece, and the cut made termini of its own: the pieces to cap are
+                    # the ones the picked atoms are in, or all of them where nothing is
+                    picked = {}
+                    for a in atoms:
+                        r = int(s.atoms["residue"][a])
+                        picked.setdefault(int(s.residues["chain"][r]), set()).add(r)
+                    everything = len(atoms) == s.natoms
+                    # named by residue, since each cap renumbers the residues after it
+                    want = []
                     for c in chains:
-                        for end in {"N": "N", "C": "C", "both": "NC"}[str(value)]:
-                            try:
-                                r = edit.cap(s, c, end)
-                            except ValueError as e:
-                                if "no amino acids" not in str(e):
-                                    why.append(f"chain {cname(c)} {end}: {e}")
+                        for run in edit.pieces(s, c):
+                            if not (everything or picked.get(c, set()) & set(run)):
                                 continue
-                            # a later cap reorders the residues: keep what names this one
-                            capped.append((c, str(s.residues["name"][r]),
-                                           int(s.residues["resid"][r])))  # fmt: skip
+                            for end in ends:
+                                r = run[0] if end == "N" else run[-1]
+                                want.append((c, str(s.residues["name"][r]),
+                                             int(s.residues["resid"][r]), end))  # fmt: skip
+                    capped, why = [], []
+                    for c, name, resid, end in want:
+                        r = next((x for x in range(s.nresidues)
+                                  if int(s.residues["chain"][x]) == c
+                                  and str(s.residues["name"][x]) == name
+                                  and int(s.residues["resid"][x]) == resid), None)  # fmt: skip
+                        if r is None:
+                            continue
+                        try:
+                            r = edit.cap(s, c, end, residue=r)
+                        except ValueError as e:
+                            if "no amino acids" not in str(e):
+                                why.append(f"chain {cname(c)} {name}{resid} {end}: {e}")
+                            continue
+                        # a later cap reorders the residues: keep what names this one
+                        capped.append((c, str(s.residues["name"][r]),
+                                       int(s.residues["resid"][r])))  # fmt: skip
                     if not capped:
                         raise ValueError("; ".join(why) or "no amino acid chain to cap")
                     where = {(int(s.residues["chain"][r]), str(s.residues["name"][r]),
                               int(s.residues["resid"][r])): r
                              for r in range(s.nresidues)}  # fmt: skip
                     made = [a for t in capped for a in s.residue_atoms(where[t])]
-                    note = ", ".join(f"{n} on chain {cname(c)}" for c, n, _ in capped)
+                    per_chain = {}
+                    for c, n, resid in capped:
+                        per_chain.setdefault(c, []).append(f"{n}{resid}")
+                    note = "; ".join(f"chain {cname(c)}: {', '.join(v)}"
+                                     for c, v in sorted(per_chain.items()))  # fmt: skip
                     if why:
                         note += "; not " + "; ".join(why)
                     hydrogens = False

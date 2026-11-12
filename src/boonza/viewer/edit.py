@@ -2570,10 +2570,42 @@ def convert_sulfono_run(s, residues, r2: str = "inherit",
     return sorted(made), "; ".join(notes)
 
 
-def cap(s, chain: int, end: str) -> int:
-    """ACE on a chain's first residue (``end="N"``) or NME on its last (``"C"``): a
-    trans peptide bond, Amber's atom names, the terminus' charge gone.  Returns the
-    cap's residue.
+def pieces(s, chain: int) -> list[list[int]]:
+    """The chain's amino acids in runs joined by peptide bonds, each from its own N
+    terminus: a chain cut in the middle, or one with a gap where residues are missing,
+    is more than one piece, and every piece has two termini of its own.  A cyclic
+    peptide, which has none, comes back as one run in the order its residues are in."""
+    res = [r for r in range(s.nresidues) if int(s.residues["chain"][r]) == chain
+           and _residue_atom(s, r, "CA") >= 0]  # fmt: skip
+    mine, after, before = set(res), {}, {}
+    for r in res:
+        c = _residue_atom(s, r, "C")
+        if c < 0:
+            continue
+        for b, _ in neighbors(s, c):
+            r2 = int(s.atoms["residue"][b])
+            if r2 != r and r2 in mine and str(s.atoms["name"][b]) == "N":
+                after[r], before[r2] = r2, r
+    runs = []
+    for r in res:
+        if r in before:
+            continue
+        run = [r]
+        while run[-1] in after and len(run) <= len(res):
+            run.append(after[run[-1]])
+        runs.append(run)
+    return runs or ([res] if res else [])
+
+
+def cap(s, chain: int, end: str, residue: int | None = None) -> int:
+    """ACE on the N terminus of a chain (``end="N"``) or NME on its C terminus
+    (``"C"``): a trans peptide bond, Amber's atom names, the terminus' charge gone.
+    Returns the cap's residue.
+
+    ``residue``: cap the terminus of the piece this residue belongs to, rather than
+    the chain's first or last.  A chain cut in the middle is two pieces (:func:`pieces`)
+    and the cut made two termini; without this the cap goes to the end of the chain,
+    which is not the terminus the cut was made at.
 
     What a terminus needs is room for the cap, not any particular atom: the hydrogen
     ACE takes the place of, or the OXT NME does, is grown where it belongs where the
@@ -2581,11 +2613,16 @@ def cap(s, chain: int, end: str) -> int:
     there -- so the cap comes out the same whichever way the terminus was written."""
     if end not in ("N", "C"):
         raise ValueError('end is "N" or "C"')
-    res = [r for r in range(s.nresidues) if int(s.residues["chain"][r]) == chain
-           and _residue_atom(s, r, "CA") >= 0]  # fmt: skip
-    if not res:
+    runs = pieces(s, chain)
+    if not runs:
         raise ValueError("no amino acids in that chain")
-    r = res[0] if end == "N" else res[-1]
+    if residue is None:
+        run = runs[0] if end == "N" else runs[-1]
+    else:
+        run = next((x for x in runs if residue in x), None)
+        if run is None:
+            raise ValueError("that residue is no amino acid of the chain")
+    r = run[0] if end == "N" else run[-1]
     backbone = "N" if end == "N" else "C"
     anchor = _residue_atom(s, r, backbone)
     if anchor < 0:
@@ -2605,7 +2642,15 @@ def cap(s, chain: int, end: str) -> int:
         add_hydrogens(s, anchor, 1)  # where the cap belongs, for it to take the place of
         leaving = s.natoms - 1
     name = "ACE" if end == "N" else "NME"
-    resid = int(s.residues["resid"][r]) + (-1 if end == "N" else 1)
+    # the number next to the terminus, or the first free one further out: a cut chain
+    # caps twice over, and both caps numbering themselves after their own terminus can
+    # land on a number the chain already has
+    step = -1 if end == "N" else 1
+    taken = {int(s.residues["resid"][x]) for x in range(s.nresidues)
+             if int(s.residues["chain"][x]) == chain}  # fmt: skip
+    resid = int(s.residues["resid"][r]) + step
+    while resid in taken:
+        resid += step
     new_res = _new_residue(s, chain, name, resid)
     if end == "N":
         new = attach(s, anchor, leaving, "C(C)=O", length=1.33, residue=new_res)
