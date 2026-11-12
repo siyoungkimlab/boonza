@@ -2085,11 +2085,34 @@ export function setupUI(app) {
                                 title: `Rotate: ${d.atoms.map(a => m.topo.atoms.name[a]).join("–")}` });
     const label = el("span", { className: "what" }, `${d.name ? d.name.replace("chi", "χ") + " " : ""}${d.angle.toFixed(1)}°`);
     const turn = { ...d, model: m, base: m.pos.slice() };
+    // the smaller side of the bond turns, until ⇄ says to turn the other one
+    let other = d.other;
+    const named = side => m.topo.atoms.name[side === "c" ? d.atoms[2] : d.atoms[1]];
+    const swap = el("button", {}, "⇄");
+    const retitle = () => {
+      swap.title = `turning the ${named(turn.side)} side, ${turn.moving.length} atoms; `
+                 + `click for the ${named(other.side)} side, ${other.moving.length}`;
+    };
+    retitle();
+    const commit = () => serverEdit(m, "api/set_dihedral",
+                                    { atoms: d.atoms, angle: +wheel.value, side: turn.side }, false);
     wheel.oninput = () => { app.turnDihedral(turn, +wheel.value); label.textContent = `${wheel.value}°`; };
-    wheel.onchange = () => serverEdit(m, "api/set_dihedral", { atoms: d.atoms, angle: +wheel.value }, false);
+    wheel.onchange = commit;
+    swap.onclick = () => {
+      // a-b-c-d ends at the same angle whichever side turns, so put the atoms back
+      // where they were and turn the other side to that same angle
+      m.pos = turn.base.slice();
+      const was = { moving: turn.moving, sign: turn.sign, side: turn.side };
+      Object.assign(turn, other);
+      other = was;
+      retitle();
+      app.turnDihedral(turn, +wheel.value);
+      if (+wheel.value !== Math.round(d.angle)) commit();
+      app.message(`turning the ${named(turn.side)} side: ${turn.moving.length} atoms`);
+    };
     const prof = el("button", {}, "Profile");
-    prof.onclick = () => profilePanel(m, d.atoms);
-    box.append(el("span", { className: "what" }, "Rotate"), wheel, label, prof);
+    prof.onclick = () => profilePanel(m, d.atoms, turn.side);
+    box.append(el("span", { className: "what" }, "Rotate"), wheel, label, swap, prof);
   }
 
   // --- command line -------------------------------------------------------------------------------
@@ -3373,7 +3396,7 @@ export function setupUI(app) {
     });
   }
 
-  async function profilePanel(m = null, atoms = null) {
+  async function profilePanel(m = null, atoms = null, side = "smaller") {
     if (!m) {
       const t = editTarget(2);
       if (!t) return;
@@ -3383,13 +3406,13 @@ export function setupUI(app) {
     const p = panel("profile", "Torsion Profile", body => { body.append(el("p", { className: "help" }, "computing…")); });
     const body = p.querySelector(".body");
     try {
-      const d = await app.post("api/dihedral", { m: m.index, atoms: orderChain(m, atoms) });
-      const scan = await app.busy("torsion profile", () => app.post("api/dihedral_scan", { m: m.index, atoms: d.atoms, step: 10 }));
+      const d = await app.post("api/dihedral", { m: m.index, atoms: orderChain(m, atoms), side });
+      const scan = await app.busy("torsion profile", () => app.post("api/dihedral_scan", { m: m.index, atoms: d.atoms, step: 10, side }));
       body.innerHTML = "";
       const name = d.name ? `${d.name.replace("chi", "χ")}: ` : "";
       body.append(el("div", {}, `${name}${d.atoms.map(a => m.topo.atoms.name[a]).join("–")}`));
       body.append(plot(scan, async angle => {
-        await serverEdit(m, "api/set_dihedral", { atoms: d.atoms, angle }, false);
+        await serverEdit(m, "api/set_dihedral", { atoms: d.atoms, angle, side }, false);
         marker(angle);
       }));
       const alone = d.atoms && scan.alone_atoms ? ` (${scan.alone_atoms} atoms)` : "";

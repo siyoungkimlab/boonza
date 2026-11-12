@@ -1420,9 +1420,13 @@ class Session:
         p.positions = np.asarray(self.system.positions)[np.asarray(p.atoms["view_index"])]
         return p
 
-    def dihedral(self, atoms) -> dict:
+    def dihedral(self, atoms, side: str = "smaller") -> dict:
         """The a-b-c-d angle and the atoms that turn with it.  Two bonded atoms are
-        the bond: its outer atoms are chosen (boonza.viewer.edit.dihedral_from_bond)."""
+        the bond: its outer atoms are chosen (boonza.viewer.edit.dihedral_from_bond).
+
+        ``side`` picks which side of the bond turns, the smaller by default.  Both are
+        returned -- ``other`` is the one not picked -- so that the viewer can turn the
+        other without asking again."""
         from .edit import dihedral_angle, dihedral_from_bond, dihedral_name, rotating_side
 
         self._editable()
@@ -1432,27 +1436,33 @@ class Session:
         elif len(atoms) != 4:
             raise ValueError("pick a bond (two atoms) or four atoms")
         a, b, c, d = atoms
-        moving, sign = rotating_side(self.system, b, c)
+        moving, sign = rotating_side(self.system, b, c, side)
+        far, far_sign = rotating_side(self.system, b, c, "b" if sign > 0 else "c")
         return {"angle": round(dihedral_angle(self.system.positions, a, b, c, d), 2),
                 "atoms": atoms, "name": dihedral_name(self.system, atoms),
-                "moving": moving.tolist(), "sign": sign}  # fmt: skip
+                "moving": moving.tolist(), "sign": sign,
+                "side": "c" if sign > 0 else "b",
+                "other": {"moving": far.tolist(), "sign": far_sign,
+                          "side": "b" if sign > 0 else "c"}}  # fmt: skip
 
-    def set_dihedral(self, atoms, degrees: float) -> dict:
+    def set_dihedral(self, atoms, degrees: float, side: str = "smaller") -> dict:
         from .edit import set_dihedral
 
         self._editable()
         with self._lock:
             self._remember()
-            angle = set_dihedral(self.system, *(int(x) for x in atoms), float(degrees))
+            angle = set_dihedral(self.system, *(int(x) for x in atoms), float(degrees),
+                                 side=side)  # fmt: skip
             return {**self._changed(topology=False), "angle": round(angle, 2)}
 
-    def dihedral_scan(self, atoms, step: float = 10.0) -> dict:
+    def dihedral_scan(self, atoms, step: float = 10.0, side: str = "smaller") -> dict:
         from .edit import dihedral_scan
 
         self._editable()
         with self._lock:
             return dihedral_scan(self.system, *(int(x) for x in atoms), self._parameterized(),
-                                 step=step, alone=self._alone(int(atoms[1])))  # fmt: skip
+                                 step=step, alone=self._alone(int(atoms[1])),
+                                 side=side)  # fmt: skip
 
     def _alone(self, a: int) -> list[int]:
         """What "isolated" means for atom a: its residue in a polymer, else its molecule."""
