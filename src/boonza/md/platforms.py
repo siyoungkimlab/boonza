@@ -16,6 +16,12 @@ def _candidates(name):
     return sorted(platforms, key=lambda p: p.getSpeed(), reverse=True)
 
 
+def first_platform(name):
+    """The platform ``name`` asks for, or the fastest one there is: what
+    :func:`create_simulation` tries first."""
+    return _candidates(name)[0]
+
+
 def create_simulation(
     topology,
     system,

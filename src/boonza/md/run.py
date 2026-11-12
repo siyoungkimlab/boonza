@@ -270,18 +270,22 @@ def _new_run(args, paths: RunPaths, src: Path, log):
     if getattr(args, "barostat", "isotropic") != "none":
         system.addForce(_barostat(args, mm, unit, every=0))  # asleep until NPT
     if args.dihedral_restraint != "none":
+        from ..io import load
         from .restraints import add_dihedral_restraints, plot_well, write_records
 
+        reference = getattr(args, "dihedral_restraint_reference", None)
         records, what = add_dihedral_restraints(
             system, s, args.dihedral_restraint, args.dihedral_restraint_kJ,
             getattr(args, "dihedral_restraint_selection", None),
             _secondary_for(args, paths.workdir),
+            reference=load(reference) if reference else None,
         )  # fmt: skip
         write_records(paths.dihedral_restraints_csv, records)
         plot_well(paths.dihedral_restraints_png, args.dihedral_restraint_kJ)
         log(
             f"Dihedral restraints: {len(records)} backbone torsions over {what}, "
             f"K = {-abs(args.dihedral_restraint_kJ):g} kJ/mol"
+            + (f", at their angles in {reference}" if reference else "")
         )
     if getattr(args, "elastic_network_selection", None):
         from .restraints import add_elastic_network
@@ -312,14 +316,18 @@ def _new_run(args, paths: RunPaths, src: Path, log):
             f"different ones closer than {args.repulsion_distance_nm:g} nm, "
             f"k = {args.repulsion_kJ:g} kJ/mol/nm^2")  # fmt: skip
     if getattr(args, "distance_restraints", None):
+        from ..io import load
         from .restraints import add_distance_restraints, write_records
 
+        lengths = getattr(args, "distance_restraint_reference", None)
         records = add_distance_restraints(system, s, args.distance_restraints,
                                           args.distance_restraint_kJ,
-                                          args.distance_restraint_nm)  # fmt: skip
+                                          args.distance_restraint_nm,
+                                          reference=load(lengths) if lengths else None)  # fmt: skip
         write_records(paths.distance_restraints_csv, records)
-        held = ("each pair's starting distance" if args.distance_restraint_nm is None
-                else f"r0 = {args.distance_restraint_nm:g} nm")  # fmt: skip
+        held = (f"r0 = {args.distance_restraint_nm:g} nm" if args.distance_restraint_nm is not None
+                else f"each pair's distance in {lengths}" if lengths
+                else "each pair's starting distance")  # fmt: skip
         log(f"Distance restraints: {len(records)} springs over "
             f"{len(args.distance_restraints)} set(s), {held}, "
             f"k = {args.distance_restraint_kJ:g} kJ/mol/nm^2")  # fmt: skip
@@ -384,6 +392,20 @@ def run_workflow(args, log=print) -> None:
         if not args.early_stop and any(k in args.specified for k in mon.MONITOR_SELECTORS):
             raise ValueError("an early-stop target is chosen but early_stop is off")
 
+    if not resume and getattr(args, "rem", False):
+        # soft first, from where the system starts -- and before the run's own
+        # context exists: a GPU in exclusive-process mode (what LSF hands out)
+        # lets a process hold one context at a time, and REM's is gone when it
+        # returns
+        from ..rem import relax
+        from .platforms import first_platform
+
+        log("REM: minimizing with soft Lennard-Jones and Coulomb first...")
+        xyz = np.asarray(positions.value_in_unit(unit.nanometer), float)
+        xyz, report = relax(system, xyz, platform=first_platform(args.platform))
+        positions = xyz * unit.nanometer
+        log(f"REM: soft energy {report['rem_energy_before']:.4g} -> "
+            f"{report['rem_energy_after']:.4g} kJ/mol")  # fmt: skip
     simulation, notes = create_simulation(
         topology, system, integrator, args.platform, args.precision, "precision" in args.specified
     )
@@ -410,15 +432,6 @@ def run_workflow(args, log=print) -> None:
             mon.check_saved(monitor, args, system.getNumParticles())
         commit_settings(args, paths.final_configuration)
     else:
-        if getattr(args, "rem", False):  # soft first, from where the system starts
-            from ..rem import relax
-
-            log("REM: minimizing with soft Lennard-Jones and Coulomb first...")
-            xyz = np.asarray(positions.value_in_unit(unit.nanometer), float)
-            xyz, report = relax(system, xyz, platform=simulation.context.getPlatform())
-            positions = xyz * unit.nanometer
-            log(f"REM: soft energy {report['rem_energy_before']:.4g} -> "
-                f"{report['rem_energy_after']:.4g} kJ/mol")  # fmt: skip
         simulation.context.setPositions(positions)
         if getattr(args, "model", "aa") == "aa":
             simulation.minimizeEnergy()

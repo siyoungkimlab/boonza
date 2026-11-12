@@ -177,6 +177,7 @@ ligands included.
 | `rem` | off | minimize first with soft, bounded nonbonded interactions (REM, after mstool's): pair energy min(A cos²(πr/2σ), LJ) + C q_i q_j cos²(πr/2r_c), A = 100 and C = 50 kJ/mol, so atoms on atoms (a placed ligand, a mutation) slip apart instead of blowing up; then the usual minimization. Nothing holds chirality or cis/trans meanwhile (`boonza.rem.relax(..., torsions=...)` holds the ones named). Martini and SIRAH runs take it too. `boonza.rem` does it for any OpenMM system |
 | `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets); in Martini, the BB-BB-BB-BB torsions |
 | `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
+| `dihedral_restraint_reference` | none, the input itself | with `dihedral_restraint`, hold phi/psi at their values in this structure of the same protein (a crystal structure, say) rather than the input's, and under `ss` pick the residues from its helices and sheets, so a backmapped or predicted model is held to the structure it came from and not to its own backbone. Residues pair by chain, number and name (by number and name alone when the two share no chain name); one the reference lacks is left free. `dihedral_restraints.csv` lists the input's angle beside each target. It does nothing on its own |
 | `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |
 | `elastic_network_selection` | `name GC` in a SIRAH run, `name GC and not chain LIG` in a SIRAH swim, none otherwise | hold a fold with springs between the beads this selects, for a model whose topology has no rubber bands: E = k (r - r0)^2 at the starting distance r0, between pairs within `elastic_network_nm` that are more than `elastic_network_res_min_dist` residues apart. The springs are forces, no part of the topology, so a held pair keeps every nonbonded interaction it had. `--no-elastic` leaves them out; a run started from a settings file does only what the file says, so an `md.toml` written without this keeps running without it |
 | `elastic_network_res_min_dist` | 2 | how many residues apart a pair must be before a spring holds it; the bonded terms already hold anything nearer |
@@ -513,6 +514,15 @@ of depth set by `dihedral_restraint_kJ`; `"ss"` only those of residues DSSP
 puts in helices or sheets (boonza's own DSSP; MDTraj is not needed). The
 force is in `system.xml`, so restarts keep it; the torsions and their
 reference angles are in `dihedral_restraints.csv`.
+
+A model whose backbone is not to be trusted -- backmapped from a
+coarse-grained run, predicted, built -- can be held to the structure it came
+from instead: `dihedral_restraint_reference = "9OEL.dms"` takes every target
+angle from that structure, and under `"ss"` the residues from its helices
+and sheets, pairing residues by chain, number and name. The model starts off
+its targets, so the wells pull the backbone over during minimization and
+equilibration; `dihedral_restraints.csv` lists the input's angle beside each
+target.
 
 A Martini run restrains the coarse-grained backbone instead: the
 BB-BB-BB-BB torsion over four residues in a row, which is the torsion
