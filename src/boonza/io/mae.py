@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from collections.abc import Iterator
 
 import numpy as np
 
@@ -24,13 +25,46 @@ from .dms import _factorize
 _INF = float("inf")
 
 
+#: ct properties that say "ct ``index`` of the ``count`` that make up one structure"
+MARK_INDEX, MARK_COUNT = "boonza_ct_index", "boonza_ct_count"
+#: in a ct that save_mae merged from several: the title and properties of each
+MERGED = "boonza_ct_prop"
+
+
 def load_mae(
     path, structure_only: bool = False, without_tables: bool = False,
     ignore_unrecognized: bool = False,
 ) -> System:  # fmt: skip
-    """Read an MAE/CMS file (optionally gzip/bzip2 compressed); all cts go into one System."""
+    """Read an MAE/CMS file (optionally gzip/bzip2 compressed); all cts go into one System.
+
+    For a file that holds several separate structures (poses, a ligand
+    library), use :func:`iter_mae`, which gives one System per structure.
+    """
     path = os.fspath(path)
     blocks = parse_mae(read_text(path))
+    return _build(path, blocks, structure_only, without_tables, ignore_unrecognized)
+
+
+def iter_mae(
+    path, structure_only: bool = False, without_tables: bool = False,
+    ignore_unrecognized: bool = False,
+) -> Iterator[System]:  # fmt: skip
+    """Read an MAE/CMS file one structure at a time: a System per structure.
+
+    Each ct is a structure of its own, as in Schrödinger's ``StructureReader``,
+    with two exceptions, where several cts are one structure and stay together
+    as the cts of one System: cts that boonza wrote from one System (they carry
+    a "ct k of n" mark, see :func:`save_mae`), and a CMS ``full_system`` ct
+    with the component cts that follow it.
+    """
+    path = os.fspath(path)
+    for group in _structures(parse_mae(read_text(path))):
+        s = _build(path, group, structure_only, without_tables, ignore_unrecognized)
+        if s.ncts:
+            yield s
+
+
+def _build(path, blocks, structure_only, without_tables, ignore_unrecognized) -> System:
     stages = {b.get("fepio_stage") for b in blocks}
     if 1 in stages and 2 in stages:
         raise NotImplementedError("alchemical (FEP) MAE files are not supported yet")
@@ -43,6 +77,53 @@ def load_mae(
         s = s.clone(structure_only=True)
     s.name = path
     return s
+
+
+def crystal_cell(get, prefix: str = "") -> np.ndarray | None:
+    """The cell of a PDB's CRYST1 record as Maestro keeps it on a ct, in the
+    properties ``pdb_PDB_CRYST1_a`` ... ``_gamma``; None when they are not all
+    there.  ``get`` looks a property up by name, ``prefix`` goes before each."""
+    from .pdb import cell_from_lengths_angles
+
+    values = [get(f"{prefix}pdb_PDB_CRYST1_{k}") for k in ("a", "b", "c", "alpha", "beta", "gamma")]
+    if any(isinstance(v, bool) or not isinstance(v, int | float) for v in values):
+        return None
+    if min(values) <= 0:
+        return None
+    cell = cell_from_lengths_angles(*map(float, values))
+    return cell if np.isfinite(cell).all() else None
+
+
+def _structures(blocks: list[dict]) -> list[list[dict]]:
+    """The file's blocks, grouped into structures (the rules are in iter_mae)."""
+    groups: list[list[dict]] = []
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        n = 1
+        if b.get("ffio_ct_type") == "full_system":
+            while i + n < len(blocks) and _is_component(blocks[i + n]):
+                n += 1
+        elif MARK_COUNT in b or MARK_INDEX in b:
+            count = b.get(MARK_COUNT)
+            group = blocks[i : i + count] if isinstance(count, int) and count > 0 else []
+            marks = [(g.get(MARK_INDEX), g.get(MARK_COUNT)) for g in group]
+            if marks == [(k, count) for k in range(count)]:
+                n = count
+            else:
+                warnings.warn(
+                    f"ct {i} is marked as ct {b.get(MARK_INDEX)} of {count} of one structure, "
+                    "but the cts around it do not make up that structure (was the file "
+                    "edited?): it is read as a structure of its own", stacklevel=3,
+                )  # fmt: skip
+        groups.append(blocks[i : i + n])
+        i += n
+    return groups
+
+
+def _is_component(block: dict) -> bool:
+    kind = block.get("ffio_ct_type")
+    return isinstance(kind, str) and kind != "full_system"
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +230,9 @@ def _append_ct(s: System, ct: dict, ignore_unrecognized: bool, without_tables: b
             v = ct.get(f"chorus_box_{a}{x}")
             if isinstance(v, int | float) and not isinstance(v, bool):
                 cell[i, j] = v
+    if not cell.any():  # no simulation box: the crystal's cell, as Maestro keeps it
+        crystal = crystal_cell(ct.get)
+        cell = cell if crystal is None else crystal
     s._cell = cell  # every ct overwrites the cell, as in msys
 
     particles = _read_particles(s, ct)
@@ -198,6 +282,33 @@ def _add_keyval(props: dict, key: str, value) -> None:
     props[key] = value
 
 
+def _unmerge_cts(s: System, first: int, record: MaeArray, n: int) -> np.ndarray:
+    """Give back the cts that save_mae merged into one: ids of the ``n`` cts.
+
+    ``record`` holds each ct's title and properties.  A property of the merged
+    ct that none of them had was put there since, and goes to the first.
+    """
+    which = _column(record, "ct", record.size, 0, "i").tolist()
+    keys = _column(record, "key", record.size, "", "s").tolist()
+    values = _column(record, "value", record.size, "", "s").tolist()
+    n = max([n, *(k + 1 for k in which)])
+    names, props = [""] * n, [{} for _ in range(n)]
+    for k, key, value in zip(which, keys, values, strict=True):
+        if k < 0 or len(key) < 3:
+            continue
+        if key == "s_m_title":
+            names[k] = value
+        else:
+            props[k][key[2:]] = {"i": int, "r": float}.get(key[0], str)(value)
+    known = set().union(*props)
+    added = {k: v for k, v in s._ct_props[first].items() if k not in known}
+    ids = [first, *(s.add_ct().id for _ in range(n - 1))]
+    for k, ct_id in enumerate(ids):
+        s._ct_names[ct_id] = names[k]
+        s._ct_props[ct_id] = props[k] | added if k == 0 else props[k]
+    return np.array(ids, np.int64)
+
+
 def _read_particles(s: System, ct: dict):
     m_atom = ct.get("m_atom")
     if not isinstance(m_atom, MaeArray):
@@ -206,6 +317,8 @@ def _read_particles(s: System, ct: dict):
     props = s._ct_props[ct_id]
     for key, val in ct.items():
         if key.startswith("chorus_box_") or key in ("m_title", "__name__"):
+            continue
+        if key in (MARK_INDEX, MARK_COUNT):  # the writer's, not the structure's
             continue
         if isinstance(val, bool) or val is None:
             continue
@@ -238,12 +351,19 @@ def _read_particles(s: System, ct: dict):
     pos = np.column_stack([both(f"m_{c}_coord", f"ffio_{c}_coord", 0.0, "r") for c in "xyz"])
     vel = np.column_stack([both(f"ffio_{c}_vel", f"ffio_{c}_vel", 0.0, "r") for c in "xyz"])
     total = n + npseudo
-
-    chain_code, chain_first = _factorize(chain, segid)
+    ct_of = ct_id  # the ct of each chain
+    record = ct.get(MERGED)
+    if isinstance(record, MaeArray) and "boonza_ct" in m_atom:  # cts merged by save_mae
+        was = both("boonza_ct", "boonza_ct", 0, "i")
+        ct_ids = _unmerge_cts(s, ct_id, record, int(was.max()) + 1 if total else 1)
+        chain_code, chain_first = _factorize(was, chain, segid)
+        ct_of = ct_ids[was[chain_first]]
+    else:
+        chain_code, chain_first = _factorize(chain, segid)
     res_code, res_first = _factorize(chain_code, resid, resname, insertion)
     chain_off, res_off, atom_off = s.nchains, s.nresidues, s.natoms
     s._chains.append(
-        len(chain_first), {"ct": ct_id, "name": chain[chain_first], "segid": segid[chain_first]}
+        len(chain_first), {"ct": ct_of, "name": chain[chain_first], "segid": segid[chain_first]}
     )
     s._residues.append(
         len(res_first),

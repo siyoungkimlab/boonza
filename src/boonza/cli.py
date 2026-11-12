@@ -1881,6 +1881,12 @@ def _parameterize(args) -> int:
     return 0
 
 
+def _is_mae(path) -> bool:
+    from boonza.io import _format
+
+    return _format(path, None) in (".mae", ".cms")
+
+
 def _view(args) -> int:
     from pathlib import Path
 
@@ -1907,11 +1913,16 @@ def _view(args) -> int:
         # when opened from the page; one molecule is a structure like any other
         what = viewer.from_paths(paths)
         single = not what.models[0].group.startswith("series")
+    elif single and len(paths) == 1 and not flags and _is_mae(paths[0]):
+        # an MAE of several structures (poses, a library) is a model for each;
+        # one structure, of however many cts, is a structure like any other
+        what = viewer.from_paths(paths)
+        single = len(what.models) == 1
     if not single:
         if flags:
             raise ValueError("-c, -s, --ligand, --center, --glue and --fit go with one "
                              "structure (and trajectory)")  # fmt: skip
-        if not paths[0].lower().endswith(".sdf") or len(paths) > 1:
+        if not (paths[0].lower().endswith(".sdf") or _is_mae(paths[0])) or len(paths) > 1:
             what = viewer.from_paths(paths, merge=args.merge, fit=args.merge_fit,
                                      cg_frames=args.cg_frames,
                                      scaffold=args.merge_scaffold or None)  # fmt: skip
