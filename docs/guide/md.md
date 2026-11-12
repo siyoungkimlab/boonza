@@ -472,12 +472,27 @@ the reference's own; its water, and anything else with no beads, is left out.
 The reference needs its hydrogens; a ligand needs AmberTools for GAFF2, and a
 nucleic acid is minimized with `na.amber.bsc1`.
 
-Without `-r`, each amino acid is an ideal residue laid on its beads, with the
-Amber templates' hydrogens and charged termini. Protonation states are
-SIRAH's (its histidine is the neutral epsilon tautomer, so HIE), and atoms no
-bead says anything about -- the end of an isoleucine or leucine side chain --
-are wherever the minimization left them. Only proteins: a nucleic acid or a
-cofactor needs the reference. Solvent beads are never turned back.
+Without `-r`, the structure is built from the bead names by SIRAH Tools' own
+backmapping table (`sirah_vmdtk.tcl`; boonza carries the table, under its GPL
+v2 licence, see NOTICE): the atoms that sit on beads, and each other atom
+placed from three already there by a distance, an angle and a dihedral. The
+hydrogens and the charged termini are the Amber templates'. That covers amino
+acids and DNA. Protonation states are SIRAH's (its histidine is the neutral
+epsilon tautomer, so HIE), and atoms no bead says anything about -- the end of
+an isoleucine or leucine side chain -- are wherever the rules and the
+minimization left them. Lipids, glycans, modified residues and cofactors need
+the reference. Solvent beads are never turned back.
+
+A swim's probes are not in the reference, so they are built from their beads
+either way: each as the amino acids its name spells, with an ACE and an NME
+cap, since a probe's ends are neutral beads.
+
+A coarse-grained frame has no chirality and no cis or trans. Where its beads
+sit as a D residue or a cis peptide bond would, following them would make
+one, so the alpha carbons' hands and the peptide bonds are held through the
+minimization (trans, or cis where the reference has it so), and the mapped
+atoms there end up short of their beads; the last line printed says how many
+are more than 1 A off.
 
 A trajectory is written wrapped, so the solute's molecules are first made
 whole across the box and brought beside each other.

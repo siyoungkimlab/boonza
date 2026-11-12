@@ -119,7 +119,7 @@ def __getattr__(name):  # the builder is heavier than the settings above
         from . import build
 
         return getattr(build, name)
-    if name in ("backmap", "from_beads", "bead_atoms", "BackmapError"):
+    if name in ("backmap", "from_beads", "bead_atoms", "read_table", "BackmapError"):
         from . import backmapping  # not "backmap": that name is the function's
 
         return getattr(backmapping, name)
@@ -129,4 +129,4 @@ def __getattr__(name):  # the builder is heavier than the settings above
 __all__ = ["BACKBONE", "INCLUDED", "IONS", "OPENMM_OPTIONS", "PARAMETERS", "WATER",
            "WATERS_PER_ION_PAIR", "BackmapError", "Sirahized", "backmap", "bead_atoms",
            "contents", "from_beads", "map_structure", "needed", "read", "read_residues",
-           "sirahize", "solvate", "unpack"]  # fmt: skip
+           "read_table", "sirahize", "solvate", "unpack"]  # fmt: skip

@@ -840,13 +840,27 @@ solute's molecules are made whole and brought beside each other first (default:
 (default: boonza md's, with :data:`NUCLEIC_FORCEFIELD` added for a nucleic acid;
 GAFF2 for a ligand, which needs AmberTools).
 
-### `boonza.sirah.from_beads(cg, positions=None, log=None)`
+### `boonza.sirah.from_beads(cg, positions=None, log=None, rules: 'str' = 'sirah', residues=None)`
 
-Amino acids built from bead names alone, each an ideal residue laid on its
-beads: hydrogens and charged termini from the Amber templates, protonation
-states SIRAH's own (:data:`BUILT_AS`: its neutral epsilon histidine is HIE), a
-disulfide wherever two sulfur beads are bonded.  Nothing is minimized here.
-Only proteins: a nucleotide or a cofactor needs the structure it came from.
+The all-atom structure built from bead names alone, hydrogens included.
+Nothing is minimized here.
+
+``rules="sirah"`` follows SIRAH Tools' backmapping table (:func:`read_table`):
+the atoms that sit on beads, and the others placed from them by a distance, an
+angle and a dihedral.  Amino acids and DNA; an amino acid the table lacks is
+built the other way.  ``rules="ideal"`` lays an ideal residue
+(:func:`boonza.peptide`'s) on its beads as a rigid body: amino acids only.
+
+Either way the hydrogens and charged termini are the Amber templates', the
+protonation states SIRAH's own (:data:`BUILT_AS`: its neutral epsilon histidine
+is HIE), and two bonded sulfur beads are a disulfide.  What the table has no
+way to finish here (lipids, glycans, modified residues) and cofactors are
+reported and left out: they need the structure the run was built from.
+
+A swim probe, whose beads are named by its sequence, is built as the amino
+acids it is, with an ACE and an NME cap: its ends are neutral beads, and a lone
+amino acid has no Amber template without them.  ``residues``: only these
+residues of ``cg``.
 
 ### `boonza.sirah.bead_atoms(cg, aa) -> 'tuple[np.ndarray, np.ndarray]'`
 
@@ -855,6 +869,15 @@ paired.  Residues are matched by chain, number and insertion code; a residue
 SIRAH's map knows by its map (the first of a bead's atom names the residue
 has), any other (a cofactor, a bead a heavy atom) by the atoms' own names.
 Solvent beads and beads of residues ``aa`` does not have are left out.
+
+### `boonza.sirah.read_table() -> 'dict'`
+
+SIRAH Tools' backmapping table, ``{coarse-grained residue: entry}``: the
+all-atom residue it stands for (``name``), the atoms that sit on beads and the
+ones placed from three others by a distance, an angle and a dihedral
+(``build``), what changes at a chain's ends (``first``, ``last``) and the atoms
+written (``print``).  It is SIRAH Tools' own (``sirah_vmdtk.tcl``, GPL v2),
+read from its Tcl by ``scripts/gen_sirah_backmap.py``.
 
 ## Pockets
 

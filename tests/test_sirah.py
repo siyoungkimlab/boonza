@@ -1010,7 +1010,7 @@ def _hands(s):
 
     pos = np.asarray(s.positions, float)
     out = []
-    for a, b, c, d in _held_torsions(s):
+    for a, b, c, d, _ in _held_torsions(s):
         if str(s.atoms["name"][d]).strip() != "CB":
             continue
         b0, b1, b2 = pos[a] - pos[b], pos[c] - pos[b], pos[d] - pos[c]
@@ -1087,7 +1087,7 @@ def test_backmap_puts_a_cap_with_its_neighbor_and_leaves_out_what_has_no_beads()
 
 
 def test_backmap_without_a_reference_builds_the_protein():
-    from boonza.sirah import BackmapError, backmap, sirahize
+    from boonza.sirah import BackmapError, backmap, from_beads, sirahize
 
     aa = boonza.load(DATA / "1CRN_ph7.pdb")
     cg = sirahize(aa).system()
@@ -1104,12 +1104,18 @@ def test_backmap_without_a_reference_builds_the_protein():
     mine, theirs = _heavy(out), _heavy(aa)
     off = np.linalg.norm(np.asarray(out.positions)[[mine[k] for k in theirs]]
                          - np.asarray(aa.positions)[list(theirs.values())], axis=1)  # fmt: skip
-    assert np.sqrt((off**2).mean()) < 0.8  # 0.41 A: what no bead fixes is the ends of Ile, Leu
+    assert np.sqrt((off**2).mean()) < 0.6  # 0.28 A: what no bead fixes is the ends of Ile, Leu
+    # SIRAH's own instructions are the closer of the two ways to build a residue
+    for rules, limit in (("sirah", 0.5), ("ideal", 1.3)):
+        raw = from_beads(cg, rules=rules)
+        there = _heavy(raw)
+        off = np.linalg.norm(np.asarray(raw.positions)[[there[k] for k in theirs]]
+                             - np.asarray(aa.positions)[list(theirs.values())], axis=1)  # fmt: skip
+        assert np.sqrt((off**2).mean()) < limit and raw.natoms == aa.natoms
+    with pytest.raises(BackmapError, match="rules is"):
+        from_beads(cg, rules="other")
     assert _hands(out) == _hands(aa)
     assert np.nanmin(np.abs(boonza.backbone_dihedrals(out)[2][0])) > 150
-    dna = sirahize(boonza.load(DATA / "dna_duplex.pdb"), atoms="nucleic").system()
-    with pytest.raises(BackmapError, match="no amino acid among the beads"):
-        backmap(dna)
 
 
 def test_backmap_command_takes_a_frame_of_a_trajectory(tmp_path, capsys):
@@ -1175,3 +1181,90 @@ def test_backmap_makes_a_wrapped_frame_whole():
 
     np.testing.assert_allclose(spread(whole), spread(aa), atol=1e-3)
     assert np.abs(spread(cut) - spread(aa)).max() > side / 3
+
+
+def test_backmap_without_a_reference_builds_dna():
+    from boonza import viparr
+    from boonza.sirah import backmap, from_beads, read_table, sirahize
+
+    table = read_table()
+    assert table["sA"]["name"] == "ALA" and table["DAX"]["first"] == {"apply": "AX5"}
+    assert table["sA"]["build"]["CB"] == ["+", ["CA", "N", "C"], [1.5, 109.0, -120.0]]
+    dna = boonza.load(DATA / "dna_duplex.pdb")
+    cg = sirahize(dna, atoms="nucleic").system()
+    raw = from_beads(cg)
+    names = sorted({str(n) for n in raw.residues["name"]})
+    assert names == ["DA", "DC", "DC5", "DG", "DG3", "DT"]  # the strands' ends are their own
+    heavy = raw.atoms["anum"] > 1
+    assert int(heavy.sum()) == dna.natoms  # the file has no hydrogens
+    assert int(raw.atoms["formal_charge"].sum()) == -38  # a phosphate each but the two 5' ends
+    # every residue is its Amber template: atoms, hydrogens and bonds (adenine's H2,
+    # which a bead sits on, is not added a second time)
+    ff = viparr.load_forcefield("na.amber.bsc1")
+    for r in range(raw.nresidues):
+        tp = ff.template(str(raw.residues["name"][r]))
+        have = sorted(str(raw.atoms["name"][a]) for a in raw.residue_atoms(r))
+        assert have == sorted(n for n in tp.names if not n.startswith("$"))
+    out = backmap(cg)
+    rename = {"O1P": "OP1", "O2P": "OP2"}
+    theirs = {(k[0], k[1], rename.get(k[2], k[2])): a for k, a in _heavy(dna).items()}
+    mine = _heavy(out)
+    assert sorted(mine) == sorted(theirs)
+    off = np.linalg.norm(np.asarray(out.positions)[[mine[k] for k in theirs]]
+                         - np.asarray(dna.positions)[list(theirs.values())], axis=1)  # fmt: skip
+    assert np.sqrt((off**2).mean()) < 0.4  # 0.16 A
+
+
+def test_backmap_builds_swim_probes_the_reference_does_not_have():
+    from boonza.sirah import backmap, bead_atoms, sirahize
+    from boonza.sirah.probes import probe
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    protein = sirahize(aa).system()
+    cg = protein.copy()
+    for k, sequence in enumerate(("Y", "EK")):  # a single residue and a dipeptide
+        p = probe(sequence).system()
+        p.positions = np.asarray(p.positions) + [40.0 + 15 * k, 0.0, 0.0]
+        p.chains["name"] = np.array(["LIG"] * p.nchains)
+        p.residues["resid"] = np.asarray(p.residues["resid"]) + 900 + 10 * k
+        cg.append(p)
+    assert sorted({str(n) for n in cg.residues["name"]} & {"Y", "EK"}) == ["EK", "Y"]
+    said = []
+    out = backmap(cg, aa, log=said.append)
+    probes = []  # in the order of the atoms, which is the order a file is written in
+    for a in range(out.natoms):
+        r = int(out.atoms["residue"][a])
+        if str(out.chains["name"][out.residues["chain"][r]]) == "LIG" and (
+            not probes or probes[-1][0] != r
+        ):
+            probes.append((r, str(out.residues["name"][r])))
+    probes = [name for _, name in probes]
+    # each with its caps, in order: a probe's ends are neutral beads
+    assert probes == ["ACE", "TYR", "NME", "ACE", "GLU", "LYS", "NME"]
+    assert any("built from their beads" in line for line in said)
+    beads, atoms = bead_atoms(cg, out)
+    assert sorted(beads.tolist()) == list(range(cg.natoms))
+    off = np.linalg.norm(np.asarray(out.positions)[atoms] - np.asarray(cg.positions)[beads], axis=1)
+    assert np.sqrt((off**2).mean()) < 0.3
+    assert out.natoms > aa.natoms and _hands(out)[: len(_hands(aa))] == _hands(aa)
+
+
+def test_backmap_keeps_hands_and_trans_bonds_against_the_beads():
+    from boonza.sirah import backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    # beads that sit as a mirror image at one residue: its side chain's first bead
+    # through the plane of its backbone beads, which is the other hand
+    names = [str(n) for n in cg.atoms["name"]]
+    res = np.asarray(cg.atoms["residue"])
+    r = next(r for r in range(cg.nresidues) if str(cg.residues["name"][r]) == "sF")
+    at = {names[b]: b for b in np.flatnonzero(res == r)}
+    frame = np.array(cg.positions, float)
+    n, ca, o, side = (frame[at[k]] for k in ("GN", "GC", "GO", "BCG"))
+    normal = np.cross(n - ca, o - ca)
+    normal /= np.linalg.norm(normal)
+    frame[at["BCG"]] = side - 2 * np.dot(side - ca, normal) * normal
+    out = backmap(cg, aa, frame)
+    assert _hands(out) == _hands(aa)
+    assert np.nanmin(np.abs(boonza.backbone_dihedrals(out)[2][0])) > 150
