@@ -83,8 +83,8 @@ def test_reversible_work_matches_the_ratio_it_is_defined_as():
 
 def test_the_drmsd_coordinate_is_boonzas_own():
     s = _complex()
-    # the same pocket on both sides, and wide enough for either: boonza.drmsd keeps 5 A,
-    # where this fixture has only 4 alpha carbons and ctmd asks for 8
+    # the same pocket on both sides, and wide enough for either: 8 A, what both default
+    # to, leaves this small fixture short of the 8 alpha carbons ctmd asks for
     same = {"cutoff": 10.0, "periodic": False}
     pocket, ligand, dref = drmsd_pairs(s, **same)
     assert dref.shape == (len(pocket), len(ligand)) and dref.size
@@ -118,7 +118,7 @@ def test_the_coordinate_says_what_it_cannot_be_built_from():
         drmsd_of(s, ligand="resname NOPE", periodic=False)
     with pytest.raises(CVError, match="no pocket atom within"):
         drmsd_of(s, cutoff=0.01, periodic=False)
-    # 5 A, boonza.drmsd's own cutoff, leaves a handful of alpha carbons here: enough
+    # 5 A, what boonza.drmsd used to default to, leaves a handful of alpha carbons: enough
     # to measure with and too thin to bias along.  How many exactly depends on the
     # conformer RDKit built for the fixture's ligand, so it is not asserted
     with pytest.raises(CVError, match="too few to measure against"):

@@ -23,9 +23,9 @@ import numpy as np
 #: move the coordinate without the ligand going anywhere -- what the published
 #: protocol gets by superposing the protein and measuring only the ligand
 POCKET = "protein and name CA"
-#: A of the ligand a pocket atom must be within.  Not :func:`boonza.drmsd`'s 5, which
-#: is right for an analysis of a few pairs and far too tight for a coordinate to be
-#: biased along: an alpha carbon sits behind its side chain, so a real pocket may have
+#: A of the ligand a pocket atom must be within, the same 8 :func:`boonza.drmsd` uses.
+#: 5 would be far too tight for a coordinate to be biased along: an alpha carbon sits
+#: behind its side chain, so a real pocket may have
 #: only a handful that close (PANX1 with Brilliant Blue FCF, a 51-atom ligand in the
 #: pore: 3 within 5 A, 20 within 8, 45 within 10).  8 rather than 10 because widening
 #: dilutes: the mean runs over every pair, and a second-shell one barely answers the

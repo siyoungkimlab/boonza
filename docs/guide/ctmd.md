@@ -79,7 +79,7 @@ the protein, measure the ligand". The pocket-ligand **drmsd** says the same thin
 without a superposition: it compares pocket-ligand distances with the reference's,
 so moving or turning the whole system changes nothing and only the ligand's motion
 relative to its pocket is seen. That is `boonza.drmsd`, and the pocket is the one it
-uses — alpha carbons within 5 Å of the ligand, backbone rather than every atom, so
+uses — alpha carbons within 8 Å of the ligand, backbone rather than every atom, so
 that a side chain swinging about does not move the coordinate on its own.
 
 Two consequences:
@@ -97,14 +97,15 @@ Two consequences:
 ### Which protein atoms, and how wide
 
 `boonza.drmsd`'s own defaults are the ligand's heavy atoms against `protein and name
-CA` within **5 Å**. That is right for an analysis and far too tight for a coordinate
-to be biased along, because an alpha carbon sits behind its own side chain. Measured
-on PANX1 with Brilliant Blue FCF, a 51-heavy-atom ligand in the pore:
+CA` within **8 Å**, and `boonza ctmd` keeps both. 5 Å, which `boonza.drmsd` used
+until these numbers were measured, is far too tight for a coordinate to be biased
+along, because an alpha carbon sits behind its own side chain. Measured on PANX1 with
+Brilliant Blue FCF, a 51-heavy-atom ligand in the pore:
 
 | pocket rule | atoms | pairs |
 |---|---|---|
-| CA within 5 Å (`boonza.drmsd`'s default) | 3 | 153 |
-| **CA within 8 Å** (`boonza ctmd`'s default) | 20 | 1020 |
+| CA within 5 Å (the former default) | 3 | 153 |
+| **CA within 8 Å** (the default of both) | 20 | 1020 |
 | CA within 10 Å | 45 | 2295 |
 | all heavy atoms within 5 Å | 43 | 2193 |
 

@@ -36,9 +36,9 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--ligand", help="the ligand's atoms (default: what is neither polymer, "
                    "water nor ion, heavy atoms only)")  # fmt: skip
     q.add_argument("--pocket", default=None, help="the atoms the ligand is measured against "
-                   "(default: protein alpha carbons within 5 A of it)")  # fmt: skip
+                   "(default: protein alpha carbons within 8 A of it)")  # fmt: skip
     q.add_argument("--pocket-cutoff", type=float, default=None, metavar="A",
-                   help="how near the ligand a pocket atom must be (default 5)")  # fmt: skip
+                   help="how near the ligand a pocket atom must be (default 8)")  # fmt: skip
     q.add_argument("--replicas", type=int, default=cfg.replicas,
                    help=f"biased trajectories (default {cfg.replicas}; the published protocol's "
                         "results converge by 5)")  # fmt: skip
