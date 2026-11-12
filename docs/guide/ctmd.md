@@ -169,6 +169,27 @@ BEDROC above the 0.3–0.5 it describes elsewhere, AmpC being the system it call
 as the exception. Two of their 28 ligands wrote no data at all and are left out of
 the ranking rather than scored.
 
-So the scoring and ranking here are the published ones. What this does **not** test
-is the coordinate, since theirs is the aligned RMSD and boonza's is the drmsd. For
-that, run one system both ways and compare the rankings.
+### What that check does and does not show
+
+It runs no simulation. Their COLVAR files already hold a finished c(t) series —
+their last column is PLUMED's `metad.rct` — so the only code path it exercises is
+reading those files, scoring each replica where the ligand left, taking the lowest,
+ranking, and the enrichment metrics. That path is the published one, and this is
+real evidence for it.
+
+Three things it leaves untested:
+
+- **`reversible_work` is not exercised at all**, because the c(t) it would compute
+  is already in their file. Its only checks are the identities in the tests: a flat
+  bias returns its own value, no bias returns 0, and the defining ratio comes out
+  right. It has never been compared with PLUMED's `rct` on the same trajectory.
+- **The coordinate** is theirs, not boonza's: an aligned RMSD rather than the drmsd.
+- **The enrichment this implementation gives** is therefore unmeasured. Reproducing
+  the paper's EF30 from their numbers is not the same as reproducing it from runs of
+  our own.
+
+Closing that gap means running the protocol: for AmpC, 26 ligands by a 5 ns filter
+and three 5 ns biased replicas each, about 520 ns of MD, which on the paper's own
+timings is some 200 GPU-hours. Until that is done, treat the biasing half as
+implemented and smoke-tested, not validated. Running one system both ways and
+comparing the rankings is the check that matters.
