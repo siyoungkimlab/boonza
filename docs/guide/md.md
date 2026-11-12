@@ -449,6 +449,63 @@ Not yet: SIRAH's lipids, whose library and mapping files are carried (for the
 atomistic force fields SIRAH maps from) but not yet assembled here. Glycans
 are in SIRAH's AMBER release rather than this one.
 
+### Back to atoms
+
+`boonza backmap` turns a coarse-grained frame back into an all-atom structure.
+It is the one command for every model: `--model` says which, and by default
+the bead names do (`boonza.backmap` and `boonza.detect_model` from Python).
+Only SIRAH is turned back so far; Martini's beads are recognized and refused.
+A SIRAH
+bead sits on one atom, so a frame says where those atoms are; the rest is put
+back in one of two ways.
+
+```bash
+# with the structure the run was built from: its residues laid on the beads
+boonza backmap run/sirah/cg.dms last.mae -c run/trajectory.dcd -r protein.mae
+boonza backmap run/sirah/cg.dms f.mae -c run/trajectory.dcd -r protein.mae --frame 0 --frame 500
+
+# without it: amino acids built from the bead names
+boonza backmap run/sirah/cg.dms last.mae -c run/trajectory.dcd
+```
+
+With `-r`, every residue of the reference is laid on its beads as a rigid body
+(matched by chain, residue number and insertion code) and the structure is
+then minimized, soft nonbonded terms first, with the mapped atoms held to their
+beads by 50 kcal/mol/A^2 springs (`--restraint`). Atom names, protonation
+states, ligands that were coarse-grained (`--cofactors`) and ACE/NME caps are
+the reference's own; its water, and anything else with no beads, is left out.
+The reference needs its hydrogens; a ligand needs AmberTools for GAFF2, and a
+nucleic acid is minimized with `na.amber.bsc1`.
+
+Without `-r`, the structure is built from the bead names by SIRAH Tools' own
+backmapping table (`sirah_vmdtk.tcl`; boonza carries the table, under its GPL
+v2 licence, see NOTICE): the atoms that sit on beads, and each other atom
+placed from three already there by a distance, an angle and a dihedral. The
+hydrogens and the charged termini are the Amber templates'. That covers amino
+acids and DNA. Protonation states are SIRAH's (its histidine is the neutral
+epsilon tautomer, so HIE), and atoms no bead says anything about -- the end of
+an isoleucine or leucine side chain -- are wherever the rules and the
+minimization left them. Lipids, glycans, modified residues and cofactors need
+the reference. Solvent beads are never turned back.
+
+A swim's probes are not in the reference, so they are built from their beads
+either way: each as the amino acids its name spells, with an ACE and an NME
+cap, since a probe's ends are neutral beads.
+
+A coarse-grained frame has no chirality and no cis or trans. Where its beads
+sit as a D residue or a cis peptide bond would, following them would make
+one, so the alpha carbons' hands and the peptide bonds are held through the
+minimization (trans, or cis where the reference has it so), and the mapped
+atoms there end up short of their beads; the last line printed says how many
+are more than 1 A off.
+
+A trajectory is written wrapped, so the solute's molecules are first made
+whole across the box and brought beside each other.
+
+`--frame` counts from 0, negative from the end, and can be repeated: several
+frames are written as `NAME_00010.mae`. `--no-minimize` stops after the rigid
+placement. From Python: `boonza.sirah.backmap(cg, reference, positions)`.
+
 ## Backbone restraints
 
 `dihedral_restraint = "bb"` restrains every backbone phi and psi across an

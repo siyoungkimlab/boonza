@@ -10,6 +10,7 @@ __version__ = "0.1.0.dev0"
 
 from . import (  # noqa: E402
     analysis,
+    ctmd,  # noqa: E402  (light: openmm is loaded only when it runs)
     gaff,
     pbc,
     viparr,  # noqa: E402
@@ -30,6 +31,7 @@ from .analysis import (  # noqa: E402
     sasa,
     settled,
 )
+from .backmapping import backmap, detect_model  # noqa: E402
 from .bondorders import guess_bond_orders  # noqa: E402
 from .build import (  # noqa: E402
     from_smiles,
@@ -238,7 +240,10 @@ __all__ = [
     "CEResult",
     "MatchResult",
     "Martinized",
+    "ctmd",
     "martinize",
+    "backmap",
+    "detect_model",
     "ce_align",
     "cealign",
     "chimerax_ss",

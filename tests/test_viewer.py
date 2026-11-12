@@ -813,21 +813,24 @@ def test_dynamics_moves_further_than_minimizing_and_plays_back():
     s = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
     session = viewer.Session(s, atoms="protein", cg=False)
     before = session.system.positions.copy()
+    # seeded, so a run repeats on one machine (threads and platforms still differ)
     out = session.dynamics("resid 2", restraint=10.0, picoseconds=2.0, temperature=300.0,
-                           path=True)  # fmt: skip
+                           path=True, seed=5)  # fmt: skip
     assert out["steps"] == 2000 and out["picoseconds"] == 2.0
     assert 50.0 < out["temperature"] < 450.0  # a mean over a run that starts cold
     assert out["mobile_atoms"] == len(session.system.select("resid 2")) > 0
     held = session.system.select("not (resid 2) and not hydrogen").ids
     after = session.system.positions
-    # the springs still hold the rest, while the free part has moved on
     assert np.linalg.norm(after[held] - before[held], axis=1).max() == pytest.approx(
         out["held_max"], abs=1e-3
     )
-    # over the whole set, not its single furthest atom: the springs are soft (10
-    # kJ/mol/Å²) and there are far more held atoms than free ones, so the largest
-    # held displacement beats the largest free one often enough on its own
-    assert out["mobile_rmsd"] > out["held_rmsd"]
+    # the springs still hold the rest, while the free part has moved.  Each against a
+    # bound of its own, not against the other: over twelve seeds the held atoms'
+    # RMSD was 0.27-0.36 A (10 kcal/mol/A^2 springs at 300 K allow about 0.42) and the
+    # free residue's 0.28-1.67 A, so "free further than held" fails one run in twelve
+    # (0.319 against 0.319 A on CI, 0.284 against 0.271 with seed 7)
+    assert out["held_rmsd"] < 0.6
+    assert out["mobile_rmsd"] > 0.1
     path = out["path"]
     assert 1 < len(path["frames"]) <= 61
     assert len(path["frames"]) == len(path["iterations"]) == len(set(path["iterations"]))
@@ -2997,3 +3000,51 @@ def test_a_click_on_a_model_leaves_the_view_and_views_are_kept():
     for key in ("rot", "center", "distance", "ortho", "zclip", "pivot"):
         assert f"{key}:" in view, key  # the camera, and nothing of what is drawn
     assert "views: state.views" in main and "views: page.views || []" in main  # in a session
+
+
+def test_a_charge_edit_says_what_it_did_and_reloads_only_when_atoms_changed(served):
+    s = boonza.from_smiles("CCO")
+    session = viewer.Session(s)
+    get, post = served(session)
+    o = int(np.flatnonzero(s.atoms["anum"] == 8)[0])
+    # no hydrogen added or removed: the page keeps its topology and sets the charge
+    status, out = post("api/edit", {"op": "charge", "atoms": [o], "value": -1, "hydrogens": False})
+    assert status == 200 and out["topology"] is False and "was" not in out
+    assert out["charges"] == [[o, -1]] and out["hydrogens"] == 0 and out["natoms"] == 9
+    assert json.loads(get("api/topology")[2])["atoms"]["charge"][o] == -1
+    # hydrogens follow the charge: atoms changed, so the topology is fetched again
+    status, out = post("api/edit", {"op": "charge", "atoms": [o], "value": 1})
+    assert out["topology"] is True and out["hydrogens"] == 1 and out["natoms"] == 10
+    assert out["charges"] == [[o, 1]] and len(out["was"]) == 10
+
+
+def test_adjusting_hydrogens_of_many_atoms_walks_the_bonds_once(monkeypatch):
+    from boonza.viewer import edit
+
+    # every atom has its hydrogens already: checking them is one walk over the bonds,
+    # not two per atom (0.05 s an atom on a 36,000-atom model, minutes for a chain)
+    s = boonza.from_smiles("CCCCCCCCCC")
+    n = s.natoms
+    calls = []
+    walk = edit._bonded
+    monkeypatch.setattr(edit, "_bonded", lambda s: calls.append(1) or walk(s))
+    index = edit.adjust_hydrogens(s, list(range(n)))
+    assert len(calls) == 1 and s.natoms == n and index.tolist() == list(range(n))
+
+
+def test_an_error_about_atoms_names_them_and_their_model(served, monkeypatch):
+    from boonza.viewer import edit
+
+    session = viewer.Session(boonza.from_smiles("CCO"))
+    get, post = served(session)
+
+    def fail(s, *a, **k):
+        raise edit.AtomsError("no GAFF2 parameters for MOL1: nope", [0, 2])
+
+    monkeypatch.setattr(edit, "parameterize", fail)
+    status, out = post("api/minimize", {"m": 0, "mode": "all"})
+    assert status == 400 and out["error"].startswith("no GAFF2 parameters for MOL1")
+    assert out["atoms"] == [0, 2] and out["m"] == 0
+    # an error that names no atoms carries none
+    status, out = post("api/select", {"m": 0, "sel": "not a selection ("})
+    assert status == 400 and "atoms" not in out

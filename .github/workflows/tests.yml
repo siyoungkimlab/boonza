@@ -46,6 +46,10 @@ jobs:
           # the package with all its dependencies, plus pytest, ruff and the
           # MDAnalysis reference
           python -m pip install -e '.[dev]'
+          # RDKit 2026.9.2 builds the helix of test_peptide_backbone one residue
+          # shorter (12 of 15 H, the test wants more than 0.8): with 2026.9.1 the
+          # same commit passed.  Held here, in CI alone, until that is looked at
+          python -m pip install 'rdkit<2026.9.2'
       - name: Report the environment under test
         run: |
           python -c "import numpy, numba; print('numpy', numpy.__version__, 'numba', numba.__version__)"

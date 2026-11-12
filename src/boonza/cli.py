@@ -1736,6 +1736,42 @@ def _martini_files(args):
     return itp, lipids
 
 
+def _backmap(args) -> int:
+    from pathlib import Path
+
+    import boonza
+
+    cg = _load(args.cg)
+    model = boonza.detect_model(cg) if args.model == "auto" else args.model
+    if model is None:
+        raise ValueError(f"{args.cg}: neither SIRAH's beads nor Martini's by their names; "
+                         "say which with --model")  # fmt: skip
+    reference = _load(args.reference) if args.reference else None
+    frames = args.frame or [-1]
+    if args.coordinates:
+        trajectory = boonza.open_trajectory(args.coordinates, cg)
+        count = len(trajectory)
+        picked = [f + count if f < 0 else f for f in frames]
+        if any(not 0 <= f < count for f in picked):
+            raise ValueError(f"{args.coordinates} has {count} frames (0 to {count - 1}, or "
+                             "negative from the end)")  # fmt: skip
+    else:
+        if args.frame:
+            raise ValueError("--frame picks a frame of a trajectory: give one with -c")
+        trajectory, picked = None, [None]
+    out = Path(args.output)
+    for f in picked:
+        frame = None if f is None else trajectory[f]
+        positions, box = (None, None) if frame is None else (frame.positions, frame.box)
+        where = out if len(picked) == 1 else out.with_name(f"{out.stem}_{f:05d}{out.suffix}")
+        print(f"{args.cg} ({model})" + ("" if f is None else f" frame {f}") + f" -> {where}")
+        aa = boonza.backmap(cg, reference, positions, model=model, box=box,
+                            minimize=not args.no_minimize, restraint=args.restraint,
+                            log=lambda *a: print(" ", *a))  # fmt: skip
+        boonza.save(aa, str(where))
+    return 0
+
+
 def _martinize(args) -> int:
     import boonza
 
@@ -1903,6 +1939,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("md", help="prepare and run OpenMM MD, restartable (boonza md --help)")
     sub.add_parser("swim", help="ligands swimming around a protein, many simulations "
                    "(boonza swim --help)")  # fmt: skip
+    sub.add_parser("ctmd", help="rank docked poses by the reversible work it takes to break "
+                   "them, with well-tempered metadynamics (boonza ctmd --help)")  # fmt: skip
     sub.add_parser("fep", help="relative binding free energies: boonza fep prep, run, "
                    "result (boonza fep prep --help)")  # fmt: skip
     sub.add_parser("pockets", help="fpocket on coarse-grained proteins, one structure or a "
@@ -2092,6 +2130,32 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--no-labels", action="store_true", help="no names under the molecules")
     q.set_defaults(run=_draw)
 
+    q = sub.add_parser("backmap", help="coarse-grained beads back to an all-atom structure "
+                       "(SIRAH; Martini is not turned back yet)")  # fmt: skip
+    q.add_argument("cg", help="the coarse-grained system (a SIRAH run's sirah/cg.dms)")
+    q.add_argument("--model", default="auto", choices=("auto", "sirah", "martini"),
+                   help="which model the beads are (default: read from their names)")  # fmt: skip
+    q.add_argument("output", help="all-atom structure to write (.mae, .dms, .pdb); with "
+                   "several frames, one file a frame: NAME_00010.mae")  # fmt: skip
+    q.add_argument("-c", "--coordinates", help="the run's trajectory, to take frames from "
+                   "(default: the positions in the coarse-grained file)")  # fmt: skip
+    q.add_argument("--frame", type=int, action="append", metavar="N",
+                   help="frame to turn back, from 0; negative from the end; repeat for "
+                   "several (default: the last)")  # fmt: skip
+    q.add_argument("-r", "--reference", help="the all-atom structure the run was built from: "
+                   "its residues are laid on the beads, so names, protonation states, ligands "
+                   "and caps are its own. Without it (SIRAH) proteins and DNA are built from "
+                   "the bead names, with default protonation states")  # fmt: skip
+    q.add_argument(
+        "--no-minimize",
+        action="store_true",
+        help="only lay the residues on their beads as rigid bodies",
+    )
+    q.add_argument("--restraint", type=float, default=50.0, metavar="K",
+                   help="springs holding the mapped atoms to their beads while minimizing, "
+                   "kcal/mol/A^2 (default 50)")  # fmt: skip
+    q.set_defaults(run=_backmap)
+
     q = sub.add_parser("martinize", help="Martini beads and topology for proteins, as martinize2")
     q.add_argument("input", help="all-atom structure (hydrogens, if present, set protonation)")
     q.add_argument("output", help="directory for topol.top, molecule_N.itp and cg.gro")
@@ -2253,7 +2317,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--ref-ligandsel", default=None,
                    help="reference ligand (default: --ligandsel)")  # fmt: skip
     q.add_argument("--proteinsel", default="protein and name CA", help="pocket candidates")
-    q.add_argument("--cutoff", type=float, default=5.0, help="pocket cutoff (A)")
+    q.add_argument("--cutoff", type=float, default=8.0, help="pocket cutoff (A)")
     q.add_argument("--no-symmetry", action="store_true", help="pair ligand atoms in order")
     q.add_argument("--no-pbc", action="store_true", help="ignore periodic boxes")
     q.set_defaults(run=_drmsd)
@@ -2269,7 +2333,7 @@ def _parser() -> argparse.ArgumentParser:
                    "(default: the frame whose ligand touches the most protein)")  # fmt: skip
     q.add_argument("--ligandsel", default=DEFAULT_LIGAND, help="ligand atoms")
     q.add_argument("--proteinsel", default="protein and name CA", help="pocket candidates")
-    q.add_argument("--pocket-cutoff", type=float, default=5.0, help="pocket cutoff (A)")
+    q.add_argument("--pocket-cutoff", type=float, default=8.0, help="pocket cutoff (A)")
     q.add_argument("--pocketsel", default=None,
                    help="the pocket atoms themselves; --proteinsel, --pocket-cutoff and the "
                         "reference then decide nothing")  # fmt: skip
@@ -2475,6 +2539,10 @@ def main(argv=None) -> int:
         from .md.swim import main as swim_main
 
         return swim_main(argv[1:])
+    if argv and argv[0] == "ctmd":  # its own parser: run and score
+        from .ctmd.cli import main as ctmd_main
+
+        return ctmd_main(argv[1:])
     if argv and argv[0] == "fep":
         from .fep.cli import main as fep_main
 

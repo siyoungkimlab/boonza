@@ -182,3 +182,20 @@ def test_side_by_side_copies_are_one_model(tmp_path):
     boonza.save(ensemble, tmp_path / "ensemble.pdb")
     assert "MODEL" not in (tmp_path / "lattice.pdb").read_text()
     assert (tmp_path / "ensemble.pdb").read_text().count("MODEL") == 3
+
+
+def test_formal_charges_digit_first_and_sign_first(tmp_path):
+    # the format writes "1-" (digit, then sign); read as a leading integer that was +1,
+    # and a sulfonate's O- came in as O+.  Sign first, as boonza writes it, is read too
+    def atom(i, name, element, charge):
+        return (f"HETATM{i:5d} {name:<4} LIG A   1    {i:8.3f}{0:8.3f}{0:8.3f}  1.00  0.00"
+                f"          {element:>2}{charge:<2}\n")  # fmt: skip
+
+    charges = ["1-", "1+", "2+", "-1", "+1", "  ", "2-"]
+    path = tmp_path / "q.pdb"
+    path.write_text("".join(atom(i + 1, f"X{i}", "O", q) for i, q in enumerate(charges)) + "END\n")
+    s = boonza.load(str(path))
+    assert s.atoms["formal_charge"].tolist() == [-1, 1, 2, -1, 1, 0, -2]
+    back = tmp_path / "back.pdb"
+    boonza.save(s, str(back))
+    assert boonza.load(str(back)).atoms["formal_charge"].tolist() == [-1, 1, 2, -1, 1, 0, -2]
