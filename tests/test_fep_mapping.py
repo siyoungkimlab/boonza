@@ -92,3 +92,62 @@ def test_a_change_of_charge_is_not_offered():
     # unless asked for, at a penalty
     m = {0: 0, 1: 1, 2: 2, 3: 3}
     assert mapping.score(a, b, m, charge_change=0.1) == pytest.approx(0.1)
+
+
+def _elsewhere(mol, shift=(14.0, -3.0, 2.0), angle=1.1):
+    """The same molecule posed somewhere else: turned about z, then moved."""
+    out = Chem.Mol(mol)
+    conf = out.GetConformer()
+    c, s = np.cos(angle), np.sin(angle)
+    turn = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    xyz = (turn @ conf.GetPositions().T).T + np.asarray(shift, float)
+    for k, p in enumerate(xyz):
+        conf.SetAtomPosition(k, p.tolist())
+    return out
+
+
+def test_graph_maps_what_poses_apart_cannot(benzenes):
+    """The same ligand posed 14 Å away: nothing sits on top of anything, and the
+    graphs pair every atom.  The fit then brings the pairs together."""
+    a = benzenes["toluene"]
+    b = _elsewhere(a)
+    assert mapping.map_atoms(a, b) == {}
+    m = mapping.map_graph(a, b)
+    assert len(m) == a.GetNumAtoms()
+    xa = a.GetConformer().GetPositions()
+    fitted = mapping.fit_on_core(a, b, m)
+    off = [np.linalg.norm(fitted[j] - xa[i]) for i, j in m.items()]
+    assert max(off) < 1e-6
+
+
+def test_graph_and_poses_agree_where_both_can_map(benzenes):
+    """Benzene onto toluene: the ring and five hydrogens, posed or not."""
+    a, b = benzenes["benzene"], benzenes["toluene"]
+    assert _elements(a, mapping.map_graph(a, b)) == ["C"] * 6 + ["H"] * 5
+    assert _elements(a, mapping.map_graph(a, _elsewhere(b))) == ["C"] * 6 + ["H"] * 5
+
+
+def test_graph_keeps_rings_whole():
+    """Cyclohexane onto cyclopentane: no ring maps, however they are posed."""
+    a, b = _posed("C1CCCCC1"), _posed("C1CCCC1")
+    assert not set(mapping.map_graph(a, b)) & set(a.GetRingInfo().AtomRings()[0])
+
+
+def test_graph_mapping_builds_a_network_the_poses_cannot():
+    """Two ligands posed apart: no edge from the poses, one from the graphs."""
+    from boonza.fep import network
+
+    a = _posed("c1ccccc1CO")
+    b = _elsewhere(_posed("c1ccccc1CN", seed=2))
+    with pytest.raises(ValueError, match="fall apart"):
+        network.edges([a, b], mapping_method="pose")
+    got = network.edges([a, b])  # the graphs, by default
+    assert len(got) == 1 and got[0].score > 0.5
+
+
+def test_a_fit_needs_three_pairs(benzenes):
+    """Fewer than three pairs fix no rotation, so B stays where it is."""
+    a = benzenes["toluene"]
+    b = _elsewhere(a)
+    was = b.GetConformer().GetPositions()
+    assert np.allclose(mapping.fit_on_core(a, b, {0: 0, 1: 1}), was)

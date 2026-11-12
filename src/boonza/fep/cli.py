@@ -78,8 +78,15 @@ def _prep(argv) -> int:
     g.add_argument("--network", choices=("3d", "2d"),
                    help="score ligand pairs on their atom mapping in the poses (3d), or on "
                         "their graphs' maximum common substructure, leaving the poses out of "
-                        "the choice (2d); either way an edge is built from its 3D mapping "
-                        "(default: 3d, or the first prep's with --extend)")  # fmt: skip
+                        "the choice (2d); either way an edge is built from the mapping --map "
+                        "makes (default: 3d, or the first prep's with --extend)")  # fmt: skip
+    g.add_argument("--map", dest="map_method", choices=("pose", "graph"),
+                   help="pair two ligands' atoms by their poses, those within 0.95 Å of each "
+                        "other (pose), or by their graphs' maximum common substructure, B "
+                        "then moved rigidly onto A over the atoms they share (graph: for a "
+                        "series not posed on top of each other, where it is the pose of B "
+                        "that the mapping decides, not the SDF's) (default: graph, or the "
+                        "first prep's with --extend)")  # fmt: skip
     g.add_argument("--max-change", dest="max_change", type=int,
                    help="an edge that changes more heavy atoms is taken only where no route "
                         "through smaller ones exists; 0 no limit "
@@ -127,7 +134,8 @@ def _prep(argv) -> int:
              large_change_atoms=x.get("large_change_atoms", LARGE_CHANGE_ATOMS),
              network_method=x.get("network"), max_change=x.get("max_change"),
              max_degree=x.get("max_degree"),
-             reference=x.get("reference"), complexes=x.get("complexes"))  # fmt: skip
+             reference=x.get("reference"), complexes=x.get("complexes"),
+             mapping_method=x.get("map_method"))  # fmt: skip
     except (ValueError, FileNotFoundError, RuntimeError, viparr.ViparrError) as e:
         print(f"boonza fep prep: error: {e}", file=sys.stderr)
         return 1

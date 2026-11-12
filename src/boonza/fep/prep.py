@@ -58,8 +58,9 @@ import numpy as np
 
 from .. import gaff, viparr
 from ..system import System
-from . import lambdas, network
+from . import lambdas, mapping, network
 from .hybrid import _md
+from .mapping import MAPPING_METHOD
 
 #: the solvent leg's padding (openfe: 1.5 nm), the complex leg's is boonza md's
 SOLVENT_PADDING_NM = 1.5
@@ -591,7 +592,8 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
          octanol_box=None, extend: bool = False,
          large_change_atoms: int = LARGE_CHANGE_ATOMS, network_method: str | None = None,
          max_change: int | None = None, max_degree: int | None = None,
-         reference: str | None = None, complexes=None) -> list[Path]:  # fmt: skip
+         reference: str | None = None, complexes=None,
+         mapping_method: str | None = None) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
     ``charge_windows`` windows and ``charge_production_ns`` of production (None: as
@@ -600,7 +602,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     dense schedule (boonza.fep.lambdas.dense; 0 never).  ``network_method``,
     ``max_change``, ``max_degree`` and ``reference`` (a ligand's name) choose the
     edges (boonza.fep.network); not given, the first prep's (network.json) with
-    ``extend``, else the network's defaults.  ``complexes``: a directory of one
+    ``extend``, else the network's defaults.  ``mapping_method``: how atoms are
+    paired, by the poses ("pose") or by the graphs ("graph", which moves B onto A
+    over the atoms they share, so the SDF's pose of B is not what runs).
+    ``complexes``: a directory of one
     co-complex per ligand (boonza.fep.complexes), instead of one receptor.
     ``phase``, without a receptor, what the water leg is set against: vacuum
     (hydration), octanol or wet-octanol (transfer); ``octanol_box`` a box built
@@ -740,13 +745,26 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 if max_change is None else max_change,
                 "max_degree": first.get("max_degree", network.MAX_DEGREE)
                 if max_degree is None else max_degree,
-                "reference": reference or first.get("reference")}  # fmt: skip
+                "reference": reference or first.get("reference"),
+                "mapping": mapping_method or first.get("mapping", MAPPING_METHOD)}  # fmt: skip
     if settings["reference"] is not None and settings["reference"] not in names:
         raise ValueError(f"--reference {settings['reference']}: no ligand of that name")
     rules = {"charge_change": penalty, "method": settings["method"],
              "max_change": settings["max_change"], "max_degree": settings["max_degree"],
+             "mapping_method": settings["mapping"],
              "log": log, "reference": names.index(settings["reference"])
              if settings["reference"] is not None else None}  # fmt: skip
+    if before is not None and first.get("mapping", "pose") != settings["mapping"]:
+        # a prep from before the option mapped by the poses, and says so nowhere else
+        log(f"  warning: the first prep's edges were paired by the ligands' "
+            f"{first.get('mapping', 'pose')}s, these by their {settings['mapping']}s; every "
+            "edge's own ΔΔG stands, and leg.json says which paired it")  # fmt: skip
+    if settings["mapping"] == "graph":
+        if own_receptors is not None:
+            raise ValueError("--map graph moves B onto A over the atoms they share, which "
+                             "--complexes' own receptor for B contradicts")  # fmt: skip
+        log("atoms paired by the ligands' graphs; B is moved onto A over the atoms they "
+            "share, so its pose in the leg is not the one the SDF gave")  # fmt: skip
     if before is None:
         edges = network.edges(mols, **rules)
     else:
@@ -811,6 +829,19 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             log(f"{a} -> {b}: {max(heavy_old, heavy_new)} heavy atoms of one ligand's "
                 f"own: {len(schedule_)} windows, dense where their Lennard-Jones is "
                 "switched")  # fmt: skip
+        lig_b = ligs[e.b]
+        if settings["mapping"] == "graph":  # B where the atoms it shares with A are
+            fitted = mapping.fit_on_core(mols[e.a], mols[e.b], e.mapping)
+            was = np.asarray(ligs[e.b].positions, float)
+            lig_b = ligs[e.b].copy()
+            lig_b.positions = fitted
+            xa = np.asarray(mols[e.a].GetConformer().GetPositions(), float)
+            pairs_ = sorted(e.mapping.items())
+            off = fitted[[j for _, j in pairs_]] - xa[[i for i, _ in pairs_]]
+            moved = float(np.linalg.norm(fitted - was, axis=1).max())
+            log(f"{a} -> {b}: B moved onto the {len(e.mapping)} atoms it shares with A "
+                f"({np.sqrt((off ** 2).sum(1).mean()):.2f} Å RMSD over them, "
+                f"{moved:.1f} Å from its own pose)")  # fmt: skip
         for leg, env, padding in legs:
             log(f"{a} -> {b}: {leg}")
             env_b = None
@@ -818,14 +849,14 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 env = receptor.copy()
                 env.positions = own_receptors[a]
                 env_b = own_receptors[b]
-            built = build_leg(env, ligs[e.a], ligs[e.b], e.mapping, ff, args, padding, log,
+            built = build_leg(env, ligs[e.a], lig_b, e.mapping, ff, args, padding, log,
                               charge_change=dq,
                               solvent=solvent_box if leg == "octanol" else None,
                               env_b=env_b)  # fmt: skip
             hyb, old, dropped = built.hybrid, built.old, built.dropped
             _finish(hyb, old, args, leg == "complex", log)
             meta = {"edge": [a, b], "ligands": [e.a, e.b], "leg": leg, "phase": phase,
-                    "score": e.score,
+                    "score": e.score, "mapping": settings["mapping"],
                     "lambdas": schedule_.tolist(), "charge_change": dq,
                     "alchemical_waters": built.alchemical_waters,
                     "temperature": args.temperature, "pressure": args.pressure,

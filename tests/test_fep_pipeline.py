@@ -162,3 +162,34 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
     assert cli.main(["prep", "--ligands", str(moved), "--workdir", str(work), "--extend",
                      *tiny]) == 1  # fmt: skip
     assert "toluene is not in the pose" in capsys.readouterr().err
+
+
+def test_graph_mapping_builds_a_leg_the_poses_cannot(tmp_path):
+    """Ligands posed 14 Å apart: no edge from the poses, while --map graph pairs
+    them by their graphs and builds the leg with B moved onto A -- which minimizes
+    and runs like any other, as it would not with a bond stretched over the gap."""
+    records = Chem.SDMolSupplier(str(DATA / "benzene_modifications.sdf"), removeHs=False)
+    ms = {m.GetProp("_Name"): m for m in records}
+    a, b = ms["benzene"], Chem.Mol(ms["toluene"])
+    conf = b.GetConformer()
+    for k, p in enumerate(conf.GetPositions() + np.array([14.0, 0.0, 0.0])):
+        conf.SetAtomPosition(k, p.tolist())
+    sdf = tmp_path / "apart.sdf"
+    w = Chem.SDWriter(str(sdf))
+    w.write(a)
+    w.write(b)
+    w.close()
+    tiny = ["--windows", "3", "--repeats", "1", "--iteration-ps", "0.02",
+            "--equilibration-ns", "0.00002", "--production-ns", "0.0001"]  # fmt: skip
+    where = ["prep", "--ligands", str(sdf), "--workdir"]
+    apart = ["--map", "pose"] + tiny
+    assert cli.main(where + [str(tmp_path / "poses")] + apart) == 1  # nothing to pair
+    work = tmp_path / "graph"
+    assert cli.main(where + [str(work)] + tiny) == 0  # the graphs, by default
+    assert json.loads((work / "network.json").read_text())["settings"]["mapping"] == "graph"
+    leg = work / "edges" / "benzene~toluene" / "solvent"
+    meta = json.loads((leg / "leg.json").read_text())
+    assert meta["mapping"] == "graph" and meta["core"] == 11
+    # it minimizes and runs: with a bond stretched over the gap it would not
+    run_leg(leg, 1, platform="CPU", log=lambda *_: None)
+    assert np.isfinite(np.load(leg / "run_1.npz")["u_kln"]).all()
