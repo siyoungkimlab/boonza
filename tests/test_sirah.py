@@ -992,3 +992,186 @@ def test_a_missing_atom_places_its_bead_instead_of_refusing(crambin_all_atom):
 
     with pytest.raises(ValueError, match="missing atoms SIRAH maps beads onto"):
         map_structure(cut, "protein", None, strict=True)
+
+
+# --- back to atoms ---------------------------------------------------------------------
+
+
+def _heavy(s):
+    chain = np.array([str(x).strip() for x in s.chains["name"]])[np.asarray(s.residues["chain"])]
+    res, resid = np.asarray(s.atoms["residue"]), np.asarray(s.residues["resid"])
+    return {(chain[res[a]], int(resid[res[a]]), str(s.atoms["name"][a]).strip()): a
+            for a in range(s.natoms) if s.atoms["anum"][a] > 1}  # fmt: skip
+
+
+def _hands(s):
+    """The sign of each alpha carbon's N-CA-C-CB improper: its hand."""
+    from boonza.sirah.backmapping import _held_torsions
+
+    pos = np.asarray(s.positions, float)
+    out = []
+    for a, b, c, d in _held_torsions(s):
+        if str(s.atoms["name"][d]).strip() != "CB":
+            continue
+        b0, b1, b2 = pos[a] - pos[b], pos[c] - pos[b], pos[d] - pos[c]
+        out.append(bool(np.dot(np.cross(np.cross(b0, b1), np.cross(b1, b2)), b1) > 0))
+    return out
+
+
+def test_bead_atoms_pairs_every_bead_with_the_atom_it_sits_on():
+    from boonza.sirah import bead_atoms, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    beads, atoms = bead_atoms(cg, aa)
+    assert sorted(beads.tolist()) == list(range(cg.natoms))
+    np.testing.assert_allclose(np.asarray(cg.positions)[beads], np.asarray(aa.positions)[atoms],
+                               atol=1e-3)  # fmt: skip
+
+
+def test_backmap_with_the_reference_follows_the_beads():
+    from boonza.sirah import BackmapError, backmap, bead_atoms, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    # the frame is not the reference's: turned, moved, and every bead off by ~0.3 A
+    rng = np.random.default_rng(1)
+    q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+    q *= np.sign(np.linalg.det(q))
+    frame = (
+        np.asarray(cg.positions) @ q.T + [30.0, -12.0, 7.0] + rng.normal(0, 0.17, (cg.natoms, 3))
+    )
+    said = []
+    placed = backmap(cg, aa, frame, minimize=False)
+    out = backmap(cg, aa, frame, log=said.append)
+    assert out.natoms == aa.natoms and out.atoms["name"].tolist() == aa.atoms["name"].tolist()
+    assert out.atoms["formal_charge"].tolist() == aa.atoms["formal_charge"].tolist()
+    assert out.nbonds == aa.nbonds
+    np.testing.assert_array_equal(aa.positions, boonza.load(DATA / "1CRN_ph7.pdb").positions)
+    beads, atoms = bead_atoms(cg, out)
+    for s, limit in ((placed, 0.6), (out, 0.25)):  # rigid residues, then pulled onto the beads
+        off = np.linalg.norm(np.asarray(s.positions)[atoms] - frame[beads], axis=1)
+        assert np.sqrt((off**2).mean()) < limit
+    assert _hands(out) == _hands(aa)
+    omega = boonza.backbone_dihedrals(out)[2][0]
+    assert np.nanmin(np.abs(omega)) > 150
+    assert any("beads on their atoms" in line for line in said)
+    with pytest.raises(BackmapError, match="positions for 205 beads"):
+        backmap(cg, aa, frame[:-1])
+    other = aa.copy()
+    other.chains["name"] = np.array(["Z"] * other.nchains)
+    with pytest.raises(BackmapError, match="no residue of the all-atom structure matches"):
+        backmap(cg, other)
+
+
+def test_backmap_puts_a_cap_with_its_neighbor_and_leaves_out_what_has_no_beads():
+    from boonza.sirah import backmap, sirahize
+    from boonza.viewer import edit
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    capped = aa.copy()
+    edit.cap(capped, 0, "N")
+    water = capped.add_residue(name="HOH", chain=0, resid=900)
+    capped.add_atom(int(getattr(water, "id", water)), name="O", anum=8, pos=[50.0, 50.0, 50.0])
+    said = []
+    shift = np.asarray(cg.positions) + [5.0, 0.0, 0.0]
+    out = backmap(cg, capped, shift, minimize=False, log=said.append)
+    names = [str(x) for x in out.residues["name"]]
+    assert "ACE" in names and "HOH" not in names
+    assert any("left out" in line and "HOH" in line for line in said)
+    ace = out.select("resname ACE").ids
+    was = capped.select("resname ACE").ids
+    expected = np.asarray(capped.positions)[was] + [5.0, 0.0, 0.0]
+    np.testing.assert_allclose(np.asarray(out.positions)[ace], expected, atol=1e-6)
+
+
+def test_backmap_without_a_reference_builds_the_protein():
+    from boonza.sirah import BackmapError, backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    out = backmap(cg)
+    assert boonza.sequence(out) == boonza.sequence(aa)
+    assert out.natoms == aa.natoms  # every hydrogen, the charged termini's too
+    assert sorted(_heavy(out)) == sorted(_heavy(aa))
+    assert {str(n) for n in out.residues["name"]} >= {"CYX"}  # the three disulfides
+    sg = [str(out.atoms["name"][a]).strip() for a in range(out.natoms)]
+    assert (
+        sum(sg[i] == "SG" == sg[j] for i, j in zip(out.bonds["i"], out.bonds["j"], strict=True))
+        == 3
+    )
+    mine, theirs = _heavy(out), _heavy(aa)
+    off = np.linalg.norm(np.asarray(out.positions)[[mine[k] for k in theirs]]
+                         - np.asarray(aa.positions)[list(theirs.values())], axis=1)  # fmt: skip
+    assert np.sqrt((off**2).mean()) < 0.8  # 0.41 A: what no bead fixes is the ends of Ile, Leu
+    assert _hands(out) == _hands(aa)
+    assert np.nanmin(np.abs(boonza.backbone_dihedrals(out)[2][0])) > 150
+    dna = sirahize(boonza.load(DATA / "dna_duplex.pdb"), atoms="nucleic").system()
+    with pytest.raises(BackmapError, match="no amino acid among the beads"):
+        backmap(dna)
+
+
+def test_backmap_command_takes_a_frame_of_a_trajectory(tmp_path, capsys):
+    from boonza.cli import main
+    from boonza.sirah import sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    boonza.save(cg, str(tmp_path / "cg.dms"))
+    with boonza.open_writer(str(tmp_path / "t.dcd"), cg.natoms) as w:
+        for k in range(3):
+            w.write(np.asarray(cg.positions) + [float(k), 0.0, 0.0])
+    args = ["backmap", str(tmp_path / "cg.dms"), str(tmp_path / "aa.mae"),
+            "-c", str(tmp_path / "t.dcd"), "-r", str(DATA / "1CRN_ph7.pdb"),
+            "--no-minimize"]  # fmt: skip
+    assert main(args) == 0
+    last = boonza.load(str(tmp_path / "aa.mae"))
+    np.testing.assert_allclose(
+        last.positions, np.asarray(aa.positions) + [2.0, 0.0, 0.0], atol=2e-3
+    )
+    assert main([*args, "--frame", "0", "--frame", "1"]) == 0
+    assert (tmp_path / "aa_00000.mae").exists() and (tmp_path / "aa_00001.mae").exists()
+    assert main([*args, "--frame", "7"]) == 1
+    assert "has 3 frames" in capsys.readouterr().err
+
+
+def test_backmap_lays_nucleotides_on_their_beads():
+    from boonza.sirah import BackmapError, backmap, bead_atoms, sirahize
+
+    dna = boonza.load(DATA / "dna_duplex.pdb")
+    cg = sirahize(dna, atoms="nucleic").system()
+    # every bead, the one the topology calls O3' and the map C1X (on C1') too
+    beads, atoms = bead_atoms(cg, dna)
+    assert sorted(beads.tolist()) == list(range(cg.natoms))
+    np.testing.assert_allclose(np.asarray(cg.positions)[beads], np.asarray(dna.positions)[atoms],
+                               atol=1e-3)  # fmt: skip
+    moved = np.asarray(cg.positions) + [0.0, 9.0, 0.0]
+    out = backmap(cg, dna, moved, minimize=False)
+    np.testing.assert_allclose(
+        out.positions, np.asarray(dna.positions) + [0.0, 9.0, 0.0], atol=1e-6
+    )
+    with pytest.raises(BackmapError, match="no hydrogens"):  # this file has none
+        backmap(cg, dna, moved)
+
+
+def test_backmap_makes_a_wrapped_frame_whole():
+    from boonza.sirah import backmap, sirahize
+
+    aa = boonza.load(DATA / "1CRN_ph7.pdb")
+    cg = sirahize(aa).system()
+    side = 60.0
+    box = np.eye(3) * side
+    # the molecule across a box edge, as a trajectory writes it: cut in two
+    wrapped = (np.asarray(cg.positions) - np.asarray(cg.positions).mean(axis=0)) % side
+    assert np.ptp(wrapped, axis=0).max() > side / 2
+    cut = backmap(cg, aa, wrapped, minimize=False)
+    whole = backmap(cg, aa, wrapped, box=box, minimize=False)
+    ca = aa.select("name CA").ids
+
+    def spread(s):
+        p = np.asarray(s.positions)[ca]
+        return np.linalg.norm(p[:, None] - p[None], axis=2)
+
+    np.testing.assert_allclose(spread(whole), spread(aa), atol=1e-3)
+    assert np.abs(spread(cut) - spread(aa)).max() > side / 3

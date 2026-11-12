@@ -1736,6 +1736,38 @@ def _martini_files(args):
     return itp, lipids
 
 
+def _backmap(args) -> int:
+    from pathlib import Path
+
+    import boonza
+    from boonza.sirah import backmap
+
+    cg = _load(args.cg)
+    reference = _load(args.reference) if args.reference else None
+    frames = args.frame or [-1]
+    if args.coordinates:
+        trajectory = boonza.open_trajectory(args.coordinates, cg)
+        count = len(trajectory)
+        picked = [f + count if f < 0 else f for f in frames]
+        if any(not 0 <= f < count for f in picked):
+            raise ValueError(f"{args.coordinates} has {count} frames (0 to {count - 1}, or "
+                             "negative from the end)")  # fmt: skip
+    else:
+        if args.frame:
+            raise ValueError("--frame picks a frame of a trajectory: give one with -c")
+        trajectory, picked = None, [None]
+    out = Path(args.output)
+    for f in picked:
+        frame = None if f is None else trajectory[f]
+        positions, box = (None, None) if frame is None else (frame.positions, frame.box)
+        where = out if len(picked) == 1 else out.with_name(f"{out.stem}_{f:05d}{out.suffix}")
+        print(f"{args.cg}" + ("" if f is None else f" frame {f}") + f" -> {where}")
+        aa = backmap(cg, reference, positions, box=box, minimize=not args.no_minimize,
+                     restraint=args.restraint, log=lambda *a: print(" ", *a))  # fmt: skip
+        boonza.save(aa, str(where))
+    return 0
+
+
 def _martinize(args) -> int:
     import boonza
 
@@ -2091,6 +2123,29 @@ def _parser() -> argparse.ArgumentParser:
                    help="draw every molecule with the core the same way up")  # fmt: skip
     q.add_argument("--no-labels", action="store_true", help="no names under the molecules")
     q.set_defaults(run=_draw)
+
+    q = sub.add_parser("backmap", help="SIRAH beads back to an all-atom structure")
+    q.add_argument("cg", help="the coarse-grained system (a run's sirah/cg.dms)")
+    q.add_argument("output", help="all-atom structure to write (.mae, .dms, .pdb); with "
+                   "several frames, one file a frame: NAME_00010.mae")  # fmt: skip
+    q.add_argument("-c", "--coordinates", help="the run's trajectory, to take frames from "
+                   "(default: the positions in the coarse-grained file)")  # fmt: skip
+    q.add_argument("--frame", type=int, action="append", metavar="N",
+                   help="frame to turn back, from 0; negative from the end; repeat for "
+                   "several (default: the last)")  # fmt: skip
+    q.add_argument("-r", "--reference", help="the all-atom structure the run was built from: "
+                   "its residues are laid on the beads, so names, protonation states, ligands "
+                   "and caps are its own. Without it amino acids are built from the bead "
+                   "names (proteins only, default protonation states)")  # fmt: skip
+    q.add_argument(
+        "--no-minimize",
+        action="store_true",
+        help="only lay the residues on their beads as rigid bodies",
+    )
+    q.add_argument("--restraint", type=float, default=50.0, metavar="K",
+                   help="springs holding the mapped atoms to their beads while minimizing, "
+                   "kcal/mol/A^2 (default 50)")  # fmt: skip
+    q.set_defaults(run=_backmap)
 
     q = sub.add_parser("martinize", help="Martini beads and topology for proteins, as martinize2")
     q.add_argument("input", help="all-atom structure (hydrogens, if present, set protonation)")

@@ -41,7 +41,7 @@ SECTIONS = [
                  "martini.bilayer", "martini.lipid_templates", "martini.equilibrate",
                  "probe_contacts", "ProbeMap"]),
     ("SIRAH", ["sirah.sirahize", "sirah.Sirahized", "sirah.solvate", "sirah.map_structure",
-               "sirah.unpack"]),
+               "sirah.unpack", "sirah.backmap", "sirah.from_beads", "sirah.bead_atoms"]),
     ("Pockets", ["pockets.write_fpocket_pdb", "pockets.bead_elements", "pockets.bead_types",
                  "pockets.martini_polar", "pockets.sirah_polar", "pockets.coarse_grain",
                  "pockets.protein_ids", "pockets.find_fpocket", "pockets.preset",
