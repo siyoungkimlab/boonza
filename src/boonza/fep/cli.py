@@ -7,11 +7,12 @@
 prep takes boonza md's settings (force fields, salt, padding, cutoff,
 temperature, the secondary-structure dihedral restraints, ...) and its own:
 the ligands, repeats and lambda windows.  Its defaults are openfe's where they
-differ from md's: 1 ns equilibration, 5 ns production, hydrogen mass
-repartitioning with a 4 fs step.  An edge that changes the net charge turns a
-water far from the solute into Na+ or Cl- alongside, and runs openfe's longer
-protocol (22 windows, 20 ns); the network takes one only to join ligands of
-different charge.  Without a receptor, each edge is a relative hydration free
+differ from md's, except for the lengths: hydrogen mass repartitioning with a
+4 fs step, and 0.1 ns equilibration and 0.5 ns production for every edge,
+openfe's being 1 and 5.  An edge that changes the net charge turns a water far
+from the solute into Na+ or Cl- alongside and runs openfe's 22 windows, but
+for the same length as any other edge; the network takes one only to join
+ligands of different charge.  Without a receptor, each edge is a relative hydration free
 energy (a leg in water, one in vacuum), and the charge cannot change; with
 --phase octanol or wet-octanol, a relative transfer free energy from water to
 1-octanol (a leg in water, one in an octanol box built once in the work
@@ -34,8 +35,11 @@ from __future__ import annotations
 import argparse
 import sys
 
-#: openfe's defaults, where boonza md's differ
-FEP_DEFAULTS = {"equilibration_ns": 1.0, "production_ns": 5.0, "hmr": True,
+#: what a leg runs for, and openfe's defaults where boonza md's differ.  The lengths
+#: are short on purpose, the same for every edge: openfe's own are 1 and 5 ns, and a
+#: charge change ran 20, which is hours of GPU per window before anything is known.
+#: Lengthen them per run with --equilibration-ns and --production-ns
+FEP_DEFAULTS = {"equilibration_ns": 0.1, "production_ns": 0.5, "hmr": True,
                 "integration_fs": 4.0, "workdir": "boonza_fep"}  # fmt: skip
 
 
@@ -88,7 +92,8 @@ def _prep(argv) -> int:
                         "free of --max-degree, so the network grows out from it")  # fmt: skip
     g.add_argument("--charge-production-ns", dest="charge_production_ns", type=float,
                    help="production of an edge that changes the net charge, per window "
-                        "(default: 20)")  # fmt: skip
+                        "(default: --production-ns, as for any other edge; openfe runs "
+                        "20)")  # fmt: skip
     g.add_argument("--phase", choices=PHASES,
                    help="without a receptor, the leg set against the water leg: vacuum (a "
                         "hydration free energy), or 1-octanol, dry or water-saturated as a "

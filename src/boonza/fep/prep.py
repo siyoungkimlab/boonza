@@ -68,9 +68,11 @@ ALCHEMICAL_WATER_NM = 0.8
 #: a change of net charge scores this times LOMAP's score, so a network takes
 #: one only to join ligands of different charge
 CHARGE_CHANGE_PENALTY = 0.1
-#: and runs openfe's longer protocol (its industry benchmark's settings)
+#: and runs openfe's denser lambda schedule (its industry benchmark's settings).
+#: Its length is not openfe's 20 ns: an edge runs for --production-ns whether the
+#: charge changes or not, and --charge-production-ns lengthens this one alone
 CHARGE_WINDOWS = 22
-CHARGE_PRODUCTION_NS = 20.0
+CHARGE_PRODUCTION_NS = None
 #: an edge where either ligand has at least this many heavy atoms of its own (not
 #: mapped to the other's) runs boonza.fep.lambdas.dense(); 0 never.  Only the
 #: largest: with MBAR fixed, 11 windows ran IGF1R's Cmpd1~Cmpd8 (a benzyl ring, 6)
@@ -194,6 +196,8 @@ def same_settings(before: Previous, args, repeats, windows, iteration_ps, phase,
                   charge_windows, charge_production_ns,
                   large_change_atoms: int = LARGE_CHANGE_ATOMS) -> None:  # fmt: skip
     """Raise unless the new edges would be built as the first prep's were."""
+    if charge_production_ns is None:
+        charge_production_ns = args.production_ns
     differ = []
     for meta in before.metas:
         charged = bool(meta.get("charge_change"))
@@ -583,14 +587,15 @@ def write_leg(directory: Path, hyb, old: System, meta: dict, positions_b=None) -
 
 def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: float = 2.5,
          cofactors=(), log=print, charge_windows: int = CHARGE_WINDOWS,
-         charge_production_ns: float = CHARGE_PRODUCTION_NS, phase: str = "vacuum",
+         charge_production_ns: float | None = CHARGE_PRODUCTION_NS, phase: str = "vacuum",
          octanol_box=None, extend: bool = False,
          large_change_atoms: int = LARGE_CHANGE_ATOMS, network_method: str | None = None,
          max_change: int | None = None, max_degree: int | None = None,
          reference: str | None = None, complexes=None) -> list[Path]:  # fmt: skip
     """Build every leg of every edge in ``args.workdir``; the run directories.
     An edge that changes the net charge (only with a receptor) gets
-    ``charge_windows`` windows and ``charge_production_ns`` of production; one
+    ``charge_windows`` windows and ``charge_production_ns`` of production (None: as
+    long as any other edge, ``args.production_ns``); one
     where either ligand has ``large_change_atoms`` or more atoms of its own, the
     dense schedule (boonza.fep.lambdas.dense; 0 never).  ``network_method``,
     ``max_change``, ``max_degree`` and ``reference`` (a ligand's name) choose the
@@ -632,6 +637,8 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             + ", ".join(names[k] for k in new))  # fmt: skip
         same_settings(before, args, repeats, windows, iteration_ps, phase, charge_windows,
                       charge_production_ns, large_change_atoms)  # fmt: skip
+    if charge_production_ns is None:  # as long as any other edge
+        charge_production_ns = args.production_ns
     if phase not in PHASES:
         raise ValueError(f"--phase is one of {', '.join(PHASES)}, not {phase!r}")
     if phase != "vacuum" and args.input_structure:
