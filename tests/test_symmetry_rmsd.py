@@ -349,9 +349,11 @@ def test_drmsd_matches_mdanalysis_script_and_brute_force(tmp_path):
     boonza.save(s, tmp_path / "top.pdb")  # one model, although the ligand is a second ct
 
     u = mda.Universe(str(tmp_path / "top.pdb"), str(path))
-    expected, pocket_ids = _user_drmsd(u)
+    # the cutoff is said on both sides: what this pins is that boonza agrees with the
+    # script, at the script's own 5 A, whatever boonza defaults to
+    expected, pocket_ids = _user_drmsd(u, cutoff=5.0)
     traj = boonza.open_trajectory(path, s)
-    r = drmsd(s, ligand="resname LIG", positions=traj)
+    r = drmsd(s, ligand="resname LIG", cutoff=5.0, positions=traj)
     np.testing.assert_array_equal(np.sort(r.pocket), np.sort(pocket_ids))
     assert len(r.pocket) >= 5
     np.testing.assert_allclose(r.plain_drmsd, expected, atol=2e-4)  # float32 in MDAnalysis
