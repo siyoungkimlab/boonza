@@ -1096,6 +1096,50 @@ def test_mutations_and_caps_stay_ff19sb():
         cap(p, 0, "C")
 
 
+def test_a_cap_needs_room_not_a_particular_atom():
+    """A terminus written without OXT, or without hydrogens, caps like any other: what
+    the cap replaces is grown where the cap belongs.  It was refused before."""
+    from boonza.viewer.edit import _residue_atom, cap, neighbors
+
+    p = _peptide()
+    last = p.nresidues - 1
+    oxt = _residue_atom(p, last, "OXT")
+    p.delete_atoms([oxt] + [b for b, _ in neighbors(p, oxt) if p.atoms["anum"][b] == 1])
+    r = cap(p, 0, "C")
+    assert str(p.residues["name"][r]) == "NME"
+    c = _residue_atom(p, p.nresidues - 2, "C")
+    assert any(str(p.atoms["name"][b]) == "N" and int(p.atoms["residue"][b]) == r
+               for b, _ in neighbors(p, c))  # fmt: skip
+    with pytest.raises(ValueError, match="capped"):
+        cap(p, 0, "C")
+
+    bare = _peptide()
+    bare.delete_atoms(np.flatnonzero(np.asarray(bare.atoms["anum"]) == 1).tolist())
+    r = cap(bare, 0, "N")
+    assert str(bare.residues["name"][r]) == "ACE"
+    n = _residue_atom(bare, 1, "N")  # ACE first: the old first residue is 1 now
+    assert any(int(bare.atoms["residue"][b]) == r for b, _ in neighbors(bare, n))
+
+
+def test_capping_through_the_session_shows_the_caps_and_skips_what_has_no_terminus():
+    """Nothing picked caps every chain, and the water alongside the peptide is no
+    reason to fail: the caps come back as atoms for the page to draw (a cartoon draws
+    none of a cap), with a note saying what was capped."""
+    p = _peptide()
+    water = boonza.load(DATA / "gmx_amber" / "conf.gro").select("water").clone()
+    both = p.copy()
+    both.append(water)
+    session = viewer.Session(both, whole=False)
+    out = session.edit("cap", [], "N")  # every chain: the peptide's end, not the water
+    s = session.system
+    names = {str(s.residues["name"][int(s.atoms["residue"][a])]) for a in out["made"]}
+    assert names == {"ACE"} and "ACE" in out["note"]
+    out = session.edit("cap", [], "both")  # that end is capped now; the other still caps
+    assert "NME" in out["note"] and "not " in out["note"]
+    with pytest.raises(ValueError, match="capped"):
+        session.edit("cap", [], "both")
+
+
 def test_two_residues_become_a_sulfono_gamma_aa_unit():
     """ALA-LEU-PHE-ALA: LEU and PHE become one SGA unit.  LEU's side chain stays
     where it was on the chiral carbon, PHE's rides the sulfonyl, the chain and the

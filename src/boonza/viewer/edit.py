@@ -2570,23 +2570,45 @@ def convert_sulfono_run(s, residues, r2: str = "inherit",
     return sorted(made), "; ".join(notes)
 
 
-def cap(s, chain: int, end: str) -> None:
+def cap(s, chain: int, end: str) -> int:
     """ACE on a chain's first residue (``end="N"``) or NME on its last (``"C"``): a
-    trans peptide bond, Amber's atom names, the terminus' charge gone."""
+    trans peptide bond, Amber's atom names, the terminus' charge gone.  Returns the
+    cap's residue.
+
+    What a terminus needs is room for the cap, not any particular atom: the hydrogen
+    ACE takes the place of, or the OXT NME does, is grown where it belongs where the
+    structure has none -- an entry without hydrogens, a chain whose acid was never
+    there -- so the cap comes out the same whichever way the terminus was written."""
+    if end not in ("N", "C"):
+        raise ValueError('end is "N" or "C"')
     res = [r for r in range(s.nresidues) if int(s.residues["chain"][r]) == chain
            and _residue_atom(s, r, "CA") >= 0]  # fmt: skip
     if not res:
         raise ValueError("no amino acids in that chain")
+    r = res[0] if end == "N" else res[-1]
+    backbone = "N" if end == "N" else "C"
+    anchor = _residue_atom(s, r, backbone)
+    if anchor < 0:
+        raise ValueError(f"the {end} terminus has no backbone {backbone}")
+    on = [b for b, _ in neighbors(s, anchor)
+          if int(s.atoms["residue"][b]) != r and int(s.atoms["anum"][b]) > 1]  # fmt: skip
+    if on:
+        other = str(s.residues["name"][int(s.atoms["residue"][on[0]])])
+        raise ValueError(f"the {end} terminus is bonded to {other} already: capped, or the "
+                         "chain carries on there")  # fmt: skip
+    # what the cap replaces: a hydrogen of the amine, or the acid's second oxygen
+    leaving = (next((b for b, _ in neighbors(s, anchor) if int(s.atoms["anum"][b]) == 1), -1)
+               if end == "N" else _residue_atom(s, r, "OXT"))  # fmt: skip
+    if leaving < 0:
+        if not hydrogens_wanted(s, anchor):
+            raise ValueError(f"the {end} terminus has no room for a cap (capped already?)")
+        add_hydrogens(s, anchor, 1)  # where the cap belongs, for it to take the place of
+        leaving = s.natoms - 1
+    name = "ACE" if end == "N" else "NME"
+    resid = int(s.residues["resid"][r]) + (-1 if end == "N" else 1)
+    new_res = _new_residue(s, chain, name, resid)
     if end == "N":
-        r = res[0]
-        n, ca = _residue_atom(s, r, "N"), _residue_atom(s, r, "CA")
-        hs = [b for b, _ in neighbors(s, n) if s.atoms["anum"][b] == 1]
-        if not hs or any(
-            str(s.residues["name"][s.atoms["residue"][b]]) == "ACE" for b, _ in neighbors(s, n)
-        ):
-            raise ValueError("the N terminus is capped already, or has no hydrogen to replace")
-        new_res = _new_residue(s, chain, "ACE", int(s.residues["resid"][r]) - 1, before=r)
-        new = attach(s, n, hs[0], "C(C)=O", length=1.33, residue=new_res)
+        new = attach(s, anchor, leaving, "C(C)=O", length=1.33, residue=new_res)
         _rename(s, new, {6: ["C", "CH3"], 8: ["O"], 1: ["HH31", "HH32", "HH33"]})
         n = _find(s, r, "N")
         q = np.asarray(s.atoms["formal_charge"]).copy()
@@ -2599,13 +2621,7 @@ def cap(s, chain: int, end: str) -> None:
         _name_amide_h(s, r)
         _place(s, new_res, r, after=False)
     else:
-        r = res[-1]
-        c = _residue_atom(s, r, "C")
-        oxt = _residue_atom(s, r, "OXT")
-        if oxt < 0:
-            raise ValueError("the C terminus has no OXT to replace (capped already?)")
-        new_res = _new_residue(s, chain, "NME", int(s.residues["resid"][r]) + 1, before=None)
-        new = attach(s, c, oxt, "NC", length=1.33, residue=new_res)
+        new = attach(s, anchor, leaving, "NC", length=1.33, residue=new_res)
         _rename(s, new, {7: ["N"], 6: ["CH3"], 1: ["H", "HH31", "HH32", "HH33"]})
         c, o = _find(s, r, "C"), _find(s, r, "O")
         q = np.asarray(s.atoms["formal_charge"]).copy()
@@ -2617,6 +2633,8 @@ def cap(s, chain: int, end: str) -> None:
         ca, ch3 = _find(s, r, "CA"), _find(s, new_res, "CH3")
         set_dihedral(s, ca, c, nn, ch3, 180.0)
         _place(s, new_res, r, after=True)
+    # placing it renumbered the residues: the cap is the one of that name and number
+    return int(s.atoms["residue"][_residue_atom_any(s, name, resid, chain)])
 
 
 def extend(s, chain: int, end: str, new: str) -> int:

@@ -3263,7 +3263,10 @@ export function setupUI(app) {
     const sel = app.selection();
     const m = sel[0]?.[0] || app.currentModel();
     const out = await busyEdit(m, "capping", { op: "cap", atoms: sel[0]?.[1] || [], value: end });
-    if (out) app.message(end === "both" ? "capped with ACE and NME" : `capped with ${end === "N" ? "ACE" : "NME"}`);
+    if (!out) return;
+    // a cap is a residue of its own: a cartoon draws none of it, so show it
+    if (out.made?.length) { app.select(m, out.made); reveal(m, out.made); }
+    app.message(out.note || (end === "both" ? "capped with ACE and NME" : `capped with ${end === "N" ? "ACE" : "NME"}`));
   }
   async function busyEdit(m, what, body) {
     try {

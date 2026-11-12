@@ -812,9 +812,30 @@ class Session:
                     chains = sorted(
                         {int(s.residues["chain"][s.atoms["residue"][a]]) for a in atoms}
                     )
+                    # every chain, where nothing is picked: water, ions and ligands have
+                    # no terminus to cap and are no reason to fail: what can be capped is
+                    cname = lambda c: str(s.chains["name"][c]).strip() or "?"  # noqa: E731
+                    capped, why = [], []
                     for c in chains:
                         for end in {"N": "N", "C": "C", "both": "NC"}[str(value)]:
-                            edit.cap(s, c, end)
+                            try:
+                                r = edit.cap(s, c, end)
+                            except ValueError as e:
+                                if "no amino acids" not in str(e):
+                                    why.append(f"chain {cname(c)} {end}: {e}")
+                                continue
+                            # a later cap reorders the residues: keep what names this one
+                            capped.append((c, str(s.residues["name"][r]),
+                                           int(s.residues["resid"][r])))  # fmt: skip
+                    if not capped:
+                        raise ValueError("; ".join(why) or "no amino acid chain to cap")
+                    where = {(int(s.residues["chain"][r]), str(s.residues["name"][r]),
+                              int(s.residues["resid"][r])): r
+                             for r in range(s.nresidues)}  # fmt: skip
+                    made = [a for t in capped for a in s.residue_atoms(where[t])]
+                    note = ", ".join(f"{n} on chain {cname(c)}" for c, n, _ in capped)
+                    if why:
+                        note += "; not " + "; ".join(why)
                     hydrogens = False
                 elif op == "extend":  # an amino acid more at a chain's N or C terminus
                     chains = sorted(
