@@ -183,3 +183,48 @@ def test_distance_restraints_hold_the_complex_leg():
     ]  # fmt: skip
     with pytest.raises(ValueError, match="one ligand has and the other does not"):
         prep._finish(hybrid.build(sa, sb, xa, xb, core, env), a, args, True, log=lambda *_: None)
+
+
+def test_position_restraints_hold_the_complex_leg():
+    """boonza md's position restraints, on a free energy run's complex leg: the
+    held atoms sit at their own starting positions, so the springs add nothing
+    to the energy the hybrid starts from, and an atom only one ligand has is
+    refused, as a distance restraint on it is."""
+    import types
+
+    import openmm as mm
+
+    from boonza.fep import prep
+
+    a, sa, xa = _system("GAG")
+    b, sb, xb = _system("GSG")
+    core, env = _mapping(a, b)
+    args = types.SimpleNamespace(
+        pressure=1.0, temperature=300.0, dihedral_restraint="none",
+        position_restraints=["resid 1 and noh", "resid 3 and name CA"],
+        position_restraint_kJ=1000.0,
+    )  # fmt: skip
+    h = hybrid.build(sa, sb, xa, xb, core, env)
+    said = []
+    prep._finish(h, a, args, True, log=said.append)
+    (held,) = [f for f in h.system.getForces() if f.getName() == "PositionRestraints"]
+    want = [*a.select("resid 1 and noh").ids.tolist(),
+            *a.select("resid 3 and name CA").ids.tolist()]  # fmt: skip
+    assert [held.getParticleParameters(k)[0] for k in range(held.getNumParticles())] == want
+    i, (k, *x0) = held.getParticleParameters(0)
+    assert k == 1000.0 and np.allclose(x0, np.asarray(a.positions[i]) / 10.0)
+    assert any(f"position restraints: {len(want)} atoms" in x for x in said)
+    assert isinstance(held, mm.CustomExternalForce)
+
+    # the solvent leg holds nothing
+    solv = hybrid.build(sa, sb, xa, xb, core, env)
+    prep._finish(solv, a, args, False, log=lambda *_: None)
+    assert "PositionRestraints" not in [f.getName() for f in solv.system.getForces()]
+
+    # and an atom only one ligand has is refused
+    odd = sorted(h.unique_old)[0]
+    args.position_restraints = [
+        f"resid {int(a.atoms['residue'][odd]) + 1} and name {a.atoms['name'][odd]}"
+    ]
+    with pytest.raises(ValueError, match="one ligand has and the other does not"):
+        prep._finish(hybrid.build(sa, sb, xa, xb, core, env), a, args, True, log=lambda *_: None)

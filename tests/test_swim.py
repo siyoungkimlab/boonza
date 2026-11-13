@@ -179,7 +179,8 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     args = parse_arguments([str(protein), "--workdir", str(work), *SHORT,
                             "--dihedral-restraint", "bb", "--rem",
                             "--distance-restraint", "chain A and resname ACE and name O",
-                            "chain A and resname NME and name N"])  # fmt: skip
+                            "chain A and resname NME and name N",
+                            "--position-restraint", "chain A and name CA"])  # fmt: skip
     sims = swim.prepare(args, peptides, types=2, copies=2, log=quiet, repel=True)
     assert [d.name for d in sims] == ["sim_000", "sim_001"]
     rows = list(csv.DictReader((work / "assignment.csv").open()))
@@ -204,6 +205,10 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     assert settings.distance_restraints == [["chain A and resname ACE and name O",
                                              "chain A and resname NME and name N"]]  # fmt: skip
     assert any(line.startswith("Distance restraints: 1 springs") for line in said)
+    # and so are the position restraints: the protein's CA held, the ligands free
+    assert settings.position_restraints == ["chain A and name CA"]
+    held = list(csv.DictReader((sims[0] / "md" / "position_restraints.csv").open()))
+    assert len(held) == 1 and held[0]["label"].startswith("A:") and held[0]["label"].endswith(":CA")
     state = sims[0] / "md" / "state.csv"
     assert len(state.read_text().splitlines()) == 3
     assert "LigandRepulsion" in (sims[0] / "md" / "system.xml").read_text()

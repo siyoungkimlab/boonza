@@ -50,6 +50,7 @@ class RunPaths:
             "dihedral_restraints_csv": "dihedral_restraints.csv",
             "dihedral_restraints_png": "dihedral_restraints.png",
             "distance_restraints_csv": "distance_restraints.csv",
+            "position_restraints_csv": "position_restraints.csv",
             "performance_csv": "performance.csv",
             "monitor_csv": "monitor.csv",
             "status_json": "status.json",
@@ -331,6 +332,18 @@ def _new_run(args, paths: RunPaths, src: Path, log):
         log(f"Distance restraints: {len(records)} springs over "
             f"{len(args.distance_restraints)} set(s), {held}, "
             f"k = {args.distance_restraint_kJ:g} kJ/mol/nm^2")  # fmt: skip
+    if getattr(args, "position_restraints", None):
+        from .restraints import add_position_restraints, write_records
+
+        scaling = getattr(args, "position_restraint_scaling", "com")
+        records = add_position_restraints(system, s, args.position_restraints,
+                                          args.position_restraint_kJ, scaling)  # fmt: skip
+        write_records(paths.position_restraints_csv, records)
+        anchors = ("anchors following the box" if scaling == "com"
+                   else "anchors fixed whatever the box does")  # fmt: skip
+        log(f"Position restraints: {len(records)} atoms over "
+            f"{len(args.position_restraints)} set(s), each held where it starts, "
+            f"k = {args.position_restraint_kJ:g} kJ/mol/nm^2, {anchors}")  # fmt: skip
     integrator = mm.LangevinMiddleIntegrator(
         args.temperature * unit.kelvin, 1 / unit.picosecond, args.integration_fs * unit.femtoseconds
     )

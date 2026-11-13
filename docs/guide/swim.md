@@ -24,7 +24,10 @@ protein's helices and sheets but sets
 free, and `--repulsion` keeps the ligand copies apart (see below).
 `--dihedral-restraint-reference crystal.pdb` holds the protein at that
 structure's angles and secondary structure instead of the input's, as in
-`boonza md`.
+`boonza md`. `--position-restraint` is carried to every run as written, with
+nothing left out for you: `'chain A and name CA'` holds the protein and lets
+the ligands swim, `'name CA'` would hold peptide ligands too (in a
+coarse-grained swim, `'name BB and not chain LIG'`).
 
 `--ligands` takes a file of your own (SDF or DMS), or the name of a probe
 library boonza builds (`SingleAminoAcid18`, `Dipeptide105`, `Dipeptide196`).

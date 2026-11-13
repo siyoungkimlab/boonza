@@ -34,6 +34,10 @@ GO_SETTINGS = ("structure_bias", "go_map", "go_eps", "go_low", "go_up", "go_res_
 #: Pressure coupling: one scale factor for the box, x and y together with z
 #: free (a planar membrane), or constant volume.
 BAROSTATS = ("isotropic", "membrane", "none")
+#: What a position restraint's anchors do when the box changes: follow it, each
+#: molecule's centre scaled with the box (GROMACS's refcoord_scaling = com), or
+#: stay at fixed coordinates (its refcoord_scaling = no).
+POSITION_RESTRAINT_SCALINGS = ("com", "none")
 #: What to do about water: pad the solute and make a box, fill the empty space
 #: of the input's own cell (a system built elsewhere, a membrane), build a
 #: lipid bilayer around the solute (Martini only), or nothing.
@@ -227,6 +231,9 @@ DEFAULTS: dict = {
     "distance_restraint_reference": None,
     "distance_restraint_kJ": 1000.0,
     "distance_restraint_nm": None,
+    "position_restraints": None,
+    "position_restraint_kJ": 1000.0,
+    "position_restraint_scaling": "com",
     "seed": 0,
     "precision": "mixed",
     "platform": None,
@@ -298,6 +305,7 @@ _NUMBERS = {
     "repulsion_kJ",
     "distance_restraint_kJ",
     "distance_restraint_nm",
+    "position_restraint_kJ",
     "area_per_lipid",
     "water_nm",
     "shift_nm",
@@ -319,6 +327,7 @@ _CHOICES = {
     "precision": PRECISIONS,
     "platform": PLATFORMS,
     "barostat": BAROSTATS,
+    "position_restraint_scaling": POSITION_RESTRAINT_SCALINGS,
     "solvate": SOLVATE_MODES,
     "lj_switch": LJ_SWITCHES,
 }
@@ -463,6 +472,11 @@ def check_settings(values: dict, where: str) -> dict:
             )
             if ok:
                 out[key] = [list(p) for p in v]
+        elif key == "position_restraints":
+            # one selection per set of held atoms, as --position-restraint gives them
+            ok = isinstance(v, list | tuple) and all(isinstance(x, str) and x.strip() for x in v)
+            if ok:
+                out[key] = list(v)
         elif key == "parents":
             ok = isinstance(v, dict) and all(isinstance(p, str) and p for p in v.values())
         else:
@@ -889,6 +903,34 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
          "the length every spring holds, r0 (nm), e.g. 0.28 for a hydrogen bond "
          "(default: each pair's own distance in the built system)"),
     ])  # fmt: skip
+    hold.add_argument(
+        "--position-restraint",
+        dest="position_restraints",
+        action="append",
+        metavar="SELECTION",
+        help="hold every atom SELECTION picks where it starts, each on a harmonic spring "
+        "to its own position in the built system (solvated.dms, before minimization), "
+        "e.g. 'protein and name CA' or 'backbone', or 'name BB' for Martini beads.  Give "
+        "it again for another set.  The selections are made on the built system, so "
+        "name atoms by chain, resid and name rather than by index.  The springs last "
+        "the whole run, equilibration and production alike.  Every held atom is listed "
+        "in position_restraints.csv (default: none, nothing is held)",
+    )
+    hold.add_argument(
+        "--position-restraint-scaling",
+        dest="position_restraint_scaling",
+        choices=POSITION_RESTRAINT_SCALINGS,
+        help="what the anchors of --position-restraint do when a barostat changes the "
+        "box: com (default) moves them as the barostat moves each molecule, its centre "
+        "scaled with the box and its shape kept, so the springs do not weigh on the "
+        "pressure (GROMACS's refcoord_scaling = com); none leaves them at fixed "
+        "coordinates, so held atoms resist every volume move (refcoord_scaling = no).  "
+        "Without a barostat the two are the same; on its own it does nothing",
+    )
+    numbers(hold, [
+        ("--position-restraint-kJ", "position_restraint_kJ",
+         "how stiff each of those springs is (kJ/mol/nm^2), E = k/2 |r - r0|^2"),
+    ])  # fmt: skip
 
     stop = p.add_argument_group("stopping when a binder leaves")
     stop.add_argument(
@@ -1030,6 +1072,7 @@ def finish(args) -> None:
         "repulsion_kJ",
         "distance_restraint_kJ",
         "distance_restraint_nm",
+        "position_restraint_kJ",
     ]:
         v = getattr(args, key)
         if v is not None and (not math.isfinite(v) or v <= 0):
@@ -1315,7 +1358,8 @@ def restore_settings(args, path) -> None:
         args.model = saved["model"]
     # the springs are forces of system.xml too: a resumed run keeps the ones it has
     for key in ("distance_restraints", "distance_restraint_kJ", "distance_restraint_nm",
-                "distance_restraint_reference"):  # fmt: skip
+                "distance_restraint_reference", "position_restraints",
+                "position_restraint_kJ", "position_restraint_scaling"):  # fmt: skip
         if key in args.specified and getattr(args, key) != saved.get(key, DEFAULTS[key]):
             raise ValueError(f"cannot change {key} when resuming: system.xml fixes the "
                              "springs the run was built with")  # fmt: skip
@@ -1429,6 +1473,14 @@ repulsion_kJ = 500.0
 #                         "protein and noh and within 3.5 of (resname HOH and resid 301)"]]
 distance_restraint_kJ = 1000.0
 # distance_restraint_nm = 0.28
+
+# Hold atoms where they start, E = k/2 |r - r0|^2, each on a spring to its own
+# position in the built system; one selection per set, for the whole run.
+# position_restraints = ["protein and name CA"]
+position_restraint_kJ = 1000.0
+# When a barostat changes the box, the anchors follow it ("com": a molecule's
+# centre scales with the box, its shape does not) or stay where they are ("none").
+position_restraint_scaling = "com"
 
 # GPU precision: mixed, single or double. Left out, a platform that cannot
 # honour mixed falls back to its own; set, it is an error.

@@ -178,6 +178,8 @@ ligands included.
 | `dihedral_restraint`, `dihedral_restraint_kJ` | `none`, 20 | hold phi/psi at the input (`bb`: all, `ss`: helices and sheets); in Martini, the BB-BB-BB-BB torsions |
 | `dihedral_restraint_selection` | every peptide chain | with `dihedral_restraint`, hold only the torsions whose atoms this selects, e.g. `chain A` (`boonza swim` leaves out its ligands); it does nothing on its own |
 | `dihedral_restraint_reference` | none, the input itself | with `dihedral_restraint`, hold phi/psi at their values in this structure of the same protein (a crystal structure, say) rather than the input's, and under `ss` pick the residues from its helices and sheets, so a backmapped or predicted model is held to the structure it came from and not to its own backbone. Residues pair by chain, number and name (by number and name alone when the two share no chain name); one the reference lacks is left free. `dihedral_restraints.csv` lists the input's angle beside each target. It does nothing on its own |
+| `position_restraints`, `position_restraint_kJ` | none, 1000 | hold every atom a selection picks where it starts, on a harmonic spring (kJ/mol/nm²) to its own position in the built system; a list, one selection per set (`--position-restraint` given again); for the whole run. See [Position restraints](#position-restraints) |
+| `position_restraint_scaling` | `com` | what those anchors do when a barostat changes the box: `com` moves them with it (each molecule's centre scaled with the box, its shape kept), `none` leaves them at fixed coordinates; GROMACS's `refcoord_scaling = com` and `no` |
 | `seed`, `precision`, `platform` | 0, mixed, fastest | `seed` goes to the initial velocities, the integrator and the barostat; 0 means choose one |
 | `elastic_network_selection` | `name GC` in a SIRAH run, `name GC and not chain LIG` in a SIRAH swim, none otherwise | hold a fold with springs between the beads this selects, for a model whose topology has no rubber bands: E = k (r - r0)^2 at the starting distance r0, between pairs within `elastic_network_nm` that are more than `elastic_network_res_min_dist` residues apart. The springs are forces, no part of the topology, so a held pair keeps every nonbonded interaction it had. `--no-elastic` leaves them out; a run started from a settings file does only what the file says, so an `md.toml` written without this keeps running without it |
 | `elastic_network_res_min_dist` | 2 | how many residues apart a pair must be before a spring holds it; the bonded terms already hold anything nearer |
@@ -596,6 +598,52 @@ network, or for the loops that Martini leaves free. A SIRAH run takes no
 dihedral restraints at all: its backbone is three beads a residue, held by
 torsion terms of the force field's own.
 
+## Position restraints
+
+`position_restraints = ["protein and name CA"]` (`--position-restraint
+'protein and name CA'`, given again for another set) holds every atom a
+selection picks where it starts: E = k/2 |r - r0|², with r0 the atom's own
+position in the built system (`solvated.dms`, before minimization) and k
+`position_restraint_kJ`, 1000 kJ/mol/nm² unless set. The selections are made
+on the built system, so name atoms by chain, resid and name rather than by
+index; in a coarse-grained run they pick beads (`name BB`, `name GC`). An atom
+two selections name is held once, and a virtual site is left to its parents.
+
+The springs last the whole run, equilibration and production alike -- there is
+no release after equilibration. They are a force in `system.xml`, so a restart
+keeps them and refuses a change to them, and `position_restraints.csv` lists
+every held atom with its anchor. Displacements are minimum-image, so an atom
+carried across the cell is not pulled back through it.
+
+`position_restraint_scaling` says what the anchors do when the box changes.
+With `"com"`, the default, they follow it, as GROMACS's `refcoord_scaling = com`
+has them. A
+barostat changes the volume by moving every molecule as a body, its centre
+scaled with the box; each anchor is carried the same way -- the centre of its
+atom's molecule scales with the box, and its offset from that centre does not.
+A volume move therefore costs the springs nothing, so they neither resist the
+pressure coupling nor are strained by it, and the held shape is the input's
+whatever the box does. `position_restraints.csv` gives each anchor as it is at
+the start. A membrane run's x-y and z scale each on their own; a triclinic cell
+scales by one factor. The force reads the box at every step, which holds while
+each box length stays between 0.71 and 1.41 times its starting value.
+
+With `"none"` (`refcoord_scaling = no`) the anchors are fixed coordinates. A
+volume move then shifts every held molecule off its anchors by its centre's
+displacement, the springs' energy counts against the move, and many held atoms
+far from the origin damp the box's fluctuations: in a test with a peptide held
+at 1000 kJ/mol/nm² the box moved a tenth as far as with `"com"`. It is the
+choice when the coordinates themselves are the point -- an anchor that must
+stay where another program put it -- or for a run without a barostat, where
+the two are the same.
+
+`boonza swim` carries the setting to each of its runs unchanged, so write the
+selection for the protein (`chain A and name CA`, `name BB and not chain LIG`)
+unless the ligands or probes are meant to be held too. `boonza fep prep` puts
+the springs on the complex leg only, and refuses a selection that picks an atom
+one ligand has and the other does not, since a spring there would be counted
+in the free energy.
+
 ## Stopping when a binder leaves
 
 With `early_stop`, a target is watched every `monitor_interval_ns`. It is the
@@ -671,6 +719,7 @@ it is seeded.
 | `performance.csv` | where the wall time went |
 | `view.dms`, `view.mae` | a Martini run: the system without its elastic network, which a viewer would otherwise draw as a hairball; same atoms, same names, same order, so the trajectory lines up with it. Its cts say so, and `boonza md` refuses to run it. A SIRAH run writes none -- it has no network to leave out |
 | `dihedral_restraints.csv`, `.png` | with backbone restraints |
+| `position_restraints.csv` | with position restraints: every held atom and its anchor |
 
 A snapshot goes out in three formats because they are not equivalent. The
 `.dms` keeps every atom where it sits and every decimal, so it is the one to
