@@ -871,8 +871,7 @@ class Session:
                         mine = [a for a in s.residue_atoms(r) if anum[a] > 1]
                         joined = {int(res_of[y]) for a in mine
                                   for y, _ in edit.neighbors(s, a)}  # fmt: skip
-                        others = np.flatnonzero((anum > 1)
-                                                & ~np.isin(res_of, list(joined | {r})))
+                        others = np.flatnonzero((anum > 1) & ~np.isin(res_of, list(joined | {r})))
                         if not len(others) or not mine:
                             continue
                         d = np.linalg.norm(x[mine][:, None, :] - x[others][None, :, :], axis=2)
