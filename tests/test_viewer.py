@@ -1140,6 +1140,41 @@ def test_capping_through_the_session_shows_the_caps_and_skips_what_has_no_termin
         session.edit("cap", [], "both")
 
 
+def test_a_cap_stands_where_the_terminus_puts_it():
+    """ACE and NME were built along the hydrogen or the OXT they replace, which points
+    an sp3 way of its own: the junction came out at 109.5 degrees, where an amide's is
+    121, and the cap pointed wherever that atom happened to.  The backbone fixes it --
+    at a carbonyl, CA and O leave one slot between them."""
+    from boonza.pbc import angles, dihedrals
+    from boonza.viewer.edit import _residue_atom, cap, neighbors
+
+    p = _peptide()
+    ace, nme = cap(p, 0, "N"), cap(p, 0, "C")
+    x = np.asarray(p.positions, float)
+    at = lambda r, n: x[_residue_atom(p, r, n)]  # noqa: E731
+    for r, cap_res in ((1, ace), (p.nresidues - 2, nme)):
+        if str(p.residues["name"][cap_res]) == "ACE":
+            c, ch3, o = at(cap_res, "C"), at(cap_res, "CH3"), at(cap_res, "O")
+            n, ca = at(r, "N"), at(r, "CA")
+            junction, omega, flat = (c, n, ca), (ch3, c, n, ca), (o, c, n, ca)
+        else:
+            n, ch3 = at(cap_res, "N"), at(cap_res, "CH3")
+            c, ca, o = at(r, "C"), at(r, "CA"), at(r, "O")
+            junction, omega, flat = (c, n, ch3), (ca, c, n, ch3), (o, c, n, ch3)
+        deg = lambda f, v: np.degrees(float(f(*[y[None] for y in v])[0]))  # noqa: E731
+        assert abs(deg(angles, junction) - 121.0) < 2.0
+        assert abs(abs(deg(dihedrals, omega)) - 180.0) < 2.0
+        assert abs(deg(dihedrals, flat)) < 2.0  # a planar amide
+    # and it is turned clear of the protein, not into it
+    for cap_res in (ace, nme):
+        mine = [a for a in p.residue_atoms(cap_res) if int(p.atoms["anum"][a]) > 1]
+        joined = {int(p.atoms["residue"][y]) for a in mine for y, _ in neighbors(p, a)}
+        others = [a for a in range(p.natoms) if int(p.atoms["anum"][a]) > 1
+                  and int(p.atoms["residue"][a]) not in joined]  # fmt: skip
+        d = np.linalg.norm(x[mine][:, None, :] - x[others][None, :, :], axis=2)
+        assert d.min() > 2.2
+
+
 def test_a_chain_cut_in_the_middle_caps_the_termini_the_cut_made():
     """Capping worked on the chain's first and last residue, so a cut in the middle --
     which makes two termini of its own -- was capped at the far end of the chain
