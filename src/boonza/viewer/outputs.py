@@ -938,6 +938,8 @@ def from_paths(paths, merge: bool = False, fit: str = "", scaffold=None, cg_fram
             raise FileNotFoundError(p)
         elif members := _series_members(p, {m.group for m in models}):
             models += members
+        elif members := _structure_members(p):
+            models += members
         else:
             models.append(Model(p.name, lambda p=p: _session(p, **kwargs), group="files"))
     title = " + ".join(p.name for p in paths)
@@ -960,6 +962,26 @@ def _properties(system) -> dict:
             "TPSA": round(rdMolDescriptors.CalcTPSA(mol), 1),
             "HBD": Lipinski.NumHDonors(mol), "HBA": Lipinski.NumHAcceptors(mol),
             "rotatable bonds": rdMolDescriptors.CalcNumRotatableBonds(mol)}  # fmt: skip
+
+
+def _structure_members(path) -> list[Model]:
+    """An MAE file of more than one structure (poses, a library): a model per
+    structure, grouped under the file's name.  One structure, however many cts
+    it is made of: none, and it opens as a file like any other."""
+    from ..io import _format
+    from ..io.mae import iter_mae
+
+    if _format(path, None) not in (".mae", ".cms"):
+        return []
+    systems = list(iter_mae(path))
+    if len(systems) < 2:
+        return []
+    out = []
+    for k, s in enumerate(systems):
+        name = next((n for n in s._ct_names if n), "") or f"structure {k + 1}"
+        session = Session(s, title=name)
+        out.append(Model(name, lambda x=session: x, group=path.name, _session=session))
+    return out
 
 
 def _series_members(path, taken=()) -> list[Model]:

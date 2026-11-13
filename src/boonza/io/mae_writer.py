@@ -19,6 +19,7 @@ import warnings
 import numpy as np
 
 from .._columns import STR, scalar
+from .mae import crystal_cell
 
 # atomic number -> (maestro color, mmod type)
 _MMOD = {1: (21, 48), 3: (4, 11), 6: (2, 14), 7: (43, 40), 8: (70, 23), 9: (8, 56),
@@ -175,23 +176,53 @@ def _kind(value) -> str:
 
 
 def save_mae(system, path, structure_only: bool = False, allow_reorder_atoms: bool = False,
-             append: bool = False) -> None:  # fmt: skip
-    """Write ``system`` as MAE (``.gz``/``.bz2`` suffixes are compressed); one block per ct."""
+             append: bool = False, merge_cts: bool | None = None) -> None:  # fmt: skip
+    """Write ``system`` as MAE; ``.gz``, ``.maegz`` and ``.bz2`` names are compressed.
+
+    ``system`` is one System or a sequence of them, each a separate structure
+    in the file (read them back one at a time with :func:`iter_mae`).
+
+    ``merge_cts``: write each System as a single ct, which is how every other
+    program tells one structure from the next.  The merged ct has the title of
+    the first ct and the properties of all of them (the first ct's value where
+    they disagree).  Nothing is lost to boonza: the ct of each atom and every
+    ct's own title and properties are written too (``i_boonza_ct``,
+    ``boonza_ct_prop``), and reading gives the cts back.  Otherwise there is
+    one block per ct, and the cts of a System with several are marked "ct k of
+    n" (``i_boonza_ct_index``, ``i_boonza_ct_count``) so that ``iter_mae``
+    keeps them together.  The default is to merge when given a sequence, and
+    not for one System.
+    """
+    from ..system import System
+
     path = os.fspath(path)
+    single = isinstance(system, System)
+    systems = [system] if single else list(system)
+    if merge_cts is None:
+        merge_cts = not single
     parts = ["{\n  s_m_m2io_version\n  :::\n  2.0.0\n}\n"]
-    for ct in range(system.ncts):
-        ids = system.ct_atoms(ct)
-        if len(ids) == 0:
+    for k, s in enumerate(systems):
+        if merge_cts:
+            if s.natoms == 0:
+                if single:
+                    continue
+                raise ValueError(f"structure {k} has no atoms")
+            parts.append(_ct_block(s, structure_only).text() + "\n")
             continue
-        if ids.max() - ids.min() + 1 != len(ids):
-            msg = f"atom ids in ct {ct} are noncontiguous; writing to MAE will reorder the atoms"
-            if not allow_reorder_atoms:
-                raise ValueError(msg)
-            warnings.warn(msg, stacklevel=2)
-        parts.append(_ct_block(system.clone(ids), structure_only).text() + "\n")
+        cts = [ids for ids in map(s.ct_atoms, range(s.ncts)) if len(ids)]
+        if not cts and not single:
+            raise ValueError(f"structure {k} has no atoms")
+        for j, ids in enumerate(cts):
+            if ids.max() - ids.min() + 1 != len(ids):
+                msg = "atom ids in a ct are noncontiguous; writing to MAE will reorder the atoms"
+                if not allow_reorder_atoms:
+                    raise ValueError(msg)
+                warnings.warn(msg, stacklevel=2)
+            mark = (j, len(cts)) if len(cts) > 1 else None
+            parts.append(_ct_block(s.clone(ids), structure_only, mark).text() + "\n")
     text = "\n".join(parts)
     mode = "at" if append else "wt"
-    if path.endswith(".gz"):
+    if path.lower().endswith((".gz", ".maegz", ".cmsgz")):
         opener = gzip.open
     elif path.endswith(".bz2"):
         opener = bz2.open
@@ -201,17 +232,51 @@ def save_mae(system, path, structure_only: bool = False, allow_reorder_atoms: bo
         f.write(text)
 
 
-def _ct_block(s, structure_only: bool) -> _Block:
+def _typed_key(key: str, value) -> str:
+    """A ct property's name in the file: its kind, then the name without spaces."""
+    return f"{_kind(value)}_" + "".join("_" if c.isspace() else c for c in key)
+
+
+def _ct_block(s, structure_only: bool, mark: tuple[int, int] | None = None) -> _Block:
+    """All of ``s`` as one ct; ``mark``: (index, count) of this ct in its structure."""
     ct = _Block("f_m_ct")
     _provenance(ct, s)
-    if s.cell.any():
+    props: dict = {}
+    for ct_props in s._ct_props:
+        for key, value in ct_props.items():
+            props.setdefault(_typed_key(key, value), scalar(value))
+    # a cell the ct's own CRYST1 properties (Maestro's, read from a PDB) already
+    # describe is left to them: the box properties are a simulation's, and mark
+    # the file as one to programs that treat a simulation's cts as one system
+    crystal = crystal_cell(props.get, "r_")
+    if s.cell.any() and (crystal is None or not np.allclose(crystal, s.cell, atol=1e-3)):
         for i, a in enumerate("abc"):
             for j, x in enumerate("xyz"):
                 ct.set(f"r_chorus_box_{a}{x}", float(s.cell[i, j]))
-    ct.set("s_m_title", s._ct_names[0])
-    for key, value in s._ct_props[0].items():
-        key = "".join("_" if c.isspace() else c for c in key)
-        ct.set(f"{_kind(value)}_{key}", scalar(value))
+    ct.set("s_m_title", next((n for n in s._ct_names if n), ""))
+    for key, value in props.items():
+        ct.set(key, value)
+    if mark is not None:
+        ct.set("i_boonza_ct_index", mark[0])
+        ct.set("i_boonza_ct_count", mark[1])
+    # several cts written as one: which ct each atom was in, numbered from 0
+    # over the cts that have atoms, and each one's own title and properties
+    was = None
+    used, dense = np.unique(s._level_key("ct"), return_inverse=True)
+    if len(used) > 1:
+        was = dense.reshape(-1)
+        rows = [(k, "s_m_title", s._ct_names[c]) for k, c in enumerate(used.tolist())]
+        for k, c in enumerate(used.tolist()):
+            for key, value in s._ct_props[c].items():
+                value = scalar(value)
+                value = int(value) if isinstance(value, bool) else value
+                text = value if isinstance(value, str) else repr(value)
+                rows.append((k, _typed_key(key, value), text))
+        ct.array("boonza_ct_prop").add_rows(len(rows), {
+            "i_ct": np.array([r[0] for r in rows], np.int64),
+            "s_key": np.array([r[1] for r in rows], dtype=STR),
+            "s_value": np.array([r[2] for r in rows], dtype=STR),
+        })  # fmt: skip
 
     A, R, C = s._atoms, s._residues, s._chains
     anum = A.column("anum")
@@ -252,6 +317,8 @@ def _ct_block(s, structure_only: bool) -> _Block:
         cols["s_m_pdb_segment_name"] = A.column("segid")[real].astype(STR)
     for prop, key in _extra_props(A):
         cols[key] = A.column(prop)[real]
+    if was is not None:
+        cols["i_boonza_ct"] = was[real]
     ct.array("m_atom").add_rows(len(real), cols)
 
     bi, bj = mapping[s._bonds.column("i")], mapping[s._bonds.column("j")]
@@ -275,6 +342,7 @@ def _ct_block(s, structure_only: bool) -> _Block:
     ppos, pvel, pres = A.column("pos")[pseudo], A.column("vel")[pseudo], res[pseudo]
     pchain = C.column("name")[chn[pseudo]]
     ff.array("ffio_pseudo").add_rows(len(pseudo), {
+        **({} if was is None else {"i_boonza_ct": was[pseudo]}),
         "r_ffio_x_coord": ppos[:, 0], "r_ffio_y_coord": ppos[:, 1], "r_ffio_z_coord": ppos[:, 2],
         "s_ffio_atom_name": A.column("name")[pseudo],
         "s_ffio_pdb_residue_name": _padded(R.column("name")[pres], 4),

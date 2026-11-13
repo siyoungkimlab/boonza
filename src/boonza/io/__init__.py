@@ -10,7 +10,7 @@ from .cif import CifError, load_cif, save_cif
 from .dms import DMSError, load_dms, save_dms
 from .gro import load_gro, save_gro
 from .gromacs import GromacsError, load_top
-from .mae import load_mae
+from .mae import iter_mae, load_mae
 from .mae_writer import save_mae
 from .pdb import load_pdb, save_pdb
 from .psf import load_psf
@@ -94,6 +94,7 @@ __all__ = [
     "CifError",
     "DMSError",
     "MaeError",
+    "iter_mae",
     "load",
     "load_cif",
     "load_dms",

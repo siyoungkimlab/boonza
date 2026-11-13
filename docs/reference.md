@@ -951,7 +951,7 @@ water box when it fills one) and has no business in a run directory.
 all, for running SIRAH's own tools beside it -- pdb2gmx, say, which reads
 the residue libraries.
 
-### `boonza.sirah.backmap(cg, reference=None, positions=None, *, box=None, minimize: 'bool' = True, restraint: 'float' = 50.0, forcefields=None, log=None)`
+### `boonza.sirah.backmap(cg, reference=None, positions=None, *, box=None, minimize: 'bool' = True, restraint: 'float' = 50.0, probe_side_chains: 'bool' = False, forcefields=None, log=None)`
 
 The all-atom structure of a SIRAH frame.
 
@@ -973,6 +973,15 @@ and no ligands, and only for proteins.
 ``box``: the frame's cell.  A trajectory is written wrapped, so with a box the
 solute's molecules are made whole and brought beside each other first (default:
 ``cg``'s own cell when the positions are its own; none for ``positions`` given).
+
+``probe_side_chains``: keep a swim probe's side chains alone.  The whole probe is
+laid on its beads first, so the side chain is placed as the dipeptide's, and only
+then are the caps and the backbone dropped, CA staying as the hydrogen that closes
+CB's valence (:func:`_side_chains_only`).  What is left is a small molecule, not an
+amino acid, so the minimization parameterizes it with GAFF2 (AmberTools): the
+springs that follow hold it by its side-chain beads, the backbone beads having no
+atoms left.  It applies to probes alone -- what ``reference`` does not have -- and
+a probe with no side chain to keep (glycine, alanine in SIRAH) is dropped.
 
 ``forcefields``: as :func:`boonza.viewer.edit.parameterize` takes them
 (default: boonza md's, with :data:`NUCLEIC_FORCEFIELD` added for a nucleic acid;
@@ -1173,6 +1182,9 @@ pseudo particles (atomic number 0).
 
 Read an MAE/CMS file (optionally gzip/bzip2 compressed); all cts go into one System.
 
+For a file that holds several separate structures (poses, a ligand
+library), use :func:`iter_mae`, which gives one System per structure.
+
 ### `boonza.io.load_pdb(path, guess_bonds: 'bool' = True, conect: 'bool' = True, ssbond: 'bool' = True, link: 'bool' = True) -> 'System'`
 
 Read a PDB file (optionally gzip/bzip2 compressed).
@@ -1214,9 +1226,23 @@ Write a DMS file; ``.gz`` / ``.bz2`` suffixes are compressed.
 
 Write the system as .gro (nm); velocities are written when any is nonzero.
 
-### `boonza.io.save_mae(system, path, structure_only: 'bool' = False, allow_reorder_atoms: 'bool' = False, append: 'bool' = False) -> 'None'`
+### `boonza.io.save_mae(system, path, structure_only: 'bool' = False, allow_reorder_atoms: 'bool' = False, append: 'bool' = False, merge_cts: 'bool | None' = None) -> 'None'`
 
-Write ``system`` as MAE (``.gz``/``.bz2`` suffixes are compressed); one block per ct.
+Write ``system`` as MAE; ``.gz``, ``.maegz`` and ``.bz2`` names are compressed.
+
+``system`` is one System or a sequence of them, each a separate structure
+in the file (read them back one at a time with :func:`iter_mae`).
+
+``merge_cts``: write each System as a single ct, which is how every other
+program tells one structure from the next.  The merged ct has the title of
+the first ct and the properties of all of them (the first ct's value where
+they disagree).  Nothing is lost to boonza: the ct of each atom and every
+ct's own title and properties are written too (``i_boonza_ct``,
+``boonza_ct_prop``), and reading gives the cts back.  Otherwise there is
+one block per ct, and the cts of a System with several are marked "ct k of
+n" (``i_boonza_ct_index``, ``i_boonza_ct_count``) so that ``iter_mae``
+keeps them together.  The default is to merge when given a sequence, and
+not for one System.
 
 ### `boonza.io.save_pdb(system: 'System', path, append: 'bool' = False, reorder: 'bool' = False, models='auto', conect='auto') -> 'None'`
 
