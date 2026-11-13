@@ -1,5 +1,5 @@
 import pytest
-from canonical import assert_same, canon
+from canonical import as_msys_reads_mae, assert_same, canon
 from conftest import msys_file, run_msys
 
 import boonza
@@ -27,7 +27,8 @@ FILES = [
 @pytest.mark.parametrize("name", FILES)
 def test_load_matches_msys(name):
     path = msys_file(name)
-    assert_same(canon(boonza.load(path)), run_msys("load", path))
+    ref = run_msys("load", path)
+    assert_same(*as_msys_reads_mae(canon(boonza.load(path)), ref))
 
 
 @pytest.mark.parametrize("name", ["alchemical_restraint.mae", "morse.mae"])

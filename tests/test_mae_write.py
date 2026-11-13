@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from canonical import assert_same, assert_same_content, canon
+from canonical import as_msys_reads_mae, assert_same, assert_same_content, canon
 from conftest import msys_file, run_msys
 
 import boonza
@@ -39,7 +39,9 @@ def test_mae_roundtrip(name, tables, tmp_path):
         warnings.simplefilter("ignore")
         boonza.save(src, out)
     back = boonza.load(out)
-    assert_same(canon(back), run_msys("load", out))  # msys reads our file identically
+    ref = run_msys("load", out)
+    # msys reads our file as we do, but for what it does not read at all
+    assert_same(*as_msys_reads_mae(canon(back), ref, kept=src.atoms.props))
     if tables is None:
         tables = [t for t in src.tables if t != "nonbonded"]
     nb = "nonbonded" in tables
@@ -80,7 +82,7 @@ def test_atom_properties_survive_mae(tmp_path):
     for prop in ("bfactor", "occupancy"):
         np.testing.assert_allclose(back.atoms[prop], src.atoms[prop], rtol=1e-6)
     # under the names Maestro keeps for them, so Maestro shows them as its own
-    text = out.read_text(errors="replace")
+    text = out.read_text(errors="replace", encoding="utf-8")
     assert "r_m_pdb_tfactor" in text and "r_m_pdb_occupancy" in text
 
 

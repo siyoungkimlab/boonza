@@ -133,6 +133,25 @@ def _first_diff(a, b, path):
     return None
 
 
+def as_msys_reads_mae(ours: dict, ref: dict, kept=()) -> tuple[dict, dict]:
+    """``(ours, ref)`` without what boonza and msys deliberately read differently
+    from an MAE file, to compare the rest:
+
+    - atom properties boonza reads and msys does not: ``bfactor`` and ``occupancy``
+      (Maestro's ``r_m_pdb_tfactor`` and ``r_m_pdb_occupancy``), and the ones boonza
+      wrote itself as ``<kind>_user_<name>`` -- ``kept``, the properties of the
+      structure that was written.  Left in wherever msys has them too.
+    - ``boonza_ct_index`` and ``boonza_ct_count``, the marks boonza writes on the
+      structures of one system and takes off again on reading: to msys they are
+      properties like any other."""
+    mine = {"bfactor", "occupancy", *kept} - set(ref["atom_props"])
+    ours = {**ours, "atom_props": {k: v for k, v in ours["atom_props"].items() if k not in mine}}
+    marks = ("boonza_ct_index", "boonza_ct_count")
+    ref = {**ref, "cts": [[n, {k: v for k, v in p.items() if k not in marks}]
+                          for n, p in ref["cts"]]}  # fmt: skip
+    return ours, ref
+
+
 def assert_same(ours: dict, ref: dict) -> None:
     diff = _first_diff(ours, ref, "system")
     assert diff is None, diff
