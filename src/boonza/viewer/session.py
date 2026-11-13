@@ -862,6 +862,26 @@ class Session:
                         per_chain.setdefault(c, []).append(f"{n}{resid}")
                     note = "; ".join(f"chain {cname(c)}: {', '.join(v)}"
                                      for c, v in sorted(per_chain.items()))  # fmt: skip
+                    # a cap built where a cut was has the other piece in its place
+                    x = np.asarray(s.positions, float)
+                    anum, res_of = np.asarray(s.atoms["anum"]), np.asarray(s.atoms["residue"])
+                    tight = []
+                    for t in capped:
+                        r = where[t]
+                        mine = [a for a in s.residue_atoms(r) if anum[a] > 1]
+                        joined = {int(res_of[y]) for a in mine
+                                  for y, _ in edit.neighbors(s, a)}  # fmt: skip
+                        others = np.flatnonzero((anum > 1) & ~np.isin(res_of, list(joined | {r})))
+                        if not len(others) or not mine:
+                            continue
+                        d = np.linalg.norm(x[mine][:, None, :] - x[others][None, :, :], axis=2)
+                        if d.min() >= edit.CAP_CONTACT:
+                            continue
+                        hit = int(res_of[others[d.min(0).argmin()]])
+                        near = f"{s.residues['name'][hit]}{int(s.residues['resid'][hit])}"
+                        tight.append(f"{t[1]}{t[2]} is {d.min():.1f} Å from {near}")
+                    if tight:
+                        note += "; " + ", ".join(tight)
                     if why:
                         note += "; not " + "; ".join(why)
                     hydrogens = False

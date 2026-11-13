@@ -2570,6 +2570,66 @@ def convert_sulfono_run(s, residues, r2: str = "inherit",
     return sorted(made), "; ".join(notes)
 
 
+#: a peptide bond's length, which a cap is built at (Å)
+AMIDE_BOND = 1.335
+#: the angle a third sp2 substituent stands at, where only one fixes the plane
+SP2_ANGLE = 121.0
+#: turns of the one free torsion tried, where the terminus leaves one free
+SLOT_TURNS = 24
+#: a cap with another residue's heavy atom this close is said to overlap it (Å): a cut
+#: chain capped where it was cut has the piece across the cut still in the cap's place
+CAP_CONTACT = 2.2
+
+
+def _internal(a, b, c, bond: float, angle: float, dihedral: float) -> np.ndarray:
+    """The position of an atom bonded to ``a``: ``bond`` Å from it, standing ``angle``
+    degrees from ``b``, turned ``dihedral`` degrees about the a-b bond away from ``c``."""
+    ab = _unit(a - b)
+    normal = _unit(np.cross(c - b, ab))
+    in_plane = np.cross(ab, normal)
+    th, ph = np.radians(angle), np.radians(dihedral)
+    d = -np.cos(th) * ab + np.sin(th) * (np.cos(ph) * in_plane + np.sin(ph) * normal)
+    return a + bond * _unit(d)
+
+
+def _amide_slot(s, anchor: int, residue: int, leaving: int) -> np.ndarray:
+    """The unit direction the cap's first atom belongs in, from the terminus' own
+    geometry: an amide is planar and its atoms stand 120 degrees apart, so two heavy
+    neighbours of the anchor -- a carbonyl's CA and O, or proline's CA and CD -- fix
+    the third slot between them, with nothing to choose.  Where the anchor has one (an
+    amine's CA), the torsion about that bond is free, since nothing in a terminus says
+    where the residue that is not there would have been: it is turned to clash least,
+    the cap's two heavy atoms standing in for it."""
+    x = np.asarray(s.positions, float)
+    anum = np.asarray(s.atoms["anum"])
+    res = np.asarray(s.atoms["residue"])
+    # not the atom the cap replaces: an acid's OXT is a heavy neighbour of its own
+    # carbon, and counting it put the slot along the CA bond
+    heavy = [b for b, _ in neighbors(s, anchor)
+             if anum[b] > 1 and int(res[b]) == residue and b != leaving]  # fmt: skip
+    if len(heavy) >= 2:  # the slot opposite them, in their plane
+        d = -sum(_unit(x[b] - x[anchor]) for b in heavy[:2])
+        return _unit(d)
+    if not heavy:  # nothing to stand against: the atom it replaces points the way
+        return _unit(x[leaving] - x[anchor])
+    axis = _unit(x[heavy[0]] - x[anchor])
+    side = np.eye(3)[int(np.argmin(np.abs(axis)))]
+    e1 = _unit(side - (side @ axis) * axis)
+    e2 = np.cross(axis, e1)
+    theta = np.radians(SP2_ANGLE)
+    others = np.flatnonzero((anum > 1) & (res != residue) & (np.arange(s.natoms) != leaving))
+    best = None
+    for k in range(SLOT_TURNS):
+        phi = 2 * np.pi * k / SLOT_TURNS
+        d = np.cos(theta) * axis + np.sin(theta) * (np.cos(phi) * e1 + np.sin(phi) * e2)
+        # the cap's first atom, and its far one about where a trans amide puts it
+        probes = x[anchor] + np.outer([AMIDE_BOND, AMIDE_BOND + 1.1], d)
+        room = float(np.linalg.norm(probes[:, None, :] - x[others][None, :, :], axis=2).min())
+        if best is None or room > best[0]:
+            best = (room, d)
+    return _unit(best[1])
+
+
 def pieces(s, chain: int) -> list[list[int]]:
     """The chain's amino acids in runs joined by peptide bonds, each from its own N
     terminus: a chain cut in the middle, or one with a gap where residues are missing,
@@ -2641,6 +2701,12 @@ def cap(s, chain: int, end: str, residue: int | None = None) -> int:
             raise ValueError(f"the {end} terminus has no room for a cap (capped already?)")
         add_hydrogens(s, anchor, 1)  # where the cap belongs, for it to take the place of
         leaving = s.natoms - 1
+    # the cap belongs in the terminus' own amide slot, which the backbone fixes; the
+    # atom it replaces is a hydrogen or an acid's oxygen, pointing an sp3 way of its
+    # own, so it is moved there first and the cap is built along it
+    pos = np.asarray(s.positions, float).copy()
+    pos[leaving] = pos[anchor] + AMIDE_BOND * _amide_slot(s, anchor, r, leaving)
+    s.positions = pos
     name = "ACE" if end == "N" else "NME"
     # the number next to the terminus, or the first free one further out: a cut chain
     # caps twice over, and both caps numbering themselves after their own terminus can
@@ -2674,9 +2740,16 @@ def cap(s, chain: int, end: str, residue: int | None = None) -> int:
         s.atoms["formal_charge"] = q
         set_bond(s, c, o, 2)
         nn = _find(s, new_res, "N")
-        adjust_hydrogens(s, [nn, o])
+        # the fragment is a methylamine, whose nitrogen is sp3: in an amide it is
+        # planar, so the methyl stands in the plane, trans to the carbonyl's CA
         ca, ch3 = _find(s, r, "CA"), _find(s, new_res, "CH3")
-        set_dihedral(s, ca, c, nn, ch3, 180.0)
+        x = np.asarray(s.positions, float)
+        methyl = [ch3] + [b for b, _ in neighbors(s, ch3) if int(s.atoms["anum"][b]) == 1]
+        shift = _internal(x[nn], x[c], x[ca], float(np.linalg.norm(x[ch3] - x[nn])),
+                          SP2_ANGLE, 180.0) - x[ch3]  # fmt: skip
+        x[methyl] += shift  # the methyl's own geometry rides along; its turn is free
+        s.positions = x
+        adjust_hydrogens(s, [nn, o])
         _place(s, new_res, r, after=True)
     # placing it renumbered the residues: the cap is the one of that name and number
     return int(s.atoms["residue"][_residue_atom_any(s, name, resid, chain)])
