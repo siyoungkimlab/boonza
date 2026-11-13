@@ -853,6 +853,37 @@ export function setupUI(app) {
     }
     const counts = constraintCounts(app.currentModel());
     app.message(`frozen ${counts.fixed}, restrained ${counts.tethered}`);
+    // the panels that say what is held, and offer what moves only where nothing is
+    if (panels.minimize) minimizePanel();
+    if (panels.dynamics) dynamicsPanel();
+  }
+  // the restrained and frozen atoms, selected: nothing in the view marks them otherwise
+  function selectConstrained() {
+    app.clearSelection();
+    for (const m of app.shownModels()) {
+      const c = m.state.constraint, ids = app.range(c.length).filter(a => c[a]);
+      if (ids.length) app.select(m, ids, "add");
+    }
+    app.rebuild(); app.onSelection();
+  }
+  // positional restraints, in the panels they act in (Edit | Restraints is the same)
+  function restraintRows(body, m) {
+    const c = constraintCounts(m);
+    body.append(el("h3", {}, "Positional restraints"));
+    body.append(row(button("Restrain Selection", () => constrain("tether")), button("Freeze Selection", () => constrain("fix"))));
+    body.append(row(button("Release Selection", () => constrain("free")), button("Release All", () => constrain("freeall"))));
+    if (c.fixed || c.tethered) {
+      body.append(row(el("span", { className: "what" }, `${c.tethered} restrained, ${c.fixed} frozen`),
+                      button("Select Them", selectConstrained)));
+      body.append(el("p", { className: "help" }, "These atoms are what is held and the rest is free. Release All goes "
+        + "back to the choices of what moves."));
+    } else {
+      body.append(el("p", { className: "help" }, "Select atoms (Ctrl-click takes a residue), then restrain them: each "
+        + "is held by a spring to the position it has when the run starts, of the strength below; a frozen atom "
+        + "does not move at all. With any set, they are what is held and everything else is free, in place of "
+        + "the choices of what moves. Hydrogens are never held."));
+    }
+    return c;
   }
   function constraintCounts(m) {
     const c = m?.state?.constraint || [];
@@ -1150,6 +1181,8 @@ export function setupUI(app) {
       "-",
       { label: "Delete", run: deleteSelected, key: "Del" },
       { label: "Copy SMILES", run: copySmiles, key: "Ctrl C" },
+      { label: "Copy Sequence", run: () => copySequence(!!sequenceText(true)),
+        off: () => !sequenceText(false) },
       { label: "Rename Residue or Chain…", run: relabelPanel },
       "-",
       { label: "Hydrogens", sub: [
@@ -2359,7 +2392,12 @@ export function setupUI(app) {
     }
     if (typing) return;
     const ctrl = e.ctrlKey || e.metaKey;
-    if (ctrl && e.key.toLowerCase() === "c" && !String(window.getSelection())) { e.preventDefault(); copySmiles(); return; }
+    if (ctrl && e.key.toLowerCase() === "c" && !String(window.getSelection())) {
+      e.preventDefault();
+      // picked in the sequence bar: its letters; picked in the view: the molecules' SMILES
+      if (seqLast && !$("seqbar").hidden && sequenceText(true)) copySequence(true); else copySmiles();
+      return;
+    }
     if (ctrl && e.key.toLowerCase() === "z") { e.preventDefault(); undo(e.shiftKey); }
     else if (ctrl && e.key.toLowerCase() === "y") { e.preventDefault(); undo(true); }
     else if (ctrl && e.key.toLowerCase() === "a") { e.preventDefault(); selectWhere(() => true); }
@@ -2652,7 +2690,10 @@ export function setupUI(app) {
 
   const panels = {};
   function panel(id, title, build, where = null) {
-    if (panels[id]) { panels[id].remove(); delete panels[id]; }
+    if (panels[id]) {  // rebuilt (a count in it changed): where it was, not back at the start
+      if (!where && panels[id].isConnected) where = [panels[id].offsetLeft, panels[id].offsetTop];
+      panels[id].remove(); delete panels[id];
+    }
     const p = el("div", { className: "panel" });
     const close = el("button", { title: "close" }, "✕");
     close.onclick = () => { p.remove(); delete panels[id]; };
@@ -3195,10 +3236,14 @@ export function setupUI(app) {
     const pick = el("select", { title: "the amino acid to add" },
       ...AMINO.map(aa => el("option", { value: aa, selected: aa === extendWith }, aa)));
     pick.onchange = () => { extendWith = pick.value; };
-    body.append(row(pick, button("N terminus", () => extendChain("N")), button("C terminus", () => extendChain("C"))));
-    body.append(el("p", { className: "help" }, "Adds the amino acid before the first residue or after the last of the "
-      + "selected atoms' chain (not a mutation): a trans peptide bond, turned to clash least; the terminus, "
-      + "charged or not, moves on to it. The new residue is selected, its hydrogens shown, ready for the next."));
+    body.append(row(pick, button("Add", () => extendChain("auto"), "blue"),
+                    button("at N", () => extendChain("N")), button("at C", () => extendChain("C"))));
+    body.append(el("p", { className: "help" }, "Adds the amino acid to the piece of chain the selected residue is in "
+      + "(not a mutation): a chain cut in the middle, or with a gap, grows at the terminus the cut made. Add goes "
+      + "the way the selection says: the residue that starts its piece grows at N, the one that ends it at C, "
+      + "and elsewhere the one end nothing is bonded to. Where both are open (a lone residue, one in the "
+      + "middle), say which with at N or at C. A trans peptide bond, turned to clash least; the terminus, charged "
+      + "or not, moves on to it. The new residue is selected, its hydrogens shown, ready for the next."));
     body.append(el("h3", {}, "Separate Residue"));
     const resName = el("input", { placeholder: "name (UNL)", style: "width:90px", maxLength: 4 });
     body.append(row(resName, button("Make Selection a Residue", () => splitResidue(resName.value))));
@@ -3248,7 +3293,7 @@ export function setupUI(app) {
     const out = await busyEdit(t[0], `adding ${extendWith}`, { op: "extend", atoms: t[1], value: { end, residue: extendWith } });
     if (!out) return;
     if (out.made?.length) app.select(t[0], out.made);
-    app.message(`${extendWith} added at the ${end} terminus`);
+    app.message(`${extendWith} added at the ${out.note || `${end} terminus`}`);
   }
   async function splitResidue(name) {
     const t = editTarget();
@@ -3313,13 +3358,11 @@ export function setupUI(app) {
   function minimizePanel() {
     panel("minimize", "Energy Minimize", body => {
       const m = app.currentModel();
-      const c = constraintCounts(m);
+      const c = restraintRows(body, m);
       const k = el("input", { type: "number", value: localStorage.getItem("boonza.restraint") || 10, min: 0, step: 1, style: "width:60px" });
       k.onchange = () => localStorage.setItem("boonza.restraint", k.value);
       const spring = row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²"));
       if (c.fixed || c.tethered) {
-        body.append(el("p", { className: "help" }, `Restraints: ${c.fixed} frozen, ${c.tethered} restrained `
-          + "(Edit | Restraints); the rest is free. Edit | Restraints | Free All goes back to the choices below."));
         body.append(spring, row(button("Minimize", () => minimize({ restraint: +k.value }), "blue")));
       } else {
         let mode = localStorage.getItem("boonza.minMode") || "both";
@@ -3356,7 +3399,6 @@ export function setupUI(app) {
   function dynamicsPanel() {
     panel("dynamics", "Molecular Dynamics", body => {
       const m = app.currentModel();
-      const c = constraintCounts(m);
       const num = (store, value, min, step, width = "60px") => {
         const i = el("input", { type: "number", value: localStorage.getItem(store) || value, min, step, style: `width:${width}` });
         i.onchange = () => localStorage.setItem(store, i.value);
@@ -3371,10 +3413,8 @@ export function setupUI(app) {
       body.append(row(el("span", { className: "what" }, "Length"), ps, el("span", {}, "ps"),
                       el("span", { className: "what" }, "Temperature"), T, el("span", {}, "K")));
       let mode = localStorage.getItem("boonza.minMode") || "both";
-      if (c.fixed || c.tethered) {
-        body.append(el("p", { className: "help" }, `Restraints: ${c.fixed} frozen, ${c.tethered} restrained `
-          + "(Edit | Restraints); the rest is free."));
-      } else {
+      const c = restraintRows(body, m);
+      if (!(c.fixed || c.tethered)) {
         const choices = MIN_MODES.map(([key, label]) => {
           const b = button(label, () => {
             mode = key;
@@ -4412,6 +4452,31 @@ export function setupUI(app) {
   const residueAtoms = (m, rs) => rs.flatMap(r => m.topo.residueAtoms[r]);
   const seqTarget = e => e.target.closest?.(".aa");
 
+  // the letters of the bar as text: its residues are picked by dragging, which selects
+  // atoms and no text, so the browser's own Copy has nothing to take
+  const seqLetter = (m, r) => m.topo.residues.mimics?.[r]?.toLowerCase() || letter(m.topo.residues.name[r]);
+  // one line a chain; ``picked``: only the selected residues (chains without any left out)
+  function sequenceText(picked = false, only = null) {
+    const lines = [];
+    for (const { m, rs } of sequenceChains()) {
+      if (only && !(only.m === m && rs.includes(only.r))) continue;
+      const on = picked ? new Set(app.selected(m).map(a => m.topo.atoms.residue[a])) : null;
+      const text = rs.filter(r => !on || on.has(r)).map(r => seqLetter(m, r)).join("");
+      if (text) lines.push(text);
+    }
+    return lines.join("\n");
+  }
+  async function copySequence(picked = false, only = null) {
+    const text = sequenceText(picked, only);
+    if (!text) { app.message(picked ? "no residue of the sequence is selected" : "no sequence to copy", true); return; }
+    const n = text.replace(/\n/g, "").length, shown = text.length > 120 ? `${text.slice(0, 120)}…` : text;
+    app.message((await copyText(text)) ? `copied ${n} residue${n === 1 ? "" : "s"}: ${shown}`
+      : `could not reach the clipboard: ${text}`);
+  }
+  // Copy (Ctrl/Cmd C) takes the sequence while the bar is what was last clicked in
+  let seqLast = false;
+  window.addEventListener("pointerdown", e => { seqLast = !!e.target.closest?.("#seqbar"); }, true);
+
   $("seqbar").addEventListener("pointerdown", e => {
     const s = seqTarget(e);
     if (!s || e.button !== 0) return;
@@ -4445,11 +4510,21 @@ export function setupUI(app) {
       if (!app.selected(m).some(a => m.topo.atoms.residue[a] === r)) app.select(m, residueAtoms(m, [r]), "set");
     }
     const sel = app.selection();
-    if (!sel.length) return;
+    // the chain under the pointer: a letter of it, or its label
+    const line = e.target.closest?.(".seqline")?.querySelector(".aa");
+    const here = line ? { m: state.models[+line.dataset.m], r: +line.dataset.r } : null;
+    const copying = [
+      { label: "Copy Selected Sequence", run: () => copySequence(true), key: "Ctrl C", off: () => !sequenceText(true) },
+      { label: "Copy This Chain's Sequence", run: () => copySequence(false, here), off: () => !here },
+      { label: "Copy Every Sequence", run: () => copySequence(false) },
+    ];
+    if (!sel.length) { menu(copying, e.clientX, e.clientY); return; }
     const [m, ids] = sel[0];
     const names = [...new Set(ids.map(a => m.topo.atoms.residue[a]))].map(r => `${m.topo.residues.name[r]}${m.topo.residues.resid[r]}`);
     const what = names.length > 3 ? `${names.length} residues` : names.join(", ");
     menu([
+      ...copying,
+      "-",
       { label: `Mutate ${what} to`, sub: () => AMINO.map(aa => ({ label: `${aa} (${ONE[aa]})`, run: () => mutate(aa) })),
         off: () => !m.topo.editable },
       { label: "Convert to Sulfono-\u03b3-AA, sulfonyl:", sub: () => SULFONO_R2.map(([v, lab]) => ({ label: lab, run: () => sulfono(v) })),

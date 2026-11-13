@@ -1470,6 +1470,82 @@ def test_extend_and_split_through_the_session():
     assert {str(session.system.atoms["name"][a]) for a in out["made"]} == {"CB", "HB1"}
 
 
+def test_extending_grows_the_piece_that_was_picked_the_way_it_is_open():
+    """Extending worked on the chain's first and last residue, as capping once did: a
+    residue picked at a cut grew the far end of the chain.  And the direction had to
+    be said, where the pick says it: the residue that starts its piece has the piece
+    on its C side, so it grows at N, and the one that ends it at C."""
+    from boonza.viewer.edit import _residue_atom, neighbors, open_end, pieces
+
+    def cut(k=1):  # ARG | PRO-ASP, or ARG-PRO | ASP
+        session = viewer.Session(_peptide(), whole=False)
+        s = session.system
+        aa = [r for r in range(s.nresidues) if _residue_atom(s, r, "CA") >= 0]
+        session.edit("bond", [_residue_atom(s, aa[k - 1], "C"), _residue_atom(s, aa[k], "N")], 0)
+        return session
+
+    def joined(s, r, name):
+        a = _residue_atom(s, r, name)
+        return {int(s.atoms["residue"][b]) for b, _ in neighbors(s, a)} - {r}
+
+    # the residue after the cut: the new one goes on its N, not on the chain's start
+    session = cut()
+    s = session.system
+    first, second = pieces(s, 0)
+    key = (str(s.residues["name"][second[0]]), int(s.residues["resid"][second[0]]))
+    n = s.nresidues
+    out = session.edit("extend", [_residue_atom(s, second[0], "CA")], {"residue": "ALA"})
+    s = session.system
+    assert s.nresidues == n + 1 and out["note"] == "N terminus"
+    new = {int(s.atoms["residue"][a]) for a in out["made"]}.pop()
+    old = next(
+        r
+        for r in range(s.nresidues)
+        if (str(s.residues["name"][r]), int(s.residues["resid"][r])) == key
+    )
+    assert joined(s, new, "C") == {old}
+    assert [len(x) for x in pieces(s, 0)] == [len(first), len(second) + 1]
+    # what was made is the piece's new start: the next one carries on the same way
+    out = session.edit("extend", out["made"], {"residue": "GLY"})
+    assert out["note"] == "N terminus"
+    assert [len(x) for x in pieces(session.system, 0)] == [len(first), len(second) + 2]
+
+    # the residue before the cut grows at C
+    session = cut(2)
+    s = session.system
+    first, second = pieces(s, 0)
+    out = session.edit("extend", [_residue_atom(s, first[-1], "CA")], {"residue": "SER"})
+    assert out["note"] == "C terminus"
+    assert [len(x) for x in pieces(session.system, 0)] == [len(first) + 1, len(second)]
+    resids = [int(session.system.residues["resid"][r]) for r in range(session.system.nresidues)]
+    assert len(set(resids)) == len(resids)
+    # a piece of one residue is open both ways, and nothing in it says which
+    with pytest.raises(ValueError, match="both ends are open"):
+        lone = pieces(session.system, 0)[1][0]
+        session.edit("extend", [_residue_atom(session.system, lone, "CA")], {"residue": "ALA"})
+
+    # an end said outright is the picked piece's, not the chain's
+    session = cut()
+    s = session.system
+    first, second = pieces(s, 0)
+    session.edit("extend", [_residue_atom(s, second[-1], "CA")], {"end": "N", "residue": "ALA"})
+    assert [len(x) for x in pieces(session.system, 0)] == [len(first), len(second) + 1]
+
+    # two open ends and a pick at neither: a question, not a guess
+    session = viewer.Session(_peptide(), whole=False)
+    s = session.system
+    run = pieces(s, 0)[0]
+    with pytest.raises(ValueError, match="both ends are open"):
+        session.edit("extend", [_residue_atom(s, run[1], "CA")], {"residue": "ALA"})
+    # capped at one end, there is one way left, whatever is picked
+    session.edit("cap", [_residue_atom(s, run[0], "CA")], "N")
+    s = session.system
+    run = pieces(s, 0)[0]
+    assert open_end(s, run, {run[1]}) == "C" and open_end(s, run) == "C"
+    with pytest.raises(ValueError, match="bonded on already"):
+        open_end(s, run, {run[0]})
+
+
 def test_an_edit_drops_the_force_field_the_file_came_with(tmp_path):
     """Atoms added to a parameterized structure have no parameters: saved with the old
     force field, the MAE read back failed ("Missing vdw parameter with name ''")."""
