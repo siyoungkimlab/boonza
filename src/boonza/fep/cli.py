@@ -5,7 +5,8 @@
     boonza fep result boonza_fep
 
 prep takes boonza md's settings (force fields, salt, padding, cutoff,
-temperature, the secondary-structure dihedral restraints, ...) and its own:
+temperature, the secondary-structure dihedral restraints, distance and position
+restraints on the complex leg, ...) and its own:
 the ligands, repeats and lambda windows.  Its defaults are openfe's where they
 differ from md's, except for the lengths: hydrogen mass repartitioning with a
 4 fs step, and 0.1 ns equilibration and 0.5 ns production for every edge,

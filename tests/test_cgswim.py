@@ -94,7 +94,9 @@ def test_a_prepared_simulation(tmp_path):
     args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", "--gromacs",
                             "--workdir", str(tmp_path / "swim"), "--production-ns", "10",
                             "--seed", "1", "--distance-restraint", "resid 10 and name BB",
-                            "resid 20 and name BB", "--distance-restraint-nm", "0.6"])  # fmt: skip
+                            "resid 20 and name BB", "--distance-restraint-nm", "0.6",
+                            "--position-restraint", "name BB",
+                            "--position-restraint-scaling", "none"])  # fmt: skip
     sims = prepare(args, ["EK", "LL", "RR"], types=2, copies=2, log=lambda *_: None)
     assert len(sims) == 2  # 3 probes, about 2 a simulation
     d = sims[0]
@@ -117,6 +119,8 @@ def test_a_prepared_simulation(tmp_path):
     # restraints are run-time: carried to boonza md, which applies them to cg.dms
     assert settings.distance_restraints == [["resid 10 and name BB", "resid 20 and name BB"]]
     assert settings.distance_restraint_nm == 0.6
+    assert settings.position_restraints == ["name BB"]
+    assert settings.position_restraint_scaling == "none"
     assert not settings.forcefields  # nothing all-atom came along
     # the run reads the built system, which carries its parameters; the topology
     # beside it is what GROMACS would read

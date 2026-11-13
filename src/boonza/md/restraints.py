@@ -448,6 +448,139 @@ def add_distance_restraints(omm_system, s, pairs, k_kj: float, r0_nm=None,
     return records
 
 
+def add_position_restraints(omm_system, s, selections, k_kj: float,
+                             scaling: str = "com") -> list[dict]:  # fmt: skip
+    """Hold the atoms each of ``selections`` picks where they are in ``s``.
+
+    Every picked atom gets E = k/2 |r - r0|^2, ``r0`` its own position in ``s``
+    (the built system, before minimization) and ``k`` in kJ/mol/nm^2.  In a
+    periodic system the displacement is the minimum image's, so an atom the
+    integrator carries across the cell is not pulled back through it.  An atom
+    named by two selections is held once; a massless one (a virtual site) is
+    left out, its place being its parents' to decide.
+
+    With ``scaling`` of ``"none"`` the anchors are fixed coordinates (GROMACS's
+    ``refcoord_scaling = no``): a barostat's volume move shifts the held atoms
+    off them, so the springs resist it.  With ``"com"``, the default, the
+    anchors follow the cell as ``refcoord_scaling = com`` has them: a barostat
+    moves each molecule as a body, its centre scaled with the box, so each
+    anchor is carried the same way -- the centre of its atom's molecule scales
+    with the box and its offset from that centre does not.  A
+    volume move then costs the springs nothing, and they do not weigh on the
+    pressure coupling.  The centre is the centroid of the molecule as OpenMM
+    sees it (:func:`_molecule_centres`), which is what its barostats scale.
+    The force reads the box as it is at every evaluation
+    (:func:`_box_lengths`): per axis in a rectangular cell, so a membrane's
+    x-y and z go their own ways, and by one factor in a triclinic one, which
+    only an isotropic barostat changes.
+
+    The springs are a force of the OpenMM system, so ``system.xml`` carries
+    them into restarts, and they last the whole run.  Returns one record per
+    held atom.
+    """
+    import openmm as mm
+
+    if scaling not in ("com", "none"):
+        raise ValueError(f"position restraint: scaling is 'com' or 'none', not {scaling!r}")
+    xyz = np.asarray(s.positions, float) / 10.0  # A to nm
+    periodic = omm_system.usesPeriodicBoundaryConditions()
+    follow = periodic and scaling == "com"
+    picked: list[int] = []
+    seen: set[int] = set()
+    for sel in selections:
+        ids = s.select(sel).ids.tolist()
+        if not ids:
+            raise ValueError(f"position restraint: {sel!r} picks no atoms")
+        for a in ids:
+            a = int(a)
+            if a in seen or omm_system.getParticleMass(a)._value == 0:
+                continue
+            seen.add(a)
+            picked.append(a)
+    if not picked:
+        raise ValueError("position restraint: the selections pick only massless particles")
+    if follow:
+        from openmm import unit
+
+        box = np.array([v.value_in_unit(unit.nanometer)
+                        for v in omm_system.getDefaultPeriodicBoxVectors()], float)  # fmt: skip
+        lengths, scale = _box_lengths(box)
+        force = mm.CustomExternalForce(
+            "0.5*k*periodicdistance(x,y,z,ax+ux*bx,ay+uy*by,az+uz*bz)^2;" + lengths
+        )
+        names = ("k", "ax", "ay", "az", "ux", "uy", "uz")
+        centres = _molecule_centres(omm_system, xyz, picked)
+    else:
+        force = mm.CustomExternalForce("0.5*k*periodicdistance(x,y,z,x0,y0,z0)^2" if periodic
+                                       else "0.5*k*((x-x0)^2+(y-y0)^2+(z-z0)^2)")  # fmt: skip
+        names = ("k", "x0", "y0", "z0")
+    for p in names:
+        force.addPerParticleParameter(p)
+    records: list[dict] = []
+    for a in picked:
+        if follow:  # the anchor is (x0 - centre) + centre * (box now / box at the start)
+            c = centres[a]
+            force.addParticle(a, [float(k_kj), *(xyz[a] - c).tolist(), *(c / scale).tolist()])
+        else:
+            force.addParticle(a, [float(k_kj), *xyz[a].tolist()])
+        records.append({"atom": a, "label": _atom_label(s, a),
+                        "x0_nm": round(float(xyz[a][0]), 4),
+                        "y0_nm": round(float(xyz[a][1]), 4),
+                        "z0_nm": round(float(xyz[a][2]), 4),
+                        "k_kJ_per_nm2": float(k_kj)})  # fmt: skip
+    force.setName("PositionRestraints")
+    omm_system.addForce(force)
+    return records
+
+
+def _box_lengths(box) -> tuple[str, np.ndarray]:
+    """The box's lengths now, as an OpenMM expression defining ``bx``, ``by``
+    and ``bz`` (nm), and what each is at the start.
+
+    A custom force has no variable for the box, but ``periodicdistance`` knows
+    it: a point ``h`` along x from the origin, with L/2 < h < L, is L - h from
+    it by the minimum image, so L = h + periodicdistance(0,0,0,h,0,0).  With
+    ``h`` at 1/sqrt(2) of the starting length that holds while the box stays
+    between 0.71 and 1.41 times it, far beyond what a barostat does to a
+    liquid.  A triclinic cell is read along its first vector, which lies on x,
+    and the one factor serves all three axes: the same length is returned
+    three times.
+    """
+    box = np.asarray(box, float).reshape(3, 3)
+    start = np.diag(box).copy()
+
+    def length(axis: int) -> str:
+        h = float(start[axis]) / math.sqrt(2.0)
+        point = ",".join(repr(h) if k == axis else "0" for k in range(3))
+        return f"{h!r}+periodicdistance(0,0,0,{point})"
+
+    if np.abs(box - np.diag(start)).max() > 1e-6:  # triclinic: one factor, from a
+        # OpenMM reads a definition's own variables from the ones after it
+        return f"by=bx;bz=bx;bx={length(0)}", np.full(3, start[0])
+    return f"bx={length(0)};by={length(1)};bz={length(2)}", start
+
+
+def _molecule_centres(omm_system, xyz, atoms) -> dict[int, np.ndarray]:
+    """The centroid (nm) of the molecule each of ``atoms`` is in: the atoms
+    OpenMM takes for one molecule -- joined by bonds, constraints or any other
+    bonded term, an elastic network's springs and distance restraints among
+    them -- which is the body its barostats move in one piece.  Call it once
+    the system has every such force it will get."""
+    import openmm as mm
+
+    context = mm.Context(omm_system, mm.VerletIntegrator(0.001),
+                         mm.Platform.getPlatformByName("Reference"))  # fmt: skip
+    wanted = set(atoms)
+    out = {}
+    for molecule in context.getMolecules():
+        mine = wanted.intersection(molecule)
+        if mine:
+            centre = xyz[list(molecule)].mean(axis=0)
+            out.update(dict.fromkeys(mine, centre))
+    del context
+    return out
+
+
 def _minimum_image(d, box):
     """``d`` wrapped into the cell ``box`` (3x3 rows, nm), triclinic included."""
     box = np.asarray(box, float).reshape(3, 3)

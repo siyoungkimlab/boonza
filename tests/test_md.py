@@ -453,6 +453,183 @@ def test_distance_restraints_from_the_command_line_and_a_file(tmp_path):
         config.load_configuration(bad)
 
 
+def test_position_restraints_hold_atoms_where_they_start():
+    """One spring per picked atom, to its own starting position: nothing is felt
+    until an atom moves, and then k/2 d^2 for each one that has."""
+    import openmm as mm
+
+    s = boonza.peptide("AAAAA")
+    system = _particles(s.natoms)
+    records = restraints.add_position_restraints(
+        system, s, ["name CA", "resid 2 and (name CA or name N)"], 1000.0)  # fmt: skip
+    ca = s.select("name CA").ids.tolist()
+    n2 = int(s.select("resid 2 and name N").ids[0])
+    assert [r["atom"] for r in records] == [*ca, n2]  # an atom named twice is held once
+    assert records[0]["label"].endswith(":ALA1:CA") and records[0]["k_kJ_per_nm2"] == 1000.0
+    assert records[0]["x0_nm"] == pytest.approx(s.positions[ca[0]][0] / 10, abs=1e-4)
+    (force,) = [f for f in system.getForces() if isinstance(f, mm.CustomExternalForce)]
+    assert force.getName() == "PositionRestraints" and force.getNumParticles() == 6
+    assert _energy(system, s.positions) == pytest.approx(0.0, abs=1e-6)
+    moved = np.array(s.positions, float)
+    moved[ca[0]] += [1.0, 2.0, 2.0]  # 3 A away
+    moved[n2] += [0.0, 0.0, 1.0]  # 1 A
+    free = int(s.select("resid 4 and name CB").ids[0])
+    moved[free] += 5.0  # not held: costs nothing
+    assert _energy(system, moved) == pytest.approx(500.0 * (0.3**2 + 0.1**2), rel=1e-5)
+
+    with pytest.raises(ValueError, match="picks no atoms"):
+        restraints.add_position_restraints(_particles(s.natoms), s, ["resid 99"], 1.0)
+    # a massless particle (a virtual site) goes where its parents put it
+    sites = _particles(s.natoms)
+    sites.setParticleMass(ca[0], 0.0)
+    assert len(restraints.add_position_restraints(sites, s, ["name CA"], 1.0)) == 4
+    with pytest.raises(ValueError, match="only massless"):
+        restraints.add_position_restraints(sites, s, [f"index {ca[0]}"], 1.0)
+
+
+def test_a_position_restraint_measures_across_the_box():
+    """An atom that has crossed the cell's face is 0.2 nm from its anchor, not 2.8."""
+    import openmm as mm
+
+    s = boonza.from_smiles("[Na+]", name="NA")
+    s.positions = np.array([[1.0, 5.0, 5.0]])
+    system = _particles(1, box=np.eye(3) * 3.0)  # nm
+    walls = mm.NonbondedForce()  # a periodic force makes the system periodic
+    walls.setNonbondedMethod(mm.NonbondedForce.CutoffPeriodic)
+    walls.setCutoffDistance(1.0)
+    walls.addParticle(0.0, 0.1, 0.0)
+    system.addForce(walls)
+    restraints.add_position_restraints(system, s, ["resname NA"], 1000.0)
+    assert _energy(system, [[29.0, 5.0, 5.0]]) == pytest.approx(500.0 * 0.2**2, rel=1e-5)
+
+
+def _held_peptide(box, barostat=None, scaling="com"):
+    """A peptide well away from the origin, one molecule, in a periodic system
+    whose only energy is its position restraints'."""
+    import openmm as mm
+
+    s = boonza.peptide("AAAAA")
+    s.positions = np.asarray(s.positions) + [20.0, 25.0, 15.0]
+    system = _particles(s.natoms, box=box)
+    bonds = mm.HarmonicBondForce()  # what makes it one molecule, to a barostat
+    for i in range(s.natoms - 1):
+        bonds.addBond(i, i + 1, 0.15, 0.0)
+    system.addForce(bonds)
+    walls = mm.NonbondedForce()  # a periodic force makes the system periodic
+    walls.setNonbondedMethod(mm.NonbondedForce.CutoffPeriodic)
+    for _ in range(s.natoms):
+        walls.addParticle(0.0, 0.1, 0.0)
+    system.addForce(walls)
+    restraints.add_position_restraints(system, s, ["name CA", "name N"], 1000.0, scaling)
+    if barostat is not None:
+        system.addForce(barostat)
+    return s, system
+
+
+def test_position_restraint_anchors_follow_the_box():
+    """A barostat moves a molecule as a body, its centre scaled with the box; the
+    anchors go the same way (refcoord_scaling = com), so the move costs nothing."""
+    import openmm as mm
+    from openmm import unit
+
+    s, system = _held_peptide(np.eye(3) * 4.0)
+    ctx = mm.Context(system, mm.VerletIntegrator(0.001), mm.Platform.getPlatformByName("Reference"))
+    start = np.asarray(s.positions, float) / 10
+
+    def energy(box, xyz):
+        ctx.setPeriodicBoxVectors(*(mm.Vec3(*row) for row in np.asarray(box, float)))
+        ctx.setPositions(xyz)
+        return ctx.getState(getEnergy=True).getPotentialEnergy()._value
+
+    assert energy(np.eye(3) * 4.0, start) == pytest.approx(0.0, abs=1e-9)
+    # each axis by its own factor, as a membrane's x-y and z: the centre scales,
+    # the shape does not
+    scale = np.array([1.05, 1.05, 0.93])
+    centre = start.mean(axis=0)
+    moved = start + centre * (scale - 1.0)
+    assert energy(np.diag(4.0 * scale), moved) == pytest.approx(0.0, abs=1e-6)
+    # atoms left where they were are now off their anchors by the centre's shift
+    held = len(s.select("name CA or name N").ids)
+    shift2 = float(((centre * (scale - 1.0)) ** 2).sum())
+    assert energy(np.diag(4.0 * scale), start) == pytest.approx(500.0 * held * shift2, rel=1e-5)
+    # and the springs still hold the shape: stretching the peptide with the box costs
+    assert energy(np.diag(4.0 * scale), start * scale) > 0.1
+
+    # under a barostat itself: the volume moves, the restraints never feel it
+    barostat = mm.MonteCarloBarostat(1 * unit.bar, 300 * unit.kelvin, 1)
+    s, system = _held_peptide(np.eye(3) * 4.0, barostat)
+    integrator = mm.VerletIntegrator(1e-7)  # nothing moves but by the barostat
+    ctx = mm.Context(system, integrator, mm.Platform.getPlatformByName("Reference"))
+    ctx.setPositions(np.asarray(s.positions, float) / 10)
+    boxes, worst = [], 0.0
+    for _ in range(100):
+        integrator.step(1)
+        state = ctx.getState(getEnergy=True)
+        boxes.append(state.getPeriodicBoxVectors()[0][0]._value)
+        worst = max(worst, abs(state.getPotentialEnergy()._value))
+    assert max(boxes) - min(boxes) > 0.01  # the box did change (nm)
+    assert worst < 1e-6  # kJ/mol
+
+
+def test_position_restraint_anchors_stay_put_when_asked():
+    """scaling = "none": fixed coordinates, whatever the box does (refcoord_scaling
+    = no), so a molecule moved with the box is off its anchors."""
+    import openmm as mm
+
+    s, system = _held_peptide(np.eye(3) * 4.0, scaling="none")
+    ctx = mm.Context(system, mm.VerletIntegrator(0.001), mm.Platform.getPlatformByName("Reference"))
+    start = np.asarray(s.positions, float) / 10
+    ctx.setPeriodicBoxVectors(*(mm.Vec3(*row) for row in np.eye(3) * 4.2))
+    ctx.setPositions(start)  # the box grew, the atoms did not move: nothing is felt
+    assert ctx.getState(getEnergy=True).getPotentialEnergy()._value == pytest.approx(0, abs=1e-9)
+    shift = start.mean(axis=0) * 0.05  # where a barostat would have put them
+    ctx.setPositions(start + shift)
+    held = len(s.select("name CA or name N").ids)
+    want = 500.0 * held * float((shift**2).sum())
+    assert ctx.getState(getEnergy=True).getPotentialEnergy()._value == pytest.approx(want, rel=1e-5)
+    with pytest.raises(ValueError, match="scaling is 'com' or 'none'"):
+        restraints.add_position_restraints(_particles(s.natoms), s, ["name CA"], 1.0, "all")
+
+
+def test_position_restraint_anchors_follow_a_triclinic_box():
+    """A triclinic cell changes by one factor, read from its first vector."""
+    import openmm as mm
+
+    box = np.array([[4.0, 0.0, 0.0], [1.0, 4.0, 0.0], [-1.0, 1.5, 3.5]])
+    s, system = _held_peptide(box)
+    ctx = mm.Context(system, mm.VerletIntegrator(0.001), mm.Platform.getPlatformByName("Reference"))
+    start = np.asarray(s.positions, float) / 10
+    ctx.setPositions(start)
+    assert ctx.getState(getEnergy=True).getPotentialEnergy()._value == pytest.approx(0, abs=1e-9)
+    ctx.setPeriodicBoxVectors(*(mm.Vec3(*row) for row in box * 1.04))
+    ctx.setPositions(start + start.mean(axis=0) * 0.04)
+    assert ctx.getState(getEnergy=True).getPotentialEnergy()._value == pytest.approx(0, abs=1e-6)
+
+
+def test_position_restraints_from_the_command_line_and_a_file(tmp_path):
+    args = parse_arguments([str(DATA_1TEN), "--position-restraint", "protein and name CA",
+                            "--position-restraint", "resname HOH and resid 301 and name O",
+                            "--position-restraint-kJ", "500"])  # fmt: skip
+    assert args.position_restraints == ["protein and name CA",
+                                        "resname HOH and resid 301 and name O"]  # fmt: skip
+    assert args.position_restraint_kJ == 500.0
+    assert args.position_restraint_scaling == "com"  # the anchors follow the box
+    fixed = parse_arguments([str(DATA_1TEN), "--position-restraint-scaling", "none"])
+    assert fixed.position_restraint_scaling == "none"
+    assert parse_arguments([str(DATA_1TEN)]).position_restraints is None  # nothing held
+    path = tmp_path / "final.toml"
+    config.write_settings(path, config.settings_of(args))
+    back = parse_arguments(["--config", str(path)])
+    assert back.position_restraints == args.position_restraints
+    assert back.position_restraint_kJ == 500.0
+    bad = tmp_path / "bad.toml"
+    bad.write_text('position_restraints = "protein"\n')  # a list, one selection a set
+    with pytest.raises(ValueError, match="wrong type"):
+        config.load_configuration(bad)
+    with pytest.raises(SystemExit):  # a spring of no stiffness holds nothing
+        parse_arguments([str(DATA_1TEN), "--position-restraint-kJ", "0"])
+
+
 def test_monitor_measures_across_the_box(tmp_path):
     box = np.eye(3) * 3.0
     pos = np.array([[0.1, 0.0, 0.0], [2.9, 0.0, 0.0], [1.5, 1.5, 1.5]])
@@ -499,6 +676,40 @@ def test_a_run_holds_its_distance_restraints(tmp_path, dipeptide):
     with pytest.raises(ValueError, match="cannot change distance_restraint_kJ"):
         run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003",
                                       "--distance-restraint-kJ", "10"]), log=quiet)  # fmt: skip
+    run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003"]), log=quiet)
+
+
+def test_a_run_holds_its_position_restraints(tmp_path, dipeptide):
+    work = tmp_path / "run"
+    said = []
+    run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT,
+                                  "--position-restraint", "name CA",
+                                  "--position-restraint", "resname NME and noh"]),
+                 log=said.append)  # fmt: skip
+    p = RunPaths(work)
+    assert "PositionRestraints" in p.system_xml.read_text()  # and so into restarts
+    rows = list(__import__("csv").DictReader(p.position_restraints_csv.open()))
+    built = boonza.load(p.solvated_dms)
+    want = [*built.select("name CA").ids.tolist(),
+            *built.select("resname NME and noh").ids.tolist()]  # fmt: skip
+    assert [int(r["atom"]) for r in rows] == want
+    # the anchors are the built system's positions, the frame the run is in
+    assert float(rows[0]["x0_nm"]) == pytest.approx(built.positions[want[0]][0] / 10, abs=1e-4)
+    assert any(line.startswith(f"Position restraints: {len(want)} atoms over 2 set(s)")
+               for line in said)  # fmt: skip
+    # held to within thermal reach of a 1000 kJ/mol/nm^2 spring, where a free
+    # dipeptide diffuses
+    final = boonza.load(p.final_dms)
+    d = np.linalg.norm(final.positions[want] - built.positions[want], axis=1)
+    assert d.max() < 3.0  # A
+    assert any("anchors following the box" in line for line in said)
+    with pytest.raises(ValueError, match="cannot change position_restraint_scaling"):
+        run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003",
+                                      "--position-restraint-scaling", "none"]),
+                     log=quiet)  # fmt: skip
+    with pytest.raises(ValueError, match="cannot change position_restraints"):
+        run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003",
+                                      "--position-restraint", "name N"]), log=quiet)  # fmt: skip
     run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003"]), log=quiet)
 
 
