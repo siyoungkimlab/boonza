@@ -26,7 +26,10 @@ every edge still meets one and the same receptor (boonza.fep.relief).
 
 adds ligands to a prep: the SDF holds its ligands as they were and the new
 ones; only the edges that join the new ones are built (commands_new.txt), and
-every edge already run is reused.  result writes the ligands' SDF back with
+every edge already run is reused.  Where a new edge's pose clashes with the
+receptor, it is relaxed around the new edges' ligands (REM, then EM) for those
+edges alone, which --rem asks for whether or not one does and --no-rem
+refuses.  result writes the ligands' SDF back with
 the results as fields (results_ligands.sdf), and beside each correlation plot
 its data and plot_correlation.py, which redraws it without boonza.
 """

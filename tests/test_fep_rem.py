@@ -147,3 +147,112 @@ def test_prep_rem_writes_what_it_did(tmp_path, capsys):
     assert fep_prep.receptor_format("x.dms") == ".dms"
     assert fep_prep.receptor_format("x.maegz") == fep_prep.receptor_format("x.gro") == ".mae"
     assert (work / "edges").is_dir() and (work / "commands.txt").exists()
+
+
+def test_shelve_keeps_the_receptor_before(tmp_path):
+    assert relief.shelve(tmp_path) is None  # nothing there yet
+    # a prep that never ran REM: the receptor its edges were built in is receptor.EXT
+    (tmp_path / "receptor.mae").write_text("as posed")
+    assert relief.shelve(tmp_path) == tmp_path / "rem_1"
+    assert (tmp_path / "rem_1" / "receptor.mae").read_text() == "as posed"
+    assert (tmp_path / "receptor.mae").exists()  # copied: prep writes over it next
+    for name in ("receptor_rem.mae", "rem.csv", "rem_residues.csv"):
+        (tmp_path / name).write_text(name)
+    assert relief.shelve(tmp_path) == tmp_path / "rem_2"
+    assert (tmp_path / "rem_2" / "receptor_rem.mae").read_text() == "receptor_rem.mae"
+    assert not (tmp_path / "rem.csv").exists()  # moved, not copied
+    assert (tmp_path / "rem_2" / "receptor.mae").read_text() == "as posed"
+
+
+@needs_amber
+def test_extend_rem_relaxes_for_the_new_edges_alone(tmp_path, capsys):
+    supplier = Chem.SDMolSupplier(str(DATA / "benzene_modifications.sdf"), removeHs=False)
+    by_name = {m.GetProp("_Name"): m for m in supplier}
+    first = [by_name["benzene"], by_name["toluene"]]
+    sdf, pdb = _clashing(tmp_path, first)
+    work = tmp_path / "work"
+    common = ["--windows", "3", "--repeats", "1", "--platform", "CPU"]
+    assert cli.main(["prep", str(pdb), "--ligands", str(sdf), "--workdir", str(work),
+                     *common]) == 0  # fmt: skip
+    built = {p: p.read_bytes() for p in (work / "edges").glob("*/*/*")}
+    assert built and not (work / "receptor_rem.pdb").exists()
+    more = tmp_path / "more.sdf"
+    with Chem.SDWriter(str(more)) as w:
+        for m in (*first, by_name["phenol"]):
+            w.write(m)
+    capsys.readouterr()
+    # --no-rem: the receptor stays as it is, and the clash is named
+    assert (
+        cli.main(
+            [
+                "prep",
+                str(pdb),
+                "--ligands",
+                str(more),
+                "--workdir",
+                str(tmp_path / "no"),
+                "--extend",
+                "--no-rem",
+                *common,
+            ]
+        )
+        == 1
+    )  # a workdir of its own has no prep
+    work_no = tmp_path / "work_no"
+    import shutil
+
+    shutil.copytree(work, work_no)
+    assert cli.main(["prep", str(pdb), "--ligands", str(more), "--workdir", str(work_no),
+                     "--extend", "--no-rem", *common]) == 0  # fmt: skip
+    out = capsys.readouterr().out
+    assert "--no-rem leaves the receptor as it is" in out and "REM, then EM" not in out
+    assert not (work_no / "receptor_rem.pdb").exists()
+    # by itself, with neither flag: the new edges' poses clash, so REM runs
+    assert cli.main(["prep", str(pdb), "--ligands", str(more), "--workdir", str(work),
+                     "--extend", *common]) == 0  # fmt: skip
+    out = capsys.readouterr().out
+    assert "new edges' ligands" in out and "for those edges alone" in out
+    assert "which --no-rem leaves as it is" in out  # why it ran, without being asked
+    assert all(p.read_bytes() == b for p, b in built.items())  # the first edges as built
+    rows = list(csv.DictReader((work / "rem.csv").open()))
+    # A's of the new edges as posed, and B as each leg has it (--map graph, the default)
+    assert {r["ligand"] for r in rows} >= {"phenol on benzene"} | {
+        r["ligand"].split(" on ")[1] for r in rows if " on " in r["ligand"]
+    }
+    assert all(float(r["closest_after"]) > float(r["closest_before"]) for r in rows)
+    relaxed = np.asarray(boonza.load(work / "receptor_rem.pdb").positions, float)
+    posed_receptor = np.asarray(boonza.load(work / "rem_1" / "receptor.pdb").positions, float)
+    assert np.abs(relaxed - posed_receptor).max() > 0.5  # room made
+    new = (work / "commands_new.txt").read_text().splitlines()
+    assert new and all("phenol" in line for line in new)
+    # a later extension starts from that receptor, and keeps it when it relaxes again
+    again = tmp_path / "again.sdf"
+    with Chem.SDWriter(str(again)) as w:
+        for m in (*first, by_name["phenol"], by_name["anisole"]):
+            w.write(m)
+    assert (
+        cli.main(
+            [
+                "prep",
+                str(pdb),
+                "--ligands",
+                str(again),
+                "--workdir",
+                str(work),
+                "--extend",
+                "--rem",
+                *common,
+            ]
+        )
+        == 0
+    )  # asked for, clash or not
+    # rem_<n> is what the workdir held before the n-th relaxation: rem_1 the receptor
+    # as posed (the first prep ran no REM), rem_2 the one this extension replaced
+    kept = np.asarray(boonza.load(work / "rem_2" / "receptor_rem.pdb").positions, float)
+    assert np.allclose(kept, relaxed, atol=1e-3)
+    assert np.allclose(
+        boonza.load(work / "rem_2" / "receptor.pdb").positions, relaxed, atol=1e-3
+    )  # the receptor the edges before it were built in
+    assert (work / "rem_2" / "rem.csv").exists() and (work / "receptor_rem.pdb").exists()
+    first = np.asarray(boonza.load(work / "rem_1" / "receptor.pdb").positions, float)
+    assert np.abs(first - posed_receptor).max() < 1e-3  # as it came, nothing relaxed
