@@ -391,7 +391,7 @@ def save_structure(s: System, path, positions=None, box=None) -> None:
 def secondary_beside(top) -> str | None:
     """The DSSP codes boonza wrote beside a built Martini topology, if any."""
     path = Path(top).parent / "secondary.txt"
-    return path.read_text().strip() if path.is_file() else None
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else None
 
 
 #: Where a topology's coordinates are looked for, in this order.  A .dms or a
@@ -468,7 +468,7 @@ def _write_built(m, directory: Path, system: System, gromacs: bool, log=print,
     if computed:
         from ..martini.go import CONTACTS_OUT
 
-        (directory / CONTACTS_OUT).write_text(computed)
+        (directory / CONTACTS_OUT).write_text(computed, encoding="utf-8")
         rows = sum(1 for line in computed.splitlines() if line.startswith("R "))
         log(f"Wrote the contact map the fold is held by: {directory.name}/{CONTACTS_OUT} "
             f"({rows} residue pairs)")  # fmt: skip
@@ -628,7 +628,7 @@ def build_sirah_system(args, workdir: Path, log=print, check=None) -> tuple[Syst
         s = built.system()
         _write_built(built, workdir / "sirah", s, bool(args.gromacs), log)
         if built.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
-            (workdir / "sirah" / "secondary.txt").write_text(built.ss + "\n")
+            (workdir / "sirah" / "secondary.txt").write_text(built.ss + "\n", encoding="utf-8")
         # a view file where there is something to leave out: SIRAH needs no
         # elastic network, holding its fold with torsion terms, but a cofactor
         # is held by bands all the same -- a hundred and fifty from one
@@ -769,7 +769,7 @@ def build_martini_system(args, workdir: Path, log=print, check=None) -> tuple[Sy
     _write_built(m, workdir / "martini", s, bool(args.gromacs), log,
                  martini_itp=args.martini_itp)  # fmt: skip
     if m.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
-        (workdir / "martini" / "secondary.txt").write_text(m.ss + "\n")
+        (workdir / "martini" / "secondary.txt").write_text(m.ss + "\n", encoding="utf-8")
     # what to open in a viewer: the backbone bead named CA, so a chain is
     # traced, and no elastic network, which a viewer would draw as a hairball.
     # Same atoms in the same order, so a trajectory still lines up with it.

@@ -79,7 +79,7 @@ def read_contact_map(path) -> list[tuple[int, str, int, str]]:
     way -- a chymotrypsin, an antibody, or a chain that starts at 802.
     """
     out = []
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
         token = line.split()
         if not token or token[0] != "R" or len(token) != _COLUMNS:
             continue

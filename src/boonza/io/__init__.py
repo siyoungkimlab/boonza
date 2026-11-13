@@ -21,7 +21,7 @@ def _load_top(path, **kwargs):
     """``.top`` is a GROMACS topology, or an Amber prmtop under an old name."""
     import os
 
-    with open(os.fspath(path), errors="replace") as fh:
+    with open(os.fspath(path), errors="replace", encoding="utf-8") as fh:
         head = fh.read(4096)
     if head.startswith("%VERSION") or "%FLAG" in head:
         return load_prmtop(path, **kwargs)

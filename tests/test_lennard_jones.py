@@ -33,10 +33,11 @@ B 2
 
 
 def _pair(tmp_path, r):
-    (tmp_path / "t.top").write_text(PAIR)
+    (tmp_path / "t.top").write_text(PAIR, encoding="utf-8")
     (tmp_path / "t.gro").write_text(
         f"t\n2\n    1B        C    1   0.000   0.000   0.000\n"
-        f"    2B        C    2{r:8.3f}   0.000   0.000\n   5.00000   5.00000   5.00000\n"
+        f"    2B        C    2{r:8.3f}   0.000   0.000\n   5.00000   5.00000   5.00000\n",
+        encoding="utf-8",
     )
     return load_top(tmp_path / "t.top", tmp_path / "t.gro")
 
@@ -190,7 +191,7 @@ def test_final_toml_records_it(tmp_path):
         args = _quiet(argv)
         path = tmp_path / "final.toml"
         config.write_settings(path, config.settings_of(args))
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert f"# Lennard-Jones as run: {line}" in text
         assert f'lj_switch = "{args.lj_switch}"' in text
         assert f"dispersion_correction = {str(args.dispersion_correction).lower()}" in text

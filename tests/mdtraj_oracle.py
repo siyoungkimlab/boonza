@@ -35,7 +35,7 @@ def _hbonds(bonds_path, path):
     top = t.topology
     top._bonds = []
     atoms = list(top.atoms)
-    with open(bonds_path) as f:
+    with open(bonds_path, encoding="utf-8") as f:
         for i, j in json.load(f):
             top.add_bond(atoms[i], atoms[j])
     water = [a.index for a in atoms if a.residue.is_water]

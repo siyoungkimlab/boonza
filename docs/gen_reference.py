@@ -132,7 +132,7 @@ def main():
         for name in missing:
             lines += _entry(f"boonza.{name}", getattr(boonza, name))
     out = Path(__file__).with_name("reference.md")
-    out.write_text("\n".join(lines).rstrip() + "\n")
+    out.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     print(f"wrote {out} ({len(lines)} lines)")
 
 

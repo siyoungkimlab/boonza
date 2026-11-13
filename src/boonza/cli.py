@@ -534,7 +534,7 @@ def _probes_of(workdirs) -> list[str]:
     for d in workdirs or []:
         for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
             if candidate.is_file():
-                out += json.loads(candidate.read_text())["probes"]
+                out += json.loads(candidate.read_text(encoding="utf-8"))["probes"]
                 break
     return list(dict.fromkeys(out))
 
@@ -624,14 +624,14 @@ def _triage(args) -> int:
     # boonza modes reads the ligand back from here, so its session shows the same one
     chosen = {"ligandsel": args.ligandsel, "proteinsel": args.proteinsel,
               "pocketsel": args.pocketsel}  # fmt: skip
-    (out / "triage.json").write_text(json.dumps(chosen, indent=1))
+    (out / "triage.json").write_text(json.dumps(chosen, indent=1), encoding="utf-8")
     rows, prints = [], {}
     for d in args.workdir:
         here = Path(d)
         row = {"run": here.name}
         status = here / "status.json"
         if status.exists():
-            row["outcome"] = json.loads(status.read_text()).get("outcome", "")
+            row["outcome"] = json.loads(status.read_text(encoding="utf-8")).get("outcome", "")
         if row.get("outcome") == "detached" and not args.keep_detached:
             # the ligand left and the run stopped saying so: nothing to measure
             rows.append({**row, "note": "detached"})
@@ -680,7 +680,7 @@ def _triage(args) -> int:
               f"{100 * got.population:.0f}% of the run"
               f"{', settled late' if got.settled else ''}{'  ' + got.note if got.note else ''}",
               flush=True)  # fmt: skip
-    with open(out / "summary.csv", "w", newline="") as fh:
+    with open(out / "summary.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, TRIAGE_FIELDS, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
@@ -723,7 +723,7 @@ def _gbsa(args) -> int:
         row = {"run": name, "model": args.model}
         status = here / "status.json"
         if status.is_file():
-            row["outcome"] = json.loads(status.read_text()).get("outcome", "")
+            row["outcome"] = json.loads(status.read_text(encoding="utf-8")).get("outcome", "")
         if row.get("outcome") == "detached" and not args.keep_detached:
             # the ligand left and the run stopped saying so: nothing to score
             rows.append({**row, "note": "detached"})
@@ -742,7 +742,7 @@ def _gbsa(args) -> int:
         got_summary = got.summary()
         row.update({k: round(v, 3) if isinstance(v, float) else v for k, v in got_summary.items()})
         rows.append(row)
-        with open(out / "frames" / f"{name}.csv", "w", newline="") as fh:
+        with open(out / "frames" / f"{name}.csv", "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["frame", "total", *TERMS, "bonded"])
             total = got.total
@@ -753,7 +753,7 @@ def _gbsa(args) -> int:
         print(f"{name}: dG {got_summary['dg']:.1f} +/- {got_summary['sem']:.1f} kcal/mol over "
               f"{got_summary['frames']} frame(s) ({parts}); best {got_summary['best']:.1f} at "
               f"frame {got_summary['best_frame']}", flush=True)  # fmt: skip
-    with open(out / "summary.csv", "w", newline="") as fh:
+    with open(out / "summary.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, GBSA_FIELDS, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
@@ -782,7 +782,9 @@ def _modes(args) -> int:
     found = modes([loaded[n] for n in names], cutoff=args.cutoff)
     summary = {}
     if (where / "summary.csv").exists():
-        summary = {r["run"]: r for r in csv.DictReader(open(where / "summary.csv"))}
+        summary = {
+            r["run"]: r for r in csv.DictReader(open(where / "summary.csv", encoding="utf-8"))
+        }
     print(f"{len(names)} pose(s) -> {len(found)} mode(s) at cosine {args.cutoff:g}\n")
     print(f"{'mode':>4s} {'runs':>5s} {'share':>6s} {'widest':>7s}  medoid")
     rows = []
@@ -808,13 +810,13 @@ def _modes(args) -> int:
     (out / "structures").mkdir(parents=True, exist_ok=True)
     cols = ["run", "mode", "mode_runs", "mode_spread", "medoid", "is_medoid"]
     cols += [c for c in (next(iter(summary.values()), {}) or {}) if c not in (*cols, "run")]
-    with open(out / "modes.csv", "w", newline="") as fh:
+    with open(out / "modes.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(sorted(rows, key=lambda r: (r["mode"], -r["is_medoid"], r["run"])))
     ligand = args.ligandsel
     if ligand is None and (where / "triage.json").exists():
-        ligand = json.loads((where / "triage.json").read_text()).get("ligandsel")
+        ligand = json.loads((where / "triage.json").read_text(encoding="utf-8")).get("ligandsel")
     ligand = ligand or "not (polymer or water or ions)"
     reference = _load(args.reference) if args.reference else None
     picked = []
@@ -826,7 +828,7 @@ def _modes(args) -> int:
     poses = _align_medoids(out, picked, reference)
     _write_sessions(out, poses, ligand)
     # boonza view draws the same ligand
-    (out / "modes.json").write_text(json.dumps({"ligandsel": ligand}, indent=1))
+    (out / "modes.json").write_text(json.dumps({"ligandsel": ligand}, indent=1), encoding="utf-8")
     print(f"\n{len(picked)} medoid(s) -> {out / 'modes.csv'} and a session beside it")
     return 0
 
@@ -951,8 +953,8 @@ def _write_sessions(out, poses, ligand: str) -> None:
         pml.append(f"orient {first}")
     pml.append("save session.pse")
     vmd.append("display resetview")
-    Path(out, "session.pml").write_text("\n".join(pml) + "\n")
-    Path(out, "session.vmd").write_text("\n".join(vmd) + "\n")
+    Path(out, "session.pml").write_text("\n".join(pml) + "\n", encoding="utf-8")
+    Path(out, "session.vmd").write_text("\n".join(vmd) + "\n", encoding="utf-8")
 
 
 def _probes(args) -> int:
@@ -971,7 +973,7 @@ def _probes(args) -> int:
         if found is None:
             for candidate in (Path(d) / "probes.json", Path(d).parent / "probes.json"):
                 if candidate.is_file():
-                    found = json.loads(candidate.read_text())["probes"]
+                    found = json.loads(candidate.read_text(encoding="utf-8"))["probes"]
                     break
         if found is None:
             raise ValueError(f"{d} has no probes.json, so name the probes with --probes: it "
@@ -1519,7 +1521,7 @@ def _setting_of(workdirs, key):
         for name in (Path(d) / "final.toml", Path(d) / "md.toml", Path(d).parent / "md.toml"):
             if name.is_file():
                 try:
-                    settings = tomllib.loads(name.read_text())
+                    settings = tomllib.loads(name.read_text(encoding="utf-8"))
                 except (OSError, tomllib.TOMLDecodeError):
                     continue
                 if key in settings:
@@ -1691,7 +1693,7 @@ def _draw(args) -> int:
 
     smiles, names = list(args.smiles or []), None
     if args.input:
-        pairs = read_smiles(Path(args.input).read_text())
+        pairs = read_smiles(Path(args.input).read_text(encoding="utf-8"))
         if not pairs:
             raise ValueError(f"{args.input} holds no SMILES")
         smiles += [s for s, _ in pairs]

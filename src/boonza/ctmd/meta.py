@@ -139,7 +139,7 @@ def _simulation(topology, omm, settings: Settings, seed: int, platform=None, log
 
 def _write_colvar(path, time, cv, bias, work) -> None:
     """A COLVAR file in PLUMED's format, so the authors' analysis scripts read it too."""
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("#! FIELDS time d metad.bias metad.rct\n")
         for row in zip(time, cv, bias, work, strict=True):
             f.write(" {:f} {:f} {:f} {:f}\n".format(*row))

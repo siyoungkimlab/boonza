@@ -45,7 +45,8 @@ def test_matches_biopython(ref, rc, mob, mc, tmp_path):
     np.save(tmp_path / "a.npy", A)
     np.save(tmp_path / "b.npy", B)
     r = subprocess.run([BIO_PYTHON, str(HERE / "ce_oracle.py"), str(tmp_path / "a.npy"),
-                        str(tmp_path / "b.npy")], capture_output=True, text=True)  # fmt: skip
+                        str(tmp_path / "b.npy")],
+                       capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert r.returncode == 0, r.stderr
     want = json.loads(r.stdout)
     ia, ib, rms, R, t, z = ce_align(A, B)

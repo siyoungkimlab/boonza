@@ -54,7 +54,7 @@ def two_peptides(tmp_path_factory):
 def test_settings_precedence(tmp_path):
     toml = tmp_path / "s.toml"
     toml.write_text('production_ns = 5.0\nsaltM = 0.1\nforcefields = ["aa.amber.ff14SB", '
-                    '["water.tip3p"]]\n')  # fmt: skip
+                    '["water.tip3p"]]\n', encoding="utf-8")  # fmt: skip
     a = parse_arguments(["x.pdb", "--config", str(toml), "--saltM", "0.2"])
     assert (a.production_ns, a.saltM) == (5.0, 0.2)
     assert a.forcefields == (("aa.amber.ff14SB",), ("water.tip3p",))
@@ -81,11 +81,13 @@ def test_settings_precedence(tmp_path):
     assert (r.repulsion_selection, r.repulsion_distance_nm, r.repulsion_kJ) == ("chain L", 0.5, 800)
     sel = parse_arguments(["x", "--dihedral-restraint-selection", "chain A"])
     assert sel.dihedral_restraint_selection == "chain A"
-    toml.write_text('dihedral_restraint_selection = "chain A"\n')  # and in a settings file
+    toml.write_text(
+        'dihedral_restraint_selection = "chain A"\n', encoding="utf-8"
+    )  # and in a settings file
     assert config.load_configuration(toml)["dihedral_restraint_selection"] == "chain A"
     ref = parse_arguments(["x", "--dihedral-restraint-reference", "xtal.dms"])
     assert ref.dihedral_restraint_reference == "xtal.dms"
-    toml.write_text('dihedral_restraint_reference = "xtal.dms"\n')
+    toml.write_text('dihedral_restraint_reference = "xtal.dms"\n', encoding="utf-8")
     assert config.load_configuration(toml)["dihedral_restraint_reference"] == "xtal.dms"
 
 
@@ -113,10 +115,12 @@ def test_settings_file_errors(tmp_path):
     for text in ('temperatur = 300\n', 'hmr = "yes"\n', 'precision = "quad"\n',
                  'forcefields = [1]\n'):  # fmt: skip
         p = tmp_path / "bad.toml"
-        p.write_text(text)
+        p.write_text(text, encoding="utf-8")
         with pytest.raises(ValueError):
             config.load_configuration(p)
-    p.write_text('proteinff = "amber19sb"\nwaterff = "opc"\n')  # ommflow's, replaced
+    p.write_text(
+        'proteinff = "amber19sb"\nwaterff = "opc"\n', encoding="utf-8"
+    )  # ommflow's, replaced
     with pytest.raises(ValueError, match="list OpenMM XML files in forcefields"):
         config.load_configuration(p)
 
@@ -448,7 +452,7 @@ def test_distance_restraints_from_the_command_line_and_a_file(tmp_path):
     # boonza fep takes the same springs, on its complex leg: see
     # tests/test_fep_hybrid.py, which holds a hybrid system with them
     bad = tmp_path / "bad.toml"
-    bad.write_text('distance_restraints = [["resid 1"]]\n')
+    bad.write_text('distance_restraints = [["resid 1"]]\n', encoding="utf-8")
     with pytest.raises(ValueError, match="wrong type"):
         config.load_configuration(bad)
 
@@ -623,7 +627,9 @@ def test_position_restraints_from_the_command_line_and_a_file(tmp_path):
     assert back.position_restraints == args.position_restraints
     assert back.position_restraint_kJ == 500.0
     bad = tmp_path / "bad.toml"
-    bad.write_text('position_restraints = "protein"\n')  # a list, one selection a set
+    bad.write_text(
+        'position_restraints = "protein"\n', encoding="utf-8"
+    )  # a list, one selection a set
     with pytest.raises(ValueError, match="wrong type"):
         config.load_configuration(bad)
     with pytest.raises(SystemExit):  # a spring of no stiffness holds nothing
@@ -642,7 +648,9 @@ def test_monitor_measures_across_the_box(tmp_path):
     row = dict.fromkeys(monitor.FIELDS, 0)
     for step in (10, 20, 20):
         monitor.append_row(csv, {**row, "step": step, "consecutive_detached_count": step // 10})
-    assert len(csv.read_text().splitlines()) == 3  # the repeated step is not written twice
+    assert (
+        len(csv.read_text(encoding="utf-8").splitlines()) == 3
+    )  # the repeated step is not written twice
     assert monitor.restore_count(csv, 15) == 1
     with pytest.raises(ValueError):
         monitor.append_row(csv, {**row, "step": 5})
@@ -669,8 +677,8 @@ def test_a_run_holds_its_distance_restraints(tmp_path, dipeptide):
                                   "--distance-restraint", "resname ALA and name CB",
                                   "resname NME and name N"]), log=said.append)  # fmt: skip
     p = RunPaths(work)
-    assert "DistanceRestraints" in p.system_xml.read_text()  # and so into restarts
-    rows = list(__import__("csv").DictReader(p.distance_restraints_csv.open()))
+    assert "DistanceRestraints" in p.system_xml.read_text(encoding="utf-8")  # and so into restarts
+    rows = list(__import__("csv").DictReader(p.distance_restraints_csv.open(encoding="utf-8")))
     assert len(rows) == 2 and rows[0]["label1"].endswith(":O")
     assert any(line.startswith("Distance restraints: 2 springs over 2 set(s)") for line in said)
     with pytest.raises(ValueError, match="cannot change distance_restraint_kJ"):
@@ -687,8 +695,8 @@ def test_a_run_holds_its_position_restraints(tmp_path, dipeptide):
                                   "--position-restraint", "resname NME and noh"]),
                  log=said.append)  # fmt: skip
     p = RunPaths(work)
-    assert "PositionRestraints" in p.system_xml.read_text()  # and so into restarts
-    rows = list(__import__("csv").DictReader(p.position_restraints_csv.open()))
+    assert "PositionRestraints" in p.system_xml.read_text(encoding="utf-8")  # and so into restarts
+    rows = list(__import__("csv").DictReader(p.position_restraints_csv.open(encoding="utf-8")))
     built = boonza.load(p.solvated_dms)
     want = [*built.select("name CA").ids.tolist(),
             *built.select("resname NME and noh").ids.tolist()]  # fmt: skip
@@ -731,16 +739,16 @@ def test_new_run_and_restarts(tmp_path, dipeptide):
     rounded = boonza.load(p.final_pdb)
     moved = np.abs(np.asarray(final.positions) - np.asarray(rounded.positions))
     assert moved.max() < 1e-3  # the same frame, to the PDB's own precision
-    assert len(p.state_csv.read_text().splitlines()) == 3  # header, 1 and 2 ps
+    assert len(p.state_csv.read_text(encoding="utf-8").splitlines()) == 3  # header, 1 and 2 ps
     s = boonza.load(p.solvated_dms)
-    assert "DihedralRestraint" in p.system_xml.read_text()
-    assert s.nresidues > 100 and "MonteCarloBarostat" in p.system_xml.read_text()
+    assert "DihedralRestraint" in p.system_xml.read_text(encoding="utf-8")
+    assert s.nresidues > 100 and "MonteCarloBarostat" in p.system_xml.read_text(encoding="utf-8")
     # a larger target resumes and appends
     run_workflow(parse_arguments(["--workdir", str(work), "--production-ns", "0.003"]), log=quiet)
-    assert len(p.state_csv.read_text().splitlines()) == 4
+    assert len(p.state_csv.read_text(encoding="utf-8").splitlines()) == 4
     assert config.load_configuration(p.final_configuration)["production_ns"] == 0.003
     run_workflow(parse_arguments(["--workdir", str(work)]), log=quiet)  # nothing left to do
-    assert len(p.state_csv.read_text().splitlines()) == 4
+    assert len(p.state_csv.read_text(encoding="utf-8").splitlines()) == 4
     with pytest.raises(ValueError, match="integration_fs"):
         run_workflow(parse_arguments(["--workdir", str(work), "--integration-fs", "1"]),
                      log=quiet)  # fmt: skip
@@ -754,18 +762,18 @@ def test_early_stop_confirms_detachment(tmp_path, two_peptides):
             "--detach-cutoff-nm", "0.1"]  # fmt: skip
     run_workflow(parse_arguments(argv), log=quiet)
     p = RunPaths(work)
-    status = json.loads(p.status_json.read_text())
+    status = json.loads(p.status_json.read_text(encoding="utf-8"))
     assert status["outcome"] == "detached" and status["final_production_step"] == 1000
-    pocket = json.loads(p.pocket_json.read_text())
+    pocket = json.loads(p.pocket_json.read_text(encoding="utf-8"))
     assert (pocket["selector_kind"], pocket["selector_value"]) == ("selection", "chain B")
     assert len(pocket["ligand_atom_indices"]) == 22  # the whole second dipeptide
     with pytest.raises(ValueError, match="differs from the saved target"):
         run_workflow(parse_arguments(["--workdir", str(work), "--monitor-selection", "chain A"]),
                      log=quiet)  # fmt: skip
-    rows = p.monitor_csv.read_text().splitlines()
+    rows = p.monitor_csv.read_text(encoding="utf-8").splitlines()
     assert len(rows) == 3 and rows[-1].endswith("true")
     run_workflow(parse_arguments(["--workdir", str(work)]), log=quiet)  # stays stopped
-    assert p.monitor_csv.read_text().splitlines() == rows
+    assert p.monitor_csv.read_text(encoding="utf-8").splitlines() == rows
 
 
 def test_solvate_false_runs_the_input_as_it_is(tmp_path, dipeptide):
@@ -779,7 +787,7 @@ def test_solvate_false_runs_the_input_as_it_is(tmp_path, dipeptide):
     assert parse_arguments(["x"]).solvate == "box"
     assert parse_arguments(["x", "--solvate", "fill"]).solvate == "fill"
     toml = tmp_path / "old.toml"
-    toml.write_text("solvate = false\n")  # a boolean, from before fill was a mode
+    toml.write_text("solvate = false\n", encoding="utf-8")  # a boolean, from before fill was a mode
     assert config.load_configuration(toml)["solvate"] == "none"
     lines = []
     out, info = build_system(args, tmp_path, log=lines.append)
@@ -829,12 +837,12 @@ def test_barostat_choices(tmp_path, dipeptide):
     work = tmp_path / "mb"
     run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT,
                                   "--barostat", "membrane"]), log=quiet)  # fmt: skip
-    xml = RunPaths(work).system_xml.read_text()
+    xml = RunPaths(work).system_xml.read_text(encoding="utf-8")
     assert "MonteCarloMembraneBarostat" in xml
     dry = tmp_path / "nvt"
     run_workflow(parse_arguments([str(dipeptide), "--workdir", str(dry), *SHORT,
                                   "--barostat", "none"]), log=quiet)  # fmt: skip
-    assert "Barostat" not in RunPaths(dry).system_xml.read_text()
+    assert "Barostat" not in RunPaths(dry).system_xml.read_text(encoding="utf-8")
 
 
 def test_openmm_xml_route_builds(tmp_path, dipeptide):
@@ -936,7 +944,7 @@ def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
     work = tmp_path / "plain"
     run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT]), log=quiet)
     p = RunPaths(work)
-    doc = json.loads(p.status_json.read_text())
+    doc = json.loads(p.status_json.read_text(encoding="utf-8"))
     assert doc["outcome"] == "target_reached"
     assert doc["early_stop_enabled"] is False
     assert doc["final_production_time_ns"] == pytest.approx(0.002)
@@ -947,7 +955,7 @@ def test_every_run_says_how_far_it_got(tmp_path, dipeptide):
     longer = [*SHORT]  # resuming to a further target says so, from the same file
     longer[longer.index("--production-ns") + 1] = "0.004"
     run_workflow(parse_arguments(["--workdir", str(work), *longer]), log=quiet)
-    doc = json.loads(p.status_json.read_text())
+    doc = json.loads(p.status_json.read_text(encoding="utf-8"))
     assert doc["final_production_time_ns"] == pytest.approx(0.004)
     assert doc["target_production_ns"] == 0.004
 
@@ -961,13 +969,13 @@ def test_a_watched_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_ligan
     argv = [str(two_ligands), "--workdir", str(work), *SHORT, "--seed", "1", "--early-stop",
             "--monitor-ligand", "ligand-0", "--pocket-cutoff-nm", "0.8"]  # fmt: skip
     run_workflow(parse_arguments(argv), log=quiet)
-    watched = json.loads(RunPaths(work).status_json.read_text())
+    watched = json.loads(RunPaths(work).status_json.read_text(encoding="utf-8"))
     assert watched["early_stop_enabled"] is True and watched["ligand_id"] == "ligand-0"
 
     longer = [*SHORT]
     longer[longer.index("--production-ns") + 1] = "0.004"
     run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
-    doc = json.loads(RunPaths(work).status_json.read_text())
+    doc = json.loads(RunPaths(work).status_json.read_text(encoding="utf-8"))
     # the messages carry the record, so a failure here says what it found
     assert doc["early_stop_enabled"] is False, doc  # no longer watched
     assert doc["ligand_id"] == "ligand-0", doc  # but what it was watching is not forgotten
@@ -986,14 +994,14 @@ def test_a_detached_run_resumed_unwatched_keeps_what_it_found(tmp_path, two_liga
             "--monitor-interval-ns", "0.001", "--pocket-cutoff-nm", "0.8"]  # fmt: skip
     # the monitor interval matters: it defaults to 0.1 ns, and the run is 0.002
     run_workflow(parse_arguments(argv), log=quiet)
-    gone = json.loads(RunPaths(work).status_json.read_text())
+    gone = json.loads(RunPaths(work).status_json.read_text(encoding="utf-8"))
     assert gone["outcome"] == "detached", gone  # by construction: nothing counts as contact
     assert gone["ligand_id"] == "ligand-0" and gone["early_stop_enabled"] is True, gone
 
     longer = [*SHORT]
     longer[longer.index("--production-ns") + 1] = "0.004"
     run_workflow(parse_arguments(["--workdir", str(work), *longer, "--no-early-stop"]), log=quiet)
-    doc = json.loads(RunPaths(work).status_json.read_text())
+    doc = json.loads(RunPaths(work).status_json.read_text(encoding="utf-8"))
     assert doc["early_stop_enabled"] is False, doc
     assert doc["ligand_id"] == "ligand-0", doc  # what it found is not forgotten
     assert doc["outcome"] == "target_reached", doc  # and it ran on to the new target
@@ -1024,7 +1032,7 @@ def test_the_barostat_carries_the_seed(tmp_path, dipeptide):
     work = tmp_path / "seeded"  # and it reaches the system a restart is built from
     run_workflow(parse_arguments([str(dipeptide), "--workdir", str(work), *SHORT,
                                   "--seed", "7"]), log=quiet)  # fmt: skip
-    written = RunPaths(work).system_xml.read_text()
+    written = RunPaths(work).system_xml.read_text(encoding="utf-8")
     barostat = [x for x in written.split("<Force") if "MonteCarloBarostat" in x][0]
     assert 'randomSeed="7"' in barostat and 'frequency="25"' in barostat
 
@@ -1078,7 +1086,10 @@ def test_a_settings_file_of_defaults_is_not_a_model_conflict(tmp_path):
     assert args.model == "aa" and "elastic" in config.load_configuration(path)
 
     # a value that really differs is still refused
-    path.write_text(path.read_text().replace("elastic = false", "elastic = true"))
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("elastic = false", "elastic = true"),
+        encoding="utf-8",
+    )
     with pytest.raises(SystemExit):
         parse_arguments(["x.pdb", "--config", str(path)])
 
@@ -1089,7 +1100,7 @@ def test_martini_needs_no_force_field_in_final_toml(tmp_path):
     args = parse_arguments(["x.pdb", "--model", "martini3"])
     path = tmp_path / "final.toml"
     config.write_settings(path, config.settings_of(args))
-    assert "forcefields" not in path.read_text()
+    assert "forcefields" not in path.read_text(encoding="utf-8")
     assert config.load_configuration(path)["model"] == "martini3"
 
 
@@ -1114,7 +1125,7 @@ def test_boonza_md_runs_a_martini_bilayer(tmp_path, model):
     names = set(s.residues["name"].tolist())
     assert "DPPC" in names and "W" in names
     # the water is recorded as water, not as 1177 one-bead ions
-    info = json.loads(paths.components_json.read_text())
+    info = json.loads(paths.components_json.read_text(encoding="utf-8"))
     assert info["water_molecules"] > 100
 
 
@@ -1395,7 +1406,7 @@ def test_charge_geometry_reaches_gaff2(tmp_path, dipeptide, monkeypatch):
 
     monkeypatch.setattr(gaff, "gaff2_patch", patch)
     toml = tmp_path / "md.toml"
-    toml.write_text('charge_geometry = "reference"\n')
+    toml.write_text('charge_geometry = "reference"\n', encoding="utf-8")
     for argv, want in (([], "optimized"), (["--charge-geometry", "reference"], "reference"),
                        (["--config", str(toml)], "reference")):  # fmt: skip
         with pytest.raises(Stop):

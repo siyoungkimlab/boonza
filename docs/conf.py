@@ -6,7 +6,9 @@ from pathlib import Path
 project = "boonza"
 author = "Siyoung Kim"
 copyright = "2026, Siyoung Kim"
-_init = (Path(__file__).resolve().parent.parent / "src" / "boonza" / "__init__.py").read_text()
+_init = (Path(__file__).resolve().parent.parent / "src" / "boonza" / "__init__.py").read_text(
+    encoding="utf-8"
+)
 release = version = re.search(r'__version__ = "([^"]+)"', _init).group(1)
 
 extensions = ["myst_parser"]

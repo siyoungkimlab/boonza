@@ -282,7 +282,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             _write_built(system, built, whole, gromacs or whole is None,
                          log if s == 0 else _quiet)  # fmt: skip
             if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
-                (built / "secondary.txt").write_text(protein.ss + "\n")
+                (built / "secondary.txt").write_text(protein.ss + "\n", encoding="utf-8")
         else:
             system = build(protein, probes, copies, box, rng, args.saltM, clearance)
             built = d / "martini"
@@ -290,7 +290,7 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             _write_built(system, built, whole, gromacs or whole is None,
                          log if s == 0 else _quiet, martini_itp=args.martini_itp)  # fmt: skip
             if protein.ss:  # DSSP cannot read beads: dihedral_restraint = 'ss' reads this back
-                (built / "secondary.txt").write_text(protein.ss + "\n")
+                (built / "secondary.txt").write_text(protein.ss + "\n", encoding="utf-8")
         if whole is not None and (not sirah or system.restraint_bonds()):
             # what to open in a viewer: the system without the bands that hold
             # it -- the rubber bands, and whatever holds a cofactor -- which a
@@ -339,9 +339,10 @@ def prepare(args, sequences=None, types: int = 10, copies: int = 5,
             {"probes": list(group), "copies": copies, "chain": chain,
              "concentration_mM": round(concentration_of(copies, edge, len(group)), 1),
              "ligand": "resname " + " ".join(group),
-             "align": "name GC" if sirah else "name BB"}, indent=1) + "\n")  # fmt: skip
+             "align": "name GC" if sirah else "name BB"}, indent=1) + "\n",
+        encoding="utf-8")  # fmt: skip
     (root / "simulations.txt").write_text(
-        "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims)
+        "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims), encoding="utf-8"
     )
     log(f"{len(sims)} simulations in {root}: run each line of {root / 'simulations.txt'} "
         "(a job array), or pass --run")  # fmt: skip

@@ -16,7 +16,7 @@ from chimerax.core.commands import run
 
 
 def _strip_seqres(path):
-    lines = [ln for ln in open(path) if not ln.startswith("SEQRES")]
+    lines = [ln for ln in open(path, encoding="utf-8") if not ln.startswith("SEQRES")]
     f = tempfile.NamedTemporaryFile("w", suffix=".pdb", delete=False)
     f.writelines(lines)
     f.close()
@@ -62,7 +62,7 @@ def main():
         "full_rmsd": result["full RMSD"],
         "final_rmsd": result["final RMSD"],
         "matrix": result["transformation matrix"].matrix.tolist(),
-    }, open(out, "w"))  # fmt: skip
+    }, open(out, "w", encoding="utf-8"))  # fmt: skip
 
 
 main()

@@ -272,7 +272,7 @@ def read_ff(paths, name: str) -> ForceField:
 def _read_ff_file(path: Path, ff: ForceField) -> None:
     macros: dict = {}
     top, section, ctx = None, None, None
-    for raw in path.read_text().splitlines():
+    for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue
@@ -411,7 +411,7 @@ def read_map(path) -> dict[str, dict[str, float]]:
     and an atom listed for several beads is shared among them."""
     beads_of: dict[str, list[str]] = {}
     section = None
-    for raw in Path(path).read_text().splitlines():
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue
@@ -436,7 +436,7 @@ def read_rtp_parents(path) -> dict[str, dict[str, str]]:
     """Residue -> {hydrogen: heavy atom it is bonded to}, from a GROMACS ``.rtp``."""
     out: dict[str, dict[str, str]] = {}
     res, section = None, None
-    for raw in Path(path).read_text().splitlines():
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue
@@ -463,7 +463,7 @@ def read_modification_mappings(path) -> dict[str, dict[str, dict[str, float]]]:
     These weights override the residue's for the atoms they list."""
     out: dict = {}
     name, section = None, None
-    for raw in Path(path).read_text().splitlines():
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
         line = raw.split(";", 1)[0].strip()
         if not line:
             continue

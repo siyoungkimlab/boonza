@@ -48,12 +48,12 @@ def test_prep_run_result(tmp_path, capsys):
                      "--repeats", "2", "--iteration-ps", "0.02", "--equilibration-ns", "0.00002",
                      "--production-ns", "0.0001"]) == 0  # fmt: skip
     leg = work / "edges" / "benzene~toluene" / "solvent"
-    meta = json.loads((leg / "leg.json").read_text())
+    meta = json.loads((leg / "leg.json").read_text(encoding="utf-8"))
     assert meta["lambdas"] == [0.0, 0.5, 1.0] and meta["repeats"] == 2
     assert meta["timestep_fs"] == 4.0 and meta["core"] == 11
     edge = work / "edges" / "benzene~toluene"
     assert not (edge / "complex").exists() and (edge / "vacuum").is_dir()  # hydration
-    lines = (work / "commands.txt").read_text().splitlines()
+    lines = (work / "commands.txt").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 4 and lines[0].startswith("boonza fep run ")
     # each repeat runs, and a run started again carries on (here: nothing left)
     for d in (leg, edge / "vacuum"):
@@ -66,10 +66,10 @@ def test_prep_run_result(tmp_path, capsys):
     assert cli.main(["result", str(work)]) == 0
     table = capsys.readouterr().out
     assert "benzene~toluene" in table and "ΔΔG" in table
-    rows = list(csv.DictReader((work / "results_edges.csv").open()))
+    rows = list(csv.DictReader((work / "results_edges.csv").open(encoding="utf-8")))
     assert len(rows) == 1 and np.isfinite(float(rows[0]["ddG"])) and rows[0]["repeats"] == "2"
     assert rows[0]["kind"] == "hydration"
-    ligs = list(csv.DictReader((work / "results_ligands.csv").open()))
+    ligs = list(csv.DictReader((work / "results_ligands.csv").open(encoding="utf-8")))
     assert {x["ligand"] for x in ligs} == {"benzene", "toluene"}
     assert sum(float(x["dG"]) for x in ligs) == pytest.approx(0, abs=1e-6)
 
@@ -116,12 +116,12 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
     assert cli.main(["prep", "--ligands", str(first), "--workdir", str(work), *tiny,
                      "--max-degree", "3"]) == 0  # fmt: skip
     assert (work / "ligands.sdf").exists()  # kept, every field with it
-    chosen = json.loads((work / "network.json").read_text())
+    chosen = json.loads((work / "network.json").read_text(encoding="utf-8"))
     assert chosen["settings"]["max_degree"] == 3 and chosen["settings"]["method"] == "3d"
-    first_rows = list(csv.DictReader((work / "edges.csv").open()))
+    first_rows = list(csv.DictReader((work / "edges.csv").open(encoding="utf-8")))
     assert all(r["changed_heavy"] != "" and r["role"] in ("tree", "redundant")
                for r in first_rows)  # fmt: skip
-    old = (work / "commands.txt").read_text().splitlines()
+    old = (work / "commands.txt").read_text(encoding="utf-8").splitlines()
     _run_all(old)
     ran = {p: p.read_bytes() for p in (work / "edges").glob("*/*/run_*.npz")}
     # the same ligands (any order) and a new one, without a measured value
@@ -131,21 +131,24 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
                      *tiny]) == 0  # fmt: skip
     out = capsys.readouterr().out
     assert "adding 1 to the 3 of the first prep: anisole" in out
-    names = [r["name"] for r in csv.DictReader((work / "ligands.csv").open())]
+    names = [r["name"] for r in csv.DictReader((work / "ligands.csv").open(encoding="utf-8"))]
     assert names == ["benzene", "toluene", "phenol", "anisole"]  # first indices kept
-    new = (work / "commands_new.txt").read_text().splitlines()
+    new = (work / "commands_new.txt").read_text(encoding="utf-8").splitlines()
     assert new and all("anisole" in line for line in new)
-    assert (work / "commands.txt").read_text().splitlines() == old + new
+    assert (work / "commands.txt").read_text(encoding="utf-8").splitlines() == old + new
     # the first prep's network rules kept; every edge, old and new, in edges.csv
-    assert json.loads((work / "network.json").read_text())["settings"]["max_degree"] == 3
-    assert len(list(csv.DictReader((work / "edges.csv").open()))) > len(first_rows)
+    assert (
+        json.loads((work / "network.json").read_text(encoding="utf-8"))["settings"]["max_degree"]
+        == 3
+    )
+    assert len(list(csv.DictReader((work / "edges.csv").open(encoding="utf-8")))) > len(first_rows)
     assert all(p.read_bytes() == b for p, b in ran.items())  # nothing run is touched
     _run_all(new)
     capsys.readouterr()
     assert cli.main(["result", str(work)]) == 0
     out = capsys.readouterr().out
     assert "1 without a measured value, predicted: anisole" in out
-    ligs = list(csv.DictReader((work / "results_ligands.csv").open()))
+    ligs = list(csv.DictReader((work / "results_ligands.csv").open(encoding="utf-8")))
     assert {x["ligand"] for x in ligs} == set(names) and all(x["dG_shifted"] for x in ligs)
     sdf = list(Chem.SDMolSupplier(str(work / "results_ligands.sdf"), removeHs=False))
     assert [m.GetProp("_Name") for m in sdf] == names
@@ -153,7 +156,7 @@ def test_ligands_added_later_reuse_every_edge_run(tmp_path, capsys):
     assert sdf[0].GetProp("dG") == "-0.9"  # the fields it came with, kept
     assert (work / "network_white.pdf").exists()  # prep's drawing of the network
     assert (work / "plots" / "network_errors_black.pdf").exists()  # result's, by errors
-    plotted = (work / "plots" / "dG.csv").read_text().splitlines()
+    plotted = (work / "plots" / "dG.csv").read_text(encoding="utf-8").splitlines()
     assert plotted[-1].startswith("anisole,") and plotted[-1].endswith(",,,,")
     from boonza.viewer.outputs import from_folder  # boonza view WORKDIR: the series
 
@@ -194,9 +197,12 @@ def test_graph_mapping_builds_a_leg_the_poses_cannot(tmp_path):
     assert cli.main(where + [str(tmp_path / "poses")] + apart) == 1  # nothing to pair
     work = tmp_path / "graph"
     assert cli.main(where + [str(work)] + tiny) == 0  # the graphs, by default
-    assert json.loads((work / "network.json").read_text())["settings"]["mapping"] == "graph"
+    assert (
+        json.loads((work / "network.json").read_text(encoding="utf-8"))["settings"]["mapping"]
+        == "graph"
+    )
     leg = work / "edges" / "benzene~toluene" / "solvent"
-    meta = json.loads((leg / "leg.json").read_text())
+    meta = json.loads((leg / "leg.json").read_text(encoding="utf-8"))
     assert meta["mapping"] == "graph" and meta["core"] == 11
     # it minimizes and runs: with a bond stretched over the gap it would not
     run_leg(leg, 1, platform="CPU", log=lambda *_: None)

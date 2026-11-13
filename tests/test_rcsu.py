@@ -59,7 +59,7 @@ def _rows(text):
 
 def _reference(name, tmp_path):
     text = gzip.decompress((REF / f"{name}.go" / "go_contacts.out.gz").read_bytes()).decode()
-    (tmp_path / f"{name}.out").write_text(text)
+    (tmp_path / f"{name}.out").write_text(text, encoding="utf-8")
     return text, tmp_path / f"{name}.out"
 
 
@@ -266,14 +266,14 @@ def test_a_residue_is_named_by_its_insertion_code_too(tmp_path):
     """
     from boonza.martini import martinize
 
-    plain = Path(DATA / "1TEN.pdb").read_text().splitlines(keepends=True)
+    plain = Path(DATA / "1TEN.pdb").read_text(encoding="utf-8").splitlines(keepends=True)
     out = []
     for line in plain:
         if line.startswith("ATOM") and 820 <= int(line[22:26]) <= 824:
             line = line[:22] + f"{819:4d}" + "ABCDE"[int(line[22:26]) - 820] + line[27:]
         out.append(line)
     coded = tmp_path / "coded.pdb"
-    coded.write_text("".join(out))
+    coded.write_text("".join(out), encoding="utf-8")
 
     before = martinize(boonza.load(DATA / "1TEN.pdb"), "protein", go=True)
     after = martinize(boonza.load(coded), "protein", go=True)
@@ -290,19 +290,19 @@ def test_a_map_written_to_a_file_cannot_carry_an_insertion_code(tmp_path):
     such a structure's map and not a map to give back."""
     from boonza.martini import martinize
 
-    plain = Path(DATA / "1TEN.pdb").read_text().splitlines(keepends=True)
+    plain = Path(DATA / "1TEN.pdb").read_text(encoding="utf-8").splitlines(keepends=True)
     out = []
     for line in plain:
         if line.startswith("ATOM") and 820 <= int(line[22:26]) <= 824:
             line = line[:22] + f"{819:4d}" + "ABCDE"[int(line[22:26]) - 820] + line[27:]
         out.append(line)
     coded = tmp_path / "coded.pdb"
-    coded.write_text("".join(out))
+    coded.write_text("".join(out), encoding="utf-8")
 
     with pytest.warns(UserWarning, match="no column for"):
         text = contact_map(boonza.load(coded)).text()
     written = tmp_path / "written.out"
-    written.write_text(text)
+    written.write_text(text, encoding="utf-8")
     # and reading it back is refused rather than guessed at
     with pytest.raises(ValueError, match="this structure has 6 of them"):
         martinize(boonza.load(coded), "protein", go=written)
@@ -331,7 +331,7 @@ def test_a_fold_held_by_contacts_boonza_worked_out(tmp_path):
     assert computed.go.contact_map.startswith("Go contact map calculated with boonza")
 
     read = tmp_path / "go_contacts.out"
-    read.write_text(computed.go.contact_map)
+    read.write_text(computed.go.contact_map, encoding="utf-8")
     again = martinize(boonza.load(DATA / "1TEN.pdb"), "protein", go=read)
     assert again.go.nbparams == computed.go.nbparams
     assert again.go.atomtypes == computed.go.atomtypes
@@ -344,7 +344,8 @@ def test_a_map_boonza_computed_is_martinize2s_map(tmp_path):
     martinize2's own Go model."""
     given = tmp_path / "theirs.out"
     given.write_text(gzip.decompress(
-        (REF / "1TEN.go" / "go_contacts.out.gz").read_bytes()).decode())  # fmt: skip
+        (REF / "1TEN.go" / "go_contacts.out.gz").read_bytes()).decode(),
+        encoding="utf-8")  # fmt: skip
     theirs = martinize(boonza.load(DATA / "1TEN.pdb"), "protein", go=given)
     ours = martinize(boonza.load(DATA / "1TEN.pdb"), "protein", go=True)
     assert ours.go.nbparams == theirs.go.nbparams
@@ -357,7 +358,7 @@ def test_the_map_goes_beside_the_topology(tmp_path):
 
     m = martinize(boonza.load(DATA / "1TEN.pdb"), "protein", go=True)
     m.save(tmp_path, martini_itp="martini.itp")
-    assert (tmp_path / CONTACTS_OUT).read_text() == m.go.contact_map
+    assert (tmp_path / CONTACTS_OUT).read_text(encoding="utf-8") == m.go.contact_map
     assert read_contact_map(tmp_path / CONTACTS_OUT)  # and it reads back
 
 
@@ -369,7 +370,7 @@ def test_the_format_is_the_one_read_back(tmp_path):
     assert len(rows) == 777
     assert {len(line.split()) for line in rows} == {18}
     path = tmp_path / "written.out"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     assert len(read_contact_map(path)) == 701
 
 
@@ -382,7 +383,7 @@ def test_the_settings_need_no_map(tmp_path):
                             "--structure-bias", "go"])  # fmt: skip
     assert go_options(args)["go"] is True
     given = tmp_path / "m.out"
-    given.write_text("")
+    given.write_text("", encoding="utf-8")
     args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
                             "--structure-bias", "go", "--go-map", str(given)])  # fmt: skip
     assert go_options(args)["go"] == str(given)

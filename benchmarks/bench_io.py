@@ -83,7 +83,9 @@ for fmt, path in (("pdb", {str(pdb)!r}), ("cif", {str(cif)!r})):
 print(json.dumps(res))
 """
     try:
-        r = subprocess.run([GEMMI_PYTHON, "-c", code], capture_output=True, text=True)
+        r = subprocess.run(
+            [GEMMI_PYTHON, "-c", code], capture_output=True, text=True, encoding="utf-8"
+        )
     except OSError:
         return {}
     if r.returncode:

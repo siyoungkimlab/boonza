@@ -103,9 +103,9 @@ def test_a_prepared_simulation(tmp_path):
     assert (d / "probes.json").is_file() and (d / "martini" / "topol.top").is_file()
     import json
 
-    written = json.loads((d / "probes.json").read_text())
+    written = json.loads((d / "probes.json").read_text(encoding="utf-8"))
     assert written["copies"] == 2 and written["align"] == "name BB"
-    top = (d / "martini" / "topol.top").read_text()
+    top = (d / "martini" / "topol.top").read_text(encoding="utf-8")
     for name in written["probes"]:
         # the molecule is prefixed, the residue is not: one would clash with
         # Martini's own water, the other is what selects the probe
@@ -126,7 +126,9 @@ def test_a_prepared_simulation(tmp_path):
     # beside it is what GROMACS would read
     assert Path(settings.input_structure) == (d / "martini" / "cg.dms").resolve()
     assert (tmp_path / "swim" / "assignment.csv").is_file()
-    assert (tmp_path / "swim" / "simulations.txt").read_text().count("boonza md") == 2
+    assert (tmp_path / "swim" / "simulations.txt").read_text(encoding="utf-8").count(
+        "boonza md"
+    ) == 2
 
 
 def test_the_built_system_is_neutral_and_runs(tmp_path):
@@ -161,7 +163,7 @@ def test_the_analysis_knows_a_coarse_grained_run(tmp_path):
 
     cg = martinize(aa).system()
     assert _coarse_grained(cg)
-    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}')
+    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}', encoding="utf-8")
     run = tmp_path / "md"
     run.mkdir()
 
@@ -259,7 +261,7 @@ def test_the_secondary_structure_is_written_beside_the_topology(tmp_path):
     args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3",
                             "--workdir", str(tmp_path / "run")])  # fmt: skip
     build_martini_system(args, tmp_path, log=lambda *_: None)
-    written = (tmp_path / "martini" / "secondary.txt").read_text().strip()
+    written = (tmp_path / "martini" / "secondary.txt").read_text(encoding="utf-8").strip()
     assert set(written) <= set("HBEGITSC ")
     assert secondary_beside(tmp_path / "martini" / "topol.top") == written
     assert secondary_beside(tmp_path / "topol.top") is None
@@ -319,7 +321,7 @@ def test_probe_contacts(tmp_path):
     top = m.top(n=1, by="side-chain")
     assert ("E", m.residues[row], 1.0) in top
     m.to_csv(tmp_path / "probes.csv")
-    text = (tmp_path / "probes.csv").read_text().splitlines()
+    text = (tmp_path / "probes.csv").read_text(encoding="utf-8").splitlines()
     assert text[0] == "chain,resid,residue,EK,LL"
     assert len(text) == len(m.residues) + 1
 
@@ -335,7 +337,7 @@ def test_the_probes_command(tmp_path, capsys):
     with boonza.open_writer(run / "trajectory.dcd", s.natoms) as w:
         for frame in frames:
             w.write(frame, s.cell)
-    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}')
+    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}', encoding="utf-8")
     assert cli_main(["probes", "--workdir", str(run), "-o", str(tmp_path / "out.csv")]) == 0
     printed = capsys.readouterr().out
     assert "2 probes" in printed and f"LEU{resid}" in printed
@@ -354,7 +356,7 @@ def test_feature_maps_run_on_beads(tmp_path, capsys):
     with boonza.open_writer(run / "trajectory.dcd", s.natoms) as w:
         for frame in frames:
             w.write(frame, s.cell)
-    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}')
+    (tmp_path / "probes.json").write_text('{"probes": ["EK", "LL"]}', encoding="utf-8")
     assert cli_main(["sites", "--workdir", str(run), "--features"]) == 0
     assert "hotspots" in capsys.readouterr().out
 
@@ -512,7 +514,7 @@ def test_the_old_elastic_network_numbers_still_load(tmp_path):
                    f'input_structure = "{DATA / "1TEN.pdb"}"\n'
                    "elastic_network_kJ = 500.0\n"
                    "elastic_network_nm = 1.1\n"
-                   "elastic_network_lower_nm = 0.07\n")  # fmt: skip
+                   "elastic_network_lower_nm = 0.07\n", encoding="utf-8")  # fmt: skip
     with pytest.warns(DeprecationWarning, match="old name for"):
         args = parse_arguments(["--config", str(old)])
     assert (args.elastic_kJ, args.elastic_nm, args.elastic_lower_nm) == (500.0, 1.1, 0.07)
@@ -547,7 +549,7 @@ def test_an_all_atom_run_still_refuses_an_elastic_network(capsys):
 
 
 def _bonds_of(directory):
-    itp = next((directory / "martini").glob("molecule_*.itp")).read_text()
+    itp = next((directory / "martini").glob("molecule_*.itp")).read_text(encoding="utf-8")
     section = itp.split("[ bonds ]")[1].split("[", 1)[0]
     return [ln for ln in section.splitlines() if ln.strip()]
 
@@ -591,7 +593,7 @@ def test_a_sirah_swim_springs_the_protein_and_leaves_the_probes_free(tmp_path):
         assert main([str(DATA / "1TEN.pdb"), "--model", "sirah", "--probes", "EK",
                      "--types", "1", "--copies", "1", *extra,
                      "--workdir", str(root)]) == 0  # fmt: skip
-        return tomllib.loads((root / "sim_000" / "md.toml").read_text())
+        return tomllib.loads((root / "sim_000" / "md.toml").read_text(encoding="utf-8"))
 
     on = network_of()
     assert on["elastic_network_selection"] == "name GC and not chain LIG"
@@ -623,7 +625,7 @@ def test_a_sirah_run_of_its_own_holds_every_alpha_carbon(tmp_path):
     assert parse_arguments([str(DATA / "1TEN.pdb")]).elastic_network_selection is None
 
     older = tmp_path / "md.toml"
-    older.write_text('model = "sirah"\ninput_structure = "x.pdb"\n')
+    older.write_text('model = "sirah"\ninput_structure = "x.pdb"\n', encoding="utf-8")
     from_file = parse_arguments(["--config", str(older)])
     assert from_file.elastic is True  # the model's default, as every setting is
     assert from_file.elastic_network_selection is None  # but the file is the record
@@ -796,7 +798,7 @@ def test_a_run_holds_only_what_it_is_told_to(tmp_path):
 
 
 def _bonds_of_itp(path):
-    section = path.read_text().split("[ bonds ]")[1].split("[", 1)[0]
+    section = path.read_text(encoding="utf-8").split("[ bonds ]")[1].split("[", 1)[0]
     return [ln for ln in section.splitlines() if ln.strip()]
 
 
@@ -1048,7 +1050,7 @@ def test_a_probe_called_W_is_not_the_water_called_W(tmp_path):
         resids=[1, 2, 3, 1, 1, 2, 3, 4, 5],
         chains=["A", "A", "A", PROBE_CHAIN, PROBE_CHAIN, "", "", "", ""],
     )
-    (tmp_path / "probes.json").write_text('{"probes": ["W"]}')
+    (tmp_path / "probes.json").write_text('{"probes": ["W"]}', encoding="utf-8")
     run = tmp_path / "md"
     run.mkdir()
 
@@ -1179,7 +1181,7 @@ def test_the_probes_have_a_chain_of_their_own(model, tmp_path):
                             "--workdir", str(tmp_path / "swim")])  # fmt: skip
     (d,) = prepare(args, ["EK", "WY"], types=2, copies=2, log=lambda *_: None)
     s = boonza.load(d / built / "cg.dms")
-    probes = json.loads((d / "probes.json").read_text())
+    probes = json.loads((d / "probes.json").read_text(encoding="utf-8"))
     assert probes["chain"] == "LIG"
     res = np.asarray(s.atoms["residue"])
     rn = np.asarray(s.residues["name"])
@@ -1267,7 +1269,7 @@ def test_a_swim_takes_a_concentration_instead_of_copies(tmp_path):
     sims = prepare(args, ["EK", "LL", "RR", "WW"], types=2, conc_mM=200.0, log=said.append)
     line = next(x for x in said if "copies of each type" in x)
     assert "200 mM asked" in line
-    docs = [json.loads((d / "probes.json").read_text()) for d in sims]
+    docs = [json.loads((d / "probes.json").read_text(encoding="utf-8")) for d in sims]
     copies = docs[0]["copies"]
     assert copies >= 1 and line.startswith(f"{copies} copies of each type")
     assert 100.0 < docs[0]["concentration_mM"] < 400.0  # the nearest whole copies can get
@@ -1359,7 +1361,7 @@ def test_a_swim_swims_the_library_it_is_asked_for(tmp_path):
     assert any("18 amino acid probes" in line for line in said)  # not "dipeptide"
     names = []
     for d in sims:
-        doc = json.loads((d / "probes.json").read_text())
+        doc = json.loads((d / "probes.json").read_text(encoding="utf-8"))
         names += doc["probes"]
         assert all(len(q) == 1 for q in doc["probes"])
     assert sorted(names) == sorted(single_sequences())
@@ -1497,7 +1499,7 @@ def test_the_rubber_bands_take_a_stiffness_and_a_reach(tmp_path):
         args = parse_arguments([str(DATA / "1TEN.pdb"), "--model", "martini3", *flags,
                                 "--gromacs", "--workdir", str(where / "run")])  # fmt: skip
         build_martini_system(args, where, log=lambda *_: None)
-        itp = next((where / "martini").glob("molecule_*.itp")).read_text()
+        itp = next((where / "martini").glob("molecule_*.itp")).read_text(encoding="utf-8")
         rows = [ln.split() for ln in itp.split("[ bonds ]")[1].split("[", 1)[0].splitlines()
                 if ln.strip() and not ln.startswith(";")]  # fmt: skip
         # a rubber band is the force constant martinize was told to use

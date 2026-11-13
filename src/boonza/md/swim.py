@@ -423,7 +423,7 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
         patch = d / "patch"
         # a patch kept from a swim whose charges were computed elsewhere is made again
         made = d / "charge_geometry"
-        kept = made.read_text().strip() if made.is_file() else "optimized"
+        kept = made.read_text(encoding="utf-8").strip() if made.is_file() else "optimized"
         if (patch / "templates").is_file() and (lig.source is not None or kept == geometry):
             out[k] = patch
         elif (d / "standard").is_file():
@@ -433,7 +433,9 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
                                                              rules=host.rules), patch)  # fmt: skip
             out[k] = patch
         elif not gaff.find_unmatched(lig.system, forcefields):
-            (d / "standard").write_text("every residue is matched by the force fields\n")
+            (d / "standard").write_text(
+                "every residue is matched by the force fields\n", encoding="utf-8"
+            )
         else:
             todo.append(k)
     if todo:
@@ -450,7 +452,9 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
             done = [_gaff2_job(w) for w in work]
         for k, d in zip(todo, done, strict=True):
             out[k] = Path(d)
-            (root / ligands[k].code / "charge_geometry").write_text(geometry + "\n")
+            (root / ligands[k].code / "charge_geometry").write_text(
+                geometry + "\n", encoding="utf-8"
+            )
     return out
 
 
@@ -624,7 +628,7 @@ def prepare(args, library, types: int = 5, copies: int = 3, jobs: int = 1,
             settings["dihedral_restraint_selection"] = f"not chain {chain}"  # ligands swim
         write_settings(d / "md.toml", settings)
     (root / "simulations.txt").write_text(
-        "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims)
+        "".join(f"boonza md --config {(d / 'md.toml').resolve()}\n" for d in sims), encoding="utf-8"
     )
     log(f"{len(sims)} simulations in {root}: run each line of {root / 'simulations.txt'} "
         "(a job array), or pass --run")  # fmt: skip

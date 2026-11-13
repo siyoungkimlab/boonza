@@ -189,7 +189,7 @@ def test_the_command(tmp_path, two_sites, capsys):
     assert "pocket taken from frame" in printed  # frame 0 has the ligand out of reach
     assert "cutoff (A)" in printed and "largest" in printed  # the sweep is shown, not hidden
 
-    doc = json.loads((out / "poses.json").read_text())
+    doc = json.loads((out / "poses.json").read_text(encoding="utf-8"))
     assert doc["frames"] == len(run) and doc["poses"]
     best = doc["poses"][0]
     assert best["population"] > 0.5 and best["frames"] >= 2
@@ -303,7 +303,7 @@ def test_the_command_takes_a_folder_of_structures(tmp_path, two_sites, capsys):
     assert "comparing 25 of 25 structures" in printed  # none dropped for either reason
     assert "arrived by frame" not in printed  # a folder is not a time series
 
-    doc = json.loads((out / "poses.json").read_text())
+    doc = json.loads((out / "poses.json").read_text(encoding="utf-8"))
     sizes = sorted((p["frames"] for p in doc["poses"]), reverse=True)
     assert sizes == [15, 10]  # the two sites, whatever the files disagreed on
     best = doc["poses"][0]
@@ -359,7 +359,7 @@ def test_the_command_uses_each_frames_own_box(tmp_path, two_sites, capsys):
 
     argv = ["poses", str(structure), "--traj", str(dcd), "--pocket-cutoff", "8", "-o", str(out)]
     assert main(argv) == 0
-    best = json.loads((out / "poses.json").read_text())["poses"][0]
+    best = json.loads((out / "poses.json").read_text(encoding="utf-8"))["poses"][0]
     written = boonza.load(out / best["file"])
     assert np.allclose(written.cell, box)
     protein = written.positions[written.select("protein").ids].mean(0)

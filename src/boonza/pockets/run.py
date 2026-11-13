@@ -51,7 +51,9 @@ class PocketError(RuntimeError):
 @cache
 def _has_coefficients(exe: str) -> bool:
     try:
-        out = subprocess.run([exe, "-h"], capture_output=True, text=True, timeout=30)
+        out = subprocess.run(
+            [exe, "-h"], capture_output=True, text=True, timeout=30, encoding="utf-8"
+        )
     except (OSError, subprocess.TimeoutExpired):
         return False
     return "--score_coefficients" in out.stdout + out.stderr
@@ -93,7 +95,7 @@ def find_fpocket(path=None, program: str = "fpocket") -> Path:
 def presets() -> dict:
     """Every model's preset: its fpocket flags, score coefficients, how the N-class
     Martini beads are counted, and the level mdpocket's density map is drawn at."""
-    return json.loads(PRESETS.read_text())
+    return json.loads(PRESETS.read_text(encoding="utf-8"))
 
 
 def preset(model: str) -> dict:
@@ -141,7 +143,7 @@ class Pocket:
 
 def _info_blocks(info: Path) -> dict[int, str]:
     blocks, current, lines = {}, None, []
-    for line in open(info):
+    for line in open(info, encoding="utf-8"):
         if line.startswith("Pocket "):
             if current is not None:
                 blocks[current] = "".join(lines)
@@ -172,7 +174,7 @@ def read_pockets(out_dir, stem: str) -> list[Pocket]:
     if not pqr.exists():
         return []
     spheres: dict[int, list] = {}
-    for line in open(pqr):
+    for line in open(pqr, encoding="utf-8"):
         if line.startswith("ATOM"):
             spheres.setdefault(int(line[22:26]), []).append(
                 (float(line[30:38]), float(line[38:46]), float(line[46:54]),
@@ -224,7 +226,7 @@ def run_mdpocket(pdb, dcd, prefix, flags=(), fpocket=None) -> list[str]:
 def read_dx(dx) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``(values, origin, the three delta vectors)`` of a .dx map."""
     values, counts, origin, delta = [], None, None, []
-    for line in open(dx):
+    for line in open(dx, encoding="utf-8"):
         w = line.split()
         if not w or w[0].startswith("#"):
             continue
@@ -254,5 +256,5 @@ def write_isosurface(dx, level: float) -> Path:
         x, y, z = origin + i * delta[0] + j * delta[1] + m * delta[2]
         lines.append(f"ATOM  {(k + 1) % 100000:5d}  C   PTH     1    {x:8.3f}{y:8.3f}{z:8.3f}"
                      f"{0.0:6.2f}{grid[i, j, m]:6.2f}")  # fmt: skip
-    out.write_text("\n".join(lines) + "\nEND\n")
+    out.write_text("\n".join(lines) + "\nEND\n", encoding="utf-8")
     return out

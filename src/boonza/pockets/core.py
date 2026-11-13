@@ -57,7 +57,7 @@ def _radii(model: str, rule: str) -> dict[str, float]:
     path = RADII / f"{model}_bead_radii.csv"
     if not path.exists():
         return {}
-    with open(path, newline="") as fh:
+    with open(path, newline="", encoding="utf-8") as fh:
         return {r["type"]: float(r[column]) for r in csv.DictReader(fh)}
 
 

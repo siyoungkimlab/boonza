@@ -183,18 +183,18 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
                             "--position-restraint", "chain A and name CA"])  # fmt: skip
     sims = swim.prepare(args, peptides, types=2, copies=2, log=quiet, repel=True)
     assert [d.name for d in sims] == ["sim_000", "sim_001"]
-    rows = list(csv.DictReader((work / "assignment.csv").open()))
+    rows = list(csv.DictReader((work / "assignment.csv").open(encoding="utf-8")))
     assert sorted(r["name"] for r in rows) == ["ace-ala-nme", "ace-gly-nme", "ace-ser-nme",
                                                "ace-val-nme"]  # fmt: skip
     assert all((work / "ligands" / f"L00{k}" / "standard").is_file() for k in range(4))
-    lines = (work / "simulations.txt").read_text().splitlines()
+    lines = (work / "simulations.txt").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2 and lines[0].startswith("boonza md --config ")
     inp = boonza.load(sims[0] / "input.dms")
     assert int((inp.residues["name"] == "ACE").sum()) == 1 + 2 * 2  # protein + 2 x 2 copies
     settings = parse_arguments(["--config", str(sims[0] / "md.toml")])
     assert settings.repulsion_selection == "chain LIG"  # asked for, so on the ligands' chain
     assert settings.dihedral_restraint_selection == "not chain LIG"  # the ligands swim
-    lig_rows = list(csv.DictReader((sims[0] / "ligands.csv").open()))
+    lig_rows = list(csv.DictReader((sims[0] / "ligands.csv").open(encoding="utf-8")))
     assert len(lig_rows) == 4 and lig_rows[0]["first_resid"] == "1"  # 2 types x 2 copies
     assert set(inp.chains["name"].tolist()) == {"A", "LIG"}
     assert settings.rem  # a run-time setting: the swim carries it to every run
@@ -207,16 +207,18 @@ def test_swim_prepares_and_runs(tmp_path, protein, peptides):
     assert any(line.startswith("Distance restraints: 1 springs") for line in said)
     # and so are the position restraints: the protein's CA held, the ligands free
     assert settings.position_restraints == ["chain A and name CA"]
-    held = list(csv.DictReader((sims[0] / "md" / "position_restraints.csv").open()))
+    held = list(csv.DictReader((sims[0] / "md" / "position_restraints.csv").open(encoding="utf-8")))
     assert len(held) == 1 and held[0]["label"].startswith("A:") and held[0]["label"].endswith(":CA")
     state = sims[0] / "md" / "state.csv"
-    assert len(state.read_text().splitlines()) == 3
-    assert "LigandRepulsion" in (sims[0] / "md" / "system.xml").read_text()
-    restrained = list(csv.DictReader((sims[0] / "md" / "dihedral_restraints.csv").open()))
+    assert len(state.read_text(encoding="utf-8").splitlines()) == 3
+    assert "LigandRepulsion" in (sims[0] / "md" / "system.xml").read_text(encoding="utf-8")
+    restrained = list(
+        csv.DictReader((sims[0] / "md" / "dihedral_restraints.csv").open(encoding="utf-8"))
+    )
     assert {r["chain_id"] for r in restrained} == {"A"}  # the peptide ligands are not held
     # prepared again, the started simulation is left alone
     swim.prepare(args, peptides, types=2, copies=2, log=quiet)
-    assert len(state.read_text().splitlines()) == 3
+    assert len(state.read_text(encoding="utf-8").splitlines()) == 3
 
 
 def test_swim_with_a_parameterized_library(tmp_path, protein):
@@ -322,7 +324,7 @@ def test_swim_charges_ligands_at_the_geometry_asked_for(tmp_path, protein, monke
         d, _, _, opts = work
         given.append(opts["charge_geometry"])
         (Path(d) / "patch").mkdir(exist_ok=True)
-        (Path(d) / "patch" / "templates").write_text("")
+        (Path(d) / "patch" / "templates").write_text("", encoding="utf-8")
         return str(Path(d) / "patch")
 
     monkeypatch.setattr(swim, "_gaff2_job", job)
@@ -334,4 +336,6 @@ def test_swim_charges_ligands_at_the_geometry_asked_for(tmp_path, protein, monke
         args.charge_geometry = geometry
         swim.ligand_patches(ligands, args, ffs, root, log=quiet)
     assert given == ["reference", "optimized"]
-    assert (root / ligands[0].code / "charge_geometry").read_text().strip() == "optimized"
+    assert (root / ligands[0].code / "charge_geometry").read_text(
+        encoding="utf-8"
+    ).strip() == "optimized"

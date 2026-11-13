@@ -45,7 +45,7 @@ def _write_timing(out: Path, timing: dict, frames: dict, n_frames: int, n_beads:
            "frames": n_frames, "protein_beads": n_beads,
            "site_finding": {k: round(v, 3) if isinstance(v, float) else v
                             for k, v in frames.items()}}  # fmt: skip
-    (out / "timing.json").write_text(json.dumps(doc, indent=1) + "\n")
+    (out / "timing.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
     lines = [f"{k:16s} {v:9.2f} s {100 * v / total:5.1f}%" for k, v in timing.items()]
     lines.append(f"{'total':16s} {total:9.2f} s")
     if frames.get("from_cache"):
@@ -57,7 +57,7 @@ def _write_timing(out: Path, timing: dict, frames: dict, n_frames: int, n_beads:
                      f"{frames['grid_points_per_frame']:.0f} grid points/frame")  # fmt: skip
         lines += [f"  {k:14s} {v:9.2f} s worker {100 * v / max(sum(cpu.values()), 1e-9):5.1f}%"
                   for k, v in cpu.items()]  # fmt: skip
-    (out / "timing.txt").write_text("\n".join(lines) + "\n")
+    (out / "timing.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _same_atoms(view, system) -> bool:
@@ -199,7 +199,7 @@ def cmd_traj(args) -> int:
               "after the rest (--max-median-volume)")  # fmt: skip
     import csv
 
-    rows = list(csv.DictReader(open(out / "pockets.csv")))
+    rows = list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
     print("the first five under each ranking (pocket numbers as in the view):")
     for name in T.RANKINGS:
         top5 = sorted(rows, key=lambda r: int(r[f"rank_{name}"]))[:5]

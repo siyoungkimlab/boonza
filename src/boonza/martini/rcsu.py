@@ -79,7 +79,7 @@ ATOM_ALIASES = {("ILE", "CD1"): "CD"}
 def _tables() -> tuple[dict, np.ndarray]:
     """``({resname: {atomname: (radius, type)}}, bond type table)``."""
     path = Path(__file__).resolve().parent.parent / "data" / "martini" / "rcsu" / "protein_map.json"
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     residues = {
         res: {name: (float(v[0]), int(v[1])) for name, v in atoms.items()}
         for res, atoms in raw["residues"].items()

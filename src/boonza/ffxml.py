@@ -675,7 +675,7 @@ def _bundled() -> zipfile.Path:
 
 def bundled_version() -> str:
     """Which OpenMM release the bundled XML force field files come from."""
-    return zipfile.Path(_bundled().root, at="VERSION").read_text().strip()
+    return zipfile.Path(_bundled().root, at="VERSION").read_text(encoding="utf-8").strip()
 
 
 def list_openmm_forcefields() -> list[str]:

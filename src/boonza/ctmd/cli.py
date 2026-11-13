@@ -160,7 +160,7 @@ def _read_hits(path) -> dict:
     file names the same poses their directories do.
     """
     out = {}
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()
         if not line or line.lower().startswith(("name,", "ligand,", "pose,")):
             continue
@@ -199,7 +199,7 @@ def _score(args) -> int:
         print(f"{p.name:<{width}}  {p.score:8.1f}  {p.error:6.1f}  {p.exit_time:7.0f} ps  "
               f"{len(p.replicas)}{' (filtered)' if p.filtered else ''}")  # fmt: skip
     if args.output:
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write("pose,score,error,exit_ps,replicas,filtered\n")
             for p in ordered:
                 f.write(f"{p.name},{p.score:.4f},{p.error:.4f},{p.exit_time:.1f},"

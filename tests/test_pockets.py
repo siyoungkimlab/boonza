@@ -86,7 +86,7 @@ def test_pdb_columns(tmp_path):
     path = tmp_path / "x.pdb"
     beads.write_pdb(path, ["BB", "SC1"], ["LEU", "LEU"], ["A", "A"], [1001, 1001], ["", ""],
                     [(1.0, -2.0, 3.0), (10.5, 20.25, -30.125)], ["O", "C"])  # fmt: skip
-    lines = [x for x in path.read_text().splitlines() if x.startswith("ATOM")]
+    lines = [x for x in path.read_text(encoding="utf-8").splitlines() if x.startswith("ATOM")]
     assert lines[0][12:16] == " BB "
     assert lines[1][17:20] == "LEU" and lines[1][21] == "A" and int(lines[1][22:26]) == 1001
     assert float(lines[1][30:38]) == 10.5 and float(lines[1][46:54]) == -30.125
@@ -302,12 +302,12 @@ def test_run_on_a_mapped_structure(tmp_path):
     """An all-atom structure, mapped onto Martini 3 beads and searched with the preset."""
     _fpocket()
     assert main(["run", str(DATA / "2TRX.pdb"), "--model", "martini3", "-o", str(tmp_path)]) == 0
-    rows = list(csv.DictReader(open(tmp_path / "pockets.csv")))
-    doc = json.loads((tmp_path / "pockets.json").read_text())
+    rows = list(csv.DictReader(open(tmp_path / "pockets.csv", encoding="utf-8")))
+    doc = json.loads((tmp_path / "pockets.json").read_text(encoding="utf-8"))
     assert rows and len(rows) == len(doc["pockets"])
     assert doc["settings"]["model"] == "martini3" and doc["settings"]["fpocket_flags"]
     assert {"rank", "fpocket_score", "fpocket_volume", "center_x"} <= set(rows[0])
-    view = (tmp_path / "view.pml").read_text()
+    view = (tmp_path / "view.pml").read_text(encoding="utf-8")
     assert "pocket_1" in view and "__script__" in view
     assert all(";" not in line for line in view.splitlines() if line.startswith("#"))
 
@@ -359,7 +359,7 @@ def test_traj_view_loads_best_frames_and_never_bonds_spheres(tmp_path):
     frames = [[_frame_pocket(f, 1, [0.0, 0.0, 0.0], 1.0)] for f in range(4)]
     ranked = consensus.consensus_pockets(frames)
     view = write_traj_view(tmp_path, ranked, None, frames={1: "best_frames/pocket1_frame0.mae"})
-    text = view.read_text()
+    text = view.read_text(encoding="utf-8")
     assert "load md.pdb, beads" in text and "load best_frames/pocket1_frame0.mae, frame_1" in text
     assert "disable frame_1" in text and "unbond pocket_1, pocket_1" in text
     for pqr in ("pockets.pqr", "cores.pqr"):

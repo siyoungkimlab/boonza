@@ -137,7 +137,7 @@ def _run_dir(where: Path, system, positions, name: str) -> Path:
     with open_writer(run / "trajectory.dcd", system.natoms) as w:
         for frame in positions:
             w.write(frame, system.cell)
-    (run / "status.json").write_text(json.dumps({"outcome": "target_reached"}))
+    (run / "status.json").write_text(json.dumps({"outcome": "target_reached"}), encoding="utf-8")
     return run
 
 
@@ -153,20 +153,20 @@ def test_both_commands_write_what_they_promise(tmp_path):
     assert main(["triage", *[str(p) for p in sorted((tmp_path / "md").iterdir())],
                  "-o", str(out), "--ligandsel", LIGAND, "--proteinsel", PROTEIN,
                  "--pocketsel", "protein and name CA"]) == 0  # fmt: skip
-    rows = (out / "summary.csv").read_text().splitlines()
+    rows = (out / "summary.csv").read_text(encoding="utf-8").splitlines()
     assert len(rows) == 4 and rows[0].startswith("run,")
     loaded = np.load(out / "fingerprints.npz")
     assert len(loaded.files) == 3
     assert len({loaded[f].shape for f in loaded.files}) == 1  # one width: one system
     assert (out / "structures" / "run0_pose.mae").exists()  # mae: bond orders kept
-    assert json.loads((out / "triage.json").read_text())["ligandsel"] == LIGAND
+    assert json.loads((out / "triage.json").read_text(encoding="utf-8"))["ligandsel"] == LIGAND
 
     review = tmp_path / "review"
     # no --ligandsel: the session shows the ligand triage was given
     assert main(["modes", str(out), "-o", str(review)]) == 0
     assert (review / "modes.csv").exists()
     assert (review / "session.pml").exists() and (review / "session.vmd").exists()
-    assert "save session.pse" in (review / "session.pml").read_text()
+    assert "save session.pse" in (review / "session.pml").read_text(encoding="utf-8")
     assert len(list((review / "structures").glob("mode*_pose.mae"))) >= 1
 
 
@@ -212,8 +212,8 @@ def test_the_sessions_show_the_same_atoms_in_pymol_and_vmd(tmp_path):
     _write_sessions(tmp_path, [(pose, s)], "resname HEM")
     carbons = s.select("resname HEM and carbon").ids
     assert len(carbons) > 0
-    vmd = (tmp_path / "session.vmd").read_text()
-    pml = (tmp_path / "session.pml").read_text()
+    vmd = (tmp_path / "session.vmd").read_text(encoding="utf-8")
+    pml = (tmp_path / "session.pml").read_text(encoding="utf-8")
     assert f"mol selection {{index {_index_ranges(carbons, 0, ' to ', ' ')}}}" in vmd
     assert f"index {_index_ranges(carbons, 1, '-', '+')})" in pml
     assert "resname HEM" not in vmd + pml  # nothing left for a viewer to parse
@@ -231,7 +231,7 @@ def test_the_pocket_shows_whole_residues_with_polar_hydrogens_only(tmp_path):
     pose.parent.mkdir()
     boonza.save(s, pose)
     _write_sessions(tmp_path, [(pose, s)], "resid 3")
-    line = (tmp_path / "session.vmd").read_text().split("mol selection {index ")[1]
+    line = (tmp_path / "session.vmd").read_text(encoding="utf-8").split("mol selection {index ")[1]
     shown = set()
     for part in line.split("}")[0].replace(" to ", ":").split():
         a, _, b = part.partition(":")

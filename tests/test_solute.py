@@ -102,7 +102,7 @@ def test_the_view_file_is_cut_down_and_not_copied(tmp_path):
     view = s.clone()  # what a Martini run writes: the same atoms, a band fewer
     view.delete_bonds([view.find_bond(view.atom(0), view.atom(1))])
     boonza.save(view, tmp_path / VIEW)
-    (tmp_path / "probes.json").write_text("{}")
+    (tmp_path / "probes.json").write_text("{}", encoding="utf-8")
 
     out = tmp_path / "solute"
     write_solute(s, tmp_path / "trajectory.dcd", out,

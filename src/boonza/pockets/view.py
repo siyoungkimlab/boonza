@@ -101,7 +101,7 @@ def write_pqr(path, groups, residue: str = "STP") -> None:
             k += 1
             lines.append(f"ATOM  {k % 100000:5d}    C {residue}  {number % 10000:4d}    "
                          f"{x:8.3f}{y:8.3f}{z:8.3f}  0.00 {float(r):6.2f}")  # fmt: skip
-    Path(path).write_text("\n".join(lines + ["END"]) + "\n")
+    Path(path).write_text("\n".join(lines + ["END"]) + "\n", encoding="utf-8")
 
 
 def write_run_view(where, pockets, apo, holo=None, ligand: str | None = None,
@@ -127,7 +127,7 @@ def write_run_view(where, pockets, apo, holo=None, ligand: str | None = None,
     focus = next((k for k, v in sorted(verdicts.items()) if v[0]), 1)
     lines += [f"zoom pocket_{focus}, 12" if pockets else "orient apo"]
     view = where / "view.pml"
-    view.write_text("\n".join(lines) + "\n")
+    view.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return view
 
 
@@ -226,5 +226,5 @@ def write_traj_view(
         else [f"orient {'apo' if apo is not None else 'beads'}"]
     )
     view = where / "view.pml"
-    view.write_text("\n".join(lines) + "\n")
+    view.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return view

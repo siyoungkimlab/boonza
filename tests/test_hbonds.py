@@ -98,9 +98,12 @@ def _mdtraj_hbonds(system, pdb, tmp_path):
     if not _mdtraj_available():
         pytest.skip("mdtraj not available; set BOONZA_MDTRAJ_PYTHON")
     bonds = tmp_path / "bonds.json"
-    bonds.write_text(json.dumps(np.column_stack([system.bonds["i"], system.bonds["j"]]).tolist()))
+    bonds.write_text(
+        json.dumps(np.column_stack([system.bonds["i"], system.bonds["j"]]).tolist()),
+        encoding="utf-8",
+    )
     r = subprocess.run([MDTRAJ_PYTHON, str(HERE / "mdtraj_oracle.py"), "hbonds", str(bonds),
-                        str(pdb)], capture_output=True, text=True)  # fmt: skip
+                        str(pdb)], capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 

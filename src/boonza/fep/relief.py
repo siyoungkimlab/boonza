@@ -259,7 +259,7 @@ def write(work: Path, receptor, lig_rows, res_rows, suffix: str = ".mae") -> Non
                               "closest_after"]),
                              (work / "rem_residues.csv", res_rows, ["chain", "resid", "resname",
                               "moved_rem", "moved"])):  # fmt: skip
-        with path.open("w", newline="") as fh:
+        with path.open("w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, head)
             w.writeheader()
             w.writerows(rows)

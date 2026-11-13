@@ -95,7 +95,7 @@ def one(name, src, elastic, forcefield, go=False):
                       name if forcefield == "martini3001" else f"{name}.{forcefield}")  # fmt: skip
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir()
-        (out / "ss.txt").write_text(ss + "\n")
+        (out / "ss.txt").write_text(ss + "\n", encoding="utf-8")
         tmp = Path(tmp)
         # martinize2 writes molecule_0.itp, or molecule.itp for a Go model,
         # whose moltype names the virtual-site atom types as well
@@ -104,7 +104,7 @@ def one(name, src, elastic, forcefield, go=False):
             files += [tmp / "go_contacts.out", tmp / "go_atomtypes.itp",
                       tmp / "go_nbparams.itp"]  # fmt: skip
         for f in files:
-            lines = f.read_text().splitlines(keepends=True)
+            lines = f.read_text(encoding="utf-8").splitlines(keepends=True)
             if f.name.startswith("molecule"):  # drop the command-line header
                 lines = lines[lines.index("[ moleculetype ]\n") :]
             text = "".join(lines).encode()

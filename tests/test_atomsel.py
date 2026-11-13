@@ -47,7 +47,7 @@ def _reference_cases():
     path = MSYS_FILES.parent / "atomsel_tests.json"
     if not path.exists():
         pytest.skip("msys atomsel_tests.json not found")
-    return json.loads(path.read_text())["tests/files/2f4k.dms"]
+    return json.loads(path.read_text(encoding="utf-8"))["tests/files/2f4k.dms"]
 
 
 def _mismatches(system, cases):
@@ -74,7 +74,7 @@ def test_matches_live_msys(tmp_path):
     path = msys_file("2f4k.dms")
     sels = [sel for sel, _ in _reference_cases()] + EXTRA
     f = tmp_path / "sels.json"
-    f.write_text(json.dumps(sels))
+    f.write_text(json.dumps(sels), encoding="utf-8")
     want = run_msys("select", path, f)
     s = boonza.load(path)
     assert _mismatches(s, list(zip(sels, want, strict=True))) == []

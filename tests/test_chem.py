@@ -116,6 +116,6 @@ def test_smarts_selections_match_msys(tmp_path):
     sels = ["smarts 'c1ccccc1'", "smarts '[#8]'", "smarts 'C(=O)N'", "protein and smarts 'c'",
             "smarts '[NX3;H2]' or smarts '[SX2H]'", "smarts 'C(=O)[OH]'"]  # fmt: skip
     f = tmp_path / "sels.json"
-    f.write_text(json.dumps(sels))
+    f.write_text(json.dumps(sels), encoding="utf-8")
     for sel, want in zip(sels, run_msys("select", path, f), strict=True):
         assert s.select(sel).ids.tolist() == want, sel

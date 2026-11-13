@@ -348,15 +348,18 @@ def test_modified_residue_records(tmp_path):
     s = _mse()
     pdb = tmp_path / "mse.pdb"
     boonza.save(s, pdb)
-    pdb.write_text("MODRES 1ABC MSE A    3  MET  SELENOMETHIONINE\n" + pdb.read_text())
+    pdb.write_text(
+        "MODRES 1ABC MSE A    3  MET  SELENOMETHIONINE\n" + pdb.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     assert boonza.load(pdb).residues["parent"].tolist() == ["", "", "MET", "", ""]
     cif = tmp_path / "mse.cif"
     boonza.save(s, cif)
-    cif.write_text(cif.read_text().rstrip("\n") + "\nloop_\n"
+    cif.write_text(cif.read_text(encoding="utf-8").rstrip("\n") + "\nloop_\n"
                    + "".join(f"_pdbx_struct_mod_residue.{k}\n" for k in (
                        "id", "auth_asym_id", "auth_seq_id", "PDB_ins_code", "auth_comp_id",
                        "parent_comp_id"))
-                   + "1 A 3 ? MSE MET\n")  # fmt: skip
+                   + "1 A 3 ? MSE MET\n", encoding="utf-8")  # fmt: skip
     assert boonza.load(cif).residues["parent"].tolist() == ["", "", "MET", "", ""]
 
 
@@ -495,12 +498,16 @@ def test_gaff_parameters_by_version(tmp_path):
     parm = tmp_path / "dat" / "leap" / "parm"
     parm.mkdir(parents=True)
     title = "AMBER General Force Field for organic molecules (Version {}, {})\n"
-    (parm / "gaff2.dat").write_text(title.format("2.11", "May 2016"))  # older AmberTools
+    (parm / "gaff2.dat").write_text(
+        title.format("2.11", "May 2016"), encoding="utf-8"
+    )  # older AmberTools
     assert gaff.gaff_parameters(tmp_path, "2.11") == parm / "gaff2.dat"
     with pytest.raises(gaff.AmberToolsError, match="gaff2.dat is version 2.11"):
         gaff.gaff_parameters(tmp_path, "2.2")
-    (parm / "gaff2.dat").write_text(title.format("2.2.30", "Oct 2025"))  # newer ones
-    (parm / "gaff211.dat").write_text(title.format("2.11", "May 2016"))
+    (parm / "gaff2.dat").write_text(
+        title.format("2.2.30", "Oct 2025"), encoding="utf-8"
+    )  # newer ones
+    (parm / "gaff211.dat").write_text(title.format("2.11", "May 2016"), encoding="utf-8")
     assert gaff.gaff_parameters(tmp_path, "2.11") == parm / "gaff211.dat"
     assert gaff.gaff_parameters(tmp_path, "2.2") == parm / "gaff2.dat"
     (parm / "gaff211.dat").unlink()

@@ -1082,6 +1082,8 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
     path = work / "complexes" / f"{name}.mae"
     save(complex_, path)
     record["score"] = final.score
-    (work / "grow" / f"{name}.json").write_text(json.dumps(record, indent=1, default=float))
+    (work / "grow" / f"{name}.json").write_text(
+        json.dumps(record, indent=1, default=float), encoding="utf-8"
+    )
     _write_candidates(work / "grow" / f"{name}_candidates.sdf", poses)
     return path

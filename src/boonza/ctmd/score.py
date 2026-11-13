@@ -63,7 +63,7 @@ def read_colvar(path):
     data and ours read alike.  An empty file gives empty arrays: a replica that never
     started is not a replica that scored 0.
     """
-    lines = [x for x in Path(path).read_text().splitlines()
+    lines = [x for x in Path(path).read_text(encoding="utf-8").splitlines()
              if x.strip() and not x.lstrip().startswith("#")]  # fmt: skip
     if not lines:
         empty = np.zeros(0)

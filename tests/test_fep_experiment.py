@@ -82,22 +82,24 @@ def test_plot_with_predictions_and_the_script_that_redraws_it(tmp_path):
                                         names=["a", "b", "c", "d"],
                                         predicted=[("new1", -10.2), ("new2", -13.5)])  # fmt: skip
     assert [f.name for f in files] == ["dG_white.pdf", "dG_black.pdf"]
-    rows = (plots / "dG.csv").read_text().splitlines()
+    rows = (plots / "dG.csv").read_text(encoding="utf-8").splitlines()
     assert rows[0] == "name,calc,exp,calc_err,exp_err,null" and len(rows) == 1 + 4 + 2
     assert rows[-1] == "new2,-13.5000,,,,"  # a prediction: no measured value
     script = plots / "plot_correlation.py"
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert "import boonza" not in text and "from boonza" not in text  # stands alone
     for f in files:
         f.unlink()
     done = subprocess.run([sys.executable, "-I", "plot_correlation.py", "dG"], cwd=plots,
-                          capture_output=True, text=True)  # fmt: skip
+                          capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert done.returncode == 0, done.stderr
     assert all(f.exists() and f.read_bytes().startswith(b"%PDF") for f in files)
-    script.write_text(text + "\n# tailored\n")  # an edited copy is left alone
+    script.write_text(text + "\n# tailored\n", encoding="utf-8")  # an edited copy is left alone
     notes = []
     experiment.correlation_plot(plots / "dG", calc, exp, log=notes.append)
-    assert script.read_text().endswith("# tailored\n") and any("left as it is" in n for n in notes)
+    assert script.read_text(encoding="utf-8").endswith("# tailored\n") and any(
+        "left as it is" in n for n in notes
+    )
 
 
 def test_the_null_model_and_axes_alike(tmp_path):
@@ -117,9 +119,9 @@ def test_the_null_model_and_axes_alike(tmp_path):
     experiment.correlation_plot(plots / "dG", calc, exp, stats=statistics(calc, exp),
                                 null=null, null_stats=statistics(null, exp),
                                 log=lambda *_: None)  # fmt: skip
-    rows = (plots / "dG.csv").read_text().splitlines()
+    rows = (plots / "dG.csv").read_text(encoding="utf-8").splitlines()
     assert all(r.split(",")[-1] for r in rows[1:])  # every measured point has its null
-    lines = json.loads((plots / "dG.json").read_text())["lines"]
+    lines = json.loads((plots / "dG.json").read_text(encoding="utf-8"))["lines"]
     assert lines[0].startswith("FEP: RMSE") and "[" not in lines[0]  # no intervals
     assert lines[1].startswith("log MW: RMSE 0.00") and lines[-1] == "n = 4"
     at = plot_correlation.ticks(-12.3, -7.9)  # the ticks both axes are given

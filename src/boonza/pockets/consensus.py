@@ -135,7 +135,7 @@ def frame_pockets(pdb, frames, flags=(), fpocket=None):
     from ..sites import burial
 
     exe = find_fpocket(fpocket)
-    lines = Path(pdb).read_text().splitlines()
+    lines = Path(pdb).read_text(encoding="utf-8").splitlines()
     atom_lines = [k for k, line in enumerate(lines) if line.startswith("ATOM")]
     with tempfile.TemporaryDirectory() as tmp:
         frame_pdb = Path(tmp) / "frame.pdb"
@@ -144,7 +144,7 @@ def frame_pockets(pdb, frames, flags=(), fpocket=None):
             out = list(lines)
             for k, (x, y, z) in zip(atom_lines, xyz, strict=True):
                 out[k] = f"{lines[k][:30]}{x:8.3f}{y:8.3f}{z:8.3f}{lines[k][54:]}"
-            frame_pdb.write_text("\n".join(out) + "\n")
+            frame_pdb.write_text("\n".join(out) + "\n", encoding="utf-8")
             found = run_fpocket(frame_pdb, flags, exe, quiet=True)
             yield [FramePocket(f, r, p, float(burial(p.centres, xyz).mean()))
                    for r, p in enumerate(found, 1)]  # fmt: skip

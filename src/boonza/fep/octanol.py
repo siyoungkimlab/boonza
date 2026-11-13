@@ -91,7 +91,7 @@ def _xyz(s: System, path: Path) -> None:
         f"{msys_symbol(int(z))} {x:.4f} {y:.4f} {w:.4f}"
         for z, (x, y, w) in zip(s.atoms["anum"], np.asarray(s.positions), strict=True)
     ]
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def pack(octanol: System, water: System, n_octanol: int, n_water: int, seed: int = 0,
@@ -113,13 +113,15 @@ def pack(octanol: System, water: System, n_octanol: int, n_water: int, seed: int
                   f"pbc 0. 0. 0. {edge:.3f} {edge:.3f} {edge:.3f}"]  # fmt: skip
         for name, n in blocks:
             script += [f"structure {name}", f"  number {n}", "end structure"]
-        (d / "pack.inp").write_text("\n".join(script) + "\n")
-        with (d / "pack.inp").open() as fh:
-            done = subprocess.run([exe], stdin=fh, cwd=d, capture_output=True, text=True)
+        (d / "pack.inp").write_text("\n".join(script) + "\n", encoding="utf-8")
+        with (d / "pack.inp").open(encoding="utf-8") as fh:
+            done = subprocess.run(
+                [exe], stdin=fh, cwd=d, capture_output=True, text=True, encoding="utf-8"
+            )
         out = d / "packed.xyz"
         if done.returncode != 0 or not out.exists():
             raise RuntimeError(f"packmol failed:\n{done.stdout[-2000:]}")
-        rows = out.read_text().splitlines()[2:]
+        rows = out.read_text(encoding="utf-8").splitlines()[2:]
     xyz = np.array([[float(v) for v in r.split()[1:4]] for r in rows if r.strip()])
     box = None
     for template, n in ((octanol, n_octanol), (water, n_water)):
@@ -209,7 +211,7 @@ def box(work: Path, ff, args, wet: bool, path=None, log=print) -> System:
     d = Path(work) / "octanol"
     dms, meta_path = d / "box.dms", d / "box.json"
     if dms.exists() and meta_path.exists():
-        meta = json.loads(meta_path.read_text())
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         if meta.get("wet") == wet:
             log(f"octanol box from {dms} ({meta['octanols']} octanols, {meta['waters']} waters)")
             return load(dms)
@@ -228,5 +230,6 @@ def box(work: Path, ff, args, wet: bool, path=None, log=print) -> System:
     meta_path.write_text(json.dumps({"wet": wet, "octanols": N_OCTANOL, "waters": nw,
                                      "density": round(density, 4),
                                      "edge_nm": round(float(done.cell[0, 0]) / 10.0, 4),
-                                     "equilibration_ns": EQUILIBRATION_NS}, indent=1))  # fmt: skip
+                                     "equilibration_ns": EQUILIBRATION_NS}, indent=1),
+                          encoding="utf-8")  # fmt: skip
     return done

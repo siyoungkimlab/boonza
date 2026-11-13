@@ -45,7 +45,7 @@ def _write_json(path: Path, value) -> int:
         separators=(",", ":"),
         default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o),
     )
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return len(text)
 
 
@@ -58,9 +58,9 @@ def export(viewer: Viewer, out, ss_each_frame: bool = True) -> dict:
     for f in STATIC.iterdir():
         if f.is_file() and f.name != "index.html":
             shutil.copyfile(f, out / f.name)
-    page = (STATIC / "index.html").read_text()
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
     page = page.replace("</head>", '<meta name="boonza-static" content="1"></head>', 1)
-    (out / "index.html").write_text(page)
+    (out / "index.html").write_text(page, encoding="utf-8")
 
     size = 0
     listing = viewer.listing()

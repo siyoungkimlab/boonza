@@ -22,7 +22,7 @@ def test_view_html(tmp_path):
     ids = [int(x) for x in html.split('"serial": [')[1].split("]")[0].split(",")]
     assert ids[0] == 1 and len(ids) == len(s.select("polymer"))
     v.save(tmp_path / "hb.html")
-    assert (tmp_path / "hb.html").read_text().startswith("<!doctype html>")
+    assert (tmp_path / "hb.html").read_text(encoding="utf-8").startswith("<!doctype html>")
 
     frames = np.stack([s.positions, s.positions + 1.0, s.positions + 2.0])
     anim = boonza.view(s, "protein and chain A", positions=frames, style="sticks")

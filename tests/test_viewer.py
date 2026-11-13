@@ -181,8 +181,10 @@ def make_modes(d: Path) -> Path:
         for k in range(count):
             name = run if k == 0 else f"{run}x{k}"
             rows.append(f"{name},{n},{count},0.1,{run},{int(k == 0)},{0.5 * n},0.9")
-    (d / "modes.csv").write_text("\n".join(rows) + "\n")
-    (d / "modes.json").write_text(json.dumps({"ligandsel": "resname HEM and chain A"}))
+    (d / "modes.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    (d / "modes.json").write_text(
+        json.dumps({"ligandsel": "resname HEM and chain A"}), encoding="utf-8"
+    )
     return d
 
 
@@ -196,8 +198,8 @@ def make_triage(d: Path) -> Path:
             _rotated(s, 0.4 * k, [20.0 * k, -5.0 * k, 3.0]), d / "structures" / f"{run}_pose.pdb"
         )
         summary.append(f"{run},finished,100,{k}.5,0.{9 - k},{k % 2}")
-    (d / "summary.csv").write_text("\n".join(summary) + "\n")
-    (d / "triage.json").write_text(json.dumps({"ligandsel": "resname HEM"}))
+    (d / "summary.csv").write_text("\n".join(summary) + "\n", encoding="utf-8")
+    (d / "triage.json").write_text(json.dumps({"ligandsel": "resname HEM"}), encoding="utf-8")
     return d
 
 
@@ -214,10 +216,14 @@ def make_cavity(d: Path, holo: bool = False, old: bool = False) -> Path:
     elif holo:
         boonza.save(s.select("protein").clone(), d / "apo.pdb")
         boonza.save(s, d / "holo.pdb")
-        (d / "ligand.json").write_text(json.dumps({"file": "holo.pdb", "selection": lig}))
+        (d / "ligand.json").write_text(
+            json.dumps({"file": "holo.pdb", "selection": lig}), encoding="utf-8"
+        )
     else:
         boonza.save(s, d / "structure.pdb")
-        (d / "ligand.json").write_text(json.dumps({"file": "structure.pdb", "selection": lig}))
+        (d / "ligand.json").write_text(
+            json.dumps({"file": "structure.pdb", "selection": lig}), encoding="utf-8"
+        )
     heme = s.select("resname HEM and chain A").ids
     lines = []
     for k, centre in ((1, s.positions[heme].mean(0)), (2, s.positions[:50].mean(0))):
@@ -225,12 +231,14 @@ def make_cavity(d: Path, holo: bool = False, old: bool = False) -> Path:
             x, y, z = centre + [j, 0, 0]
             lines.append(f"ATOM  {len(lines) + 1:5d}    C STP  {k:4d}    {x:8.3f}{y:8.3f}{z:8.3f}"
                          f"  0.00   0.50")  # fmt: skip
-    (d / "sites.pqr").write_text("\n".join(lines + ["END"]) + "\n")
-    (d / "pockets.csv").write_text("rank,p,volume,lining\n1,0.91,320,A:HIS87\n2,0.40,150,\n")
+    (d / "sites.pqr").write_text("\n".join(lines + ["END"]) + "\n", encoding="utf-8")
+    (d / "pockets.csv").write_text(
+        "rank,p,volume,lining\n1,0.91,320,A:HIS87\n2,0.40,150,\n", encoding="utf-8"
+    )
     x, y, z = s.positions[heme].mean(0)
     (d / "pharm_1.pdb").write_text(f"HETATM    1  X   ACC H   1    {x:8.3f}{y:8.3f}{z:8.3f}"
-                                   "  3.00  4.20           X\nEND\n")  # fmt: skip
-    (d / "view.pml").write_text("alter pharm_1 and id 1, vdw=1.75\n")
+                                   "  3.00  4.20           X\nEND\n", encoding="utf-8")  # fmt: skip
+    (d / "view.pml").write_text("alter pharm_1 and id 1, vdw=1.75\n", encoding="utf-8")
     return d
 
 
@@ -305,7 +313,7 @@ def test_triage_folder_merged(tmp_path):
     for run in "abcd":
         boonza.save(s, d / "structures" / f"run_{run}_last.pdb")
     assert viewer.from_paths([d], merge=True).session(0).topology()["source_frames"] == ["last"]
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     assert (
         "openSource(c.m, t.a, k)" in ui
         and "`${path.slice(0, at)}_${frame}.${path.slice(at + 6)}`" in ui
@@ -407,7 +415,8 @@ def test_several_files_and_a_manifest(tmp_path):
     (tmp_path / "view.json").write_text(json.dumps({
         "title": "mine", "columns": ["score"],
         "models": [{"name": "lyso", "file": "a.pdb", "row": {"score": "1.5"},
-                    "reps": [{"sel": "all", "style": "lines", "color": "white"}]}]}))  # fmt: skip
+                    "reps": [{"sel": "all", "style": "lines", "color": "white"}]}]}),
+        encoding="utf-8")  # fmt: skip
     v = viewer.from_paths([tmp_path])
     assert v.title == "mine" and v.models[0].row == {"score": 1.5}
     assert v.session(0).topology()["reps"][0]["style"] == "lines"
@@ -732,7 +741,7 @@ def test_choosing_another_ligand_redraws_for_it():
         "reps"
     ] is None  # fmt: skip
     # and the page applies them where it is given them
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     choose = ui[ui.index("async function chooseLigand()") :]
     choose = choose[: choose.index("\n  }\n")]
     assert "if (out.reps)" in choose and "app.applyReps" in choose
@@ -783,7 +792,9 @@ def test_a_bond_out_of_a_selection_reaches_the_ribbon():
     """A residue of a chain drawn as sticks over the cartoon had its peptide bonds drawn
     by nobody -- the neighbour shows no atoms -- so it looked detached.  Such a bond is
     now a stub, and only into a ribbon."""
-    geometry = (Path(boonza.__file__).parent / "data/viewer/geometry.js").read_text()
+    geometry = (Path(boonza.__file__).parent / "data/viewer/geometry.js").read_text(
+        encoding="utf-8"
+    )
     loop = geometry[geometry.index("// bonds: a line where either end") :]
     loop = loop[: loop.index("// the traced atom of each residue")]
     assert "if (!show[i] && !show[j]) continue;" in loop  # both hidden: nothing to draw
@@ -796,7 +807,7 @@ def test_a_bond_between_two_representations_is_drawn():
     and the other in the ligand's.  Each draws only bonds with both ends its own, so the
     bond was made and drawn by nobody, and the click looked like it had done nothing."""
     here = Path(boonza.__file__).parent / "data/viewer"
-    main = (here / "main.js").read_text()
+    main = (here / "main.js").read_text(encoding="utf-8")
     body = main[main.index("function modelItems(m)") :]
     body = body[: body.index("\n}\n")]
     assert "ribbon: noRibbon, reach }" in body  # each representation knows what the rest draw
@@ -806,7 +817,7 @@ def test_a_bond_between_two_representations_is_drawn():
     # "noh" selection one toward each hydrogen), ending in mid-air
     assert "if (R.trace[r] >= 0) reach[R.trace[r]] = 1" in body
     assert "for (const a of topo.residueAtoms[r]) if (!topo.flags.h[a]) reach[a] = 1" not in body
-    ui = (here / "ui.js").read_text()
+    ui = (here / "ui.js").read_text(encoding="utf-8")
     apply = ui[ui.index("async function applyToAtoms(") :]
     apply = apply[: apply.index("\n  }\n")]
     assert "are in two models" in apply and "long for a bond" in apply
@@ -819,7 +830,7 @@ def test_set_as_ligand_takes_the_selection_not_the_whole_molecule():
     the molecule under the cursor when nothing is selected."""
     import re
 
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     item = re.search(r"\(p => \(\{ label: p\.label.*?\}\)\)\(ligandPick\(c\)\),", ui)
     assert item, "Set as Ligand no longer goes through ligandPick"
     assert "app.select(c.m, c.molecule); chooseLigand()" not in ui
@@ -1572,12 +1583,12 @@ def test_an_edit_drops_the_force_field_the_file_came_with(tmp_path):
     with pytest.raises(ValueError, match="no vdW parameters"):
         boonza.save(bad, tmp_path / "bad.mae")
     boonza.save(_peptide(), tmp_path / "ok.mae")
-    text = (tmp_path / "ok.mae").read_text()
+    text = (tmp_path / "ok.mae").read_text(encoding="utf-8")
     head, sites = text.split("ffio_sites[", 1)
     lines = sites.split("\n")
     k = next(i for i, line in enumerate(lines) if line.strip().startswith("1 atom"))
     lines[k] = " ".join(lines[k].split()[:-1]) + ' ""'
-    (tmp_path / "old.mae").write_text(head + "ffio_sites[" + "\n".join(lines))
+    (tmp_path / "old.mae").write_text(head + "ffio_sites[" + "\n".join(lines), encoding="utf-8")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         old = boonza.load(tmp_path / "old.mae")
@@ -1827,11 +1838,11 @@ def test_export_writes_what_the_server_answers(tmp_path):
     v = viewer.Viewer([viewer.Model("1FNA", lambda: viewer.Session(s, title="1FNA"))], title="1FNA")
     got = export(v, tmp_path)
     assert got["models"] == 1 and got["frames"] == 1
-    assert 'name="boonza-static"' in (tmp_path / "index.html").read_text()
+    assert 'name="boonza-static"' in (tmp_path / "index.html").read_text(encoding="utf-8")
     assert (tmp_path / "main.js").is_file()
-    listing = json.loads((tmp_path / "data/models.json").read_text())
+    listing = json.loads((tmp_path / "data/models.json").read_text(encoding="utf-8"))
     assert listing["static"] and listing["models"][0]["name"] == "1FNA"
-    topo = json.loads((tmp_path / "data/topology-m0.json").read_text())
+    topo = json.loads((tmp_path / "data/topology-m0.json").read_text(encoding="utf-8"))
     assert topo["natoms"] == s.natoms
     assert all("ids" in rep for rep in topo["reps"])
     blob = np.fromfile(tmp_path / "data/frame-m0-i0.bin", "<f4")
@@ -2015,11 +2026,11 @@ def test_a_placeholder_cell_is_no_cell(tmp_path):
     structure and distances are those of the structure itself."""
     s = boonza.load(DATA / "1LYZ.pdb")
     ss = viewer.Session(s).topology()["ss"]
-    text = (DATA / "1LYZ.pdb").read_text().splitlines()
+    text = (DATA / "1LYZ.pdb").read_text(encoding="utf-8").splitlines()
     text = [ln for ln in text if not ln.startswith("CRYST1")]
     text.insert(0, "CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 P 1           1")
     path = tmp_path / "em.pdb"
-    path.write_text("\n".join(text) + "\n")
+    path.write_text("\n".join(text) + "\n", encoding="utf-8")
     em = boonza.load(path)  # the cell is read as msys reads it: 1 A
     assert viewer.Session(em).topology()["ss"] == ss and "H" in ss
     # a crystal's cell is kept, but distances do not wrap in it for one structure
@@ -2204,7 +2215,8 @@ def test_a_design_in_its_receptor(served, tmp_path):
                 now = v.session(k).system.positions[x["atoms"]]
                 np.testing.assert_allclose(last, now, atol=2e-3)
     np.testing.assert_array_equal(v.session(0).system.positions, receptor)
-    assert post("api/minimize", {"m": k, "mode": "all"})[0] == 400
+    # a mode there is none of is refused ("all" was, until it became the fifth mode)
+    assert post("api/minimize", {"m": k, "mode": "everything"})[0] == 400
     # without a receptor a design is minimized alone; a receptor is not a design
     assert post("api/series_receptor", {"group": "series 1", "receptor": k})[0] == 400
     post("api/series_receptor", {"group": "series 1", "receptor": None})
@@ -2220,7 +2232,8 @@ def test_a_design_in_its_receptor(served, tmp_path):
     v.save_series("series 1", path)
     back = boonza.load(path)
     assert "note" not in back.ct(0).keys() and back.ct(1)["note"] == "O to F"
-    assert v.models[v.open(path)[1]].row == {"note": "O to F"}
+    # every field of the SDF is the member's row, the SMILES it was saved with too
+    assert v.models[v.open(path)[1]].row == {"SMILES": "Oc1ccccc1", "note": "O to F"}
     # a plain model by mode: the ligand moves, the rest's heavy atoms barely do (springs)
     before = v.session(0).system.positions.copy()
     out = v.minimize(0, "ligand", path=True)
@@ -2246,7 +2259,9 @@ def test_view_takes_a_pdb_id(monkeypatch, tmp_path):
     args = _parser().parse_args(["view", "1hho", "--no-browser"])
     assert args.run(args) == 0
     assert fetched == ["1hho"] and served[0].system.natoms > 0
-    (tmp_path / "2TRX").write_text("")  # a file named like an ID is read as a file
+    (tmp_path / "2TRX").write_text(
+        "", encoding="utf-8"
+    )  # a file named like an ID is read as a file
     args = _parser().parse_args(["view", "2TRX", "--no-browser"])
     with pytest.raises(ValueError):
         args.run(args)
@@ -2344,7 +2359,7 @@ def test_the_ligand_alone_is_a_representation():
     keep the colour its points have."""
     import re
 
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     table = ui[ui.index("const PRESETS") : ui.index("const MODEL_COLORS")]
     rows = re.findall(r'\["(\w+)", "([^"]+)", (\[.*?\]\]|null)\]', table)
     rep = re.compile(r'\["(\w+)", "(\w+)", "([\w/]+)"\]')  # [atoms, style, colour]
@@ -2570,7 +2585,7 @@ def test_the_builder_only_draws_the_hydrogens_it_marks():
     hydrogen was in no representation and its bonds were drawn by nobody.  The
     representation belongs with the marks: the ligand's hydrogens and the
     selection's, rebuilt whenever they change."""
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     body = ui[ui.index("function markBuilderH()") :]
     body = body[: body.index("\n  }\n")]
     assert 'label: "hydrogens"' in body and "rep.builderH = true" in body
@@ -2762,16 +2777,18 @@ def test_the_pocket_distance_decides_what_minimize_frees():
 
 def test_the_pocket_slider_is_the_one_definition():
     here = Path(boonza.__file__).parent / "data/viewer"
-    ui, main = (here / "ui.js").read_text(), (here / "main.js").read_text()
-    assert (
-        "within 4.5 of (${" not in ui
-        and "within 4.5" not in (Path(boonza.__file__).parent / "viewer/export.py").read_text()
+    ui, main = (
+        (here / "ui.js").read_text(encoding="utf-8"),
+        (here / "main.js").read_text(encoding="utf-8"),
     )
+    assert "within 4.5 of (${" not in ui and "within 4.5" not in (
+        Path(boonza.__file__).parent / "viewer/export.py"
+    ).read_text(encoding="utf-8")
     assert "within ${state.pocket} of" in main and 'localStorage.getItem("boonza.pocket")' in main
     assert ui.count("pocketRow()") >= 3  # under the representations, in Minimize and in Dynamics
     assert ui.count("pocket: state.pocket") >= 2  # what is minimized and what is run
     # a choice in a panel shows it is chosen: the style was the left dock's alone
-    assert ".panel button.armed" in (here / "style.css").read_text()
+    assert ".panel button.armed" in (here / "style.css").read_text(encoding="utf-8")
 
 
 def test_the_builder_draws_a_selected_residue_whole():
@@ -2779,7 +2796,7 @@ def test_the_builder_draws_a_selected_residue_whole():
     the chain came up 23 of its 26 atoms with nothing selected (bonded to no residue it
     is classed with the ligands, though it is no ligand), and a PHE of the chain 17 of 20
     when selected, without its backbone C and O."""
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     body = ui[ui.index("function markBuilderH()") :]
     body = body[: body.index("\n  }\n")]
     assert "for (const b of m.topo.residueAtoms[A.residue[heavy]]) left.add(b)" in body
@@ -2793,7 +2810,7 @@ def test_water_and_ions_can_be_selected():
     top = session.topology()
     assert len(session.select("water")) == 109
     assert sum(k == 2 for k in top["atoms"]["class"]) == 109
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     menu = ui[ui.index("const selectItems") :]
     assert 'label: "Water"' in menu and 'label: "Ions"' in menu and 'label: "Chain"' in menu
     # the keyword "solvent" is not what the class means: it takes the ligands in too, so
@@ -2848,8 +2865,10 @@ def test_other_names_for_water_are_not_drawn():
 
 def test_the_selection_is_an_entry_with_a_color_of_its_own():
     here = Path(boonza.__file__).parent / "data/viewer"
-    ui, main, geo = ((here / f).read_text() for f in ("ui.js", "main.js", "geometry.js"))
-    assert 'id="rdock-sel"' in (here / "index.html").read_text()
+    ui, main, geo = (
+        (here / f).read_text(encoding="utf-8") for f in ("ui.js", "main.js", "geometry.js")
+    )
+    assert 'id="rdock-sel"' in (here / "index.html").read_text(encoding="utf-8")
     assert "function refreshSelRow()" in ui and "(sel)" in ui
     assert "state.selHidden" in main and "state.selHidden = false" in ui
     assert "export function setHighlight" in geo
@@ -2858,7 +2877,7 @@ def test_the_selection_is_an_entry_with_a_color_of_its_own():
 
 
 def test_a_series_downloads_from_the_model_list():
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     header = ui[ui.index('const header = el("label", { className: "mgroup" }') :]
     header = header[: header.index("return header")]
     assert "downloadSeries(group)" in header and '"sdf")' in header
@@ -2871,7 +2890,7 @@ def test_the_builder_reads_a_stereocentre_without_being_asked():
     other selection-driven box.  And amber was the hand the centre is *not*: the
     accent means "this is the one" everywhere else in the dock, so it now marks what
     the atom is, and the plain button beside it is the other hand."""
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     body = ui[ui.index("async function refreshChiralityBox()") :]
     body = body[: body.index("\n  }\n")]
     assert "api/stereocentre" in body and "api/set_chirality" in body
@@ -2893,7 +2912,7 @@ def test_the_builder_reads_a_stereocentre_without_being_asked():
 def _with_metals(tmp_path):
     """1LYZ with a zinc on Asp52, bonded to it by CONECT as a crystal's file has it, and
     a sodium beside Asp101 without a bond."""
-    lines = (DATA / "1LYZ.pdb").read_text().splitlines()
+    lines = (DATA / "1LYZ.pdb").read_text(encoding="utf-8").splitlines()
     atoms = [ln for ln in lines if ln.startswith("ATOM")]
 
     def at(resid, name):
@@ -2914,7 +2933,7 @@ def _with_metals(tmp_path):
     end = next(k for k, x in enumerate(lines) if x.startswith(("CONECT", "MASTER", "END")))
     body = lines[:end] + het + [f"CONECT{9001:5d}{od1:5d}", f"CONECT{od1:5d}{9001:5d}", "END"]
     path = tmp_path / "metals.pdb"
-    path.write_text("\n".join(body) + "\n")
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
     return boonza.load(path)
 
 
@@ -2938,7 +2957,9 @@ def test_a_metal_bonded_to_its_residues_is_an_ion_not_the_ligand(tmp_path):
     fe = heme.select("element Fe").ids
     assert set(fe) <= set(heme.select(viewer.LIGAND).ids) and not _ion_rep(viewer.Session(heme))
     # the coordination bond is not drawn
-    geometry = (Path(boonza.__file__).parent / "data/viewer/geometry.js").read_text()
+    geometry = (Path(boonza.__file__).parent / "data/viewer/geometry.js").read_text(
+        encoding="utf-8"
+    )
     skip = "(A.class[i] === 2 || A.class[j] === 2) && A.residue[i] !== A.residue[j]) continue"
     assert skip in geometry
 
@@ -2960,7 +2981,7 @@ def test_a_boxs_ions_are_not_drawn_and_a_bound_one_is(tmp_path):
 def test_a_bond_can_be_broken_from_the_bond_buttons():
     """Single, Double and Triple had no way back: breaking a bond was Erase on its
     middle, which took no selection.  No bond (order 0) does both."""
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     assert 'toolButton("No bond", { kind: "bond", value: 0, label: "No bond" })' in ui
     apply = ui[ui.index("async function applyToAtoms(") :]
     apply = apply[: apply.index("\n  }\n")]
@@ -2974,7 +2995,7 @@ def test_a_bond_can_be_broken_from_the_bond_buttons():
 
 
 def test_a_key_turns_the_selected_atom_into_that_element():
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     assert 'const ELEMENT_KEYS = { n: "N", c: "C", o: "O", f: "F", h: "H" };' in ui
     keys = ui[ui.index("function elementKey(element)") :]
     keys = keys[: keys.index("\n  }\n")]
@@ -3014,7 +3035,7 @@ def test_a_ring_is_built_through_an_atom_and_fused_on_a_bond():
     session = viewer.Session(from_smiles("c1ccccc1"))
     session.edit("fuse", [0, 1], "c1ccncc1", hydrogens=False)
     assert smiles(session.system) == "c1ccc2cnccc2c1"
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     assert "label: n, ring: true }" in ui and 'op: "fuse", atoms: hit.atoms' in ui
     assert "formal charge ${fc > 0" in ui  # a clicked atom says its formal charge
 
@@ -3026,7 +3047,11 @@ def _bare(tmp_path, ligands=(), cut=False):
     from rdkit import Chem
     from rdkit.Chem import AllChem
 
-    lines = [ln for ln in (DATA / "1LYZ.pdb").read_text().splitlines() if ln.startswith("ATOM")]
+    lines = [
+        ln
+        for ln in (DATA / "1LYZ.pdb").read_text(encoding="utf-8").splitlines()
+        if ln.startswith("ATOM")
+    ]
 
     def gone(ln):
         resid, name = int(ln[22:26]), ln[12:16].strip()
@@ -3044,7 +3069,7 @@ def _bare(tmp_path, ligands=(), cut=False):
             lines.append(f"HETATM{9000 + 20 * k + n:5d} {el + str(n + 1):<4} L{k:02d} "
                          f"L{k + 1:4d}    {xyz_}  1.00  0.00          {el:>2}")  # fmt: skip
     path = tmp_path / "bare.pdb"
-    path.write_text("\n".join(lines) + "\nEND\n")
+    path.write_text("\n".join(lines) + "\nEND\n", encoding="utf-8")
     return boonza.load(path)
 
 
@@ -3137,10 +3162,13 @@ def test_the_mouse_of_chimerax_and_pymol():
     import subprocess
 
     here = Path(boonza.__file__).parent / "data/viewer"
-    mouse, ui = (here / "mouse.js").read_text(), (here / "ui.js").read_text()
+    mouse, ui = (
+        (here / "mouse.js").read_text(encoding="utf-8"),
+        (here / "ui.js").read_text(encoding="utf-8"),
+    )
     assert 'MOUSE_MODES = ["boonza", "chimerax", "pymol"]' in mouse
     assert 'MOUSE_MODES.includes(saved) ? saved : "boonza"' in mouse  # the default
-    assert 'id="f-mouse"' in (here / "index.html").read_text()
+    assert 'id="f-mouse"' in (here / "index.html").read_text(encoding="utf-8")
     assert "f-mouse" in ui and "MOUSE_ROWS[state.mouseMode]" in ui
     node = shutil.which("node")
     if node is None:
@@ -3166,7 +3194,9 @@ def test_the_mouse_of_chimerax_and_pymol():
       console.log(JSON.stringify(out));
     """
     run = [node, "--input-type=module", "-e", script]
-    got = json.loads(subprocess.run(run, capture_output=True, text=True, check=True).stdout)
+    got = json.loads(
+        subprocess.run(run, capture_output=True, text=True, check=True, encoding="utf-8").stdout
+    )
     acts = {mode: [b.get("act") for b in got[mode]] for mode in got}
     assert acts["boonza"] == ["box", "rotate", "pan", "zoom", "dihedral"]  # as it was
     assert acts["chimerax"] == ["rotate", "box", "box", "pan", "pan"]
@@ -3183,7 +3213,7 @@ def test_the_mouse_of_chimerax_and_pymol():
 def test_several_models_are_picked_and_superposed():
     """Shift (a run) or Ctrl (one) + click in the Models list picks several models; a
     right-click on one of them superposes the others on it."""
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text()
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     pick = ui[ui.index("function pickModel(e, m)") :]
     pick = pick[: pick.index("\n  }\n")]
     assert "e.shiftKey" in pick and "e.ctrlKey || e.metaKey" in pick
@@ -3231,7 +3261,7 @@ def test_a_hydrophobic_surface_is_a_lipophilicity_potential():
     assert len(atoms["fi"]) == s.natoms
     cg = viewer.Session(boonza.load(DATA / "martini" / "2TRX" / "cg.pdb.gz")).topology()
     assert "fi" not in cg["atoms"] and "lipo" in cg["atoms"]  # beads keep their signs
-    surface = (Path(boonza.__file__).parent / "data/viewer/surface.js").read_text()
+    surface = (Path(boonza.__file__).parent / "data/viewer/surface.js").read_text(encoding="utf-8")
     assert "sum += fi[a] * Math.exp(-Math.sqrt(r2))" in surface  # Fauchere's function
     assert "const MLP_REACH = 5;" in surface and "const MLP_SCALE = 20;" in surface
     assert "CYAN = [0, 139 / 255, 139 / 255], GOLD = [184 / 255, 134 / 255, 11 / 255]" in surface
@@ -3242,13 +3272,16 @@ def test_a_click_on_a_model_leaves_the_view_and_views_are_kept():
     That takes a double-click now, and + View at the bottom left keeps where the camera
     is as v1, v2 ..., to come back to."""
     here = Path(boonza.__file__).parent / "data/viewer"
-    ui, main = (here / "ui.js").read_text(), (here / "main.js").read_text()
+    ui, main = (
+        (here / "ui.js").read_text(encoding="utf-8"),
+        (here / "main.js").read_text(encoding="utf-8"),
+    )
     assert (
         "name.onclick"
         not in ui[ui.index("function modelsDock()") :].split("function seriesDrop")[0]
     )
     assert '$("rdock-list").ondblclick' in ui and "if (m && !m.closed) app.solo(m);" in ui
-    assert 'id="views-save"' in (here / "index.html").read_text()
+    assert 'id="views-save"' in (here / "index.html").read_text(encoding="utf-8")
     save = ui[ui.index("function saveView()") :]
     save = save[: save.index("\n  }\n")]
     assert "camera: app.cameraView()" in save and "`v${k}`" in save

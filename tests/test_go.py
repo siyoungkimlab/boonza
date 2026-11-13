@@ -105,7 +105,11 @@ def test_the_contact_map_is_read_as_the_rcsu_program_writes_it(contact_map):
     """Every row that is an overlap, or that the RCSU rules call a contact
     anyway -- the filter the original script applies -- by the residue numbers
     the structure itself uses."""
-    rows = [line for line in contact_map.read_text().splitlines() if line.startswith("R ")]
+    rows = [
+        line
+        for line in contact_map.read_text(encoding="utf-8").splitlines()
+        if line.startswith("R ")
+    ]
     contacts = read_contact_map(contact_map)
     assert len(rows) == 777  # every pair the program examined
     assert len(contacts) == 701  # the ones it calls contacts
@@ -116,7 +120,7 @@ def test_the_contact_map_is_read_as_the_rcsu_program_writes_it(contact_map):
 
 def test_a_file_that_is_not_a_contact_map_is_refused(tmp_path):
     bad = tmp_path / "nope.out"
-    bad.write_text("R 1 2 3\nnot a contact map at all\n")
+    bad.write_text("R 1 2 3\nnot a contact map at all\n", encoding="utf-8")
     with pytest.raises(ValueError, match="18-column"):
         read_contact_map(bad)
 
@@ -313,7 +317,7 @@ def test_a_swim_carries_the_go_model(tmp_path):
     assert "#define GO_VIRT" in top
     assert '#include "go_atomtypes.itp"' in top and '#include "go_nbparams.itp"' in top
     whole.save(tmp_path, martini_itp="martini.itp")
-    assert (tmp_path / "go_nbparams.itp").read_text() == protein.go.nbparams
+    assert (tmp_path / "go_nbparams.itp").read_text(encoding="utf-8") == protein.go.nbparams
     # and the probes are their own molecules, with no site of their own to hold
     assert len(whole.molecules) == 1 + len(probes)
     assert sum(1 for n in whole.molecules[1].nodes if n.get("go_site")) == 0
@@ -351,11 +355,11 @@ def test_a_chain_break_is_held_across(tmp_path):
     """A break splits a chain into two molecules, which a Go model makes one
     again; residues either side are not near along any bond, so a contact
     across the break is a well like any other."""
-    plain = (DATA / "1TEN.pdb").read_text().splitlines(keepends=True)
+    plain = (DATA / "1TEN.pdb").read_text(encoding="utf-8").splitlines(keepends=True)
     cut = [line for line in plain
            if not (line.startswith("ATOM") and 830 <= int(line[22:26]) <= 839)]  # fmt: skip
     gapped = tmp_path / "gapped.pdb"
-    gapped.write_text("".join(cut))
+    gapped.write_text("".join(cut), encoding="utf-8")
     m = martinize(boonza.load(gapped), "protein", go=True)
     assert len(m.molecules) == 1  # the two sides are one moleculetype again
     assert m.go.sites == 79  # ten residues fewer than the whole
@@ -377,8 +381,8 @@ def test_the_topology_switches_the_virtual_sites_on(built):
 
 def test_the_go_files_are_written_beside_the_topology(built, tmp_path):
     built.save(tmp_path, martini_itp="martini.itp")
-    assert (tmp_path / "go_atomtypes.itp").read_text() == built.go.atomtypes
-    assert (tmp_path / "go_nbparams.itp").read_text() == built.go.nbparams
+    assert (tmp_path / "go_atomtypes.itp").read_text(encoding="utf-8") == built.go.atomtypes
+    assert (tmp_path / "go_nbparams.itp").read_text(encoding="utf-8") == built.go.nbparams
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +443,7 @@ def test_a_map_for_another_structure_is_refused(tmp_path):
         f"   5.0000     1 1 1 1     1       1     0"
         for k in range(1, 4)
     ]
-    other.write_text("\n".join(rows) + "\n")
+    other.write_text("\n".join(rows) + "\n", encoding="utf-8")
     assert len(read_contact_map(other)) == 3  # it reads as a map
     with pytest.raises(ValueError, match="its own numbering"):
         martinize(boonza.load(STRUCTURE), "protein", go=other)

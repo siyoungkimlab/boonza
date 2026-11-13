@@ -66,7 +66,7 @@ def test_restart_files(tmp_path):
             lines += [
                 "".join(f"{v:12.7f}" for v in flat[k : k + 6]) for k in range(0, len(flat), 6)
             ]
-        path.write_text("\n".join(lines) + "\n")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return path
 
     box = [[30.0, 31.0, 32.0, 90.0, 95.0, 90.0]]

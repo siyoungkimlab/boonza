@@ -41,6 +41,7 @@ def run_msys(*args):
     r = subprocess.run(
         [MSYS_PYTHON, str(HERE / "msys_oracle.py"), *map(str, args)],
         env=_msys_env(), cwd=HERE, capture_output=True, text=True,
+            encoding="utf-8",
     )  # fmt: skip
     if r.returncode:
         raise RuntimeError(f"msys oracle failed:\n{r.stderr}")

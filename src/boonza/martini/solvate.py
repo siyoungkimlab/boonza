@@ -18,7 +18,7 @@ SEAM = 3.5  # Å, closer than any two beads in equilibrated water (4.4)
 
 def _water_box() -> tuple[np.ndarray, np.ndarray]:
     """The equilibrated water beads (Å) and the box's edges."""
-    lines = WATER_BOX.read_text().splitlines()
+    lines = WATER_BOX.read_text(encoding="utf-8").splitlines()
     n = int(lines[1])
     xyz = np.array([[float(line[20:28]), float(line[28:36]), float(line[36:44])]
                     for line in lines[2 : 2 + n]]) * 10  # fmt: skip

@@ -58,7 +58,7 @@ def test_clone_matches_msys(tmp_path):
     s = boonza.load(path)
     ids = np.random.default_rng(7).permutation(s.natoms)[: s.natoms // 3]
     ids_file = tmp_path / "ids.json"
-    ids_file.write_text(json.dumps(ids.tolist()))
+    ids_file.write_text(json.dumps(ids.tolist()), encoding="utf-8")
     assert_same(canon(s.clone(ids)), run_msys("clone", path, ids_file))
 
 

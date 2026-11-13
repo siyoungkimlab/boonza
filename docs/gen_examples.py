@@ -21,7 +21,7 @@ MAX_LINES = 60
 
 def _describe(path: Path) -> tuple[str, str, str]:
     """(title, description, code without the module docstring) of an example."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     if path.suffix == ".py":
         doc = ast.get_docstring(ast.parse(text)) or path.stem
         body = text.split('"""', 2)[2].lstrip("\n") if text.startswith('"""') else text
@@ -45,7 +45,9 @@ def _target(path: Path) -> str:
 def _run(path: Path) -> str:
     cmd = [sys.executable, str(path)] if path.suffix == ".py" else ["bash", str(path)]
     env = {**os.environ, "PYTHON": sys.executable, "PYTHONWARNINGS": "ignore"}
-    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env, timeout=900)
+    r = subprocess.run(
+        cmd, cwd=ROOT, capture_output=True, text=True, env=env, timeout=900, encoding="utf-8"
+    )
     if r.returncode:
         raise RuntimeError(f"{path.name} failed:\n{r.stdout}\n{r.stderr}")
     lines = r.stdout.replace(str(ROOT) + "/", "").rstrip().splitlines()
@@ -84,7 +86,7 @@ def main():
             out += [desc, ""]
         out += [f"```{lang}", code, "```", "", "Output:", "", "```text", output, "```", ""]
     target = ROOT / "docs" / "examples.md"
-    target.write_text("\n".join(out).rstrip() + "\n")
+    target.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
     print(f"wrote {target}")
 
 

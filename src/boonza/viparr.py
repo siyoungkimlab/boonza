@@ -134,7 +134,7 @@ def _bundled():
 
 def bundled_version() -> str:
     """Which viparr-ffpublic commit is bundled with boonza."""
-    return zipfile.Path(_bundled().root, at="VERSION").read_text().strip()
+    return zipfile.Path(_bundled().root, at="VERSION").read_text(encoding="utf-8").strip()
 
 
 def list_forcefields(path=None, bundled: bool = True) -> list[str]:
@@ -168,7 +168,7 @@ def find_forcefield(name, path=None):
 
 def _read_json(path):
     try:
-        with path.open() as fh:
+        with path.open(encoding="utf-8") as fh:
             return json.load(fh)
     except json.JSONDecodeError as e:
         raise ViparrError(f"Misformatted '{path}' file: {e}") from e
@@ -1006,7 +1006,7 @@ def _check_pairs(s, name, nbrs, per_atom, sigma, epsilon, charge, rules: Rules) 
 
 
 def _write_json(path: Path, obj) -> None:
-    path.write_text(json.dumps(obj, indent=1) + "\n")
+    path.write_text(json.dumps(obj, indent=1) + "\n", encoding="utf-8")
 
 
 def _template_json(t: Template) -> dict:

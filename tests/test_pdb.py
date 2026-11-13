@@ -41,7 +41,7 @@ def test_ter_splits_reused_chain_ids(tmp_path):
         "ATOM      4  C   ALA A   1      30.000   0.000   0.000  1.00  0.00           C",
     ]
     path = tmp_path / "ter.pdb"
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     s = boonza.load(path)
     assert s.chains["name"].tolist() == ["A", "A", "B"]
     assert s.atoms["residue"].tolist() == [0, 1, 2, 1]
@@ -126,7 +126,7 @@ def test_conect_orders_hex_serials_and_symmetry_copies(tmp_path):
                      f"  1.00  0.00          {el:>2s}")  # fmt: skip
     lines += ["CONECT    1    2    2", "CONECT    2    1    1    3", "CONECT    3    2", "END"]
     path = tmp_path / "records.pdb"
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     s = boonza.load(path)
     got = {
         (_label(s, i), _label(s, j), int(o))
@@ -135,7 +135,7 @@ def test_conect_orders_hex_serials_and_symmetry_copies(tmp_path):
     assert got == {("LIG1:C1", "LIG1:C2", 2), ("LIG1:C2", "LIG1:O3", 1),
                    ("CYS3:SG", "CYS4:SG", 1)}  # fmt: skip
     # the second SSBOND (to a symmetry copy) alone would not bond
-    path.write_text("\n".join(lines[1:]) + "\n")
+    path.write_text("\n".join(lines[1:]) + "\n", encoding="utf-8")
     assert len(boonza.load(path).bonds) == 2
 
 
@@ -147,15 +147,15 @@ def test_writer_one_model_ensembles_and_conect_round_trip(tmp_path):
     s.append(lig)  # a second ct
     out = tmp_path / "complex.pdb"
     boonza.save(s, out)
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "MODEL" not in text and "CONECT" in text
     back = boonza.load(out)
     assert back.natoms == s.natoms and back.ncts == 1
     assert _bond_set(back) == _bond_set(s)  # guessed plus CONECT reproduce every bond
     boonza.save(s, out, models=True)
-    assert out.read_text().count("MODEL") == 2 and boonza.load(out).ncts == 2
+    assert out.read_text(encoding="utf-8").count("MODEL") == 2 and boonza.load(out).ncts == 2
     boonza.save(s, out, conect=False)
-    assert "CONECT" not in out.read_text()
+    assert "CONECT" not in out.read_text(encoding="utf-8")
 
     # an ensemble (the same atoms in every ct) keeps its MODELs
     ens = lig.copy()
@@ -163,7 +163,7 @@ def test_writer_one_model_ensembles_and_conect_round_trip(tmp_path):
     moved.positions = moved.positions + 1.0
     ens.append(moved)
     boonza.save(ens, out)
-    assert out.read_text().count("MODEL") == 2
+    assert out.read_text(encoding="utf-8").count("MODEL") == 2
     again = boonza.load(out)
     assert again.ncts == 2 and _bond_set(again) == _bond_set(ens)
 
@@ -180,8 +180,8 @@ def test_side_by_side_copies_are_one_model(tmp_path):
         ensemble.append(jiggled)
     boonza.save(lattice, tmp_path / "lattice.pdb")
     boonza.save(ensemble, tmp_path / "ensemble.pdb")
-    assert "MODEL" not in (tmp_path / "lattice.pdb").read_text()
-    assert (tmp_path / "ensemble.pdb").read_text().count("MODEL") == 3
+    assert "MODEL" not in (tmp_path / "lattice.pdb").read_text(encoding="utf-8")
+    assert (tmp_path / "ensemble.pdb").read_text(encoding="utf-8").count("MODEL") == 3
 
 
 def test_formal_charges_digit_first_and_sign_first(tmp_path):
@@ -193,7 +193,10 @@ def test_formal_charges_digit_first_and_sign_first(tmp_path):
 
     charges = ["1-", "1+", "2+", "-1", "+1", "  ", "2-"]
     path = tmp_path / "q.pdb"
-    path.write_text("".join(atom(i + 1, f"X{i}", "O", q) for i, q in enumerate(charges)) + "END\n")
+    path.write_text(
+        "".join(atom(i + 1, f"X{i}", "O", q) for i, q in enumerate(charges)) + "END\n",
+        encoding="utf-8",
+    )
     s = boonza.load(str(path))
     assert s.atoms["formal_charge"].tolist() == [-1, 1, 2, -1, 1, 0, -2]
     back = tmp_path / "back.pdb"

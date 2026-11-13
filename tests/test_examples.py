@@ -17,6 +17,8 @@ SCRIPTS = sorted(p for p in (ROOT / "examples").iterdir()
 def test_example_runs(script):
     cmd = [sys.executable, str(script)] if script.suffix == ".py" else ["bash", str(script)]
     env = {**os.environ, "PYTHON": sys.executable, "PYTHONWARNINGS": "ignore"}
-    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env, timeout=900)
+    r = subprocess.run(
+        cmd, cwd=ROOT, capture_output=True, text=True, env=env, timeout=900, encoding="utf-8"
+    )
     assert r.returncode == 0, f"{script.name} failed:\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}"
     assert r.stdout.strip(), f"{script.name} printed nothing"

@@ -83,7 +83,9 @@ def write_ligand(out: Path, file: str, sel: str) -> None:
     boonza view (viewer.outputs.from_cavity)."""
     import json
 
-    (out / "ligand.json").write_text(json.dumps({"file": file, "selection": sel}) + "\n")
+    (out / "ligand.json").write_text(
+        json.dumps({"file": file, "selection": sel}) + "\n", encoding="utf-8"
+    )
 
 
 def _residue_names(system, residues) -> str:
@@ -117,7 +119,7 @@ def _sites_pdb(path: Path, pocket, spacing: float) -> None:
         first = n - len(s.xyz) + 1
         bonds += [(first + i, first + j) for i, j in zip(bi, bj, strict=True)]
     conect = [f"CONECT{a:5d}{b:5d}" for a, b in bonds]
-    path.write_text("\n".join(atoms + conect + ["END"]) + "\n")
+    path.write_text("\n".join(atoms + conect + ["END"]) + "\n", encoding="utf-8")
 
 
 def _drawable(system, ids, xyz):
@@ -140,7 +142,7 @@ def _pharm_pdb(path: Path, spots) -> None:
         f"HETATM{n:5d}  X   {CODES[h.family]} H{n % 10000:4d}    "
         f"{h.center[0]:8.3f}{h.center[1]:8.3f}{h.center[2]:8.3f}"
         f"{min(h.ligands, 999):6.2f}{min(h.enrichment, 999.99):6.2f}           X\n"
-        for n, h in enumerate(spots, 1)) + "END\n")  # fmt: skip
+        for n, h in enumerate(spots, 1)) + "END\n", encoding="utf-8")  # fmt: skip
 
 
 def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coords,
@@ -263,7 +265,7 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
             names["radii"] = [h.radius for h in mine]
             names["labels"] = [f"{CODES[h.family]} x{h.enrichment:.0f} {h.ligands}p" for h in mine]
         objects.append((k, names))
-    with open(out / "pockets.csv", "w", newline="") as fh:
+    with open(out / "pockets.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]) if rows else ["rank"])
         w.writeheader()
         w.writerows(rows)
@@ -374,5 +376,5 @@ def write(out, model: str, pockets, n_frames: int, every: int, system, ids, coor
               "cmd.extend('only', only)",
               "python end"]  # fmt: skip
     view = out / "view.pml"
-    view.write_text("\n".join(lines) + "\n")
+    view.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return view

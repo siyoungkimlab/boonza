@@ -87,7 +87,7 @@ def test_load_and_errors(tmp_path):
     with pytest.raises(ffxml.FFXMLError, match="No template found for residue"):
         ffxml.parameterize_openmm(s, ff)  # the crystal structure has no hydrogens
     bad = tmp_path / "script.xml"
-    bad.write_text("<ForceField><Script>print('hello')</Script></ForceField>")
+    bad.write_text("<ForceField><Script>print('hello')</Script></ForceField>", encoding="utf-8")
     with pytest.raises(ffxml.FFXMLError, match="Script"):
         ffxml.load_openmm_forcefield(str(bad))
     with pytest.raises(ffxml.FFXMLError, match="Could not locate"):
@@ -102,7 +102,9 @@ def test_bundled_files_come_first(tmp_path, monkeypatch):
     ff = ffxml.load_openmm_forcefield("amber19-all.xml", "amber19/opc.xml")
     assert ff.files[:2] == ["bundled:amber19-all.xml", "bundled:amber19/opc.xml"]
     assert "bundled:amber19/protein.ff19SB.xml" in ff.files  # its includes, bundled too
-    (tmp_path / "tip3p.xml").write_text(Path(_bundled("tip3p.xml")).read_text())
+    (tmp_path / "tip3p.xml").write_text(
+        Path(_bundled("tip3p.xml")).read_text(encoding="utf-8"), encoding="utf-8"
+    )
     monkeypatch.chdir(tmp_path)
     assert ffxml.load_openmm_forcefield("tip3p.xml").files == ["tip3p.xml"]  # a path wins
 
