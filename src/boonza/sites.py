@@ -1304,6 +1304,6 @@ def write_viewer_scripts(directory, sites, level: float = 50.0) -> list[Path]:
                 f"draw sphere {{{x} {y} {z}}} radius 1.5 resolution 20"]  # fmt: skip
     if len(sites):
         pml += ["deselect", "orient around0", "zoom around0, 4"]
-    (d / "sites.pml").write_text("\n".join(pml) + "\n")
-    (d / "sites.tcl").write_text("\n".join(tcl) + "\n")
+    (d / "sites.pml").write_text("\n".join(pml) + "\n", encoding="utf-8")
+    (d / "sites.tcl").write_text("\n".join(tcl) + "\n", encoding="utf-8")
     return [d / "sites.pml", d / "sites.tcl"]

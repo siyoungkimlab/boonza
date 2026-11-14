@@ -116,7 +116,7 @@ CHAIN 1
 def _four_beads(tmp_path, multiplicity, override, angle_degrees=60.0):
     """The topology written out with a geometry of a known dihedral angle."""
     top = tmp_path / f"m{multiplicity}{'o' if override else ''}.top"
-    top.write_text(_minimal_top(multiplicity, override))
+    top.write_text(_minimal_top(multiplicity, override), encoding="utf-8")
     phi = np.radians(angle_degrees)
     xyz = np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [3.5, 0.0, 0.0],
                     [3.5, np.cos(phi), np.sin(phi)]])  # fmt: skip
@@ -126,7 +126,7 @@ def _four_beads(tmp_path, multiplicity, override, angle_degrees=60.0):
         lines.append(f"{1:5d}RES  {'X' + str(k):>5s}{k:5d}"
                      + "".join(f"{v / 10:8.3f}" for v in x))  # fmt: skip
     lines += ["  5.00000   5.00000   5.00000", ""]
-    gro.write_text("\n".join(lines))
+    gro.write_text("\n".join(lines), encoding="utf-8")
     return boonza.load(top, coordinates=gro)
 
 
@@ -233,9 +233,9 @@ def test_coordinates_are_taken_unrounded_when_they_are_there(tmp_path):
     same name is used first."""
     from boonza.md.prepare import _coordinates_beside
 
-    (tmp_path / "topol.top").write_text("")
+    (tmp_path / "topol.top").write_text("", encoding="utf-8")
     for name in ("cg.pdb", "cg.gro", "topol.gro", "topol.mae", "topol.dms"):
-        (tmp_path / name).write_text("")
+        (tmp_path / name).write_text("", encoding="utf-8")
         assert _coordinates_beside(tmp_path / "topol.top").name == name
 
 
@@ -451,7 +451,7 @@ def test_the_run_directory_carries_its_force_field(crambin_all_atom, tmp_path):
     # the release's libraries, boxes, maps and documentation stay in the archive
     assert ff == {"forcefield.itp", "ffnonbonded.itp", "ffbonded.itp", "lipid_ffbonded.itp",
                   "solv.itp", "wls.itp", "wt4.itp", "sirah_ions.itp"}  # fmt: skip
-    assert 'forcefield.itp"' in top.read_text()
+    assert 'forcefield.itp"' in top.read_text(encoding="utf-8")
 
 
 def test_the_carried_force_field(tmp_path):
@@ -541,7 +541,7 @@ def test_a_solvated_run_is_built_and_runnable(crambin_all_atom, tmp_path):
     assert {"WT4", "NaW", "ClW"} <= names
     assert s.natoms > 1000 and np.any(np.asarray(s.cell))
     assert (tmp_path / "sirah" / "topol.top").is_file()
-    assert "solv.itp" in (tmp_path / "sirah" / "topol.top").read_text()
+    assert "solv.itp" in (tmp_path / "sirah" / "topol.top").read_text(encoding="utf-8")
 
 
 #: What pdb2gmx -ff sirah builds from the beads of tests/data/sirah/dna_duplex.pdb.
@@ -719,9 +719,9 @@ def test_a_prepared_sirah_swim(tmp_path):
     sims = prepare(args, ["EK", "LL", "RR"], types=2, copies=2, log=lambda *_: None)
     assert len(sims) == 2
     d = sims[0]
-    written = json.loads((d / "probes.json").read_text())
+    written = json.loads((d / "probes.json").read_text(encoding="utf-8"))
     assert written["copies"] == 2 and written["align"] == "name GC"
-    top = (d / "sirah" / "topol.top").read_text()
+    top = (d / "sirah" / "topol.top").read_text(encoding="utf-8")
     for name in written["probes"]:
         # the molecule is probe_EK, so that a probe called KW cannot be taken
         # for SIRAH's potassium, while its beads are the residue EK

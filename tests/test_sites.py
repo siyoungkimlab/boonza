@@ -168,7 +168,7 @@ def test_the_sites_command(tmp_path, swimming, capsys):
     assert main(["sites", str(structure), "--traj", *paths, "-o", str(out)]) == 0
     printed = capsys.readouterr().out
     assert "in bulk" in printed and "arrivals" in printed
-    doc = json.loads((out / "sites.json").read_text())
+    doc = json.loads((out / "sites.json").read_text(encoding="utf-8"))
     assert len(doc["sites"]) == 2
     assert all(site["runs"] == 2 for site in doc["sites"])  # both runs, pooled
     assert doc["bulk"] > 0
@@ -189,7 +189,7 @@ def test_the_density_map_agrees_with_the_clusters(tmp_path, swimming):
 
     path = tmp_path / "density.dx"
     grid.write_dx(path)
-    head = path.read_text().splitlines()
+    head = path.read_text(encoding="utf-8").splitlines()
     nx, ny, nz = grid.counts.shape
     assert head[0] == f"object 1 class gridpositions counts {nx} {ny} {nz}"
     assert head[1].startswith("origin ")  # at cell centres, half a spacing in
@@ -363,7 +363,7 @@ def test_the_sites_command_says_how_to_look_at_a_run(tmp_path, swimming, capsys)
     # the maps are named beside the script, and the script finds itself, so the
     # directory can be copied off the machine that wrote it -- which is how a
     # cluster's results are read.  An absolute path would name the cluster
-    tcl, pml = ((out / f"sites.{x}").read_text() for x in ("tcl", "pml"))
+    tcl, pml = ((out / f"sites.{x}").read_text(encoding="utf-8") for x in ("tcl", "pml"))
     assert "mol new density.dx type dx" in tcl
     assert "load density.dx, density" in pml
     assert "info script" in tcl and "__script__" in pml  # each finds its own directory
@@ -452,15 +452,15 @@ def test_a_pocket_map_is_a_mask_of_the_volume_reported(tmp_path, buried, capsys)
     printed = capsys.readouterr().out
     volume = float(printed.split("A^3")[0].split()[-1])
 
-    lines = (out / "pocket0.dx").read_text().splitlines()
+    lines = (out / "pocket0.dx").read_text(encoding="utf-8").splitlines()
     values = np.array([float(x) for line in lines[7:-1] for x in line.split()])
     assert set(np.unique(values).tolist()) == {0.0, 1.0}
     assert float((values == 1.0).sum()) == volume  # at 1 A spacing, a cell is a cubic A
     assert not (out / "pocket1.dx").exists()  # the wanderer has no pocket
 
     # and the viewer scripts draw it at half of that one value, as a surface
-    tcl = (out / "sites.tcl").read_text()
-    pml = (out / "sites.pml").read_text()
+    tcl = (out / "sites.tcl").read_text(encoding="utf-8")
+    pml = (out / "sites.pml").read_text(encoding="utf-8")
     assert f"mol modstyle 0 top Isosurface {POCKET_LEVEL:g}" in tcl
     assert f"isosurface pocket0, pocket0_map, {POCKET_LEVEL:g}" in pml
     assert "isomesh density_mesh, density, 50" in pml  # the other maps keep their level
@@ -600,7 +600,7 @@ def test_how_far_the_protein_moved_is_reported(tmp_path, swimming, capsys):
     assert "the protein moved" in printed and "shape the run no longer has" in printed
     assert "--dihedral-restraint ss" in printed  # and what to do about it
 
-    rows = list(csv.DictReader((out / "rmsd.csv").read_text().splitlines()))
+    rows = list(csv.DictReader((out / "rmsd.csv").read_text(encoding="utf-8").splitlines()))
     assert len(rows) == len(bent)
     assert [r["run"] for r in rows] == ["0"] * len(bent)
     assert [int(r["frame"]) for r in rows] == list(range(len(bent)))
@@ -915,13 +915,15 @@ def test_one_temperature_for_running_and_for_scoring(tmp_path, swimming, capsys)
     # a run says what it was at, and the analysis reads it rather than being told
     run = tmp_path / "md"
     run.mkdir()
-    (run / "md.toml").write_text("temperature = 310.0\nproduction_report_interval_ns = 0.1\n")
+    (run / "md.toml").write_text(
+        "temperature = 310.0\nproduction_report_interval_ns = 0.1\n", encoding="utf-8"
+    )
     assert _temperature_of([str(run)]) == 310.0
     assert "310 K" in capsys.readouterr().out
     # two runs that disagree are not guessed at
     other = tmp_path / "md2"
     other.mkdir()
-    (other / "md.toml").write_text("temperature = 298.0\n")
+    (other / "md.toml").write_text("temperature = 298.0\n", encoding="utf-8")
     assert _temperature_of([str(run), str(other)]) is None
     assert "different temperatures" in capsys.readouterr().out
 
@@ -938,7 +940,7 @@ def test_one_temperature_for_running_and_for_scoring(tmp_path, swimming, capsys)
                  "-o", str(out)]) == 0  # fmt: skip
     # nothing to read it from, so nothing is claimed about where it came from
     assert "their own temperature" not in capsys.readouterr().out
-    rows = list(csv.DictReader((out / "sites.csv").open()))
+    rows = list(csv.DictReader((out / "sites.csv").open(encoding="utf-8")))
     assert all(float(r["interval_ns"]) == 0.1 for r in rows)
 
 
@@ -1065,7 +1067,7 @@ def test_the_table_and_the_csv_carry_both_measures(tmp_path, capsys):
     assert main(["sites", str(structure), "--traj", str(path), "--holo", str(holo_path),
                  "--holo-ligand", DEFAULT_LIGAND, "-o", str(out)]) == 0  # fmt: skip
     printed = capsys.readouterr().out
-    with (out / "sites.csv").open() as fh:
+    with (out / "sites.csv").open(encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         assert "dpa_A" in reader.fieldnames and "dca_A" in reader.fieldnames
         rows = list(reader)
@@ -1077,7 +1079,7 @@ def test_the_table_and_the_csv_carry_both_measures(tmp_path, capsys):
     # catches a measure that reaches one writer and not another.
     if rows:
         assert "DCA" in printed and "DPA" in printed
-        doc = json.loads((out / "sites.json").read_text())
+        doc = json.loads((out / "sites.json").read_text(encoding="utf-8"))
         scored = [v for v in doc["sites"] if "dca_A" in v]
         assert scored and all("dpa_A" in v for v in scored)
         best = min(rows, key=lambda r: float(r["dca_A"]))
@@ -1112,7 +1114,7 @@ def test_the_output_records_what_it_was_asked_for(tmp_path):
     assert main(["sites", str(structure), "--traj", str(path), "--buried", "0.6",
                  "--radius", "rmin", "--spacing", "1.5", "--rank", "burial",
                  "--interval-ns", "0.1", "-o", str(out)]) == 0  # fmt: skip
-    asked = json.loads((out / "sites.json").read_text())["settings"]
+    asked = json.loads((out / "sites.json").read_text(encoding="utf-8"))["settings"]
     # what was given
     assert asked["buried"] == 0.6
     assert asked["radius"] == "rmin" and asked["spacing"] == 1.5

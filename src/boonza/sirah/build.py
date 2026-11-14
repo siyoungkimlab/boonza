@@ -986,8 +986,8 @@ class Sirahized:
         if forcefield:
             unpack(out)
         for k, mol in enumerate(self.molecules):
-            (out / f"{mol.name}.itp").write_text(self.itp(k))
-        (out / "topol.top").write_text(self.top())
+            (out / f"{mol.name}.itp").write_text(self.itp(k), encoding="utf-8")
+        (out / "topol.top").write_text(self.top(), encoding="utf-8")
         built = self.system() if system is None else system
         save_structure(built, out / "cg.dms")  # what boonza reads back, unrounded
         save_structure(built, out / "cg.gro")  # what GROMACS needs, rounded to 0.001 nm
@@ -1048,8 +1048,10 @@ class Sirahized:
             for k, mol in enumerate(self.molecules):
                 # one number per residue, so that 170 and 170A do not read back
                 # as one; _name_chains puts the structure's own numbering back
-                (Path(tmp) / f"{mol.name}.itp").write_text(self.itp(k, serial_resids=True))
-            (Path(tmp) / "topol.top").write_text(self.top(str(ff)))
+                (Path(tmp) / f"{mol.name}.itp").write_text(
+                    self.itp(k, serial_resids=True), encoding="utf-8"
+                )
+            (Path(tmp) / "topol.top").write_text(self.top(str(ff)), encoding="utf-8")
             s = load_top(Path(tmp) / "topol.top", include_dirs=[tmp, str(ff)])
         if s.natoms != len(self.positions):
             raise ValueError(f"the topology built {s.natoms} beads where this system holds "

@@ -13,7 +13,7 @@ from Bio.Align import substitution_matrices
 
 
 def main():
-    with open(sys.argv[1]) as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         cases = json.load(f)
     blosum = substitution_matrices.load("BLOSUM62")
     out = []

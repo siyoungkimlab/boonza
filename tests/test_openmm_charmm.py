@@ -307,7 +307,7 @@ def _charmm_gui_cases():
 def test_charmm_psf_roundtrip(folder, stem, tmp_path):
     import re
 
-    names = re.findall(r"name\s+(\S+)", (folder / "toppar.str").read_text())
+    names = re.findall(r"name\s+(\S+)", (folder / "toppar.str").read_text(encoding="utf-8"))
     files = [str(folder / f) for f in names if (folder / f).exists()]
     # ligand topologies and parameters from the CHARMM-GUI ligand reader are not in toppar.str
     files += sorted(str(p) for ext in ("rtf", "prm") for p in folder.glob(f"toppar/lig*.{ext}"))

@@ -84,11 +84,11 @@ def test_rays_match_direct_search(model):
 def test_structure_cli(tmp_path):
     out = tmp_path / "sites"
     assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out)]) == 0
-    rows = list(csv.DictReader(open(out / "pockets.csv")))
+    rows = list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
     assert rows and rows[0]["rank"] == "1"
     p = [float(r["p"]) for r in rows]
     assert p == sorted(p, reverse=True)  # best first
-    view = (out / "view.pml").read_text()
+    view = (out / "view.pml").read_text(encoding="utf-8")
     assert "load structure.pdb, structure" in view and "pocket_1" in view
     assert not (out / "ligand.json").exists() and "create ligand" not in view
     assert "scene overview, store" in view
@@ -105,14 +105,14 @@ def test_named_presets(tmp_path):
     assert P.presets() == P.presets("volume200")
     v = P.presets("volume200")
     mine = {**v, "martini3": {**v["martini3"], "spacing": 3.0}}
-    (tmp_path / "mine.json").write_text(json.dumps(mine))
+    (tmp_path / "mine.json").write_text(json.dumps(mine), encoding="utf-8")
     assert P.preset("martini3", str(tmp_path / "mine.json"))["spacing"] == 3.0
     with pytest.raises(ValueError, match="no presets"):
         P.presets("no-such-presets")
     out = tmp_path / "sites"
     assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
                  "--preset", str(tmp_path / "mine.json")]) == 0  # fmt: skip
-    assert list(csv.DictReader(open(out / "pockets.csv")))
+    assert list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
     assert main(["structure", str(DATA / "1MBN.pdb"), "--model", "martini3", "-o", str(out),
                  "--preset", "no-such-presets"]) == 1  # fmt: skip
 
@@ -124,16 +124,16 @@ def test_structure_cli_finds_the_heme_pocket(model, tmp_path):
     out = tmp_path / "sites"
     assert main(["structure", str(DATA / "1MBN.pdb"), "--model", model, "-o", str(out),
                  "--ligand", "resname HEM"]) == 0  # fmt: skip
-    rows = list(csv.DictReader(open(out / "pockets.csv")))
+    rows = list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
     assert {"PPc", "MOc", "LVC", "PVN"} <= set(rows[0])
     first = next(int(r["rank"]) for r in rows if r["PPc"] == "True")
     assert first <= 3
     # the heme stays in the structure, which ligand.json points at
-    assert json.loads((out / "ligand.json").read_text()) == {
+    assert json.loads((out / "ligand.json").read_text(encoding="utf-8")) == {
         "file": "structure.pdb",
         "selection": "(chain A and resid 155 and resname HEM)",
     }
-    view = (out / "view.pml").read_text()
+    view = (out / "view.pml").read_text(encoding="utf-8")
     assert "create ligand, structure and ((chain A and resi 155 and resn HEM))" in view
     assert not (out / "ligand.pdb").exists()
 
@@ -164,25 +164,27 @@ def test_traj_cli(tmp_path):
     out = tmp_path / "cavity"
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip
-    rows = list(csv.DictReader(open(out / "pockets.csv")))
+    rows = list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
     assert rows and 0 < float(rows[0]["occupancy"]) <= 1
     assert (out / "sites.pkl").exists() and (out / "view.pml").exists()
     assert {"md_frame", "best_md_frame", "centre_x", "centre_y", "centre_z"} <= set(rows[0])
-    timing = json.loads((out / "timing.json").read_text())
+    timing = json.loads((out / "timing.json").read_text(encoding="utf-8"))
     assert {"load_and_fit", "site_finding", "grouping", "ranking", "report"} <= set(
         timing["stages_s"]
     )
     assert timing["frames"] == 3 and not timing["site_finding"]["from_cache"]
     assert timing["site_finding"]["grid_cpu"] > 0 and timing["site_finding"]["workers"] == 1
-    assert "site_finding" in (out / "timing.txt").read_text()
+    assert "site_finding" in (out / "timing.txt").read_text(encoding="utf-8")
     # ranked by each pocket's best frame (p_max: with volume200, its largest site)
     assert [r["rank_p_max"] for r in rows] == [str(k) for k in range(1, len(rows) + 1)]
     assert all(float(r["p_q90_open"]) <= float(r["p_max"]) for r in rows)
     # a second run reuses the frames' sites, here grouped by the residues lining them
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1", "--top", "3", "--grouping", "consensus"]) == 0  # fmt: skip
-    assert list(csv.DictReader(open(out / "pockets.csv")))
-    assert json.loads((out / "timing.json").read_text())["site_finding"]["from_cache"]
+    assert list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
+    assert json.loads((out / "timing.json").read_text(encoding="utf-8"))["site_finding"][
+        "from_cache"
+    ]
 
 
 def _frame_site(frame, centre, score, residues=(1, 2, 3)):
@@ -238,7 +240,7 @@ def test_traj_cli_without_sites(tmp_path):
     out = tmp_path / "cavity"
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1"]) == 0  # fmt: skip
-    assert list(csv.DictReader(open(out / "pockets.csv"))) == []
+    assert list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8"))) == []
 
 
 def test_traj_cli_with_holo(tmp_path):
@@ -249,12 +251,12 @@ def test_traj_cli_with_holo(tmp_path):
     holo = ["--holo", str(DATA / "1MBN.pdb"), "--holo-ligand", "resname HEM"]
     assert main(["traj", "--workdir", str(run), "--model", "martini3", "-o", str(out),
                  "-j", "1", *holo]) == 0  # fmt: skip
-    rows = list(csv.DictReader(open(out / "pockets.csv")))
+    rows = list(csv.DictReader(open(out / "pockets.csv", encoding="utf-8")))
     assert {"PPc", "MOc", "LVC", "PVN", "frames_PPc"} <= set(rows[0])
     assert any(r["PPc"] == "True" for r in rows)
-    view = (out / "view.pml").read_text()
+    view = (out / "view.pml").read_text(encoding="utf-8")
     assert "load holo.pdb, holo" in view and "create ligand, holo and (" in view
-    assert json.loads((out / "ligand.json").read_text())["file"] == "holo.pdb"
+    assert json.loads((out / "ligand.json").read_text(encoding="utf-8"))["file"] == "holo.pdb"
     assert not (out / "ligand.pdb").exists()
 
 

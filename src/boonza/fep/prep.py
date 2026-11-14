@@ -151,7 +151,7 @@ def previous(work: Path, mols, names) -> Previous:
     work = Path(work)
     if not (work / "ligands.csv").exists() or not (work / "edges").is_dir():
         raise ValueError(f"--extend adds to a prep already in --workdir: {work} has none")
-    table = list(csv.DictReader((work / "ligands.csv").open()))
+    table = list(csv.DictReader((work / "ligands.csv").open(encoding="utf-8")))
     old = [r["name"] for r in table]
     missing = [n for n in old if n not in names]
     if missing:
@@ -171,18 +171,23 @@ def previous(work: Path, mols, names) -> Previous:
             was = m.GetConformer().GetPositions()
             if now.shape != was.shape or np.abs(now - was).max() > 1e-3:
                 raise ValueError(f"{name} is not in the pose the first prep had (ligands.sdf)")
-    with (work / "edges.csv").open() as fh:
+    with (work / "edges.csv").open(encoding="utf-8") as fh:
         rows = [r for r in csv.reader(fh)][1:]
     index = {n: k for k, n in enumerate(old)}
     pairs = [(index[r[0]], index[r[1]]) for r in rows]
-    commands = (work / "commands.txt").read_text().splitlines()
-    metas = [json.loads(p.read_text()) for p in sorted((work / "edges").glob("*/*/leg.json"))]
+    commands = (work / "commands.txt").read_text(encoding="utf-8").splitlines()
+    metas = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted((work / "edges").glob("*/*/leg.json"))
+    ]
     if not metas:
         raise ValueError(f"{work}: no legs to add to")
     rem = next((work / f"receptor_rem{s}" for s in RECEPTOR_FORMATS
                 if (work / f"receptor_rem{s}").is_file()), None)  # fmt: skip
     chosen = work / "network.json"
-    settings = json.loads(chosen.read_text())["settings"] if chosen.is_file() else None
+    settings = (
+        json.loads(chosen.read_text(encoding="utf-8"))["settings"] if chosen.is_file() else None
+    )
     return Previous(old, pairs, rows, [c for c in commands if c.strip()], metas, rem, settings)
 
 
@@ -601,14 +606,14 @@ def write_leg(directory: Path, hyb, old: System, meta: dict, positions_b=None) -
     import openmm
 
     directory.mkdir(parents=True, exist_ok=True)
-    with gzip.open(directory / "system.xml.gz", "wt") as fh:
+    with gzip.open(directory / "system.xml.gz", "wt", encoding="utf-8") as fh:
         fh.write(openmm.XmlSerializer.serialize(hyb.system))
     extra = {} if positions_b is None else {"positions_b": positions_b}
     np.savez(directory / "state.npz", positions=hyb.positions,
              box=np.asarray(old.cell, float) / 10.0, core=np.asarray(hyb.core),
              unique_old=np.asarray(hyb.unique_old),
              unique_new=np.asarray(hyb.unique_new), **extra)  # fmt: skip
-    (directory / "leg.json").write_text(json.dumps(meta, indent=1))
+    (directory / "leg.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
 
 
 def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: float = 2.5,
@@ -851,10 +856,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         degree[names[a]] += 1
         degree[names[b]] += 1
     record = {"settings": settings, "edges": len(pairs), "edges_per_ligand": degree}
-    (work / "network.json").write_text(json.dumps(record, indent=1) + "\n")
+    (work / "network.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
     network.draw(work / "network", names, pairs, changed, roles, rules["reference"],
                  settings["max_change"], log=log)  # fmt: skip
-    with (work / "ligands.csv").open("w", newline="") as fh:
+    with (work / "ligands.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["index", "name", "atoms", "charge", "smiles", "exp_dG", "exp_field"])
         for k, (m, n) in enumerate(zip(mols, names, strict=True)):
@@ -948,16 +953,16 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             if dropped:
                 log(f"  {dropped} atoms left out of the core: their constrained bonds differ")
         rows.append([a, b, len(e.mapping), round(e.score, 3), dq, e.changed, e.role])
-    with (work / "edges.csv").open("w", newline="") as fh:
+    with (work / "edges.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["ligand_a", "ligand_b", "mapped_atoms", "score", "charge_change",
                     "changed_heavy", "role"])  # fmt: skip
         w.writerows(old_rows + rows)
     lines = [f"boonza fep run {d.resolve()} --repeat {r}" for d, r in runs]
     (work / "commands.txt").write_text("\n".join((before.commands if before else []) + lines)
-                                       + "\n")  # fmt: skip
+                                       + "\n", encoding="utf-8")  # fmt: skip
     if before is not None:
-        (work / "commands_new.txt").write_text("\n".join(lines) + "\n")
+        (work / "commands_new.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         log(f"{len(runs)} new runs listed in {work / 'commands_new.txt'}; commands.txt "
             "lists every run")  # fmt: skip
     else:

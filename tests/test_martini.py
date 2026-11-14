@@ -36,8 +36,8 @@ def _gro(*beads):
 
 
 def _load(tmp_path, top, gro):
-    (tmp_path / "t.top").write_text(top)
-    (tmp_path / "t.gro").write_text(gro)
+    (tmp_path / "t.top").write_text(top, encoding="utf-8")
+    (tmp_path / "t.gro").write_text(gro, encoding="utf-8")
     return load_top(tmp_path / "t.top", tmp_path / "t.gro")
 
 
@@ -468,7 +468,8 @@ def test_martini_2_lipids_against_gromacs(tmp_path):
     top = tmp_path / "topol.top"
     top.write_text(
         "".join(f'#include "{p}"\n' for p in files)
-        + "\n[ system ]\nDPPC bilayer\n\n[ molecules ]\nDPPC 64\nDPPC 64\n"
+        + "\n[ system ]\nDPPC bilayer\n\n[ molecules ]\nDPPC 64\nDPPC 64\n",
+        encoding="utf-8",
     )
 
     s = boonza.load(top, coordinates=gro)
@@ -504,7 +505,8 @@ def test_martini_2_membrane_and_solvent_against_gromacs(tmp_path):
     top.write_text(
         "".join(f'#include "{p}"\n' for p in files)
         + "\n[ system ]\nMartini system\n\n[ molecules ]\n"
-        + "DPPC 64\nDPPC 64\nW 1177\nNA 13\nCL 13\n"
+        + "DPPC 64\nDPPC 64\nW 1177\nNA 13\nCL 13\n",
+        encoding="utf-8",
     )
 
     s = boonza.load(top, coordinates=gro)

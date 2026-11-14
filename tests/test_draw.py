@@ -120,7 +120,9 @@ def test_highlight_and_mcs_are_not_both_given(tmp_path):
 def test_svg_comes_out_as_text(tmp_path):
     out = tmp_path / "v.svg"
     draw(SERIES[:2], out)
-    assert out.read_text().lstrip().startswith("<?xml") and "</svg>" in out.read_text()
+    assert out.read_text(encoding="utf-8").lstrip().startswith(
+        "<?xml"
+    ) and "</svg>" in out.read_text(encoding="utf-8")
 
 
 def test_only_png_and_svg_are_written(tmp_path):
@@ -130,7 +132,9 @@ def test_only_png_and_svg_are_written(tmp_path):
 
 def test_the_command_line_draws_a_file_of_smiles(tmp_path, capsys):
     lib = tmp_path / "lib.smi"
-    lib.write_text("# series\n" + "\n".join(f"{s} name{i}" for i, s in enumerate(SERIES)))
+    lib.write_text(
+        "# series\n" + "\n".join(f"{s} name{i}" for i, s in enumerate(SERIES)), encoding="utf-8"
+    )
     out = tmp_path / "series.png"
     assert main(["draw", "--input", str(lib), "-o", str(out), "--mcs", "--align",
                  "--columns", "3"]) == 0  # fmt: skip

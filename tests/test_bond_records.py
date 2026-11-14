@@ -16,7 +16,7 @@ def _gemmi_connections(path):
     if not _gemmi_available():
         pytest.skip("gemmi not available; set BOONZA_GEMMI_PYTHON")
     r = subprocess.run([GEMMI_PYTHON, str(HERE / "gemmi_oracle.py"), "connections", str(path)],
-                       capture_output=True, text=True)  # fmt: skip
+                       capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert r.returncode == 0, r.stderr
     return {frozenset((tuple(a[:4]), tuple(b[:4]))) for a, b, _ in json.loads(r.stdout)}
 
@@ -81,11 +81,13 @@ def test_link_and_alternate_locations(tmp_path):
 
     def zn_partners(alt):
         path.write_text("\n".join([_link("NE2", alt, "HIS", 10, "ZN", " ZN", 100), *atoms,
-                                   "END"]) + "\n")  # fmt: skip
+                                   "END"]) + "\n", encoding="utf-8")  # fmt: skip
         s = boonza.load(path)
         return {int(b) for b in s.bonded_atoms(2)}
 
     assert zn_partners(" ") == {0, 1}  # no altloc given: both copies are linked
     assert zn_partners("A") == {0}
-    path.write_text("\n".join([_link("NE2", " ", "HIS", 10, "ZN", " ZN", 100), *atoms]) + "\n")
+    path.write_text(
+        "\n".join([_link("NE2", " ", "HIS", 10, "ZN", " ZN", 100), *atoms]) + "\n", encoding="utf-8"
+    )
     assert not boonza.load(path, link=False).bonded_atoms(2).size

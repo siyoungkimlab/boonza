@@ -42,7 +42,7 @@ KB_KCAL = 0.0019872041
 
 
 def _leg(directory: Path) -> dict | None:
-    meta = json.loads((directory / "leg.json").read_text())
+    meta = json.loads((directory / "leg.json").read_text(encoding="utf-8"))
     runs = sorted(directory.glob("run_*.npz"))
     out = []
     dk = float(meta.get("dispersion_dK", 0.0))  # kcal/mol Å^3
@@ -79,7 +79,7 @@ def results(workdir, log=print, experimental=None, ligands=None) -> dict:
     SDF instead -- the correlation plots (boonza.fep.experiment).  ``ligands``: the
     SDF to add the results to, if prep kept none in ``workdir``."""
     work = Path(workdir)
-    table = list(csv.DictReader((work / "ligands.csv").open()))
+    table = list(csv.DictReader((work / "ligands.csv").open(encoding="utf-8")))
     names = [row["name"] for row in table]
     rows, fits, temperature = [], [], None
     for edge in sorted((work / "edges").iterdir()):
@@ -207,7 +207,7 @@ def _measured(work: Path, table, rows, experimental) -> dict:
             return {}
         edge = work / "edges" / done[0]["edge"]
         leg = next(d for d in sorted(edge.iterdir()) if (d / "leg.json").exists())
-        temperature = json.loads((leg / "leg.json").read_text())["temperature"]
+        temperature = json.loads((leg / "leg.json").read_text(encoding="utf-8"))["temperature"]
         got = from_sdf(experimental, temperature, done[0]["kind"])
         unknown = sorted(set(got) - {r["name"] for r in table})
         if unknown:
@@ -314,7 +314,7 @@ def _write(path: Path, rows) -> None:
     if not rows:
         return
     keys = list(dict.fromkeys(k for r in rows for k in r))
-    with path.open("w", newline="") as fh:
+    with path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, keys)
         w.writeheader()
         for r in rows:

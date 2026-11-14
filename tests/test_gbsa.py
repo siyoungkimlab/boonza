@@ -219,7 +219,7 @@ def _run(where, system, frames, outcome="target_reached"):
     with boonza.open_writer(where / "trajectory.dcd", natoms=system.natoms) as w:
         for xyz in frames:
             w.write(xyz, box=system.cell)
-    (where / "status.json").write_text(json.dumps({"outcome": outcome}))
+    (where / "status.json").write_text(json.dumps({"outcome": outcome}), encoding="utf-8")
 
 
 def test_the_command_scores_runs_and_structures_and_skips_detached(tmp_path, protein, capsys):
@@ -239,14 +239,14 @@ def test_the_command_scores_runs_and_structures_and_skips_detached(tmp_path, pro
                  "--stride", "2"]) == 0  # fmt: skip
     printed = capsys.readouterr().out
     assert "run_b: detached" in printed and "3 run(s), 2 scored with GBn2" in printed
-    rows = {r["run"]: r for r in csv.DictReader(open(out / "summary.csv"))}
+    rows = {r["run"]: r for r in csv.DictReader(open(out / "summary.csv", encoding="utf-8"))}
     assert set(rows) == {"run_a", "run_b", "pose"}
     assert rows["run_b"]["note"] == "detached" and rows["run_b"]["frames"] == ""
     assert rows["run_a"]["frames"] == "2" and rows["run_a"]["outcome"] == "target_reached"
     assert rows["pose"]["frames"] == "1" and rows["pose"]["model"] == "GBn2"
     assert float(rows["run_a"]["bonded"]) == 0.0
     assert float(rows["pose"]["dg"]) == pytest.approx(float(rows["run_a"]["best"]), abs=0.5)
-    per_frame = list(csv.DictReader(open(out / "frames" / "run_a.csv")))
+    per_frame = list(csv.DictReader(open(out / "frames" / "run_a.csv", encoding="utf-8")))
     assert [r["frame"] for r in per_frame] == ["0", "2"]
     assert set(per_frame[0]) == {"frame", "total", *TERMS, "bonded"}
     assert not (out / "frames" / "run_b.csv").exists()

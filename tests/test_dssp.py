@@ -42,7 +42,7 @@ def run_mdtraj(path):
     if not _mdtraj_available():
         pytest.skip("mdtraj not available; set BOONZA_MDTRAJ_PYTHON")
     r = subprocess.run([MDTRAJ_PYTHON, str(HERE / "mdtraj_oracle.py"), str(path)],
-                       capture_output=True, text=True)  # fmt: skip
+                       capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     if r.returncode:
         raise RuntimeError(f"mdtraj oracle failed:\n{r.stderr}")
     return json.loads(r.stdout)
@@ -96,7 +96,7 @@ def test_backbone_dihedrals_match_mdtraj(path, capsys):
     if not _mdtraj_available():
         pytest.skip("mdtraj not available; set BOONZA_MDTRAJ_PYTHON")
     r = subprocess.run([MDTRAJ_PYTHON, str(HERE / "mdtraj_oracle.py"), "dihedrals", str(path)],
-                       capture_output=True, text=True)  # fmt: skip
+                       capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert r.returncode == 0, r.stderr
     ref = json.loads(r.stdout)
     s = boonza.load(path)

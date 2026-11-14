@@ -23,7 +23,7 @@ if len(lines) > 40:
     print(f"... ({len(lines) - 40} more lines)")
 
 data = summary.to_dict()
-(OUT / "1HHO_summary.json").write_text(json.dumps(data, indent=1))
+(OUT / "1HHO_summary.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
 heme = data["focus"]
 print("\nas data: the heme's closest residue is", heme["neighbors"][0]["residue"],
       f"at {heme['neighbors'][0]['distance']} Å; buried {heme['buried_fraction']:.0%}")  # fmt: skip

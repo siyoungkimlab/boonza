@@ -41,7 +41,7 @@ def run_gemmi(path):
     if not _gemmi_available():
         pytest.skip("gemmi not available; set BOONZA_GEMMI_PYTHON")
     r = subprocess.run([GEMMI_PYTHON, str(HERE / "gemmi_oracle.py"), str(path)],
-                       capture_output=True, text=True)  # fmt: skip
+                       capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     if r.returncode:
         raise RuntimeError(f"gemmi oracle failed:\n{r.stderr}")
     return json.loads(r.stdout)

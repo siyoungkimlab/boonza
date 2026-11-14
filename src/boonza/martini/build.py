@@ -385,16 +385,16 @@ class Martinized:
         if self.go:
             from .go import ATOMTYPES_ITP, CONTACTS_OUT, NBPARAMS_ITP
 
-            (d / ATOMTYPES_ITP).write_text(self.go.atomtypes)
-            (d / NBPARAMS_ITP).write_text(self.go.nbparams)
+            (d / ATOMTYPES_ITP).write_text(self.go.atomtypes, encoding="utf-8")
+            (d / NBPARAMS_ITP).write_text(self.go.nbparams, encoding="utf-8")
             if self.go.contact_map:  # a map boonza computed is worth keeping
-                (d / CONTACTS_OUT).write_text(self.go.contact_map)
+                (d / CONTACTS_OUT).write_text(self.go.contact_map, encoding="utf-8")
         for k, name in enumerate(self.names):
-            (d / f"{name}.itp").write_text(self.itp(k, serial_resids))
+            (d / f"{name}.itp").write_text(self.itp(k, serial_resids), encoding="utf-8")
         if any(c for _, c in self.solvent) and self.martini == 3:
-            (d / "solvent.itp").write_text(SOLVENT_ITP)
-        (d / "topol.top").write_text(self.top(martini_itp))
-        (d / "cg.gro").write_text(self._gro())
+            (d / "solvent.itp").write_text(SOLVENT_ITP, encoding="utf-8")
+        (d / "topol.top").write_text(self.top(martini_itp), encoding="utf-8")
+        (d / "cg.gro").write_text(self._gro(), encoding="utf-8")
         return d / "topol.top"
 
     def system(self, martini_itp=None):
@@ -569,7 +569,7 @@ def ion_beads(version: int) -> dict:
     out: dict = {}
     for name in files.get(version, ()):
         where, section = None, None
-        for line in parameters(name)[0].read_text().splitlines():
+        for line in parameters(name)[0].read_text(encoding="utf-8").splitlines():
             s = line.split(";")[0].strip()
             if not s:
                 continue

@@ -81,7 +81,7 @@ def _reference(name):
             mol, count = line.split()
             molecules += [mol] * int(count)
     itps = [gzip.decompress((d / f"{m}.itp.gz").read_bytes()).decode() for m in molecules]
-    return itps, (d / "ss.txt").read_text().strip()
+    return itps, (d / "ss.txt").read_text(encoding="utf-8").strip()
 
 
 #: The cases regenerate.py also writes as Martini 2.2, and what that force field
@@ -365,7 +365,7 @@ def _toy_martini_itp(path, types):
     lines += ["", "[ nonbond_params ]"]
     ts = sorted(types)
     lines += [f"{a} {b} 1 0.47 2.0" for i, a in enumerate(ts) for b in ts[i:]]
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_the_beads_run_in_openmm(tmp_path):
@@ -382,7 +382,7 @@ def test_the_beads_run_in_openmm(tmp_path):
     energies = boonza.openmm_energies(cg, **OPENMM_OPTIONS)
     assert np.isfinite(energies["total"])
     saved = m.save(tmp_path / "out", martini_itp="martini_v3.0.0.itp")
-    assert '#include "martini_v3.0.0.itp"' in saved.read_text()
+    assert '#include "martini_v3.0.0.itp"' in saved.read_text(encoding="utf-8")
     assert (tmp_path / "out" / "molecule_0.itp").exists()
     assert (tmp_path / "out" / "cg.gro").exists()
 
@@ -393,7 +393,7 @@ def test_the_command_line(tmp_path, capsys):
     assert "2 molecules, 680 beads" in capsys.readouterr().out
     assert {p.name for p in out.iterdir()} == {"topol.top", "molecule_0.itp", "molecule_1.itp",
                                                "cg.gro", "cg.dms"}  # fmt: skip
-    rubber = [line for line in (out / "molecule_0.itp").read_text().splitlines()
+    rubber = [line for line in (out / "molecule_0.itp").read_text(encoding="utf-8").splitlines()
               if line.endswith(" 700")]  # fmt: skip
     assert rubber
 
@@ -542,7 +542,7 @@ STR 1
 @pytest.fixture(scope="module")
 def toy_lipids(tmp_path_factory):
     path = tmp_path_factory.mktemp("lipids") / "toy_lipids.itp"
-    path.write_text(TOY_LIPIDS)
+    path.write_text(TOY_LIPIDS, encoding="utf-8")
     return path
 
 
@@ -686,7 +686,7 @@ def test_the_parameters_come_with_boonza(tmp_path):
     assert len(every) >= 7 and all(p.is_file() for p in every)
     assert parameters(NONBONDED)[0].name == NONBONDED
     assert [p.name for p in parameters(*LIPIDS)] == list(LIPIDS)
-    assert "10.1038" in (parameters(NONBONDED)[0].parent / "README.md").read_text()
+    assert "10.1038" in (parameters(NONBONDED)[0].parent / "README.md").read_text(encoding="utf-8")
     with pytest.raises(FileNotFoundError, match="does not carry"):
         parameters("martini_v2.itp")
 
@@ -704,7 +704,11 @@ def test_martinizing_needs_no_parameter_file(tmp_path):
         assert len(table) == len(named.tables[name])
 
     top = Path(m.save(tmp_path / "cg"))  # and what it writes can be read by GROMACS
-    included = [x.split('"')[1] for x in top.read_text().splitlines() if x.startswith("#include")]
+    included = [
+        x.split('"')[1]
+        for x in top.read_text(encoding="utf-8").splitlines()
+        if x.startswith("#include")
+    ]
     assert Path(included[0]).is_file() and Path(included[0]).name == NONBONDED
 
 
@@ -721,7 +725,7 @@ def test_martini_2_membranes_are_solvated_with_martini_2_water(tmp_path):
     assert m.martini == 2
     assert dict(m.solvent)["W"] > 0 and dict(m.solvent)["NA"] > 0
 
-    top = Path(m.save(tmp_path / "cg")).read_text()
+    top = Path(m.save(tmp_path / "cg")).read_text(encoding="utf-8")
     included = [x.split('"')[1] for x in top.splitlines() if x.startswith("#include")]
     assert Path(included[0]).name == NONBONDED_FOR[2]
     assert Path(included[-1]).name == IONS_FOR[2]

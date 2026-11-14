@@ -169,7 +169,7 @@ def write_data(path_stem, names, calc, exp, calc_err=None, exp_err=None, quantit
     def num(v):
         return "" if v is None or not np.isfinite(v) else f"{float(v):.4f}"
 
-    with stem.with_suffix(".csv").open("w", newline="") as fh:
+    with stem.with_suffix(".csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["name", "calc", "exp", "calc_err", "exp_err", "null"])
         for k in range(n):
@@ -179,15 +179,16 @@ def write_data(path_stem, names, calc, exp, calc_err=None, exp_err=None, quantit
             w.writerow([name, num(value), "", "", "", ""])
     stem.with_suffix(".json").write_text(
         json.dumps({"quantity": quantity, "lines": list(lines)}, ensure_ascii=False, indent=1)
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
 
 def redraw(path_stem, log=print) -> list[Path]:
     """The plot of ``<path_stem>.csv`` and ``.json``, drawn again."""
     stem = Path(path_stem)
-    rows = list(csv.DictReader(stem.with_suffix(".csv").open()))
-    meta = json.loads(stem.with_suffix(".json").read_text())
+    rows = list(csv.DictReader(stem.with_suffix(".csv").open(encoding="utf-8")))
+    meta = json.loads(stem.with_suffix(".json").read_text(encoding="utf-8"))
     measured = [r for r in rows if r["exp"] != ""]
 
     def column(key):

@@ -37,7 +37,7 @@ def _complex():
 
 
 def _colvar(path, time, drmsd, work):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("#! FIELDS time d metad.bias metad.rct\n")
         for t, d, w in zip(time, drmsd, work, strict=True):
             f.write(f" {t:f} {d:f} {0.0:f} {w:f}\n")
@@ -221,7 +221,7 @@ def test_an_empty_colvar_is_not_a_replica_that_scored_zero(tmp_path):
     time = np.arange(0, 600, 10.0)
     inside = np.full(time.shape, 0.2)
     _colvar(folder / "colvar_1.dat", time, inside, np.linspace(0, 40.0, len(time)))
-    (folder / "colvar_2.dat").write_text("")  # a replica that never ran
+    (folder / "colvar_2.dat").write_text("", encoding="utf-8")  # a replica that never ran
     pose = score_pose(folder)
     assert len(pose.replicas) == 1 and pose.score == pytest.approx(40.0)
     assert read_colvar(folder / "colvar_2.dat")[0].size == 0
@@ -309,7 +309,7 @@ def test_the_command_scores_folders_and_reports_enrichment(tmp_path, capsys):
         folder.mkdir()
         for k in (1, 2, 3):
             _colvar(folder / f"colvar_{k}.dat", time, inside, np.linspace(0, top, len(time)))
-    (tmp_path / "hits.csv").write_text("name,hit\ngood,1\nfair,0\npoor,0\n")
+    (tmp_path / "hits.csv").write_text("name,hit\ngood,1\nfair,0\npoor,0\n", encoding="utf-8")
     out = tmp_path / "ranking.csv"
     code = main(["ctmd", "score", str(tmp_path / "good"), str(tmp_path / "poor"),
                  str(tmp_path / "fair"), "--hits", str(tmp_path / "hits.csv"),
@@ -319,12 +319,12 @@ def test_the_command_scores_folders_and_reports_enrichment(tmp_path, capsys):
     assert printed.index("good") < printed.index("fair") < printed.index("poor")
     assert "EF34 = 2.94" in printed or "EF34 = 3.00" in printed
     assert "BEDROC" in printed
-    rows = out.read_text().splitlines()
+    rows = out.read_text(encoding="utf-8").splitlines()
     assert rows[0].startswith("pose,score") and rows[1].startswith("good,60")
     # a ligand the hit list says nothing about is an error, not a silent 0
     assert main(["ctmd", "score", str(tmp_path / "good"), "--hits", str(tmp_path / "hits.csv"),
                  "--replicas", "3"]) == 0  # fmt: skip
-    (tmp_path / "half.csv").write_text("good,1\n")
+    (tmp_path / "half.csv").write_text("good,1\n", encoding="utf-8")
     assert main(["ctmd", "score", str(tmp_path / "good"), str(tmp_path / "fair"),
                  "--hits", str(tmp_path / "half.csv")]) == 1  # fmt: skip
     assert "says nothing about fair" in capsys.readouterr().err
@@ -335,18 +335,20 @@ def test_a_hit_list_can_be_the_authors_own_file(tmp_path):
 
     # their hit_data_mol2.spc: name.mol2, whether it binds, and the ligand's charge
     theirs = tmp_path / "hit_data_mol2.spc"
-    theirs.write_text("ZINC000547933290.mol2 True -1\nZINC000130612584.mol2 False 0\n")
+    theirs.write_text(
+        "ZINC000547933290.mol2 True -1\nZINC000130612584.mol2 False 0\n", encoding="utf-8"
+    )
     assert _read_hits(theirs) == {"ZINC000547933290": 1, "ZINC000130612584": 0}
     # and the plainer forms, with a header and comments
     mine = tmp_path / "hits.csv"
-    mine.write_text("name,hit\n# a note\nlig1,1\nlig2,0\nlig3,yes\nlig4\tno\n")
+    mine.write_text("name,hit\n# a note\nlig1,1\nlig2,0\nlig3,yes\nlig4\tno\n", encoding="utf-8")
     assert _read_hits(mine) == {"lig1": 1, "lig2": 0, "lig3": 1, "lig4": 0}
     bad = tmp_path / "bad.csv"
-    bad.write_text("lig1,maybe\n")
+    bad.write_text("lig1,maybe\n", encoding="utf-8")
     with pytest.raises(ValueError, match="not a yes or a no"):
         _read_hits(bad)
     short = tmp_path / "short.csv"
-    short.write_text("lig1\n")
+    short.write_text("lig1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="a name and a 0 or 1"):
         _read_hits(short)
 
@@ -363,7 +365,7 @@ def test_a_pose_with_no_data_is_left_out_rather_than_ranked(tmp_path, capsys):
     empty = tmp_path / "empty"
     empty.mkdir()
     for k in (1, 2, 3):
-        (empty / f"colvar_{k}.dat").write_text("")
+        (empty / f"colvar_{k}.dat").write_text("", encoding="utf-8")
     assert main(["ctmd", "score", str(good), str(empty)]) == 0
     printed = capsys.readouterr().out
     assert "not scored, and left out" in printed and "empty" in printed

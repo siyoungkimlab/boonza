@@ -393,7 +393,7 @@ def cmd_traj(args, extra) -> int:
                                     for q in ranked])  # fmt: skip
     cell = SPACING * (3 / (4 * np.pi)) ** (1 / 3)  # a sphere of one grid cell's volume
     write_pqr(out / "cores.pqr", [(q.rank_quality, q.core, cell) for q in ranked], "COR")
-    with open(out / "fpocket_info.txt", "w") as fh:
+    with open(out / "fpocket_info.txt", "w", encoding="utf-8") as fh:
         for q in ranked:
             b = q.best
             fh.write(
@@ -402,7 +402,7 @@ def cmd_traj(args, extra) -> int:
                 f"best in frame {b.frame}, where it is fpocket's pocket {b.rank}\n"
             )
             fh.write(b.pocket.info.split("\n", 1)[1] if "\n" in b.pocket.info else "\n")
-    with open(out / "frames.csv", "w", newline="") as fh:
+    with open(out / "frames.csv", "w", newline="", encoding="utf-8") as fh:
         csv.writer(fh).writerows([("frame", "pockets"), *enumerate(map(len, per_frame))])
     print(f"{len(ranked)} consensus pockets from {sum(map(len, per_frame))} pockets in "
           f"{len(coords)} frames -> {out / 'pockets.csv'}")  # fmt: skip

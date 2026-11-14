@@ -45,9 +45,10 @@ def _fluid(tmp_path, na, nb, edge=4.0):
         + "".join(f"{v:8.3f}" for v in rng.uniform(0, edge, 3))
         for k in range(na + nb)
     ]
-    (tmp_path / "t.top").write_text(TOP.format(na=na, nb=nb))
+    (tmp_path / "t.top").write_text(TOP.format(na=na, nb=nb), encoding="utf-8")
     (tmp_path / "t.gro").write_text(f"t\n{na + nb}\n" + "\n".join(rows)
-                                    + f"\n{edge:10.5f}{edge:10.5f}{edge:10.5f}\n")  # fmt: skip
+                                    + f"\n{edge:10.5f}{edge:10.5f}{edge:10.5f}\n",
+                                    encoding="utf-8")  # fmt: skip
     return load_top(tmp_path / "t.top", tmp_path / "t.gro")
 
 

@@ -133,10 +133,10 @@ def test_prep_rem_writes_what_it_did(tmp_path, capsys):
                      *common]) == 0  # fmt: skip
     out = capsys.readouterr().out
     assert "REM, then EM" in out and "benzene: closest receptor heavy atom" in out
-    rows = list(csv.DictReader((work / "rem.csv").open()))
+    rows = list(csv.DictReader((work / "rem.csv").open(encoding="utf-8")))
     assert [r["ligand"] for r in rows] == ["benzene", "toluene"]
     assert all(float(r["closest_after"]) > float(r["closest_before"]) for r in rows)
-    moved = list(csv.DictReader((work / "rem_residues.csv").open()))
+    moved = list(csv.DictReader((work / "rem_residues.csv").open(encoding="utf-8")))
     assert moved and moved[0]["resname"] == "LYS"
     relaxed = boonza.load(work / "receptor_rem.pdb")  # the input's format
     assert relaxed.natoms == boonza.load(pdb).natoms

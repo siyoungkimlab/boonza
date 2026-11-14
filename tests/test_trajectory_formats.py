@@ -135,7 +135,7 @@ def test_stk_later_runs_supersede(tmp_path):
     later = pos + 100.0
     _msys_dtr(tmp_path, "b", later[:5], boxes[:5], times[:5] + 10.0, per_file=4)  # 10 ... 20
     stk = tmp_path / "run.stk"
-    stk.write_text("a.dtr\nb.dtr\n")
+    stk.write_text("a.dtr\nb.dtr\n", encoding="utf-8")
     ours = boonza.open_trajectory(stk).read()
     np.testing.assert_allclose(ours.times, [0.0, 2.5, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5, 20.0])
     np.testing.assert_array_equal(ours.positions[:4], pos[:4])  # before b starts

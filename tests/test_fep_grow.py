@@ -184,7 +184,8 @@ def test_repeats_and_the_sampling_flags_reach_the_command_line():
     bridge once.  --repeats buys that back, and the rest of the sampling is already
     there to turn up."""
     out = subprocess.run([sys.executable, "-m", "boonza.cli", "fep", "grow", "--help"],
-                         capture_output=True, text=True, check=True).stdout  # fmt: skip
+                         capture_output=True, text=True, check=True,
+                         encoding="utf-8").stdout  # fmt: skip
     for flag in ("--repeats", "--md-ps", "--keep", "--conformers", "--beam", "--max-heavy",
                  "--hold", "--water", "--seed"):  # fmt: skip
         assert flag in out, flag
@@ -213,7 +214,7 @@ def test_growing_each_ligand_several_times_keeps_the_best(tmp_path):
     _, ff = forcefields(args)
     grow.grow(s, ref, target, "toluene", ff, args, tmp_path, beam=1, keep=1,
               n_conformers=5, md_ps=2.0, repeats=3, log=lambda *_: None)  # fmt: skip
-    record = json.loads((tmp_path / "grow" / "toluene.json").read_text())
+    record = json.loads((tmp_path / "grow" / "toluene.json").read_text(encoding="utf-8"))
     assert record["repeats"] == 3 and len(record["run_scores"]) == 3
     # the runs are ranked by one common measurement of the finished pose, not by the
     # score each reached in its own trajectory: over 48 poses the two agreed most of
@@ -259,7 +260,7 @@ def test_growing_toluene_from_benzene_in_a_peptide(tmp_path):
                      n_conformers=5, md_ps=2.0, log=lambda *_: None)  # fmt: skip
     out = boonza.load(path)
     assert out.natoms == s.natoms + target.GetNumAtoms()
-    record = json.loads((tmp_path / "grow" / "toluene.json").read_text())
+    record = json.loads((tmp_path / "grow" / "toluene.json").read_text(encoding="utf-8"))
     assert record["core"] == 6 and record["steps"] and "score" in record["steps"][0]
     # the score is the interaction energy; hydrogen bonds and cation-pi are reported
     row = record["steps"][0]

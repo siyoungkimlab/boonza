@@ -83,12 +83,12 @@ def test_transfer_prep_run_result(tmp_path, monkeypatch, capsys):
                      "wet-octanol", "--windows", "3", "--repeats", "1", "--iteration-ps", "0.02",
                      "--equilibration-ns", "0.00002", "--production-ns", "0.0001",
                      "--platform", "CPU"]) == 0  # fmt: skip
-    built = json.loads((work / "octanol" / "box.json").read_text())
+    built = json.loads((work / "octanol" / "box.json").read_text(encoding="utf-8"))
     assert built["wet"] and built["octanols"] == 40 and built["waters"] == 15
     edge = work / "edges" / "benzene~toluene"
     assert (edge / "octanol").is_dir() and (edge / "solvent").is_dir()
     assert not (edge / "vacuum").exists()
-    meta = json.loads((edge / "octanol" / "leg.json").read_text())
+    meta = json.loads((edge / "octanol" / "leg.json").read_text(encoding="utf-8"))
     assert meta["leg"] == "octanol" and meta["phase"] == "wet-octanol"
     assert meta["alchemical_waters"] == []
     # the box once over, one copy of each molecule: none lost at the seam, none doubled
@@ -99,7 +99,7 @@ def test_transfer_prep_run_result(tmp_path, monkeypatch, capsys):
     assert any(27 * a + 3 * b == len(environment) for a in range(34, 41) for b in range(12, 16))
     # (the hybrid's own dummies sit on each other: only the box's atoms are compared)
     assert _min_distance(pos[environment], cell) > 0.08  # nm
-    lines = (work / "commands.txt").read_text().splitlines()
+    lines = (work / "commands.txt").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2 and all("--repeat 1" in x for x in lines)
     for leg in ("solvent", "octanol"):
         run_leg(edge / leg, 1, platform="CPU", minimize=500, log=lambda *_: None)
@@ -107,7 +107,7 @@ def test_transfer_prep_run_result(tmp_path, monkeypatch, capsys):
     assert cli.main(["result", str(work)]) == 0
     out = capsys.readouterr().out
     assert "benzene~toluene" in out and "log P" in out
-    row = next(csv.DictReader((work / "results_edges.csv").open()))
+    row = next(csv.DictReader((work / "results_edges.csv").open(encoding="utf-8")))
     assert row["kind"] == "transfer"
     ddg = float(row["ddG"])
     assert ddg == pytest.approx(float(row["dG_octanol"]) - float(row["dG_solvent"]), abs=1e-3)
@@ -115,12 +115,12 @@ def test_transfer_prep_run_result(tmp_path, monkeypatch, capsys):
     assert float(row["dlogP"]) == pytest.approx(-ddg / rt_ln10, abs=1e-3)
     # both periodic legs carry their end states' dispersion difference (toluene's
     # methyl adds Lennard-Jones, so more tail: negative), and result adds it back
-    dks = [json.loads((edge / leg / "leg.json").read_text())["dispersion_dK"]
+    dks = [json.loads((edge / leg / "leg.json").read_text(encoding="utf-8"))["dispersion_dK"]
            for leg in ("octanol", "solvent")]  # fmt: skip
     assert all(dk < 0 for dk in dks)
     assert -0.5 < float(row["dispersion"]) < 0.5 and float(row["dispersion"]) != 0.0
     # the measured values prep kept, compared by result: the edge against their difference
-    kept = {r["name"]: r for r in csv.DictReader((work / "ligands.csv").open())}
+    kept = {r["name"]: r for r in csv.DictReader((work / "ligands.csv").open(encoding="utf-8"))}
     assert {n: float(kept[n]["exp_dG"]) for n in measured} == measured
     assert "measured: 2 of 2 ligands (dG)" in out
     assert float(row["exp_ddG"]) == pytest.approx(measured["toluene"] - measured["benzene"])
@@ -146,6 +146,6 @@ def test_phase_needs_no_receptor(tmp_path):
                                          removeHs=False))))  # fmt: skip
     w.close()
     pdb = tmp_path / "receptor.pdb"  # never read: --phase is refused first
-    pdb.write_text("END\n")
+    pdb.write_text("END\n", encoding="utf-8")
     assert cli.main(["prep", str(pdb), "--ligands", str(sdf), "--workdir", str(tmp_path / "w"),
                      "--phase", "octanol"]) == 1  # fmt: skip

@@ -61,7 +61,7 @@ def test_v3000_roundtrip(name, tmp_path):
     src = boonza.load(msys_file(name))
     out = tmp_path / "v3.sdf"
     boonza.save(src, out, v3000=True)
-    assert "V3000" in out.read_text()
+    assert "V3000" in out.read_text(encoding="utf-8")
     ours, ref = canon(boonza.load(out)), canon(src)
     # V2000 coordinates go through msys' float32 parse; V3000 ones are read exactly
     for a, b in zip(ours.pop("atoms"), ref.pop("atoms"), strict=True):
@@ -103,7 +103,7 @@ def test_header_says_3d(tmp_path):
     Chem = pytest.importorskip("rdkit.Chem")
     out = tmp_path / "x.sdf"
     boonza.save(boonza.from_smiles("CCO"), out)
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert text.splitlines()[1][20:22] == "3D"
     assert Chem.MolFromMolBlock(text, removeHs=False).GetConformer().Is3D()
     assert boonza.load(out).natoms == 9

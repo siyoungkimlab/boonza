@@ -126,7 +126,7 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
         rows.append(row)
         if k <= top:
             drawn.append((k, label, s.centre))
-    with open(out / "pockets.csv", "w", newline="") as fh:
+    with open(out / "pockets.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]) if rows else ["rank"])
         w.writeheader()
         w.writerows(rows)
@@ -192,6 +192,6 @@ def run(path, model: str, out, selection: str | None = None, ligand: str | None 
               "cmd.extend('overview', overview)", "cmd.extend('only', only)",
               "python end"]  # fmt: skip
     view = out / "view.pml"
-    view.write_text("\n".join(lines) + "\n")
+    view.write_text("\n".join(lines) + "\n", encoding="utf-8")
     del grid
     return view

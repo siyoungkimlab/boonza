@@ -77,7 +77,7 @@ def find_amber_tools(amberhome=None) -> Path:
 
 def _gaff_version(path: Path) -> str:
     """The version on a GAFF parameter file's title line, e.g. "2.11"."""
-    with path.open(errors="replace") as fh:
+    with path.open(errors="replace", encoding="utf-8") as fh:
         title = fh.readline()
     words = title.split("Version", 1)[1].split() if "Version" in title else []
     return words[0].rstrip(",)") if words else "unknown"
@@ -105,7 +105,7 @@ def gaff_parameters(home, gaff: str = "2.11") -> Path:
 
 
 def _run(cmd: list[str], cwd: Path, env: dict, output: str) -> str:
-    proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8")
     log = proc.stdout + proc.stderr
     if proc.returncode != 0 or not (cwd / output).exists():
         tail = "\n".join(log.strip().splitlines()[-20:])
@@ -207,7 +207,8 @@ def _run_gaff2(fragment, net_charge, gaff, charge_method, sqm, amberhome, workdi
               "-s", "2", "-a", "Y", "-o", "out.frcmod"], d, env, "out.frcmod")  # fmt: skip
         (d / "leap.in").write_text(
             "source leaprc.gaff2\nloadamberparams gaff.dat\nm = loadmol2 out.mol2\n"
-            "loadamberparams out.frcmod\nsaveamberparm m out.prmtop out.inpcrd\nquit\n"
+            "loadamberparams out.frcmod\nsaveamberparm m out.prmtop out.inpcrd\nquit\n",
+            encoding="utf-8",
         )
         log = _run([str(bin_ / "tleap"), "-f", "leap.in"], d, env, "out.prmtop")
         if "Errors = 0" not in log:

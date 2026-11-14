@@ -107,7 +107,7 @@ def main():
         result = canon(m)
     elif mode == "clone":
         m = msys.Load(args[0])
-        with open(args[1]) as f:
+        with open(args[1], encoding="utf-8") as f:
             ids = json.load(f)
         result = canon(m.clone(ids))
     elif mode == "append":
@@ -117,7 +117,7 @@ def main():
         result = canon(m)
     elif mode == "select":
         m = msys.Load(args[0])
-        with open(args[1]) as f:
+        with open(args[1], encoding="utf-8") as f:
             selections = json.load(f)
         result = []
         for sel in selections:

@@ -86,7 +86,7 @@ def test_every_ligand_in_its_own_receptor(tmp_path, capsys):
     sdf_pose = Chem.SDMolSupplier(str(sdf), removeHs=False)[0].GetConformer().GetPositions()
     assert np.abs(kept.GetConformer().GetPositions() - sdf_pose).max() > 4.0
     leg = next((work / "edges").glob("*/complex"))
-    meta = json.loads((leg / "leg.json").read_text())
+    meta = json.loads((leg / "leg.json").read_text(encoding="utf-8"))
     state = np.load(leg / "state.npz")
     assert meta["start_b_from"] == 0.5 and "positions_b" in state.files
     a, b = meta["edge"]
@@ -107,7 +107,10 @@ def test_complexes_pair_by_the_poses_unless_graph_is_asked_for(tmp_path, capsys)
               "--repeats", "1", "--iteration-ps", "0.02", "--equilibration-ns", "0.00002",
               "--production-ns", "0.0001", "--platform", "CPU"]  # fmt: skip
     assert cli.main([*common, "--workdir", str(work)]) == 0  # no --map: the default
-    assert _json.loads((work / "network.json").read_text())["settings"]["mapping"] == "pose"
+    assert (
+        _json.loads((work / "network.json").read_text(encoding="utf-8"))["settings"]["mapping"]
+        == "pose"
+    )
     # asked for explicitly, it is refused rather than quietly contradicting itself
     assert cli.main([*common, "--workdir", str(tmp_path / "g"), "--map", "graph"]) == 1
     assert "--complexes' own receptor and pose for B contradict" in capsys.readouterr().err

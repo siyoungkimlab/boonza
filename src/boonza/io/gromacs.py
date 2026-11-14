@@ -86,7 +86,7 @@ class _Preprocessor:
         if depth > 32:
             raise GromacsError("#include nesting too deep")
         here = os.path.dirname(os.path.abspath(path))
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
         stack: list[bool] = []
         pending = ""

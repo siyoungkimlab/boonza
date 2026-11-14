@@ -30,10 +30,10 @@ def _oracle(ref, rc, mob, mc, tmpdir):
     out = Path(tmpdir) / f"{ref}{rc}_{mob}{mc}.json"
     script = f"{HERE / 'chimerax_oracle.py'} {DATA / ref}.pdb {rc} {DATA / mob}.pdb {mc} {out}"
     r = subprocess.run([CHIMERAX, "--nogui", "--exit", "--script", script], capture_output=True,
-                       text=True, timeout=600)  # fmt: skip
+                       text=True, timeout=600, encoding="utf-8")  # fmt: skip
     if not out.exists():
         raise RuntimeError(f"ChimeraX oracle failed:\n{r.stdout}\n{r.stderr}")
-    return json.loads(out.read_text())
+    return json.loads(out.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")

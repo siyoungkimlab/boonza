@@ -44,7 +44,7 @@ def path(name: str | None = None) -> Path:
 
 @cache
 def presets(name: str | None = None) -> dict:
-    return json.loads(path(name).read_text())
+    return json.loads(path(name).read_text(encoding="utf-8"))
 
 
 def preset(model: str, name: str | None = None) -> dict:

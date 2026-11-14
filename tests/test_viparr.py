@@ -31,10 +31,10 @@ def _write_ff(d: Path, rules=None, templates=None, **tables) -> Path:
                       "exclusions": 4, "es_scale": [0.0, 0.0, 0.5], "lj_scale": [0.0, 0.0, 0.5],
                       "plugins": ["bonds", "angles", "propers", "vdw1", "exclusions",
                                   "mass"]}  # fmt: skip
-    (d / "rules").write_text(json.dumps(rules))
-    (d / "templates").write_text(json.dumps(templates or {}))
+    (d / "rules").write_text(json.dumps(rules), encoding="utf-8")
+    (d / "templates").write_text(json.dumps(templates or {}), encoding="utf-8")
     for name, rows in tables.items():
-        (d / name).write_text(json.dumps(rows))
+        (d / name).write_text(json.dumps(rows), encoding="utf-8")
     return d
 
 

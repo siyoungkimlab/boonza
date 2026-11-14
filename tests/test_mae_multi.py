@@ -61,7 +61,7 @@ def test_merged_is_one_ct_per_structure(tmp_path):
     first ct's title and the properties of both cts."""
     out = tmp_path / "poses.mae"
     save_mae([_two_cts(), _two_cts(1.0)], out)
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert text.count("f_m_ct {") == 2
     from boonza.io._maeparse import parse_mae
 
@@ -75,9 +75,11 @@ def test_property_added_to_a_merged_ct(tmp_path):
     """A property another program puts on the merged ct lands on the first ct."""
     out = tmp_path / "one.mae"
     save_mae([_two_cts()], out)
-    text = out.read_text().replace("  s_m_title\n", "  s_m_title\n  r_i_glide_gscore\n", 1)
+    text = out.read_text(encoding="utf-8").replace(
+        "  s_m_title\n", "  s_m_title\n  r_i_glide_gscore\n", 1
+    )
     text = text.replace("  receptor\n", "  receptor\n  -9.5\n", 1)
-    out.write_text(text)
+    out.write_text(text, encoding="utf-8")
     (back,) = iter_mae(out)
     assert back._ct_props[0]["i_glide_gscore"] == -9.5
     assert "i_glide_gscore" not in back._ct_props[1]
@@ -89,7 +91,7 @@ def test_one_system_keeps_its_cts(tmp_path):
     src = _two_cts()
     out = tmp_path / "complex.mae"
     boonza.save(src, out)
-    assert out.read_text().count("f_m_ct {") == 2
+    assert out.read_text(encoding="utf-8").count("f_m_ct {") == 2
     (back,) = iter_mae(out)
     _same_cts(back, src)
     _same_cts(boonza.load(out), src)
@@ -108,9 +110,10 @@ def test_broken_mark_warns(tmp_path):
     src = _two_cts()
     out = tmp_path / "half.mae"
     save_mae(src.clone(src.ct_atoms(0)), out)
-    text = out.read_text().replace("  s_m_title\n", "  s_m_title\n  i_boonza_ct_index\n"
-                                   "  i_boonza_ct_count\n", 1)  # fmt: skip
-    out.write_text(text.replace("  receptor\n", "  receptor\n  0\n  2\n", 1))
+    text = out.read_text(encoding="utf-8")
+    text = text.replace("  s_m_title\n", "  s_m_title\n  i_boonza_ct_index\n"
+                        "  i_boonza_ct_count\n", 1)  # fmt: skip
+    out.write_text(text.replace("  receptor\n", "  receptor\n  0\n  2\n", 1), encoding="utf-8")
     with pytest.warns(UserWarning, match="structure of its own"):
         (back,) = iter_mae(out)
     assert back.ncts == 1 and back.natoms == len(src.ct_atoms(0))
@@ -149,7 +152,7 @@ def test_maegz_is_gzip(tmp_path, name):
     out = tmp_path / name
     boonza.save(src, out)
     assert out.read_bytes()[:2] == b"\x1f\x8b"
-    with gzip.open(out, "rt") as f:
+    with gzip.open(out, "rt", encoding="utf-8") as f:
         assert "f_m_ct" in f.read()
     assert boonza.load(out).natoms == src.natoms
 
@@ -206,17 +209,17 @@ def test_crystal_cell_of_a_maestro_file(tmp_path):
     src._ct_props[0].update({f"pdb_PDB_CRYST1_{k}": v for k, v in crystal.items()})
     out = tmp_path / "maestro.mae"
     save_mae([src, src], out)
-    assert "chorus_box" not in out.read_text()
+    assert "chorus_box" not in out.read_text(encoding="utf-8")
     back = list(iter_mae(out))
     assert len(back) == 2
     np.testing.assert_allclose(back[0].cell, cell, atol=1e-3)
     again = tmp_path / "again.mae"
     save_mae(back, again)
-    text = again.read_text()
+    text = again.read_text(encoding="utf-8")
     assert "chorus_box" not in text and "r_pdb_PDB_CRYST1_gamma" in text
     np.testing.assert_allclose(next(iter_mae(again)).cell, cell, atol=1e-3)
     # a cell that is no longer the crystal's is a box, and is what is read
     back[0].cell[:] = np.diag([50.0, 60.0, 70.0])
     save_mae(back[0], again)
-    assert "chorus_box" in again.read_text()
+    assert "chorus_box" in again.read_text(encoding="utf-8")
     np.testing.assert_allclose(boonza.load(again).cell, np.diag([50.0, 60.0, 70.0]))

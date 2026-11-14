@@ -549,7 +549,7 @@ def read_table() -> dict:
         from pathlib import Path
 
         path = Path(__file__).parent.parent / "data" / "sirah" / "backmap.json"
-        _TABLE = json.loads(path.read_text())["residues"]
+        _TABLE = json.loads(path.read_text(encoding="utf-8"))["residues"]
     return _TABLE
 
 

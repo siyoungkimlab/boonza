@@ -32,8 +32,8 @@ def run_leg(directory, repeat: int = 1, platform: str | None = None, minimize: i
     import openmm
 
     d = Path(directory)
-    meta = json.loads((d / "leg.json").read_text())
-    with gzip.open(d / "system.xml.gz", "rt") as fh:
+    meta = json.loads((d / "leg.json").read_text(encoding="utf-8"))
+    with gzip.open(d / "system.xml.gz", "rt", encoding="utf-8") as fh:
         system = openmm.XmlSerializer.deserialize(fh.read())
     state = np.load(d / "state.npz")
     dt_ps = meta["timestep_fs"] / 1000.0

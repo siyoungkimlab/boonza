@@ -101,7 +101,7 @@ def _timekeys(dtr: str):
 
 def _stk_members(path: str) -> list[str]:
     base = os.path.dirname(os.path.abspath(path))
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         lines = [line.strip() for line in fh]
     return [os.path.join(base, line) for line in lines if line and not line.startswith("#")]
 

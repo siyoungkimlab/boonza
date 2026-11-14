@@ -40,9 +40,9 @@ def test_scores_match_biopython(pairs, mode, end_gaps, tmp_path):
     cases = [{"a": a, "b": b, "mode": mode, "open": 10.0, "extend": 0.5, "end_gaps": end_gaps}
              for a, b in pairs]  # fmt: skip
     f = tmp_path / "cases.json"
-    f.write_text(json.dumps(cases))
+    f.write_text(json.dumps(cases), encoding="utf-8")
     r = subprocess.run([BIO_PYTHON, str(HERE / "bio_align_oracle.py"), str(f)],
-                       capture_output=True, text=True)  # fmt: skip
+                       capture_output=True, text=True, encoding="utf-8")  # fmt: skip
     assert r.returncode == 0, r.stderr
     for (a, b), want in zip(pairs, json.loads(r.stdout), strict=True):
         aln = align_sequences(a, b, mode=mode, end_gaps=end_gaps)

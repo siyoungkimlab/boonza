@@ -80,7 +80,7 @@ def _from_pairs(model: str, pairs: dict) -> PairTable:
 
 def _martini(path: Path, c6c12: bool) -> dict:
     pairs = {}
-    for row in _sections(path.read_text(), "nonbond_params"):
+    for row in _sections(path.read_text(encoding="utf-8"), "nonbond_params"):
         if len(row) < 5:
             continue
         a, b, x, y = row[0], row[1], float(row[3]), float(row[4])

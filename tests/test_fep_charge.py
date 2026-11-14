@@ -82,7 +82,9 @@ def test_a_charge_change_runs_as_long_as_any_other_edge(tmp_path):
                      "--equilibration-ns", "0.00002",
                      "--production-ns", "0.0001"]) == 0  # fmt: skip
     for leg in ("complex", "solvent"):
-        meta = json.loads((work / "edges" / "phenol~phenolate" / leg / "leg.json").read_text())
+        meta = json.loads(
+            (work / "edges" / "phenol~phenolate" / leg / "leg.json").read_text(encoding="utf-8")
+        )
         assert meta["charge_change"] == -1  # it is the hard kind of edge
         assert meta["production_ns"] == 0.0001  # and it still runs for --production-ns
         assert meta["equilibration_ns"] == 0.00002
@@ -99,14 +101,14 @@ def test_charge_change_with_a_receptor(tmp_path, capsys):
                      "--repeats", "1", "--iteration-ps", "0.02",
                      "--equilibration-ns", "0.00002", "--production-ns", "0.0001",
                      "--charge-production-ns", "0.0002"]) == 0  # fmt: skip
-    rows = list(csv.DictReader((work / "edges.csv").open()))
+    rows = list(csv.DictReader((work / "edges.csv").open(encoding="utf-8")))
     assert [r["charge_change"] for r in rows] == ["-1"]
     for leg in ("complex", "solvent"):
         d = work / "edges" / "phenol~phenolate" / leg
-        meta = json.loads((d / "leg.json").read_text())
+        meta = json.loads((d / "leg.json").read_text(encoding="utf-8"))
         assert meta["charge_change"] == -1 and len(meta["lambdas"]) == 5
         assert meta["production_ns"] == 0.0002 and len(meta["alchemical_waters"]) == 1
-        with gzip.open(d / "system.xml.gz", "rt") as fh:
+        with gzip.open(d / "system.xml.gz", "rt", encoding="utf-8") as fh:
             system = openmm.XmlSerializer.deserialize(fh.read())
         for x in (0.0, 1.0):
             assert _net_charge(system, x).sum() == pytest.approx(0, abs=1e-4)

@@ -67,7 +67,7 @@ def test_hotspots_are_written_where_a_viewer_can_read_them(tmp_path, screened):
     spots = boonza.hotspots(boonza.feature_maps(s, frames, ligand="not polymer"), enrichment=10.0)
     path = tmp_path / "hotspots.pdb"
     boonza.write_hotspots(path, spots)
-    lines = [x for x in path.read_text().splitlines() if x.startswith("HETATM")]
+    lines = [x for x in path.read_text(encoding="utf-8").splitlines() if x.startswith("HETATM")]
     assert len(lines) == len(spots)
     for line, h in zip(lines, spots, strict=True):
         assert line[17:20].strip() == CODES[h.family]

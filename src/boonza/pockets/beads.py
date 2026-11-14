@@ -200,7 +200,7 @@ def write_pdb(path, names, resnames, chains, resids, insertions, positions, elem
             f"{xyz[0]:8.3f}{xyz[1]:8.3f}{xyz[2]:8.3f}  1.00  0.00          {el:>2s}"
         )
     lines.append("END")
-    Path(path).write_text("\n".join(lines) + "\n")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_fpocket_pdb(system, path, ids=None, model: str | None = None,

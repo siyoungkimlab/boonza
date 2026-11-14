@@ -68,7 +68,7 @@ position: relative;"></div>
 
     def save(self, path) -> None:
         """Write a standalone HTML page."""
-        with open(os.fspath(path), "w") as fh:
+        with open(os.fspath(path), "w", encoding="utf-8") as fh:
             fh.write("<!doctype html>\n<html><head><meta charset=\"utf-8\">"
                      "<title>boonza view</title></head><body>\n"
                      f"{self.to_html()}\n</body></html>\n")  # fmt: skip

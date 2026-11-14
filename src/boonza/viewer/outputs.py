@@ -722,13 +722,13 @@ class Viewer:
                     s._ct_names[c] = self.models[k].name
                     s._ct_props[c] = dict(fields)
                 save_sdf(s, path, append=n > 0)
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
 
     def save_series(self, group: str, path) -> str:
         path = Path(path).expanduser()
         if path.suffix.lower() != ".sdf":
             raise ValueError("a series is saved as SDF (a .sdf path)")
-        path.write_text(self.series_sdf(group))
+        path.write_text(self.series_sdf(group), encoding="utf-8")
         return str(path)
 
     def close(self, m: int) -> None:
@@ -838,7 +838,7 @@ def points(path, residue: int | None = None):
     """Centres, radii and residue names of the atoms of a PQR or PDB file of spheres
     (fpocket's and boonza's sites), all of them or one residue number's."""
     xyz, radii, names = [], [], []
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
         if not line.startswith(("ATOM", "HETATM")):
             continue
         if residue is not None and int(line[22:26]) != residue:
@@ -1056,7 +1056,7 @@ def from_fep(d) -> Viewer:
 def _rows(path, key: str) -> dict:
     if not Path(path).is_file():
         return {}
-    with open(path, newline="") as fh:
+    with open(path, newline="", encoding="utf-8") as fh:
         return {r[key]: r for r in csv.DictReader(fh)}
 
 
@@ -1082,7 +1082,7 @@ def _number(v):
 
 def from_manifest(path) -> Viewer:
     path = Path(path)
-    spec = json.loads(path.read_text())
+    spec = json.loads(path.read_text(encoding="utf-8"))
     here = path.parent
     models = []
     for k, m in enumerate(spec.get("models", [])):
@@ -1124,7 +1124,11 @@ def from_modes(d) -> Viewer:
     d = Path(d)
     rows = _rows(d / "modes.csv", "run")
     f = d / "modes.json"
-    ligand = json.loads(f.read_text()).get("ligandsel") if f.is_file() else _triage_ligand(d)
+    ligand = (
+        json.loads(f.read_text(encoding="utf-8")).get("ligandsel")
+        if f.is_file()
+        else _triage_ligand(d)
+    )
     total = len(rows) or 1
     found = []
     for f in (d / "structures").iterdir():
@@ -1148,7 +1152,7 @@ def from_modes(d) -> Viewer:
 
 def _triage_ligand(d) -> str | None:
     f = Path(d) / "triage.json"
-    return json.loads(f.read_text()).get("ligandsel") if f.is_file() else None
+    return json.loads(f.read_text(encoding="utf-8")).get("ligandsel") if f.is_file() else None
 
 
 #: how a merged part is named, so a residue reads POS36 rather than the ligand's
@@ -1299,7 +1303,7 @@ def _pharm_radii(d, k: int) -> dict[int, float]:
     if not pml.is_file():
         return {}
     pat = re.compile(rf"alter pharm_{k} and id (\d+), vdw=([\d.]+)")
-    return {int(n): float(r) for n, r in pat.findall(pml.read_text())}
+    return {int(n): float(r) for n, r in pat.findall(pml.read_text(encoding="utf-8"))}
 
 
 def _with_ligand(structure, ligand) -> Session:
@@ -1337,7 +1341,7 @@ def from_cavity(d, cg_frames: bool = False) -> Viewer:
     beads = sorted(d.glob("beads.*"))
     lig_file = lig_sel = None
     if (d / "ligand.json").is_file():
-        info = json.loads((d / "ligand.json").read_text())
+        info = json.loads((d / "ligand.json").read_text(encoding="utf-8"))
         lig_file, lig_sel = d / info["file"], info["selection"]
     old = first("ligand") if lig_file is None else None  # written before ligand.json
     if old is not None and holo is None and main is not None:  # the structure's own ligand
@@ -1356,7 +1360,8 @@ def from_cavity(d, cg_frames: bool = False) -> Viewer:
         structure("holo", holo, False, **({"ligand": lig_sel} if lig_file == holo else {}))
 
     pharmacophores, frames = [], []
-    ranks = sorted({int(line[22:26]) for line in (d / "sites.pqr").read_text().splitlines()
+    pqr = (d / "sites.pqr").read_text(encoding="utf-8")
+    ranks = sorted({int(line[22:26]) for line in pqr.splitlines()
                     if line.startswith(("ATOM", "HETATM"))})  # fmt: skip
     for k in ranks:
         colour = POCKET_COLOURS[k - 1] if k <= len(POCKET_COLOURS) else "gray"

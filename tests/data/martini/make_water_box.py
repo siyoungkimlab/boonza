@@ -30,14 +30,18 @@ def main(martini_itp):
     grid += rng.normal(0, 0.03, grid.shape)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        (tmp / "w.itp").write_text("[ moleculetype ]\nW 1\n[ atoms ]\n1 W 1 W W 1 0\n")
+        (tmp / "w.itp").write_text(
+            "[ moleculetype ]\nW 1\n[ atoms ]\n1 W 1 W W 1 0\n", encoding="utf-8"
+        )
         top = f'#include "{martini_itp}"\n#include "w.itp"\n'
         top += f"[ system ]\nW\n[ molecules ]\nW {len(grid)}\n"
-        (tmp / "topol.top").write_text(top)
+        (tmp / "topol.top").write_text(top, encoding="utf-8")
         rows = [f"{k + 1:5d}W    {'W':>5s}{k + 1:5d}{x:8.3f}{y:8.3f}{z:8.3f}"
                 for k, (x, y, z) in enumerate(grid)]  # fmt: skip
         box = n * a
-        (tmp / "w.gro").write_text(f"W\n{len(grid)}\n" + "\n".join(rows) + f"\n{box} {box} {box}\n")
+        (tmp / "w.gro").write_text(
+            f"W\n{len(grid)}\n" + "\n".join(rows) + f"\n{box} {box} {box}\n", encoding="utf-8"
+        )
         s = load_top(tmp / "topol.top", tmp / "w.gro")
     top, system, pos = boonza.to_openmm(s, **OPENMM_OPTIONS)
     system.addForce(mm.MonteCarloBarostat(1 * u.bar, 300 * u.kelvin, 25))
@@ -68,7 +72,7 @@ def main(martini_itp):
         rows.append(f"{n:5d}W    {'W':>5s}{n:5d}{p[0]:8.3f}{p[1]:8.3f}{p[2]:8.3f}")
     edges = f"{b[0, 0]:.5f} {b[1, 1]:.5f} {b[2, 2]:.5f}"
     header = f"Martini 3 water, equilibrated in OpenMM (300 K, 1 bar)\n{len(x)}\n"
-    OUT.write_text(header + "\n".join(rows) + f"\n{edges}\n")
+    OUT.write_text(header + "\n".join(rows) + f"\n{edges}\n", encoding="utf-8")
     print(f"density {np.mean(dens[50:]):.4f} g/mL (last 4 ns), box {b[0, 0]:.3f} nm -> {OUT}")
 
 
