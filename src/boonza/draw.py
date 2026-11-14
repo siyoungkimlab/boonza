@@ -110,12 +110,29 @@ def orient(mols, core) -> int:
     would draw a worse picture than leaving it alone.
     """
     from rdkit.Chem import AllChem, rdDepictor
+    from rdkit.Geometry import Point3D
 
     if core is None:
         return 0
+    # The core takes its coordinates from the first molecule that has it, laid
+    # out whole.  Laid out alone, the core leaves no room for what hangs off
+    # it, and a substituent ends up drawn on top of a core atom.
+    first = next((m for m in mols if m.HasSubstructMatch(core)), None)
+    if first is None:
+        for mol in mols:
+            AllChem.Compute2DCoords(mol)
+        return 0
+    AllChem.Compute2DCoords(first)
     rdDepictor.Compute2DCoords(core)
+    placed, template = first.GetConformer(), core.GetConformer()
+    for k, a in enumerate(first.GetSubstructMatch(core)):
+        p = placed.GetAtomPosition(a)
+        template.SetAtomPosition(k, Point3D(p.x, p.y, 0.0))
     done = 0
     for mol in mols:
+        if mol is first:
+            done += 1
+            continue
         if not mol.HasSubstructMatch(core):
             AllChem.Compute2DCoords(mol)
             continue
