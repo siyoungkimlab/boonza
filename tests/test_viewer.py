@@ -3338,3 +3338,47 @@ def test_an_error_about_atoms_names_them_and_their_model(served, monkeypatch):
     # an error that names no atoms carries none
     status, out = post("api/select", {"m": 0, "sel": "not a selection ("})
     assert status == 400 and "atoms" not in out
+
+
+def test_arginine_is_a_guanidinium_wherever_it_is_built():
+    """mutate and extend charge the nitrogen that has the double bond: the charge on the
+    singly bonded one gave it three hydrogens and left the other one."""
+    from boonza.viewer.edit import dihedral_angle, extend, mutate, neighbors
+
+    def check(s, r):
+        a = {str(s.atoms["name"][x]): int(x) for x in s.residue_atoms(r)}
+        hs = {
+            n: sorted(str(s.atoms["name"][b]) for b, _ in neighbors(s, a[n])
+                      if s.atoms["anum"][b] == 1)
+            for n in ("NE", "NH1", "NH2")
+        }  # fmt: skip
+        assert hs == {"NE": ["HE"], "NH1": ["HH11", "HH12"], "NH2": ["HH21", "HH22"]}
+        orders = {str(s.atoms["name"][b]): o for b, o in neighbors(s, a["CZ"])}
+        assert orders == {"NE": 1, "NH1": 1, "NH2": 2}
+        q = {n: int(s.atoms["formal_charge"][x]) for n, x in a.items()}
+        assert q["NH2"] == 1 and sum(q.values()) == 1
+        assert len(a) == len(s.residue_atoms(r))  # no name twice
+        pos = np.asarray(s.positions, float)
+        for h, n, far in (("HH11", "NH1", "NE"), ("HH12", "NH1", "NE"),
+                          ("HH21", "NH2", "NE"), ("HH22", "NH2", "NE")):  # fmt: skip
+            turn = abs(dihedral_angle(pos, a[h], a[n], a["CZ"], a[far]))
+            assert min(turn, 180 - turn) < 5  # in the guanidinium's plane
+
+    s = boonza.peptide("AAAAA")
+    check(s, mutate(s, 2, "ARG"))
+    for end in ("C", "N"):
+        s = boonza.peptide("AAA")
+        check(s, extend(s, 0, end, "ARG"))
+
+
+@pytest.mark.parametrize("smiles", ["C1CCCCC1", "C1COCCN1", "N1CCOCC1", "N1CCNCC1", "N1CCCCC1"])
+def test_a_six_membered_ring_is_built_as_a_chair(smiles):
+    """One embedding minimized into the twist-boat; the lowest of several is the chair,
+    whose ring torsions alternate in sign near 55 degrees."""
+    from boonza.viewer.edit import _fragment, dihedral_angle
+
+    s = _fragment(smiles)
+    pos = np.asarray(s.positions, float)
+    turns = [dihedral_angle(pos, *[(k + j) % 6 for j in range(4)]) for k in range(6)]
+    assert all(45 < abs(t) < 70 for t in turns)
+    assert all(a * b < 0 for a, b in zip(turns, turns[1:] + turns[:1], strict=True))

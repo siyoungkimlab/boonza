@@ -1672,11 +1672,17 @@ GROUPS = {
 }  # fmt: skip
 
 
+#: conformers embedded for a fragment, the lowest kept (a few ms each)
+FRAGMENT_CONFORMERS = 30
+
+
 def _fragment(smiles: str):
-    """A 3D fragment with hydrogens (boonza.from_smiles); atom 0 is the first in the SMILES."""
+    """A 3D fragment with hydrogens (boonza.from_smiles); atom 0 is the first in the SMILES.
+    The lowest in energy of :data:`FRAGMENT_CONFORMERS`: one embedding alone minimizes
+    into whichever well it starts in, and cyclohexane's was the twist-boat."""
     from ..build import from_smiles
 
-    return from_smiles(smiles)
+    return from_smiles(smiles, conformers=FRAGMENT_CONFORMERS)
 
 
 def _rotation_onto(v, w) -> np.ndarray:
@@ -2045,6 +2051,63 @@ def _residue_atom(s, r: int, name: str) -> int:
     return -1
 
 
+def _charge_side_chain(s, residue: int, new: str) -> None:
+    """The side chain of a residue just built from boonza.peptide as it is at pH 7:
+    :data:`CHARGED`'s formal charges, the hydrogens they ask for, and those named as
+    the PDB names them.  The peptide is neutral, and its arginine has the double bond
+    on NH1: the charge goes on the nitrogen with the double bond, so that moves to NH2
+    first (the charge on the singly bonded one gave it three hydrogens and left NH1
+    one), and the guanidinium's hydrogens are laid in its plane."""
+    from ..build import PDB_HYDROGENS
+
+    here = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(residue)}
+    if new == "ARG" and {"CZ", "NH1", "NH2"} <= set(here):
+        set_bond(s, here["CZ"], here["NH1"], 1)
+        set_bond(s, here["CZ"], here["NH2"], 2)
+    q = np.asarray(s.atoms["formal_charge"]).copy()
+    for (rn, an), charge in CHARGED.items():
+        if rn == new and an in here:
+            q[here[an]] = charge
+    s.atoms["formal_charge"] = q
+    anum = s.atoms["anum"]
+    if not any(anum[a] == 1 for a in here.values()):  # a model without hydrogens
+        return
+    if new == "ARG" and {"NE", "CZ", "NH1", "NH2"} <= set(here):
+        # the guanidinium's hydrogens again, in its plane: the neutral template's
+        # amine is pyramidal, and NH1 had one
+        old = [b for n in ("NE", "NH1", "NH2") for b, _ in neighbors(s, here[n]) if anum[b] == 1]
+        s.delete_atoms(old)
+        here = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(residue)}
+        for heavy, hs in (("NE", ["HE"]), ("NH1", ["HH11", "HH12"]), ("NH2", ["HH21", "HH22"])):
+            n = here[heavy]
+            pos = np.asarray(s.positions, float)
+            dirs = hydrogen_directions(s, n, len(hs), shape="trigonal")
+            h = s.add_atoms(len(hs), residue=residue, name=np.array(hs), anum=np.ones(len(hs), int),
+                            mass=np.full(len(hs), MSYS_MASSES[1]))  # fmt: skip
+            xyz = np.array(s.positions, float)
+            for k, d in zip(h.ids.tolist(), dirs, strict=True):
+                xyz[k] = pos[n] + H_BOND[7] * d
+                s.add_bond(n, k, 1)
+            s.positions = xyz
+        anum = s.atoms["anum"]
+    side = [a for n, a in here.items() if n not in BACKBONE and anum[a] > 1]
+    adjust_hydrogens(s, side)
+    # the names: a hydrogen added here took a free name, not the PDB's
+    anum = s.atoms["anum"]
+    table = PDB_HYDROGENS.get(new, {})
+    names = np.asarray(s.atoms["name"]).astype(object)
+    for a in s.residue_atoms(residue):
+        by_count = table.get(str(names[a]))
+        if by_count is None or str(names[a]) in BACKBONE:
+            continue
+        hs = [b for b, _ in neighbors(s, int(a)) if anum[b] == 1]
+        want = by_count.get(len(hs))
+        if want:
+            for h, name in zip(hs, want.split(), strict=True):
+                names[h] = name
+    s.atoms["name"] = names.astype(str)
+
+
 def mutate(s, residue: int, new: str) -> int:
     """Turn amino acid ``residue`` into ``new`` (three letters): the backbone stays, the
     side chain comes from boonza.peptide, fitted on N, CA and C and turned (chi1, chi2)
@@ -2088,18 +2151,9 @@ def mutate(s, residue: int, new: str) -> int:
     for r in reversed(empty):
         if r != residue and not len(s.residue_atoms(r)):
             s.delete_residues([r])
-    added = [a for a in s.residue_atoms(residue) if str(s.atoms["name"][a]) not in BACKBONE]
     # the charges of pH 7, and the hydrogens they ask for; N gains or loses its H (Pro)
-    q = np.asarray(s.atoms["formal_charge"]).copy()
-    for (rn, an), charge in CHARGED.items():
-        if rn == new:
-            a = _residue_atom(s, residue, an)
-            if a >= 0:
-                q[a] = charge
-    s.atoms["formal_charge"] = q
-    adjust_hydrogens(
-        s, [a for a in added if s.atoms["anum"][a] > 1] + [_residue_atom(s, residue, "N")]
-    )
+    _charge_side_chain(s, residue, new)
+    adjust_hydrogens(s, [_residue_atom(s, residue, "N")])
     _best_rotamer(s, residue)
     _name_amide_h(s, residue)
     _gather(s, residue)
@@ -2901,10 +2955,9 @@ def extend(s, chain: int, end: str | None, new: str, residue: int | None = None)
         s.add_bond(here["C"], mine[link_t], 1)
     else:
         s.add_bond(mine[link_t], here["N"], 1)
+    _charge_side_chain(s, new_res, new)  # may drop an acid's hydrogen: the indices move
+    mine, here = names(new_res), names(r)
     q = np.asarray(s.atoms["formal_charge"]).copy()
-    for (rn, an), charge in CHARGED.items():
-        if rn == new and an in mine:
-            q[mine[an]] = charge
     # the terminus as the old one was
     term = mine.get("OXT") if end == "C" else mine.get("N")
     if term is not None:
