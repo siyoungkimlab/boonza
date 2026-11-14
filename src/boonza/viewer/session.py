@@ -891,7 +891,22 @@ class Session:
                     )
                     if len(chains) != 1:
                         raise ValueError("select atoms of one chain")
-                    r = edit.extend(s, chains[0], str(value["end"]), str(value["residue"]))
+                    # the piece the picked residues are in, as capping has it: a chain
+                    # cut in the middle or with a gap has termini of its own there, and
+                    # the chain's first and last residue are not what was picked
+                    picked = {int(s.atoms["residue"][a]) for a in atoms}
+                    runs = [x for x in edit.pieces(s, chains[0]) if picked & set(x)]
+                    if not runs:
+                        raise ValueError("no amino acid among the selected atoms")
+                    end = str(value.get("end") or "auto").upper()[:1]
+                    if end == "A":  # the way the piece is open, or the picked end of it
+                        if len(runs) > 1:
+                            raise ValueError("the selection spans pieces of the chain: "
+                                             "select a residue of the one to grow")  # fmt: skip
+                        end = edit.open_end(s, runs[0], picked)
+                    run = runs[0] if end == "N" else runs[-1]
+                    r = edit.extend(s, chains[0], end, str(value["residue"]), residue=run[0])
+                    note = f"{end} terminus"
                     made = s.residue_atoms(r)
                     hydrogens = False
                 elif op == "sulfono":  # two amino acids become one sulfono-gamma-AA unit

@@ -2755,47 +2755,97 @@ def cap(s, chain: int, end: str, residue: int | None = None) -> int:
     return int(s.atoms["residue"][_residue_atom_any(s, name, resid, chain)])
 
 
-def extend(s, chain: int, end: str, new: str) -> int:
+def _end_free(s, r: int, end: str) -> bool:
+    """Whether amino acid ``r`` has nothing bonded on at its backbone N (``end="N"``)
+    or C (``"C"``): no residue before or after it, and no cap."""
+    anchor = _residue_atom(s, r, end)
+    if anchor < 0:
+        return False
+    return not any(int(s.atoms["residue"][b]) != r and int(s.atoms["anum"][b]) > 1
+                   for b, _ in neighbors(s, anchor))  # fmt: skip
+
+
+def open_end(s, run: list[int], residues=()) -> str:
+    """Which way a piece of a chain (one run of :func:`pieces`) grows, where nobody
+    said: ``"N"`` or ``"C"``.  A picked residue that is the piece's first has the rest
+    of the piece on its C side, so it grows at N, and the last one at C.  Where the
+    pick does not say -- a residue in the middle, a piece of one residue, the whole
+    piece -- the one end with nothing bonded on is it.  Two open ends and no pick at
+    either is a question only whoever asked can answer, and raises."""
+    picked = set(residues)
+    at = {"N": run[0] in picked, "C": run[-1] in picked}
+    free = {e: _end_free(s, r, e) for e, r in (("N", run[0]), ("C", run[-1]))}
+    if at["N"] != at["C"]:
+        end = "N" if at["N"] else "C"
+        if not free[end]:
+            raise ValueError(f"the {end} terminus is bonded on already (capped?)")
+        return end
+    ends = [e for e in "NC" if free[e]]
+    if len(ends) == 1:
+        return ends[0]
+    if not ends:
+        raise ValueError("both termini are bonded on already (capped, or a ring)")
+    raise ValueError("both ends are open: pick the residue at the end to grow, or "
+                     "say N or C")  # fmt: skip
+
+
+def extend(s, chain: int, end: str | None, new: str, residue: int | None = None) -> int:
     """Add amino acid ``new`` (three letters) to the start (``end="N"``) or the end
     (``"C"``) of ``chain``: a trans peptide bond, the new residue turned about the
     bond to it (phi or psi of the old end) where it clashes least, its side chain to its
     least-clashing rotamer.  The terminus moves on to it, as it was: charged (NH3+,
     COO-) or neutral, or without hydrogens in a structure without any.  Returns the
-    new residue."""
+    new residue.
+
+    ``residue``: grow the piece this residue belongs to, rather than the chain's first
+    or last residue.  A chain cut in the middle, or one with a gap, is more than one
+    piece (:func:`pieces`), and each has two termini of its own.
+
+    ``end=None``: the way the piece is open (:func:`open_end`), ``residue`` being what
+    was picked -- the first residue of its piece grows at N, the last at C."""
     from ..align import kabsch
     from ..build import peptide
 
     new = new.upper()
     if new not in ONE_LETTER:
         raise ValueError(f"{new}: one of {', '.join(sorted(ONE_LETTER))}")
-    res = [r for r in range(s.nresidues) if int(s.residues["chain"][r]) == chain
-           and _residue_atom(s, r, "CA") >= 0]  # fmt: skip
-    if not res:
+    if end not in ("N", "C", None):
+        raise ValueError('end is "N" or "C"')
+    runs = pieces(s, chain)
+    if not runs:
         raise ValueError("no amino acids in that chain")
+    if residue is None:
+        if end is None and len(runs) > 1:
+            raise ValueError("the chain is in pieces: pick a residue of the one to grow")
+        run = runs[0] if end != "C" else runs[-1]
+    else:
+        run = next((x for x in runs if residue in x), None)
+        if run is None:
+            raise ValueError("that residue is no amino acid of the chain")
+    if end is None:
+        end = open_end(s, run, () if residue is None else (residue,))
     anum = np.asarray(s.atoms["anum"])
     bare = not (anum == 1).any()
     names = lambda r: {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(r)}  # noqa: E731
     if end == "C":
-        r = res[-1]
+        r = run[-1]
         here = names(r)
         if not {"CA", "C", "O"} <= set(here):
             raise ValueError("the last residue needs CA, C and O")
-        if any(int(s.atoms["residue"][b]) != r and anum[b] > 1 for b, _ in neighbors(s, here["C"])):
+        if not _end_free(s, r, "C"):
             raise ValueError("the C terminus is bonded on already (capped?)")
         # the template: the old end as glycine, then the new residue, its acid at the end
         t = peptide("G" + ONE_LETTER[new], conformation="extended")
         fit, take = ("CA", "C", "O"), 1
-    elif end == "N":
-        r = res[0]
+    else:
+        r = run[0]
         here = names(r)
         if not {"N", "CA", "C"} <= set(here):
             raise ValueError("the first residue needs N, CA and C")
-        if any(int(s.atoms["residue"][b]) != r and anum[b] > 1 for b, _ in neighbors(s, here["N"])):
+        if not _end_free(s, r, "N"):
             raise ValueError("the N terminus is bonded on already (capped?)")
         t = peptide(ONE_LETTER[new] + "G", conformation="extended")
         fit, take = ("N", "CA", "C"), 0
-    else:
-        raise ValueError('end is "N" or "C"')
     tres = sorted(set(np.asarray(t.residues["resid"]).tolist()))
     keep = int(np.flatnonzero(np.asarray(t.residues["resid"]) == tres[take])[0])
     other = int(np.flatnonzero(np.asarray(t.residues["resid"]) == tres[1 - take])[0])
