@@ -42,7 +42,12 @@ holds the first prep's ligands (the same molecules in the same poses) and the
 new ones, and only edges that join the new ones are built, in the receptor the
 first edges were built in (receptor_rem.EXT, if --rem made one), with the first
 prep's templates and charges kept; its settings must be the same.  Every edge
-already run is reused, and result analyzes them all as one network.
+already run is reused, and result analyzes them all as one network.  Where a
+new edge's pose clashes with that receptor, it is relaxed around the new edges'
+ligands, each where its legs have it, and the new edges alone are built in it
+(receptor_rem.EXT; the one before moves to rem_<n>/): an edge's ΔΔG is its own,
+whichever starting receptor its legs relaxed from, so nothing is rerun.
+``--rem`` relaxes it whether or not anything clashes, ``--no-rem`` never.
 """
 
 from __future__ import annotations
@@ -735,18 +740,20 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         if own_receptors is not None:
             if getattr(args, "rem", False):
                 log("--complexes: every ligand comes in its own receptor, so no REM")
-        elif getattr(args, "rem", False) and before is None:
-            log("REM, then EM: the receptor relaxed around every ligand's pose (the "
-                "ligands held as posed, the residues within 5 Å of one free)")  # fmt: skip
-            relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args, log),
-                         suffix=receptor_format(args.input_structure))  # fmt: skip
-        else:
-            close = relief.clashes(receptor, ligs, names)
-            if close:
-                log(f"  warning: {len(close)} ligand(s) within {relief.CLASH_A} Å of the "
-                    "receptor (heavy atoms): " + ", ".join(f"{n} {d:.2f} Å" for n, d in close)
-                    + ("; --rem relieves them first" if before is None else "; the receptor "
-                       "stays the one the first prep's edges were built in"))  # fmt: skip
+        elif before is None:  # an extending prep decides below, on its new edges' poses
+            if getattr(args, "rem", False):
+                log("REM, then EM: the receptor relaxed around every ligand's pose (the "
+                    "ligands held as posed, the residues within 5 Å of one free)")  # fmt: skip
+                relief.write(work, receptor, *relief.relieve(receptor, ligs, names, ff, args,
+                                                             log),
+                             suffix=receptor_format(args.input_structure))  # fmt: skip
+            else:
+                close = relief.clashes(receptor, ligs, names)
+                if close:
+                    log(f"  warning: {len(close)} ligand(s) within {relief.CLASH_A} Å of the "
+                        "receptor (heavy atoms): "
+                        + ", ".join(f"{n} {d:.2f} Å" for n, d in close)
+                        + "; --rem relieves them first")  # fmt: skip
     solvent_box = None
     if phase != "vacuum":
         solvent_box = octanol.box(work, ff, args, wet=phase == "wet-octanol", path=octanol_box,
@@ -797,6 +804,42 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     else:
         edges = network.extend(mols, before.pairs, new, **rules)
         log(f"{len(edges)} new edges, beside the {len(before.pairs)} of the first prep")
+    fitted = {}  # --map graph: B's pose in each edge, on the atoms it shares with A
+    if settings["mapping"] == "graph":
+        fitted = {(e.a, e.b): mapping.fit_on_core(mols[e.a], mols[e.b], e.mapping)
+                  for e in edges}  # fmt: skip
+    if before is not None and receptor is not None and own_receptors is None:
+        # the new edges' ligands only, each where its legs have it: the edges already
+        # there keep the receptor they were built in, and need no rerun
+        held, labels = [], []
+        for k in sorted({e.a for e in edges} | ({e.b for e in edges} if not fitted else set())):
+            held.append(ligs[k])
+            labels.append(names[k])
+        for (a, b), xyz in fitted.items():
+            moved = ligs[b].copy()
+            moved.positions = xyz
+            held.append(moved)
+            labels.append(f"{names[b]} on {names[a]}")
+        close = relief.clashes(receptor, held, labels)
+        # a leg whose pose clashes goes to NaN whatever the window, so REM runs unless
+        # --no-rem; without a clash the new edges meet the receptor the others did
+        said = "rem" in getattr(args, "specified", ())
+        if args.rem if said else bool(close):
+            why = ("--rem" if said else f"{len(close)} of their poses within "
+                   f"{relief.CLASH_A} Å of it, which --no-rem leaves as it is")  # fmt: skip
+            log(f"REM, then EM: the receptor relaxed around the {len(edges)} new edges' "
+                f"ligands as their legs have them ({why}; {len(held)} poses, held; the "
+                "residues within 5 Å of one free), for those edges alone")  # fmt: skip
+            rows_rem = relief.relieve(receptor, held, labels, ff, args, log)
+            kept_rem = relief.shelve(work)
+            if kept_rem is not None:
+                log(f"  the receptor the edges before were built in: kept in {kept_rem}")
+            relief.write(work, receptor, *rows_rem, suffix=receptor_format(args.input_structure))
+        elif close:
+            log(f"  warning: {len(close)} of the new edges' poses within {relief.CLASH_A} Å "
+                "of the receptor (heavy atoms): "
+                + ", ".join(f"{n} {d:.2f} Å" for n, d in close)
+                + "; --no-rem leaves the receptor as it is")  # fmt: skip
     old_rows = [r + [""] * (7 - len(r)) for r in (before.rows if before else [])]
     pairs = (before.pairs if before else []) + [(e.a, e.b) for e in edges]
     changed = ([int(r[5]) if r[5] != "" else None for r in old_rows]
@@ -858,14 +901,14 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 "switched")  # fmt: skip
         lig_b = ligs[e.b]
         if settings["mapping"] == "graph":  # B where the atoms it shares with A are
-            fitted = mapping.fit_on_core(mols[e.a], mols[e.b], e.mapping)
+            at = fitted[(e.a, e.b)]
             was = np.asarray(ligs[e.b].positions, float)
             lig_b = ligs[e.b].copy()
-            lig_b.positions = fitted
+            lig_b.positions = at
             xa = np.asarray(mols[e.a].GetConformer().GetPositions(), float)
             pairs_ = sorted(e.mapping.items())
-            off = fitted[[j for _, j in pairs_]] - xa[[i for i, _ in pairs_]]
-            moved = float(np.linalg.norm(fitted - was, axis=1).max())
+            off = at[[j for _, j in pairs_]] - xa[[i for i, _ in pairs_]]
+            moved = float(np.linalg.norm(at - was, axis=1).max())
             log(f"{a} -> {b}: B moved onto the {len(e.mapping)} atoms it shares with A "
                 f"({np.sqrt((off ** 2).sum(1).mean()):.2f} Å RMSD over them, "
                 f"{moved:.1f} Å from its own pose)")  # fmt: skip

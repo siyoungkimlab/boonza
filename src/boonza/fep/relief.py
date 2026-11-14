@@ -25,6 +25,15 @@ held firmly to where REM left them (:data:`EM_HOLD_KJ`), and every hydrogen;
 the rest of the receptor stays fixed, since in vacuum, unscreened, its charges
 would pull at each other.  Each leg's own minimization and equilibration,
 in water, follow.
+
+With ``--extend`` the same is done for the edges being added only, and by
+itself where one of their poses clashes (``--rem`` whether or not one does,
+``--no-rem`` never), since a leg that starts from a clash goes to NaN: the
+receptor the first edges were built in is relaxed around the new edges' ligands,
+each where its legs have it (with --map graph, B as moved onto A), and the new
+edges are built in that.  The edges already there keep their receptor and their
+runs; the earlier ``receptor_rem`` and its tables move to ``rem_<n>/``
+(:func:`shelve`).
 """
 
 from __future__ import annotations
@@ -246,6 +255,34 @@ def relieve(receptor, ligs, names, ff, args, log=print) -> tuple[list[dict], lis
     log(f"  {len(res_rows)} residues moved at least {MOVED_A:g} Å" + (f" (most: {top} Å)"
         if top else ""))  # fmt: skip
     return lig_rows, res_rows
+
+
+def shelve(work: Path) -> Path | None:
+    """Keep what the edges already in ``work`` were built in, before --extend relaxes
+    the receptor again and writes over it: ``rem_<n>/`` (the first free n) takes a
+    copy of ``receptor.*`` (which prep rewrites) and any earlier ``receptor_rem.*``,
+    ``rem.csv`` and ``rem_residues.csv``.  The directory, or None if there was
+    nothing to keep."""
+    import shutil
+
+    work = Path(work)
+    # the receptor those edges met: prep writes it again from the relaxed one, so a
+    # copy, not a move -- nothing is lost if this prep then fails
+    copy = [p for p in work.glob("receptor.*") if p.is_file()]
+    move = [p for p in work.glob("receptor_rem.*") if p.is_file()]
+    move += [work / n for n in ("rem.csv", "rem_residues.csv") if (work / n).is_file()]
+    if not copy and not move:
+        return None
+    n = 1
+    while (work / f"rem_{n}").exists():
+        n += 1
+    to = work / f"rem_{n}"
+    to.mkdir()
+    for p in copy:
+        shutil.copy2(p, to / p.name)
+    for p in move:
+        p.rename(to / p.name)
+    return to
 
 
 def write(work: Path, receptor, lig_rows, res_rows, suffix: str = ".mae") -> None:
