@@ -96,6 +96,23 @@ def test_every_ligand_in_its_own_receptor(tmp_path, capsys):
     assert (leg / "run_1.npz").exists()
 
 
+def test_complexes_pair_by_the_poses_unless_graph_is_asked_for(tmp_path, capsys):
+    """--complexes gives B its own receptor and its own pose, which --map graph
+    would discard by moving B onto A, so the poses pair unless graph is asked for."""
+    import json as _json
+
+    sdf, folder = _complexes(tmp_path)
+    work = tmp_path / "work"
+    common = ["prep", "--ligands", str(sdf), "--complexes", str(folder), "--windows", "3",
+              "--repeats", "1", "--iteration-ps", "0.02", "--equilibration-ns", "0.00002",
+              "--production-ns", "0.0001", "--platform", "CPU"]  # fmt: skip
+    assert cli.main([*common, "--workdir", str(work)]) == 0  # no --map: the default
+    assert _json.loads((work / "network.json").read_text())["settings"]["mapping"] == "pose"
+    # asked for explicitly, it is refused rather than quietly contradicting itself
+    assert cli.main([*common, "--workdir", str(tmp_path / "g"), "--map", "graph"]) == 1
+    assert "--complexes' own receptor and pose for B contradict" in capsys.readouterr().err
+
+
 def test_complexes_that_do_not_agree_are_refused(tmp_path, capsys):
     sdf, folder = _complexes(tmp_path)
     other = boonza.load(folder / "toluene.mae")

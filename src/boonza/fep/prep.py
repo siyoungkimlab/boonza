@@ -766,7 +766,13 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 "max_degree": first.get("max_degree", network.MAX_DEGREE)
                 if max_degree is None else max_degree,
                 "reference": reference or first.get("reference"),
-                "mapping": mapping_method or first.get("mapping", MAPPING_METHOD)}  # fmt: skip
+                # --complexes pairs by the poses unless told otherwise: every ligand
+                # comes in its own receptor, superposed on the first's, so the poses
+                # are comparable -- and B's own pose is what the graph mapping would
+                # throw away by moving B onto A, while the leg starts B's windows in
+                # B's receptor, in B's pose
+                "mapping": mapping_method or first.get("mapping")
+                or ("pose" if own_receptors is not None else MAPPING_METHOD)}  # fmt: skip
     if settings["reference"] is not None and settings["reference"] not in names:
         raise ValueError(f"--reference {settings['reference']}: no ligand of that name")
     rules = {"charge_change": penalty, "method": settings["method"],
@@ -782,7 +788,8 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     if settings["mapping"] == "graph":
         if own_receptors is not None:
             raise ValueError("--map graph moves B onto A over the atoms they share, which "
-                             "--complexes' own receptor for B contradicts")  # fmt: skip
+                             "--complexes' own receptor and pose for B contradict; without "
+                             "--map, --complexes pairs atoms by the poses")  # fmt: skip
         log("atoms paired by the ligands' graphs; B is moved onto A over the atoms they "
             "share, so its pose in the leg is not the one the SDF gave")  # fmt: skip
     if before is None:

@@ -16,11 +16,19 @@ DATA = Path(__file__).parent / "data" / "fep"
 
 
 def _amber_tools() -> bool:
+    """Whether GAFF2 can be built here.  Every fep test file skips itself without
+    AmberTools, so CI's AmberTools job sets BOONZA_REQUIRE_AMBERTOOLS and these
+    raise instead: a job that silently skipped its whole reason for existing
+    would pass, and did -- see test_gaff.py, which guards itself the same way."""
+    import os
+
     from boonza.gaff import AmberToolsError, find_amber_tools
 
     try:
         find_amber_tools()
     except AmberToolsError:
+        if os.environ.get("BOONZA_REQUIRE_AMBERTOOLS"):
+            raise
         return False
     return True
 

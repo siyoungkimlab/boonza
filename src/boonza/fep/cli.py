@@ -86,7 +86,8 @@ def _prep(argv) -> int:
                         "other (pose), or by their graphs' maximum common substructure, B "
                         "then moved rigidly onto A over the atoms they share (graph: for a "
                         "series not posed on top of each other, where it is the pose of B "
-                        "that the mapping decides, not the SDF's) (default: graph, or the "
+                        "that the mapping decides, not the SDF's) (default: graph; pose "
+                        "with --complexes, whose own pose for B graph would discard; the "
                         "first prep's with --extend)")  # fmt: skip
     g.add_argument("--max-change", dest="max_change", type=int,
                    help="an edge that changes more heavy atoms is taken only where no route "
