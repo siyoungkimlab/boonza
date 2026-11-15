@@ -325,11 +325,15 @@ function hydrogenFlags(topo) {
 //   chain       every carbon and ribbon by chain
 // a model given a color of its own (its color picker) keeps it, until a mode is chosen again
 const MODEL_HUES = ["green", "cyan", "magenta", "yellow", "salmon", "slate", "orange", "teal", "purple", "wheat"];
-function colorBy(model) {
+// how a model left to the viewer is colored: [the color, whether every rep takes it]
+function autoColor(model) {
   const hue = MODEL_HUES[model.index % MODEL_HUES.length];
   const mode = state.colorBy;
-  const [spec, all] = mode === "chain" ? ["chain", true] : mode === "model" ? [hue, true]
+  return mode === "chain" ? ["chain", true] : mode === "model" ? [hue, true]
     : live().length > 1 ? [`${hue}+chain`, false] : ["default", false];
+}
+function colorBy(model) {
+  const [spec, all] = autoColor(model);
   model.color = spec; model.tintAll = all; model.autoColor = true;
   for (const rep of model.reps) if (rep.tinted) colorRep(model, rep);
 }
@@ -364,7 +368,11 @@ async function load(model) {
       const fresh = !old && model.color === undefined;
       if (fresh) colorBy(model);
       aggregate(model);
-      if (fresh && live().filter(m => m.state && m.autoColor).length > 1) setColorBy(null);
+      // only when that changes how another is colored (the first of two, opened alone):
+      // drawing them all again for every model of a hundred was most of the wait to open
+      // them, and whoever loads a model draws it
+      const stale = m => { const [spec, all] = autoColor(m); return m.color !== spec || m.tintAll !== all; };
+      if (fresh && live().some(m => m !== model && m.state && m.autoColor && stale(m))) setColorBy(null);
       // a numbered model (a pocket, a site) is labeled at its ligand -- the site's points
       // -- when it has one, not at the middle of the protein drawn with it
       if (model.label) model.labelIds = await selectIds(model, `same residue as (${topo.ligand})`).catch(() => null);

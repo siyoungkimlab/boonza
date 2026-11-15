@@ -1908,26 +1908,30 @@ def _view(args) -> int:
     single = len(paths) == 1 and not os.path.isdir(paths[0]) and not paths[0].endswith(".bview")
     if len(paths) == 2 and is_trajectory(paths[1]) and not os.path.isdir(paths[0]):
         single = True
-    flags = (args.coordinates or args.selection or args.center or args.fit
-             or args.glue or args.ligand)  # fmt: skip
+    flags = args.coordinates or args.selection or args.center or args.glue or args.ligand
+    # --fit alone also goes with several models: each is superposed onto the first
+    several_fit = args.fit if not flags else None
+    flags = flags or args.fit
     if single and paths[0].lower().endswith(".sdf") and not flags:
         # an SDF of several molecules is a series (a table of its fields), as it is
         # when opened from the page; one molecule is a structure like any other
         what = viewer.from_paths(paths)
         single = not what.models[0].group.startswith("series")
-    elif single and len(paths) == 1 and not flags and _is_mae(paths[0]):
+    elif single and len(paths) == 1 and (not flags or several_fit) and _is_mae(paths[0]):
         # an MAE of several structures (poses, a library) is a model for each;
         # one structure, of however many cts, is a structure like any other
         what = viewer.from_paths(paths)
         single = len(what.models) == 1
     if not single:
-        if flags:
-            raise ValueError("-c, -s, --ligand, --center, --glue and --fit go with one "
-                             "structure (and trajectory)")  # fmt: skip
+        if flags and not several_fit:
+            raise ValueError("-c, -s, --ligand, --center and --glue go with one structure "
+                             "(and trajectory); --fit alone also with several models")  # fmt: skip
         if not (paths[0].lower().endswith(".sdf") or _is_mae(paths[0])) or len(paths) > 1:
             what = viewer.from_paths(paths, merge=args.merge, fit=args.merge_fit,
                                      cg_frames=args.cg_frames,
                                      scaffold=args.merge_scaffold or None)  # fmt: skip
+        if several_fit:
+            what.fit_models(several_fit)
     else:
         structure, trajectory = paths[0], paths[1] if len(paths) == 2 else None
         if args.coordinates:
@@ -2006,7 +2010,9 @@ def _parser() -> argparse.ArgumentParser:
                    "across the box, however the frame wrapped them (e.g. 'protein'): "
                    "they move to the periodic images that bring them jointly "
                    "closest")  # fmt: skip
-    q.add_argument("--fit", help="superpose every frame onto the first on these atoms")
+    q.add_argument("--fit", help="superpose every frame onto the first on these atoms; "
+                   "with several models (an MAE of many structures, several files), "
+                   "every model onto the first")  # fmt: skip
     q.add_argument("--no-whole", action="store_true", help="leave molecules split across "
                    "the box")  # fmt: skip
     q.add_argument("--port", type=int, help="default: 8765, or the next free one if it is in "

@@ -424,6 +424,32 @@ def test_several_files_and_a_manifest(tmp_path):
         viewer.from_folder(DATA / "martini")
 
 
+def test_fit_with_several_models_superposes_each_onto_the_first(tmp_path, monkeypatch, capsys):
+    from boonza import cli
+
+    s = boonza.load(DATA / "1LYZ.cif")
+    a, b = tmp_path / "a.pdb", tmp_path / "b.pdb"
+    boonza.save(s, a)
+    turn = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    s.positions = s.positions @ turn.T + [30.0, -12.0, 7.0]
+    boonza.save(s, b)
+    seen = []
+    monkeypatch.setattr(viewer, "serve", lambda what, **_: seen.append(what))
+
+    def apart(v):
+        ca = [v.session(m).system.select("name CA") for m in (0, 1)]
+        return float(np.abs(ca[0].positions - ca[1].positions).max())
+
+    assert cli.main(["view", str(a), str(b), "--no-browser"]) == 0
+    assert apart(seen[-1]) > 10
+    assert cli.main(["view", str(a), str(b), "--fit", "name CA", "--no-browser"]) == 0
+    assert apart(seen[-1]) < 0.01
+    assert cli.main(["view", str(a), str(b), "--fit", "resname XXX", "--no-browser"]) != 0
+    assert "fewer than 3 atoms" in capsys.readouterr().err
+    assert cli.main(["view", str(a), str(b), "--fit", "name CA", "--center", "protein"]) != 0
+    assert "one structure" in capsys.readouterr().err
+
+
 # --- editing, dihedrals and minimization ---------------------------------------------
 
 

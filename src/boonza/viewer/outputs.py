@@ -143,6 +143,19 @@ class Viewer:
                   match="order" if len(a) == len(b) else "sequence")  # fmt: skip
         s.set_glue(s.whole, s.center, s.fit, s.glued)  # drop frames cached before the fit
 
+    def fit_models(self, sel: str) -> None:
+        """Superpose every model onto the first on ``sel`` (``boonza view --fit`` with
+        several models): those open already now, the others as they load."""
+        with self._lock:
+            if len(self.models) < 2:
+                return
+            if len(self.session(0).system.select(sel).ids) < 3:
+                raise ValueError(f"--fit: fewer than 3 atoms of {self.models[0].name} in {sel!r}")
+            loaded = [m._session for m in self.models[1:] if m._session is not None]
+            self.align = sel
+            for s in loaded:
+                self._fit(s, self.session(0))
+
     def listing(self) -> dict:
         from .edit import GROUPS
 
