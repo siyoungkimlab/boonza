@@ -29,6 +29,15 @@ def test_read_smiles_takes_names_and_skips_comments():
     assert read_smiles(text) == [("CCO", "ethanol"), ("c1ccccc1", "benzene"), ("CC", "")]
 
 
+def test_read_smiles_keeps_triple_bonds_tabs_and_quoted_names():
+    text = 'CC#N\tacetonitrile\nCCO "NA1 (IC50=3.8uM)"\nC#C\tethyne #2\n'
+    assert read_smiles(text) == [
+        ("CC#N", "acetonitrile"),
+        ("CCO", "NA1 (IC50=3.8uM)"),
+        ("C#C", "ethyne #2"),
+    ]
+
+
 def test_one_molecule_fills_the_picture(tmp_path):
     out = tmp_path / "one.png"
     d = draw("CCO", out, size=(300, 250))
@@ -149,4 +158,13 @@ def test_the_command_line_reports_what_it_could_not_read(tmp_path, capsys):
     assert main(["draw", SERIES[0], "bad[", "-o", str(out)]) == 0
     printed = capsys.readouterr().out
     assert "1 molecule" in printed and "could not be read" in printed
+    assert out.is_file()
+
+
+def test_the_command_line_reads_a_file_given_without_input(tmp_path, capsys):
+    lib = tmp_path / "series.smi"
+    lib.write_text('CCO\t"ethanol (1 uM)"\nCC#N acetonitrile\n', encoding="utf-8")
+    out = tmp_path / "x.png"
+    assert main(["draw", str(lib), "c1ccccc1", "-o", str(out)]) == 0
+    assert "3 molecules" in capsys.readouterr().out
     assert out.is_file()
