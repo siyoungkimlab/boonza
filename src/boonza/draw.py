@@ -40,17 +40,22 @@ class Drawing:
 def read_smiles(text: str) -> list[tuple[str, str]]:
     """``(smiles, name)`` per non-empty line, as a ``.smi`` file holds them.
 
-    A line is a SMILES and, after whitespace, an optional name; ``#`` starts
-    a comment.  The name is what a grid labels the molecule with, so a file
-    that carries names needs nothing else to make a legible picture.
+    A line is a SMILES and, after a space or a tab, an optional name, which
+    may hold spaces and may be quoted; a line that starts with ``#`` is a
+    comment (a ``#`` further along is a triple bond, or part of the name).
+    The name is what a grid labels the molecule with, so a file that carries
+    names needs nothing else to make a legible picture.
     """
     out = []
     for line in text.splitlines():
-        line = line.split("#", 1)[0].strip()
-        if not line:
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
-        smiles, _, name = line.partition(" ")
-        out.append((smiles.strip(), name.strip()))
+        smiles, *rest = line.split(None, 1)
+        name = rest[0].strip() if rest else ""
+        if len(name) >= 2 and name[0] == name[-1] and name[0] in "\"'":
+            name = name[1:-1].strip()
+        out.append((smiles, name))
     return out
 
 

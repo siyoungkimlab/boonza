@@ -1691,13 +1691,18 @@ def _draw(args) -> int:
 
     from .draw import draw, read_smiles
 
-    smiles, names = list(args.smiles or []), None
-    if args.input:
-        pairs = read_smiles(Path(args.input).read_text(encoding="utf-8"))
+    # a positional that names a file is read as one: `boonza draw series.smi`
+    smiles, names = [], []
+    for item in [*(args.smiles or []), *([args.input] if args.input else [])]:
+        if item != args.input and not Path(item).is_file():
+            smiles.append(item)
+            names.append("")
+            continue
+        pairs = read_smiles(Path(item).read_text(encoding="utf-8"))
         if not pairs:
-            raise ValueError(f"{args.input} holds no SMILES")
+            raise ValueError(f"{item} holds no SMILES")
         smiles += [s for s, _ in pairs]
-        names = [""] * len(args.smiles or []) + [n for _, n in pairs]
+        names += [n for _, n in pairs]
     if not smiles:
         raise ValueError("give SMILES to draw, or --input a file of them")
     d = draw(smiles, args.output, names=names, size=tuple(args.size), columns=args.columns,
@@ -2131,7 +2136,7 @@ def _parser() -> argparse.ArgumentParser:
     q.set_defaults(run=_build)
 
     q = sub.add_parser("draw", help="a picture of molecules from SMILES (PNG or SVG)")
-    q.add_argument("smiles", nargs="*", help="SMILES to draw")
+    q.add_argument("smiles", nargs="*", help="SMILES to draw, or files of them (as --input)")
     q.add_argument("-o", "--output", required=True, help="output file (.png or .svg)")
     q.add_argument("--input", help="file of SMILES, one per line, each with an optional name")
     q.add_argument("--columns", type=int, default=4, help="molecules across (default: 4)")
