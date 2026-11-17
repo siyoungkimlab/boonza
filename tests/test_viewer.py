@@ -2585,6 +2585,9 @@ def test_a_peptide_in_the_next_image_comes_back(tmp_path, served):
     assert gap(viewer.Session(s, traj, whole=True)) > 60
     assert gap(viewer.Session(s, traj, glue="protein")) < 60
     assert gap(viewer.Session(s, traj, center="protein")) < 60
+    # the fit is onto the first frame as it is drawn, not as the run wrote it
+    session = viewer.Session(s, traj, glue="protein", fit="protein and name CA")
+    assert gap(session) < 60 and session.glue.rmsd < 1e-3
     # the page can ask for it too
     session = viewer.Session(s, traj, whole=True)
     _, post = served(session)

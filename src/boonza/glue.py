@@ -5,7 +5,8 @@ A port of msys pfx and viswizard's glue, extended to triclinic cells:
 1. make molecules whole along a spanning tree of the bonds;
 2. glue: the molecules touching each glue selection move to the periodic
    images that bring them jointly closest (optimal shifts, R. Lippert's
-   algorithm, as in msys), and are treated as one unit from then on;
+   algorithm, as in msys, each molecule counting by its number of selected
+   atoms), and are treated as one unit from then on;
 3. wrap every other unit into the box around the ``center`` atoms (or into
    the primary cell when there is no center);
 4. fit: superpose the ``fit`` atoms onto a reference (the first frame by
@@ -67,18 +68,25 @@ def _make_whole(pos, parent, child, box, inv):
             pos[c, d] -= na * box[0, d] + nb * box[1, d] + nc * box[2, d]
 
 
-def optimal_shifts(x: np.ndarray) -> np.ndarray:
-    """Integer shifts that bring 1-d periodic points (unit period) jointly closest."""
+def optimal_shifts(x: np.ndarray, weights: np.ndarray | None = None) -> np.ndarray:
+    """Integer shifts that bring 1-d periodic points (unit period) jointly closest.
+
+    ``weights``: how much each point counts (all the same when None).  With them
+    the heavy points stay together, however many light ones surround them.
+    """
     n = len(x)
     if n < 2:
         return np.zeros(n)
+    w = np.ones(n) if weights is None else np.asarray(weights, dtype=np.float64)
     s = -np.floor(x + 0.5)  # bring each point into [-1/2, 1/2)
     y = x + s
-    tot, tot2 = y.sum(), (y * y).sum()
-    xx = np.sort(y)
-    v = np.empty(n)
-    v[0] = n * tot2 - tot * tot
-    v[1:] = v[0] + np.cumsum((n - 1) - 2 * (tot + np.arange(n - 1) - n * xx[:-1]))
+    order = np.argsort(y, kind="stable")
+    xx, ww = y[order], w[order]
+    # v[k]: the weighted variance (times the total weight squared) with the k
+    # lowest points moved up one period
+    tot = (w * y).sum() + np.concatenate(([0.0], np.cumsum(ww[:-1])))
+    tot2 = (w * y * y).sum() + np.concatenate(([0.0], np.cumsum((ww * (2 * xx + 1))[:-1])))
+    v = w.sum() * tot2 - tot * tot
     return s + (y < xx[np.argmin(v)])
 
 
@@ -143,7 +151,11 @@ class Glue:
             frags = np.unique(frag[ids])
             members = [np.flatnonzero(frag == f) for f in frags]
             centers = [ids[frag[ids] == f] for f in frags]
-            self._groups.append((members, centers))
+            # a molecule counts by its size: a protein's chains among many free
+            # ligands stay together, where equal counts would let the ligands
+            # decide which images the chains go to
+            sizes = np.array([len(c) for c in centers], dtype=np.float64)
+            self._groups.append((members, centers, sizes))
             unit[np.isin(frag, frags)] = frags[0]
         _, self._unit = np.unique(unit, return_inverse=True)
         self._nunits = int(self._unit.max()) + 1 if n else 0
@@ -183,9 +195,11 @@ class Glue:
             inv = np.linalg.inv(box)
             if self._tree is not None:
                 _make_whole(pos, self._tree[0], self._tree[1], box, inv)
-            for members, centers in self._groups:
+            for members, centers, sizes in self._groups:
                 frac = np.array([pos[c].mean(0) for c in centers]) @ inv
-                shifts = np.column_stack([optimal_shifts(frac[:, d]) for d in range(3)]) @ box
+                shifts = np.column_stack([
+                    optimal_shifts(frac[:, d], sizes) for d in range(3)
+                ]) @ box  # fmt: skip
                 for m, shift in zip(members, shifts, strict=True):
                     pos[m] += shift
             if self.wrap and self._nunits:

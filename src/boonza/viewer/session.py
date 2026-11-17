@@ -412,12 +412,13 @@ class Session:
             self.whole, self.center, self.fit = bool(whole), center or None, fit or None
             self.glued = glue or None
             if self.whole or self.center or self.fit or self.glued:
-                # fit onto the first frame, whatever frame is asked for first
-                reference = self._raw(0)[0] if self.fit else None
                 self.glue = Glue(s, glue=self.glued, center=self.center, fit=self.fit,
-                                 reference=reference,
                                  whole="all" if self.whole else None,
                                  wrap=self.center is not None)  # fmt: skip
+                if self.fit:
+                    # fit onto the first frame, whatever frame is asked for first --
+                    # as it is drawn: raw, its molecules may sit in different images
+                    self.glue(*self._raw(0))
             else:
                 self.glue = None
             self._cache.clear()
