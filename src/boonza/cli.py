@@ -8,6 +8,7 @@
     boonza diff a.dms b.dms [--rtol 1e-6] [--no-positions]
     boonza describe system.dms "resname LIG and name C1" [--terms all] [--pairs]
     boonza dssp protein.pdb [--simplified]
+    boonza kinase kinase.pdb [more.mae ...] [--chain A] [--json]   (DFG state and cluster)
     boonza rmsd docked.pdb crystal.pdb [--ligandsel SEL] [--align order|sequence|none]
     boonza rmsd system.pdb crystal.pdb --traj md.xtc     (one RMSD per frame)
     boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]
@@ -242,6 +243,41 @@ def _phipsi(args) -> int:
         )
         print(f"{chains[i] or '_':>5} {res['resid'][i]:>6} {res['name'][i]:>4} {vals}")
     return 0
+
+
+def _kinase(args) -> int:
+    import dataclasses
+    import json
+
+    from .kinase import kinase_states
+
+    rows = []
+    for path in args.files:
+        found = kinase_states(_load(path), chain=args.chain, lys=args.lys, glu=args.glu,
+                              dfg=args.dfg)  # fmt: skip
+        if not found:
+            print(f"{path}: no kinase domain found", file=sys.stderr)
+        rows += [(path, st) for st in found]
+    if args.json:
+        clean = lambda v: None if isinstance(v, float) and np.isnan(v) else v  # noqa: E731
+        out = []
+        for path, st in rows:
+            d = {k: [clean(x) for x in v] if isinstance(v, tuple) else clean(v)
+                 for k, v in dataclasses.asdict(st).items()}  # fmt: skip
+            out.append({"file": str(path), **d, "label": st.label, "active": st.active,
+                        "spine": st.spine, "loop": st.loop})  # fmt: skip
+        print(json.dumps(out, indent=1))
+        return 0 if rows else 1
+    num = lambda v, fmt: "-" if np.isnan(v) else format(v, fmt)  # noqa: E731
+    width = max([len(os.path.basename(str(p))) for p, _ in rows] + [4])
+    print(f"{'file':<{width}} {'chain':>5} {'state':<16} {'dist':>5} {'C-helix':>7} {'loop':>8} "
+          f"{'D1':>5} {'D2':>5} {'Lys':>5} {'Glu':>5} {'DFG':>5}  notes")  # fmt: skip
+    for path, st in rows:
+        print(f"{os.path.basename(str(path)):<{width}} {st.chain or '_':>5} {st.label:<16} "
+              f"{num(st.cluster_distance, '.2f'):>5} {st.chelix or '-':>7} {st.loop or '-':>8} "
+              f"{num(st.d1, '.1f'):>5} {num(st.d2, '.1f'):>5} {st.lys:>5} {st.glu:>5} {st.dfg:>5}  "
+              f"{'; '.join(st.notes)}".rstrip())  # fmt: skip
+    return 0 if rows else 1
 
 
 def _rmsd(args) -> int:
@@ -2097,6 +2133,16 @@ def _parser() -> argparse.ArgumentParser:
     q = sub.add_parser("phipsi", help="backbone phi/psi/omega per residue (degrees)")
     q.add_argument("file")
     q.set_defaults(run=_phipsi)
+
+    q = sub.add_parser("kinase", help="the state of a protein kinase: DFGin/out/inter, "
+                                      "Modi-Dunbrack cluster, C-helix")  # fmt: skip
+    q.add_argument("files", nargs="+", help="structures, one row per kinase domain")
+    q.add_argument("--chain", help="only this chain (default: every chain with a kinase domain)")
+    q.add_argument("--lys", type=int, help="residue number of the β3 Lys, if not found")
+    q.add_argument("--glu", type=int, help="residue number of the αC Glu, if not found")
+    q.add_argument("--dfg", type=int, help="residue number of the DFG Asp, if not found")
+    q.add_argument("--json", action="store_true", help="every measured value, as JSON")
+    q.set_defaults(run=_kinase)
 
     from .symmetry import DEFAULT_FIT, DEFAULT_LIGAND
 

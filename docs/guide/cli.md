@@ -12,6 +12,7 @@ boonza diff a.dms b.dms [--rtol 1e-6] [--no-positions]
 boonza describe system.dms "resname LIG and name C1" [--terms all] [--pairs]
 boonza dssp protein.pdb [--simplified]        # one line of codes per chain
 boonza phipsi protein.pdb                     # phi/psi/omega table
+boonza kinase abl.pdb egfr.mae [--chain A] [--json]   # kinase state: DFGin/out/inter, cluster, C-helix
 boonza rmsd docked.pdb crystal.pdb [--ligandsel SEL] [--mobsel SEL] [--refsel SEL] [--align order|sequence|none]
 boonza rmsd system.pdb crystal.pdb --traj md.xtc [--ligandsel SEL]   # one ligand RMSD per frame
 boonza drmsd system.pdb --traj md.xtc [--reference crystal.pdb] [--cutoff 5]   # pocket-ligand dRMSD
