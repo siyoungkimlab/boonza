@@ -126,3 +126,19 @@ def test_a_bulk_center_is_not_glued():
     assert len(np.unique(s.fragids)) > Glue.CENTER_GLUE_MAX
     fix = Glue(s, center="all")
     assert fix._groups == []
+
+
+def test_optimal_shifts_weights_keep_the_heavy_points_together():
+    """Two chains either side of the boundary, and ligands filling the rest of the
+    box: counted equally the ligands decide the cut, and it falls between the chains."""
+    x = np.concatenate(([0.45, 0.55], np.linspace(0.7, 1.3, 13) % 1))
+    w = np.concatenate(([3000.0, 3000.0], np.full(13, 15.0)))
+    y = x + optimal_shifts(x)
+    assert abs(y[0] - y[1]) > 0.5
+    y = x + optimal_shifts(x, w)
+    assert abs(y[0] - y[1]) < 0.5
+    # equal weights are no weights
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        x = rng.random(9)
+        np.testing.assert_array_equal(optimal_shifts(x), optimal_shifts(x, np.full(9, 2.5)))
