@@ -524,13 +524,13 @@ boonza sites solvated.dms --traj run*.dcd --interval-ns 0.1 -o sites/
 ## Kinase conformational state
 
 ```python
-st = boonza.kinase_state(s)               # one kinase domain; chain="A" to pick one
-st.label                                  # "DFGin-BLAminus", "DFGout-BBAminus", "DFGout-None"
+st = boonza.kinase_state(s)  # one kinase domain; chain="A" to pick one
+st.label  # "DFGin-BLAminus", "DFGout-BBAminus", "DFGout-None"
 st.spatial, st.cluster, st.cluster_distance
-st.d1, st.d2, st.dihedrals, st.chi1       # what the two labels were decided from
-st.chelix, st.cb_distance, st.salt_bridge # "in" or "out", and the Lys-Glu distances
-st.spine, st.loop, st.active              # spine contacts, "extended" or "folded", BLAminus and C-helix in
-boonza.kinase_states(s)                   # every domain of every chain, as a list
+st.d1, st.d2, st.dihedrals, st.chi1  # what the two labels were decided from
+st.chelix, st.cb_distance, st.salt_bridge  # "in" or "out", and the Lys-Glu distances
+st.spine, st.loop, st.active  # spine contacts, "extended" or "folded", BLAminus and C-helix in
+boonza.kinase_states(s)  # every domain of every chain, as a list
 ```
 
 The two labels are those of Modi and Dunbrack (PNAS 2019), assigned as Kincore
