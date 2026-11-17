@@ -397,6 +397,31 @@ Kabsch-Sander backbone H-bonds of one frame: (donor residue, acceptor residue, k
 
 ``box`` and ``breaks`` as in ``dssp``.
 
+### `boonza.kinase_state(system, chain=None, lys=None, glu=None, dfg=None, positions=None) -> 'KinaseState'`
+
+The :class:`KinaseState` of the one kinase domain in ``system``; arguments as
+:func:`kinase_states`.  Raises when there is none, or more than one (name a chain).
+
+### `boonza.kinase_states(system, chain=None, lys=None, glu=None, dfg=None, positions=None) -> 'list'`
+
+The :class:`KinaseState` of every kinase domain in ``system`` (or in ``chain``,
+an index or a name): an empty list when there is none.
+
+``lys``, ``glu`` and ``dfg`` are the residue numbers of the β3 Lys, the αC Glu and
+the DFG Asp, for a kinase whose motifs are not the usual ones or that has another
+residue there (a Lys mutated away, the His of ERBB3 for the Glu); give ``chain``
+with them when the numbers are not unique.  ``positions``: one frame, (natoms, 3), in
+place of the system's own.
+
+### `class boonza.KinaseState(chain: 'str', lys: 'int', glu: 'int', hrd: 'int | None', dfg: 'int', hrd_motif: 'str', xdfg_motif: 'str', d1: 'float' = nan, d2: 'float' = nan, spatial: 'str | None' = None, dihedrals: 'tuple' = (nan, nan, nan, nan, nan, nan), chi1: 'float' = nan, rotamer: 'str | None' = None, cluster: 'str | None' = None, cluster_distance: 'float' = nan, nearest: 'str | None' = None, cb_distance: 'float' = nan, chelix: 'str | None' = None, salt_bridge: 'float' = nan, spine_his_phe: 'float' = nan, spine_phe_c: 'float' = nan, loop_hbond: 'float' = nan, notes: 'list' = <factory>) -> None`
+
+What :func:`kinase_state` found for one kinase domain.
+
+Residue numbers are the file's (``lys``, ``glu``, ``hrd``, the His or Tyr of the
+HRD motif, None when the chain has no such motif, and ``dfg``, its Asp).  Distances
+are in Å, angles in degrees; a value whose atoms are missing is NaN, and ``notes``
+says what was missing or unusual.
+
 ## RDKit
 
 ### `boonza.to_rdkit(system, atoms=None, sanitize: 'bool' = True, implicit_hydrogens: 'bool' = True, conformer: 'bool' = True, stereo: 'bool' = True, residue_info: 'bool' = True)`
@@ -686,9 +711,11 @@ overlap.  Needs two molecules; one molecule is its own core.
 
 ``(smiles, name)`` per non-empty line, as a ``.smi`` file holds them.
 
-A line is a SMILES and, after whitespace, an optional name; ``#`` starts
-a comment.  The name is what a grid labels the molecule with, so a file
-that carries names needs nothing else to make a legible picture.
+A line is a SMILES and, after a space or a tab, an optional name, which
+may hold spaces and may be quoted; a line that starts with ``#`` is a
+comment (a ``#`` further along is a triple bond, or part of the name).
+The name is what a grid labels the molecule with, so a file that carries
+names needs nothing else to make a legible picture.
 
 ## Backmapping
 

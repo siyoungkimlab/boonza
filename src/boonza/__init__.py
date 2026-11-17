@@ -61,6 +61,7 @@ from .interactions import (
     site_interactions,
 )  # noqa: E402
 from .io import DMSError, load, save  # noqa: E402
+from .kinase import KinaseState, kinase_state, kinase_states  # noqa: E402
 from .kinetics import Dwell, Rates, dwells, kinetics  # noqa: E402
 from .martini import Martinized, martinize  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
@@ -234,6 +235,9 @@ __all__ = [
     "bound_frame",
     "Pose",
     "PoseSet",
+    "KinaseState",
+    "kinase_state",
+    "kinase_states",
     "align_sequences",
     "identity_matrix",
     "sequence",

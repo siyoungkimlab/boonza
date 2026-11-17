@@ -227,7 +227,7 @@ Implemented:
   order (as msys dms-diff-ff), so term order and parameter sharing do not
   matter.
 - Command line: `boonza info | convert | select | validate | knots | diff |
-  describe | dssp | phipsi | rmsd | drmsd | triage | modes | gbsa` (see
+  describe | dssp | phipsi | kinase | rmsd | drmsd | triage | modes | gbsa` (see
   `boonza --help`).
 
 Planned: alchemical DMS.

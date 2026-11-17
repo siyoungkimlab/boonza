@@ -521,6 +521,81 @@ From the command line, add `--interval-ns` to `boonza sites`:
 boonza sites solvated.dms --traj run*.dcd --interval-ns 0.1 -o sites/
 ```
 
+## Kinase conformational state
+
+```python
+st = boonza.kinase_state(s)  # one kinase domain; chain="A" to pick one
+st.label  # "DFGin-BLAminus", "DFGout-BBAminus", "DFGout-None"
+st.spatial, st.cluster, st.cluster_distance
+st.d1, st.d2, st.dihedrals, st.chi1  # what the two labels were decided from
+st.chelix, st.cb_distance, st.salt_bridge  # "in" or "out", and the Lys-Glu distances
+st.spine, st.loop, st.active  # spine contacts, "extended" or "folded", BLAminus and C-helix in
+boonza.kinase_states(s)  # every domain of every chain, as a list
+```
+
+The two labels are those of Modi and Dunbrack (PNAS 2019), assigned as Kincore
+assigns them (Nucleic Acids Res 2022).
+
+**Where the DFG-Phe ring is.** D1 is the distance from its Cζ to the Cα of the
+fourth residue after the conserved αC Glu, D2 to the Cα of the conserved β3 Lys.
+
+| Spatial group | D1 | D2 | Phe is |
+| --- | --- | --- | --- |
+| DFGin | ≤ 11 Å | ≥ 11 Å | under the C-helix |
+| DFGout | > 11 Å | ≤ 14 Å | in the ATP site |
+| DFGinter | ≤ 11 Å | < 11 Å | in between, pointing up at the β sheet |
+
+**How the backbone puts it there.** φ and ψ of the residue before the DFG (X), of
+the Asp and of the Phe are compared with the centroids of the published clusters
+(`boonza.kinase.CENTROIDS`, Table S2 of the 2019 paper) that belong to the
+structure's spatial group and have its Phe χ1 rotamer. The distance is the mean
+over the six angles of 2(1 − cos Δθ), and the nearest centroid closer than 0.45
+(about 40° an angle) names the cluster. Farther than that, the cluster is `None`
+and the structure keeps its spatial group.
+
+| Spatial group | Clusters |
+| --- | --- |
+| DFGin | BLAminus (the active one), BLAplus, ABAminus, BLBminus, BLBplus, BLBtrans |
+| DFGout | BBAminus (what type II inhibitors bind) |
+| DFGinter | BABtrans |
+
+The letters are the Ramachandran regions of X, Asp and Phe (A alpha, B beta, L
+left) and the word is the rotamer. The DFG Gly is not part of the definition, but
+its nitrogen closes the Phe ψ: in a structure whose loop after the DFG was
+modelled, the third letter rests on a modelled atom.
+
+The rest is as the 2019 paper defines it: the C-helix is in when the Cβ atoms of
+the αC Glu and the β3 Lys are within 10 Å; a regulatory-spine contact is two side
+chains within 4.5 Å (HRD-His to DFG-Phe, and DFG-Phe to the residue four after the
+αC Glu; the β4 residue is not looked for); the activation loop is extended when the
+N of its sixth residue is within 3.5 Å of the O of the residue before the HRD.
+
+The conserved residues are found without a sequence alignment. The sequence
+gives the candidates: a catalytic loop H/Y-x-D-x4-N, the D-F/L/M/W/Y-G that
+follows its Asp by 14 to 40 residues, a Lys in A/C-x-K 95 to 260 residues before
+that, and the Glu 8 to 30 residues after the Lys (spacings in residue numbers, so
+a gap in the structure does not shorten them). The structure then chooses, from
+the C-terminal lobe, which does not move with the C-helix: the Lys whose Cα is
+nearest the DFG-Asp Cα, and of its Glu the one whose Cα is nearest the HRD-His
+Cα. No salt bridge is asked for, since an inactive kinase has none. A Lys more
+than 17 Å from the DFG Asp is not β3 (it is 9 to 14 Å away in every kinase
+checked), and the domain is then left out, not guessed.
+
+For a kinase this misses, or one with another residue there (a kinase-dead
+Lys-to-Met, the His that ERBB3 has for the Glu), give the residue numbers:
+`kinase_state(s, lys=271, glu=286, dfg=381)`.
+
+`benchmarks/kinase_table_s7.py` runs this on the 130 chains of Table S7 of the
+2019 paper (26 approved inhibitors, 42 kinases): 126 get the paper's spatial
+group and cluster with nothing given, 128 with the residues of the two kinases
+above given. The other two are both chains of 3UE4, which the paper's clustering
+put in DFGinter and the thresholds here put in DFGout (D1 11.2 and 11.5 Å).
+
+```
+boonza kinase 2GQG.pdb 2HYY.pdb          # one row per kinase domain
+boonza kinase prepared/*.mae --json      # every measured value
+```
+
 ## Rings
 
 ```python
