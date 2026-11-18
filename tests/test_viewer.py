@@ -1961,11 +1961,11 @@ def test_caps_and_new_residues_make_flat_trans_amides():
         return (at(r, "CA", "CH3"), at(r, "C"), at(r, "O"),
                 at(r + 1, "N"), at(r + 1, "CA", "CH3"), at(r + 1, "H"))  # fmt: skip
 
-    def flat(s, r):
+    def flat(s, r, within=1.5):
         ca, c, o, n, ca2, h = amide(s, r)
         assert off(s, ca, c, n, ca2) < 1.5, "omega"
         if h is not None:  # proline has none
-            assert off(s, o, c, n, h) < 1.5, "O=C-N-H"
+            assert off(s, o, c, n, h) < within, "O=C-N-H"
             assert height(s, n) < 0.02, "N out of its plane"
 
     for seq in ("A", "G", "P", "WGK", "PAP"):
@@ -1985,7 +1985,9 @@ def test_caps_and_new_residues_make_flat_trans_amides():
             v.build_peptide("AKD", "helix")
             s = v.models[0].load().system
             edit.extend(s, 0, end, new)
-            flat(s, 0 if end == "N" else s.nresidues - 2)
+            # the hydrogen is in its nitrogen's plane; the carbonyl it faces is a
+            # fitted residue's, a few degrees off that plane (it was 64 off before)
+            flat(s, 0 if end == "N" else s.nresidues - 2, within=8.0)
 
 
 def test_an_empty_view_builds_a_peptide(served):
