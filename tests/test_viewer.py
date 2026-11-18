@@ -1927,6 +1927,13 @@ def test_a_model_swatch_apart_from_its_protein():
     assert "swatch" not in viewer.Model("apo", lambda: viewer.Session(s)).info()
 
 
+def _bonded(topo, a: int) -> set[int]:
+    """The atoms bonded to ``a`` in a topology the page was sent."""
+    b = topo["bonds"]
+    pairs = zip(b["i"], b["j"], strict=True) if isinstance(b, dict) else [x[:2] for x in b]
+    return {j if i == a else i for i, j in pairs if a in (i, j)}
+
+
 def test_an_empty_view_builds_a_peptide(served):
     """The Protein Builder had nothing to start from: Mutate, Extend and Caps all need a
     residue.  A sequence is one now, in the backbone asked for, protonated as a file's
@@ -1963,6 +1970,20 @@ def test_an_empty_view_builds_a_peptide(served):
     assert status == 200
     assert json.loads(get("api/topology?m=0")[2])["residues"]["name"] == ["ALA", "LYS", "ASP",
                                                                            "GLY"]  # fmt: skip
+    # one letter is a peptide too, and both ends at once: the N-terminal template it is
+    # protonated by has no OXT, and the bond from C to it was dropped as one too many
+    for letter, name in (("A", "ALA"), ("G", "GLY"), ("P", "PRO")):
+        k = post("api/build", {"sequence": letter})[1]["added"][0]
+        one = json.loads(get(f"api/topology?m={k}")[2])
+        at = {n: i for i, n in enumerate(one["atoms"]["name"])}
+        assert one["residues"]["name"] == [name]
+        assert _bonded(one, at["C"]) == {at["CA"], at["O"], at["OXT"]}
+        assert one["atoms"]["charge"][at["OXT"]] == -1
+    # and it grows from there
+    status, out = post("api/edit", {"m": k, "op": "extend", "atoms": [0],
+                                    "value": {"end": "C", "residue": "ALA"}})  # fmt: skip
+    assert status == 200, out
+    assert json.loads(get(f"api/topology?m={k}")[2])["residues"]["name"] == ["PRO", "ALA"]
     # what cannot be built says why
     for body, why in (
         ({"sequence": "AXB"}, "not one of the twenty amino acids: B X"),

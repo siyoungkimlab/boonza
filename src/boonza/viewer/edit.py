@@ -465,7 +465,7 @@ def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
         rname = str(s.residues["name"][r]).upper()
         heavy = {names[a]: int(a) for a in ids if anum[a] > 1}
         if rname in WATER_NAMES and list(heavy) == ["O"]:
-            plan.append((r, water, False, False, "HOH"))
+            plan.append((r, water, False, False, "HOH", False))
             continue
         base = TEMPLATE_NAMES.get(rname, rname)
         if base not in known:
@@ -483,24 +483,29 @@ def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
             nterm = not any(atom_res[b] != r and anum[b] == 6 for b, _ in nb.get(heavy["N"], []))
             cterm = not any(atom_res[b] != r and anum[b] == 7 for b, _ in nb.get(heavy["C"], []))
         name = ("N" if nterm else "C" if cterm else "") + base
+        # a residue that is both ends (a free amino acid, a peptide of one) takes the
+        # N-terminal template, which has no OXT: ``lone`` keeps the one it has
         plan.append(
-            (r, ff.template(name if name in known else base), nterm, cterm and not nterm, base)
-        )
+            (r, ff.template(name if name in known else base), nterm, cterm and not nterm, base,
+             nterm and cterm)
+        )  # fmt: skip
 
     # the old hydrogens go; the residues' new ones follow
-    done = {r for r, *_ in plan}
+    done = {p[0] for p in plan}
     old_h = np.flatnonzero((anum == 1) & np.isin(atom_res, list(done)))
     removed = len(old_h)
     if removed:
         s.delete_atoms(old_h)
     added, incomplete = 0, []
-    for r, tp, _, cterm, _ in plan:
+    for r, tp, _, cterm, _, lone in plan:
         ids = s.residue_atoms(r)
         names = [str(x) for x in s.atoms["name"][ids]]
         here = {n: int(a) for n, a in zip(names, ids, strict=True)}
         real = [k for k, z in enumerate(tp.anum) if z > 1]
         # bonds within the residue: the template's
         want = {frozenset((tp.names[i], tp.names[j])) for i, j in tp.bonds}
+        if lone:  # its carboxylate: the bond was dropped as one the template lacks
+            want.add(frozenset(("C", "OXT")))
         drop = []
         for a in ids:
             for b, _ in neighbors(s, int(a)):
@@ -559,7 +564,8 @@ def protonate(s, forcefield: str = "aa.amber.ff19SB") -> dict:
             added += len(hs)
     # formal charges: each template's state
     charges = np.asarray(s.atoms["formal_charge"]).copy()
-    for r, _, nterm, cterm, base in plan:
+    for r, _, nterm, cterm, base, lone in plan:
+        cterm = cterm or lone
         here = {str(s.atoms["name"][a]): int(a) for a in s.residue_atoms(r)}
         charges[list(here.values())] = 0
         for n, q in TEMPLATE_CHARGES.get(base, {}).items():
