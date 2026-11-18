@@ -613,10 +613,12 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
                 conformers: int = 1) -> System:  # fmt: skip
     """A 3D molecule from a SMILES string (through RDKit).
 
-    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
-    reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
-    (UFF when MMFF lacks parameters); the lowest-energy one is kept.  Bond
-    orders and formal charges come from the SMILES.  The molecule is one
+    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG
+    from random coordinates, reproducible with ``seed``) and, with
+    ``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
+    lowest-energy one is kept.  Bond
+    orders, formal charges and stereochemistry come from the SMILES; a
+    stereocentre it leaves open comes out either way.  The molecule is one
     residue named ``name`` with atoms named C1, C2, ..., H1, ...
     """
     from rdkit.Chem import AllChem
@@ -630,6 +632,10 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
     mol = Chem.AddHs(mol)
     params = AllChem.ETKDGv3()
     params.randomSeed = int(seed)
+    # from random coordinates: ETKDG's own start (from a distance matrix) fails from
+    # about 250 atoms on, and this one embeds a peptide of 500, the stereocentres
+    # still the SMILES's
+    params.useRandomCoords = True
     ids = list(AllChem.EmbedMultipleConfs(mol, numConfs=max(1, int(conformers)), params=params))
     if not ids:
         raise ValueError(f"RDKit could not embed {smiles!r} in 3D")
