@@ -767,3 +767,41 @@ def test_a_peptide_sized_smiles_embeds_with_its_chirality():
     assert [u["t"].name for u in units] == ["ALA", "ALA", "LYS", "ASP"] * 4
     handed = [b.P._is_d(u["bb"]["N"], u["bb"]["CA"], u["bb"]["C"]) for u in units]
     assert handed == [False, True, False, True] * 4  # L, D, L, D as written
+
+
+@needs_amber
+def test_a_pseudopeptide_pair_makes_a_hybrid_exact_at_its_ends():
+    """boonza fep between two ligands that carry the protein's CMAP on their own
+    backbones: Ala -> fluoro-Phe at one position.  Each end of the hybrid is that
+    ligand as parameterized alone, plus the other's dummies."""
+    import test_fep_hybrid as H
+
+    from boonza.chem import to_rdkit
+    from boonza.fep import hybrid, mapping
+
+    smiles = ("CC(=O)N[C@@H](C)C(=O)N[C@@H](C)C(=O)NCc1ccccc1",
+              "CC(=O)N[C@@H](C)C(=O)N[C@@H](Cc1ccc(F)cc1)C(=O)NCc1ccccc1")  # fmt: skip
+    ligs = [boonza.from_smiles(s, name=n) for s, n in zip(smiles, ("ALG", "BLG"), strict=True)]
+    both = ligs[0].copy()
+    far = ligs[1].copy()
+    far.positions = far.positions + [40.0, 0.0, 0.0]
+    both.append(far)
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    patch = gaff.gaff2_patch(both, [ff], pseudopeptide="protein", charge_geometry="reference",
+                             amberhome=AMBERHOME)  # fmt: skip
+    ff = viparr.merge_forcefields(ff, patch)
+    made = [viparr.parameterize(s, [ff]) for s in ligs]
+    assert [len(p.table("torsiontorsion_cmap")) for p in made] == [2, 2]
+    sa, sb = (boonza.to_openmm(p, nonbonded_method="NoCutoff", constraints=False,
+                               dispersion_correction=False)[1] for p in made)  # fmt: skip
+    ra, rb = (to_rdkit(s, implicit_hydrogens=False) for s in ligs)
+    core = mapping.map_graph(ra, rb)
+    h = hybrid.build(sa, sb, np.asarray(ligs[0].positions) / 10.0,
+                     mapping.fit_on_core(ra, rb, core) / 10.0, core, {})  # fmt: skip
+    unique_new = [k for k in range(made[1].natoms) if h.new_to_hybrid[k] >= made[0].natoms]
+    assert len(unique_new) == 11 and len(h.unique_old) == 1  # the fluorophenyl for one H
+    x_old, x_new = h.positions[h.old_to_hybrid], h.positions[h.new_to_hybrid]
+    e_old = H._energy(sa, x_old)[1] + H._valence(sb, unique_new, x_new)
+    e_new = H._energy(sb, x_new)[1] + H._valence(sa, h.unique_old, x_old)
+    assert H._hybrid_energy(h, 0.0) == pytest.approx(e_old, rel=1e-6, abs=1e-3)
+    assert H._hybrid_energy(h, 1.0) == pytest.approx(e_new, rel=1e-6, abs=1e-3)

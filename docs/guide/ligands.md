@@ -182,7 +182,10 @@ settings file), so ligands that happen to contain an amino acid keep the
 parameters they had. A swim's kept ligand templates are made again when the
 setting changes. In a relative free-energy calculation every ligand of the
 series is typed the same way, and atoms that keep the protein's types in two
-ligands have identical parameters in both.
+ligands have identical parameters in both. The hybrid carries their CMAP
+terms as it carries torsions: one among mapped atoms moves from the first
+ligand's map to the second's (and does not move when the two are the same);
+one that touches an atom only one ligand has stays on throughout.
 
 Residues of a chain are not affected: a non-standard residue in a protein or
 in a peptide given residue by residue is handled as described above.
