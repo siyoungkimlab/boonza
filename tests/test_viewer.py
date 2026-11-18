@@ -1927,6 +1927,52 @@ def test_a_model_swatch_apart_from_its_protein():
     assert "swatch" not in viewer.Model("apo", lambda: viewer.Session(s)).info()
 
 
+def test_an_empty_view_builds_a_peptide(served):
+    """The Protein Builder had nothing to start from: Mutate, Extend and Caps all need a
+    residue.  A sequence is one now, in the backbone asked for, protonated as a file's
+    structure is, so the force field matches it and the builder's edits apply to it."""
+    from boonza import pbc
+    from boonza.build import CONFORMATIONS
+
+    get, post = served(viewer.Viewer([]))
+    status, out = post("api/build", {"sequence": "a kd", "conformation": "extended",
+                                     "centre": [5, 6, 7]})  # fmt: skip
+    assert status == 200 and out["added"] == [0] and out["models"][0]["group"] == "built"
+    assert out["models"][0]["name"] == "peptide AKD"
+    topo = json.loads(get("api/topology?m=0")[2])
+    assert topo["residues"]["name"] == ["ALA", "LYS", "ASP"]
+    assert topo["reps"] == [{"sel": "all", "style": "ballstick", "color": "element"}]
+    pos = np.frombuffer(get("api/frame?m=0&i=0")[2], "<f4").reshape(-1, 3)
+    assert np.allclose(pos.mean(0), [5, 6, 7], atol=1e-3)
+    names = topo["atoms"]["name"]
+    assert {"H1", "H2", "H3", "OXT", "HZ3"} <= set(names)  # NH3+, COO-, Lys charged
+    # the backbone asked for: phi and psi of the middle residue
+    by = {(r, n): k for k, (r, n) in enumerate(zip(topo["atoms"]["residue"], names, strict=True))}
+
+    def off(want, *keys):  # degrees between a dihedral and what it should be
+        got = np.degrees(pbc.dihedrals(*(pos[by[k]].astype(float)[None] for k in keys))[0])
+        return abs((got - want + 180.0) % 360.0 - 180.0)
+
+    phi, psi = CONFORMATIONS["extended"]
+    assert off(phi, (0, "C"), (1, "N"), (1, "CA"), (1, "C")) < 15
+    assert off(psi, (1, "N"), (1, "CA"), (1, "C"), (2, "N")) < 15
+    # and the builder goes on from it: one more residue at the C terminus
+    last = [k for k, r in enumerate(topo["atoms"]["residue"]) if r == 2]
+    status, out = post("api/edit", {"m": 0, "op": "extend", "atoms": last[:1],
+                                    "value": {"end": "C", "residue": "GLY"}})  # fmt: skip
+    assert status == 200
+    assert json.loads(get("api/topology?m=0")[2])["residues"]["name"] == ["ALA", "LYS", "ASP",
+                                                                           "GLY"]  # fmt: skip
+    # what cannot be built says why
+    for body, why in (
+        ({"sequence": "AXB"}, "not one of the twenty amino acids: B X"),
+        ({"sequence": "  "}, "give a sequence"),
+        ({"sequence": "AK", "conformation": "coil"}, "conformation must be"),
+    ):
+        status, out = post("api/build", body)
+        assert status == 400 and why in out["error"], out
+
+
 def test_an_empty_view_builds_molecules(served):
     get, post = served(viewer.Viewer([]))
     assert json.loads(get("api/models")[2])["models"] == []

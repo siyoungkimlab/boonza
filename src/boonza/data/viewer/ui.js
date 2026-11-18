@@ -3201,11 +3201,23 @@ export function setupUI(app) {
     return out.length ? `Selected: ${out.slice(0, 8).join(", ")}${out.length > 8 ? "…" : ""}`
       : "Select an atom of each residue to mutate (Ctrl-click takes the residue).";
   }
-  let proteinSelected = null, extendWith = "ALA";
+  let proteinSelected = null, extendWith = "ALA", newSequence = "", newConformation = "helix";
   function refreshProteinBuilder() {
     if (proteinSelected?.isConnected) proteinSelected.textContent = selectedResidues();
   }
   function proteinBuilder(body) {
+    body.append(el("h3", {}, "New Peptide"));
+    const seq = el("input", { placeholder: "sequence, e.g. ACDEFK", spellcheck: false, value: newSequence });
+    seq.oninput = () => { newSequence = seq.value; };
+    const conf = el("select", { title: "the backbone it is built in" },
+      ...["helix", "sheet", "extended", "polyproline"].map(c => el("option", { value: c, selected: c === newConformation }, c)));
+    conf.onchange = () => { newConformation = conf.value; };
+    const build = () => newPeptide(seq.value, conf.value);
+    seq.onkeydown = e => { if (e.key === "Enter") build(); };
+    body.append(row(seq), row(conf, button("Build", build, "blue")));
+    body.append(el("p", { className: "help" }, "A peptide of its own, as a new model, from one-letter codes: one "
+      + "letter is enough to start from, and Mutate, Extend and Caps below take it from there. Termini charged "
+      + "(NH3+, COO-), Lys, Arg, Asp and Glu charged as at pH 7, His as HIE."));
     body.append(el("h3", {}, "Mutate"));
     proteinSelected = el("p", { className: "help" }, selectedResidues());
     body.append(proteinSelected);
@@ -3254,6 +3266,17 @@ export function setupUI(app) {
     body.append(row(button("Both ends", () => capChains("both"))));
     body.append(el("p", { className: "help" }, "On the chains of the selected atoms, or every chain if none are "
       + "selected: a trans peptide bond, Amber's names (ACE: C O CH3; NME: N H CH3)."));
+  }
+  async function newPeptide(sequence, conformation) {
+    sequence = sequence.replace(/\s+/g, "").toUpperCase();
+    if (!sequence) { app.message("type a sequence in one-letter codes, e.g. ACDEFK", true); return; }
+    try {
+      const out = await app.busy(`building ${sequence.length > 12 ? `${sequence.length} residues` : sequence}`,
+        () => app.post("api/build", { sequence, conformation, centre: app.camera.center.slice() }));
+      await addModels(out, true);
+      setHydrogens("all");
+      app.message(`built ${sequence.length > 12 ? `a peptide of ${sequence.length} residues` : sequence} (${conformation}): select a residue to mutate it or extend from it`);
+    } catch (e) { app.message(e.message, true); }
   }
   async function mutate(aa) {
     const t = editTarget();
