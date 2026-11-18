@@ -77,7 +77,7 @@ jobs:
         with:
           environment-name: amber
           create-args: >-
-            python=3.12 "numpy>=2.0,<2.3" ambertools openmmforcefields openff-forcefields
+            python=3.12 numpy=2.2 ambertools openmmforcefields openff-forcefields
             openff-nagl openff-nagl-models
           init-shell: bash
           cache-environment: true
