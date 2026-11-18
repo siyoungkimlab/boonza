@@ -404,8 +404,11 @@ def _gaff2_job(job) -> str:
     d, tag, spec, opts = job
     d = Path(d)
     patch = gaff.gaff2_patch(load(d / "ligand.dms"), _load_forcefields(spec),
-                             workdir=d / "gaff2", tag=tag, **opts)  # fmt: skip
+                             workdir=d / "gaff2", tag=tag, draw=d, **opts)  # fmt: skip
     viparr.write_forcefield(patch, d / "patch")
+    # what matched the protein force field, for the swim's log (a separate process)
+    (d / "pseudopeptide.txt").write_text(
+        "".join(line + "\n" for line in gaff.describe_units(patch)), encoding="utf-8")  # fmt: skip
     return str(d / "patch")
 
 
@@ -414,6 +417,9 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
     made once and kept in ``root/<code>/``."""
     host = forcefields[gaff.host_index(forcefields)]
     geometry = getattr(args, "charge_geometry", None) or "optimized"
+    pseudo = getattr(args, "pseudopeptide", None) or "off"
+    # what a kept patch was made with: the geometry, and the pseudopeptide mode when on
+    how = geometry if pseudo == "off" else f"{geometry} pseudopeptide={pseudo}"
     out: list[Path | None] = [None] * len(ligands)
     todo = []
     for k, lig in enumerate(ligands):
@@ -424,7 +430,7 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
         # a patch kept from a swim whose charges were computed elsewhere is made again
         made = d / "charge_geometry"
         kept = made.read_text(encoding="utf-8").strip() if made.is_file() else "optimized"
-        if (patch / "templates").is_file() and (lig.source is not None or kept == geometry):
+        if (patch / "templates").is_file() and (lig.source is not None or kept == how):
             out[k] = patch
         elif (d / "standard").is_file():
             continue
@@ -443,7 +449,8 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
             f"{len(todo)} ligands, {jobs} at a time...")  # fmt: skip
         spec = [list(e) for e in args.forcefields]
         opts = dict(charges=args.ligand_charges, parents=args.parents,
-                    protein_extent=args.protein_extent, charge_geometry=geometry)  # fmt: skip
+                    protein_extent=args.protein_extent, charge_geometry=geometry,
+                    pseudopeptide=pseudo)  # fmt: skip
         work = [(str(root / ligands[k].code), ligands[k].code, spec, opts) for k in todo]
         if jobs > 1:
             with ProcessPoolExecutor(max_workers=jobs) as pool:
@@ -452,9 +459,10 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
             done = [_gaff2_job(w) for w in work]
         for k, d in zip(todo, done, strict=True):
             out[k] = Path(d)
-            (root / ligands[k].code / "charge_geometry").write_text(
-                geometry + "\n", encoding="utf-8"
-            )
+            (root / ligands[k].code / "charge_geometry").write_text(how + "\n", encoding="utf-8")
+            notes = Path(d).parent / "pseudopeptide.txt"
+            for line in notes.read_text(encoding="utf-8").splitlines() if notes.is_file() else ():
+                log(f"  {ligands[k].code}: {line}")
     return out
 
 

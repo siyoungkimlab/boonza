@@ -1895,8 +1895,11 @@ def _parameterize(args) -> int:
             if not res or not parent:
                 raise SystemExit(f"--parent {item}: give RESNAME=PARENT, e.g. MSE=MET")
             parents[res] = parent
+        if args.pdf and args.pseudopeptide == "off":
+            raise SystemExit("--pdf draws what --pseudopeptide matched: give that too")
         patch = gaff.gaff2_patch(system, ffs, charges=charges, parents=parents,
-                                 protein_extent=args.protein_extent, draw=args.draw)  # fmt: skip
+                                 protein_extent=args.protein_extent, draw=args.draw,
+                                 pseudopeptide=args.pseudopeptide, pdf=args.pdf)  # fmt: skip
         if args.save_patch:
             viparr.write_forcefield(patch, args.save_patch)
         names = ", ".join(t.name for t in patch.templates) or "none needed"
@@ -1905,13 +1908,19 @@ def _parameterize(args) -> int:
             print(f"  {p['residue']} ({p['chain']}): parent {p['parent']} ({p['source']}); "
                   f"{p['protein_heavy_atoms']} of {p['heavy_atoms']} heavy atoms keep "
                   "protein types")  # fmt: skip
+        for line in gaff.describe_units(patch):
+            print(f"  {line}")
+        if args.pdf and not any(str(d).endswith(".pdf") for d in patch.drawings):
+            print(f"  no {args.pdf}: no ligand residue has an amino acid in it")
         if ffs:  # onto the protein force field, wherever it is listed
             host = gaff.host_index(ffs)
             ffs[host] = viparr.merge_forcefields(ffs[host], patch)
         else:
             ffs = [patch]
-    elif args.charge or args.parent or args.save_patch or args.draw:
-        raise SystemExit("--charge, --parent, --save-patch and --draw go with --gaff2")
+    elif (args.charge or args.parent or args.save_patch or args.draw or args.pdf
+          or args.pseudopeptide != "off"):  # fmt: skip
+        raise SystemExit("--charge, --parent, --save-patch, --draw, --pseudopeptide and --pdf "
+                         "go with --gaff2")  # fmt: skip
     s = viparr.parameterize(system, ffs, rename_atoms=args.rename_atoms,
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
@@ -2385,6 +2394,23 @@ def _parser() -> argparse.ArgumentParser:
         "(matched) or on the backbone and CB only (cb)",
     )
     q.add_argument("--draw", metavar="DIR", help="2D drawings of covalent adducts (PNG)")
+    q.add_argument(
+        "--pseudopeptide",
+        nargs="?",
+        const="protein",
+        default="off",
+        choices=("off", "protein", "types"),
+        help="a ligand that is part peptide (--gaff2): the amino acids inside it take the "
+        "protein force field (types, bonded terms, CMAP), the rest GAFF2.  protein (the "
+        "bare flag): the protein's charges too, the remainder spread over the GAFF2 "
+        "atoms; types: AM1-BCC charges on every atom",
+    )
+    q.add_argument(
+        "--pdf",
+        metavar="FILE",
+        help="with --pseudopeptide: the ligand drawn in 2D on a transparent page, the "
+        "atoms with protein parameters on yellow (a second ligand goes to FILE-2.pdf)",
+    )
     q.set_defaults(run=_parameterize)  # fmt: skip
 
     q = sub.add_parser("drmsd", help="pocket-ligand distance RMSD, symmetry-corrected")

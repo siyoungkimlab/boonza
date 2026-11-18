@@ -238,3 +238,139 @@ def draw(smiles, path, names=None, size=SIZE, columns: int = COLUMNS, rows: int 
         written.append(out)
     smarts = Chem.MolToSmarts(core) if core is not None else None
     return Drawing(written, bad, smarts, aligned, len(mols))
+
+
+# ---- PDF ---------------------------------------------------------------------------
+
+
+def _rgb(text: str) -> tuple[float, float, float] | None:
+    text = text.strip()
+    if not text.startswith("#") or len(text) != 7:
+        return None  # "none", or a paint this does not know: not drawn
+    return tuple(int(text[k : k + 2], 16) / 255 for k in (1, 3, 5))
+
+
+def _path_ops(d: str) -> list[str]:
+    """PDF path operators for an SVG path of absolute M, L, Q, C and Z."""
+    import re
+
+    out, x, y = [], 0.0, 0.0
+    for cmd, rest in re.findall(r"([MLQCZ])([^MLQCZ]*)", d):
+        v = [float(n) for n in re.findall(r"-?\d+\.?\d*(?:[eE][-+]?\d+)?", rest)]
+        if cmd == "Z":
+            out.append("h")
+        elif cmd in "ML":
+            for k in range(0, len(v) - 1, 2):
+                x, y = v[k], v[k + 1]
+                out.append(f"{x:.2f} {y:.2f} {'m' if cmd == 'M' and k == 0 else 'l'}")
+        elif cmd == "Q":  # a quadratic curve as the cubic PDF has
+            for k in range(0, len(v) - 3, 4):
+                qx, qy, ex, ey = v[k : k + 4]
+                c = (x + 2 * (qx - x) / 3, y + 2 * (qy - y) / 3,
+                     ex + 2 * (qx - ex) / 3, ey + 2 * (qy - ey) / 3, ex, ey)  # fmt: skip
+                out.append(" ".join(f"{n:.2f}" for n in c) + " c")
+                x, y = ex, ey
+        else:
+            for k in range(0, len(v) - 5, 6):
+                out.append(" ".join(f"{n:.2f}" for n in v[k : k + 6]) + " c")
+                x, y = v[k + 4], v[k + 5]
+    return out
+
+
+def svg_to_pdf(svg: str) -> bytes:
+    """One of RDKit's SVG drawings as a one-page vector PDF, the page as large as the
+    picture.  Nothing is painted that the SVG does not paint, so a drawing made
+    without a background (``clearBackground = False``) has a transparent page.
+    It reads what RDKit writes -- paths, ellipses, rectangles and plain text -- and
+    is not a general SVG converter."""
+    import xml.etree.ElementTree as ET
+    import zlib
+
+    root = ET.fromstring(svg.encode("utf-8") if isinstance(svg, str) else svg)
+    box = [float(n) for n in (root.get("viewBox") or "0 0 300 300").split()]
+    width, height = box[2], box[3]
+    ops = [f"1 0 0 -1 {-box[0]:.2f} {height + box[1]:.2f} cm"]  # SVG's y runs down
+    text = False
+
+    def paint(el, body: list[str]) -> None:
+        style = dict(item.split(":", 1) for item in (el.get("style") or "").split(";")
+                     if ":" in item)  # fmt: skip
+        fill = _rgb(el.get("fill") or style.get("fill", "#000000" if el.tag.endswith("text")
+                                                else "none"))  # fmt: skip
+        stroke = _rgb(style.get("stroke", el.get("stroke") or "none"))
+        line = float((style.get("stroke-width") or el.get("stroke-width") or "1").rstrip("px"))
+        if line <= 0:
+            stroke = None
+        if fill is None and stroke is None:
+            return
+        ops.append("q")
+        if fill is not None:
+            ops.append("{:.3f} {:.3f} {:.3f} rg".format(*fill))
+        if stroke is not None:
+            ops.append("{:.3f} {:.3f} {:.3f} RG {:.2f} w".format(*stroke, line))
+            ops.append("1 J 1 j" if style.get("stroke-linecap") == "round" else "0 J 0 j")
+        ops.extend(body)
+        even = "*" if style.get("fill-rule") == "evenodd" else ""
+        ops.append(f"B{even}" if fill and stroke else f"f{even}" if fill else "S")
+        ops.append("Q")
+
+    for el in root.iter():
+        tag = el.tag.rsplit("}", 1)[-1]
+        if tag == "path" and el.get("d"):
+            paint(el, _path_ops(el.get("d")))
+        elif tag == "rect":
+            x, y, w, h = (float(el.get(k) or 0) for k in ("x", "y", "width", "height"))
+            paint(el, [f"{x:.2f} {y:.2f} {w:.2f} {h:.2f} re"])
+        elif tag == "ellipse":
+            cx, cy, rx, ry = (float(el.get(k) or 0) for k in ("cx", "cy", "rx", "ry"))
+            k = 0.5523  # four cubic arcs
+            pts = [(cx + rx, cy)]
+            for sx, sy in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
+                if sx * sy > 0:
+                    pts += [(cx + sx * rx, cy + sy * k * ry), (cx + sx * k * rx, cy + sy * ry),
+                            (cx, cy + sy * ry)]  # fmt: skip
+                else:
+                    pts += [(cx + sx * k * rx, cy + sy * ry), (cx + sx * rx, cy + sy * k * ry),
+                            (cx + sx * rx, cy)]  # fmt: skip
+            body = ["{:.2f} {:.2f} m".format(*pts[0])]
+            for n in range(1, 13, 3):
+                body.append(" ".join(f"{a:.2f} {b:.2f}" for a, b in pts[n : n + 3]) + " c")
+            paint(el, [*body, "h"])
+        elif tag == "text" and (el.text or "").strip():  # RDKit built without FreeType
+            style = dict(item.split(":", 1) for item in (el.get("style") or "").split(";")
+                         if ":" in item)  # fmt: skip
+            size = float((style.get("font-size") or "12").rstrip("px"))
+            words = el.text.strip().encode("latin-1", "replace").decode("latin-1")
+            x, y = float(el.get("x") or 0), float(el.get("y") or 0)
+            anchor = style.get("text-anchor") or el.get("text-anchor") or "start"
+            x -= {"middle": 0.5, "end": 1.0}.get(anchor, 0.0) * 0.56 * size * len(words)
+            fill = _rgb(el.get("fill") or style.get("fill", "#000000")) or (0.0, 0.0, 0.0)
+            safe = words.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            ops.append("q {:.3f} {:.3f} {:.3f} rg BT /F1 {:.2f} Tf 1 0 0 -1 {:.2f} {:.2f} Tm "
+                       "({}) Tj ET Q".format(*fill, size, x, y, safe))  # fmt: skip
+            text = True
+
+    stream = zlib.compress("\n".join(ops).encode("latin-1"))
+    fonts = "/Font << /F1 5 0 R >> " if text else ""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width:.2f} {height:.2f}] "
+         f"/Resources << {fonts}>> /Contents 4 0 R >>").encode(),
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream) + stream
+        + b"\nendstream",
+    ]  # fmt: skip
+    if text:
+        objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = []
+    for n, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % n + obj + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(objects) + 1, xref))  # fmt: skip
+    return bytes(out)

@@ -13,13 +13,13 @@ from boonza.fep import hybrid, lambdas
 openmm = pytest.importorskip("openmm")
 
 
-def _system(seq, method="NoCutoff"):
+def _system(seq, method="NoCutoff", ff="aa.amber.ff14SB"):
     from boonza.viewer.edit import protonate
 
     s = boonza.peptide(seq)
     s = s.clone(np.flatnonzero(s.atoms["anum"] > 1))
     protonate(s)
-    p = boonza.parameterize(s, ["aa.amber.ff14SB"])
+    p = boonza.parameterize(s, [ff])
     if method != "NoCutoff":
         p.cell = np.eye(3) * 40.0
     _, system, _ = boonza.to_openmm(p, nonbonded_method=method, cutoff=12.0, constraints=False,
@@ -117,6 +117,42 @@ def test_the_end_states_are_the_two_systems_and_their_dummies(method):
     # in between: finite and smooth
     es = [_hybrid_energy(h, x) for x in lambdas.windows(11)]
     assert np.all(np.isfinite(es)) and np.max(np.abs(np.diff(es))) < 1e4
+
+
+def _cmap_forces(system):
+    return {f.getName(): f for f in system.getForces()
+            if type(f).__name__ in ("CMAPTorsionForce", "CustomCVForce")}  # fmt: skip
+
+
+def test_cmap_on_the_changing_residue_moves_from_one_map_to_the_other():
+    """ff19SB has a CMAP per residue type, and a ligand that is part peptide carries
+    them on its own atoms: that used to stop at "a CMAP term touches the ligand".
+    Ala -> Ser changes the middle residue's map (the termini have none), so A's term
+    fades as B's comes.  The ends are exact."""
+    a, sa, xa = _system("AAA", ff="aa.amber.ff19SB")
+    b, sb, xb = _system("ASA", ff="aa.amber.ff19SB")
+    assert len(a.table("torsiontorsion_cmap")) == len(b.table("torsiontorsion_cmap")) == 1
+    core, env = _mapping(a, b)
+    h = hybrid.build(sa, sb, xa, xb, core, env)
+    forces = _cmap_forces(h.system)
+    assert set(forces) == {"hybrid_core_cmap"}
+    moving = forces["hybrid_core_cmap"]
+    assert moving.getNumCollectiveVariables() == 2
+    assert [moving.getCollectiveVariable(k).getNumTorsions() for k in range(2)] == [1, 1]
+    unique_new = [k for k in range(b.natoms) if h.new_to_hybrid[k] >= a.natoms]
+    x_old, x_new = h.positions[h.old_to_hybrid], h.positions[h.new_to_hybrid]
+    e_old = _energy(sa, x_old)[1] + _valence(sb, unique_new, x_new)
+    e_new = _energy(sb, x_new)[1] + _valence(sa, h.unique_old, x_old)
+    assert _hybrid_energy(h, 0.0) == pytest.approx(e_old, rel=1e-6, abs=1e-3)
+    assert _hybrid_energy(h, 1.0) == pytest.approx(e_new, rel=1e-6, abs=1e-3)
+    es = [_hybrid_energy(h, x) for x in lambdas.windows(11)]
+    assert np.all(np.isfinite(es)) and np.max(np.abs(np.diff(es))) < 1e4
+    # a residue mapped onto itself: every map the same at both ends, nothing to weigh
+    same = hybrid.build(sa, sa, xa, xa, *_mapping(a, a))
+    (static,) = _cmap_forces(same.system).items()
+    assert static[0] == "hybrid_cmap" and static[1].getNumTorsions() == 1
+    for x in (0.0, 0.5, 1.0):
+        assert _hybrid_energy(same, x) == pytest.approx(_energy(sa, xa)[1], rel=1e-6, abs=1e-4)
 
 
 def test_masses_and_order():

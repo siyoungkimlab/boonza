@@ -541,6 +541,7 @@ def _forcefield(receptor, lig, ff, args):
     patch = gaff.gaff2_patch(both, ff, charges=getattr(args, "ligand_charges", None),
                              parents=getattr(args, "parents", None),
                              protein_extent=getattr(args, "protein_extent", "matched"),
+                             pseudopeptide=getattr(args, "pseudopeptide", None) or "off",
                              charge_geometry="reference")  # fmt: skip
     out = list(ff)
     host = gaff.host_index(out)

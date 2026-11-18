@@ -284,6 +284,7 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
             parents=args.parents,
             workdir=workdir / "gaff2",
             protein_extent=args.protein_extent,
+            pseudopeptide=getattr(args, "pseudopeptide", None) or "off",
             draw=workdir,
         )
         viparr.write_forcefield(patch, workdir / "gaff2_patch")
@@ -292,6 +293,9 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
             log(f"{p['residue']} ({p['chain']}): parent {p['parent']} ({p['source']}); "
                 f"{p['protein_heavy_atoms']} of {p['heavy_atoms']} heavy atoms keep "
                 "protein types")  # fmt: skip
+        info["units"] = [{k: v for k, v in u.items() if k != "indices"} for u in patch.units]
+        for line in gaff.describe_units(patch):
+            log(line)
         for png in sorted(workdir.glob("covalent_*.png")):
             log(f"Covalent adduct drawn in {png.name} (blue: protein types, orange: GAFF2)")
         host = gaff.host_index(ff)
