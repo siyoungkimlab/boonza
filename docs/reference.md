@@ -1610,15 +1610,17 @@ residues bonded to them other than through a peptide bond or disulfide
 
 A 3D molecule from a SMILES string (through RDKit).
 
-Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
-reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
-(UFF when MMFF lacks parameters); the lowest-energy one is kept.  Bond
-orders and formal charges come from the SMILES.  The molecule is one
+Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG
+from random coordinates, reproducible with ``seed``) and, with
+``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
+lowest-energy one is kept.  Bond
+orders, formal charges and stereochemistry come from the SMILES; a
+stereocentre it leaves open comes out either way, with a warning.  The molecule is one
 residue named ``name`` with atoms named C1, C2, ..., H1, ...
 
 ### `boonza.gaff`
 
-### `boonza.gaff2_patch(system: 'System', forcefields=(), *, charges=None, parents=None, gaff: 'str' = '2.11', charge_method: 'str' = 'bcc', charge_geometry: 'str' = 'optimized', amberhome=None, workdir=None, path=None, protein_extent: 'str' = 'matched', draw=None, tag=None) -> 'ViparrForcefield'`
+### `boonza.gaff2_patch(system: 'System', forcefields=(), *, charges=None, parents=None, gaff: 'str' = '2.11', charge_method: 'str' = 'bcc', charge_geometry: 'str' = 'optimized', amberhome=None, workdir=None, path=None, protein_extent: 'str' = 'matched', draw=None, tag=None, pseudopeptide: 'str' = 'off', pdf=None) -> 'ViparrForcefield'`
 
 A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
 
@@ -1663,6 +1665,26 @@ adduct (a ligand bound to an amino acid other than by a peptide bond)
 with heavy atoms colored by where their types come from. ``tag`` makes
 the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
 so patches made separately (one per ligand) can join one force field.
+
+``pseudopeptide`` (:data:`PSEUDOPEPTIDE`) looks for amino acids inside a
+residue that is not one itself: a ligand that is part peptide, drawn or
+read as one molecule.  Each N-CA-C(=O) in it is compared with the protein
+force field's own templates.  A *residue match* is a whole template found
+atom for atom, hydrogens and all (ALA, LYS, a charged N-terminal NALA...),
+and with it the ACE, NME or NHE cap bonded to it; a *backbone match* is
+what is left where the side chain is not a standard one: the backbone on
+alanine's types, glycine's (no side chain) or proline's (a ring back to
+N), the side chain GAFF2.  Matched atoms take the protein types, so every
+bond, angle, torsion and improper among them and the CMAP of each matched
+N-CA-C are the protein force field's; terms that touch a GAFF2 atom are
+GAFF2's.  "protein" copies the template charges as well and brings the
+residue back to its formal charge by shifting the GAFF2 atoms evenly;
+"types" keeps AM1-BCC charges on every atom.  Such a molecule is charged
+at its reference conformer whatever ``charge_geometry`` says.  The
+patch's ``units`` attribute lists what was found, and ``pdf`` (a file) or
+``draw`` (a directory, ``pseudopeptide_<residue>.pdf``) gets a 2D drawing
+of the molecule on a transparent page, the atoms with protein parameters
+on yellow.
 
 ### `boonza.guess_bond_orders(system, atoms=None, force: 'bool' = False) -> 'int'`
 

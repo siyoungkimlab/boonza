@@ -123,3 +123,18 @@ def test_repartition_matches_msys(tmp_path):
     deut = boonza.repartition_hydrogen_masses(s, "all", 2.014, repartition=False)
     h = s.select("hydrogen").ids
     assert np.allclose(deut.atoms["mass"][h], 2.014)
+
+
+def test_from_smiles_says_when_a_stereocentre_is_left_open():
+    """An amino acid written without @ or @@ is L or D as the embedding falls, and the
+    CMAP it is given follows: that is said, and a SMILES with its stereo is quiet."""
+    import warnings
+
+    import pytest
+
+    with pytest.warns(UserWarning, match="leaves 1 stereocentre open .atom C5 "):
+        boonza.from_smiles("CC(=O)NC(C)C(=O)NC")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        boonza.from_smiles("CC(=O)N[C@@H](C)C(=O)NC")
+        boonza.from_smiles("CC(=O)NCC(=O)NC")  # glycine: nothing to leave open

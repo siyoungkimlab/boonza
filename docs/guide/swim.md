@@ -94,6 +94,10 @@ Each ligand is parameterized once, and simulations share the result:
   ([Ligands](ligands.md)), several ligands at once with `--jobs`. Each
   ligand's GAFF2 types and templates carry its code (`c3~L017`), so ligand
   patches never collide.
+- A ligand that is only part peptide stays whole and GAFF2, unless
+  `--pseudopeptide` is given: then the amino acids inside it take the protein
+  force field, CMAP included, and `ligands/<code>/pseudopeptide_*.pdf` shows
+  which atoms did ([Ligands](ligands.md#pseudopeptides)).
 
 Results are kept in `ligands/`; running `boonza swim` again reuses them and
 leaves simulations that have started alone.

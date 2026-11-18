@@ -613,10 +613,12 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
                 conformers: int = 1) -> System:  # fmt: skip
     """A 3D molecule from a SMILES string (through RDKit).
 
-    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
-    reproducible with ``seed``) and, with ``optimize``, minimized with MMFF94
-    (UFF when MMFF lacks parameters); the lowest-energy one is kept.  Bond
-    orders and formal charges come from the SMILES.  The molecule is one
+    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG
+    from random coordinates, reproducible with ``seed``) and, with
+    ``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
+    lowest-energy one is kept.  Bond
+    orders, formal charges and stereochemistry come from the SMILES; a
+    stereocentre it leaves open comes out either way, with a warning.  The molecule is one
     residue named ``name`` with atoms named C1, C2, ..., H1, ...
     """
     from rdkit.Chem import AllChem
@@ -627,9 +629,25 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError(f"RDKit cannot parse the SMILES {smiles!r}")
+    open_ = [i for i, tag in Chem.FindMolChiralCenters(mol, includeUnassigned=True,
+                                                       useLegacyImplementation=False)
+             if tag == "?"]  # fmt: skip
+    if open_:
+        import warnings
+
+        which = ", ".join(f"{mol.GetAtomWithIdx(i).GetSymbol()}{i + 1}" for i in open_[:6])
+        warnings.warn(
+            f"{smiles!r} leaves {len(open_)} stereocentre{'s' if len(open_) > 1 else ''} open "
+            f"(atom {which}{', ...' if len(open_) > 6 else ''} of the SMILES): each comes out "
+            "R or S as the embedding falls, so an amino acid may be L or D; write @ or @@",
+            stacklevel=2)  # fmt: skip
     mol = Chem.AddHs(mol)
     params = AllChem.ETKDGv3()
     params.randomSeed = int(seed)
+    # from random coordinates: ETKDG's own start (from a distance matrix) fails from
+    # about 250 atoms on, and this one embeds a peptide of 500, the stereocentres
+    # still the SMILES's
+    params.useRandomCoords = True
     ids = list(AllChem.EmbedMultipleConfs(mol, numConfs=max(1, int(conformers)), params=params))
     if not ids:
         raise ValueError(f"RDKit could not embed {smiles!r} in 3D")

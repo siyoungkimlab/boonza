@@ -47,6 +47,8 @@ LIGAND_FORCE_FIELDS = ("gaff-2.11",)
 #: where a GAFF2 ligand's AM1-BCC charges are computed (boonza.gaff.CHARGE_GEOMETRIES)
 CHARGE_GEOMETRIES = ("optimized", "reference")
 PROTEIN_EXTENTS = ("matched", "cb")
+#: amino acids inside a ligand residue and the protein force field (boonza.gaff.PSEUDOPEPTIDE)
+PSEUDOPEPTIDE = ("off", "protein", "types")
 #: How Lennard-Jones ends at the cutoff: cut (none), CHARMM's force switch, the
 #: potential switch OpenMM builds in (OpenFF's), or GROMACS's potential shift
 #: (Martini, SIRAH).  The first three are all-atom choices; the shift is what a
@@ -137,7 +139,7 @@ MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
 ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "charge_geometry", "ligand_charges",
-                 "parents", "protein_extent", "hmr")  # fmt: skip
+                 "parents", "protein_extent", "pseudopeptide", "hmr")  # fmt: skip
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
 #: Settings that only a Martini run has.
@@ -177,6 +179,7 @@ DEFAULTS: dict = {
     "ligand_charges": None,
     "parents": None,
     "protein_extent": "matched",
+    "pseudopeptide": "off",
     "solvate": "box",
     "padding_nm": 1.0,
     "box_nm": None,
@@ -322,6 +325,7 @@ _CHOICES = {
     "ligandff": LIGAND_FORCE_FIELDS,
     "charge_geometry": CHARGE_GEOMETRIES,
     "protein_extent": PROTEIN_EXTENTS,
+    "pseudopeptide": PSEUDOPEPTIDE,
     "dihedral_restraint": DIHEDRAL_RESTRAINTS,
     "structure_bias": STRUCTURE_BIAS,
     "precision": PRECISIONS,
@@ -661,6 +665,16 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         choices=PROTEIN_EXTENTS,
         help="amino acids with GAFF2 atoms keep protein types as far as they match "
         "(matched, the default) or on the backbone and CB only (cb)",
+    )
+    ff.add_argument(
+        "--pseudopeptide",
+        nargs="?",
+        const="protein",
+        choices=PSEUDOPEPTIDE,
+        help="a ligand that is part peptide: the amino acids inside it take the protein "
+        "force field (types, bonded terms, CMAP), the rest GAFF2.  protein (what the "
+        "bare flag means): the protein's charges too, the remainder spread over the "
+        "GAFF2 atoms; types: AM1-BCC charges on every atom; off (default)",
     )
     ff.add_argument(
         "--charge",
@@ -1411,6 +1425,12 @@ charge_geometry = "optimized"
 # residue) keep protein types "matched": as far as they and their neighbours
 # match the parent residue; or "cb": on the backbone, CB and CB's hydrogens only.
 protein_extent = "matched"
+# A ligand that is part peptide (a pseudopeptide, one residue): "protein" gives the
+# amino acids found inside it the protein force field -- types, bonded terms, CMAP
+# and charges, the rest of the molecule GAFF2 with the leftover charge spread over
+# it; "types" the same under AM1-BCC charges on every atom; "off" leaves it GAFF2.
+# The work directory gets pseudopeptide_<residue>.pdf, a drawing of what matched.
+pseudopeptide = "off"
 
 # Water: "box" puts the solute in a new box with padding_nm around it; "fill"
 # keeps INPUT_STRUCTURE's own cell and fills its empty space, leaving hydrophobic

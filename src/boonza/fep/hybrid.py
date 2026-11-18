@@ -11,6 +11,8 @@ Valence terms: those among core atoms (and the environment) move from A's to
 B's with lambda_bonds, _angles, _torsions; those touching a unique atom stay
 on throughout, so a dummy keeps its geometry and adds a constant (cancelling
 between the complex and solvent legs) to the free energy.
+CMAP terms go as the torsions do: the protein's stay, and one on the ligand's own
+backbone (a pseudopeptide) moves from A's map to B's with lambda_torsions.
 
 Nonbonded: a NonbondedForce carries all electrostatics (charges move through
 parameter offsets) and the environment's Lennard-Jones; a CustomNonbondedForce
@@ -332,16 +334,67 @@ class _Builder:
         self._add(new_core, "hybrid_core_torsions_B")
 
     def _cmap(self):
+        """CMAP terms, as the torsions go: one among core atoms (a ligand that is part
+        peptide carries the protein's CMAP on its own backbone) moves from A's map to
+        B's with lambda_torsions; one that touches a unique atom stays on throughout;
+        the environment's are A's.  A core term with the same map at both ends does
+        not move at all."""
         mm = self.mm
-        fs = self.forces_old.get("CMAPTorsionForce", [])
-        if not fs:
-            return
-        f = mm.XmlSerializer.deserialize(mm.XmlSerializer.serialize(fs[0]))
-        for k in range(f.getNumTorsions()):
-            _, *atoms = f.getTorsionParameters(k)
-            if (self.cls[atoms] != 0).any():
-                raise NotImplementedError("a CMAP term touches the ligand")
-        self.h.addForce(f)
+        std, old_core, new_core = (mm.CMAPTorsionForce() for _ in range(3))
+        maps: dict[tuple, dict[tuple, int]] = {}
+
+        def add(force, grid, atoms):
+            mine = maps.setdefault(id(force), {})
+            if grid not in mine:
+                mine[grid] = force.addMap(grid[0], list(grid[1]))
+            force.addTorsion(mine[grid], *atoms)
+
+        terms = []
+        for forces, to_h in ((self.forces_old, self.old_to_hybrid),
+                             (self.forces_new, self.new_to_hybrid)):  # fmt: skip
+            mine = {}
+            for f in forces.get("CMAPTorsionForce", []):
+                grids = []
+                for k in range(f.getNumMaps()):
+                    size, energy = f.getMapParameters(k)
+                    grids.append((int(size), tuple(round(_md(e), 9) for e in energy)))
+                for k in range(f.getNumTorsions()):
+                    m, *atoms = f.getTorsionParameters(k)
+                    atoms = tuple(int(to_h[a]) for a in atoms)
+                    if atoms in mine:
+                        raise NotImplementedError(f"two CMAP terms for atoms {atoms}")
+                    mine[atoms] = grids[m]
+            terms.append(mine)
+        old, new = terms
+        for atoms, grid in old.items():
+            c = self.cls[list(atoms)]
+            if self._changing(atoms):
+                if new.get(atoms) == grid:
+                    add(std, grid, atoms)
+                else:
+                    add(old_core, grid, atoms)
+            elif not (c == 3).any():  # the environment's, and unique old atoms'
+                add(std, grid, atoms)
+        for atoms, grid in new.items():
+            c = self.cls[list(atoms)]
+            if self._changing(atoms):
+                if old.get(atoms) != grid:
+                    add(new_core, grid, atoms)
+            elif (c == 3).any():
+                add(std, grid, atoms)
+        self._add(std, "hybrid_cmap")
+        parts = [(name, weight, f) for name, weight, f in (
+            ("cmapA", "(1-lambda_torsions)", old_core), ("cmapB", "lambda_torsions", new_core))
+            if f.getNumTorsions()]  # fmt: skip
+        if parts:
+            # CMAPTorsionForce has no parameter to scale it by: each end's terms are a
+            # collective variable of a force that weighs them
+            cv = mm.CustomCVForce(" + ".join(f"{weight}*{name}" for name, weight, _ in parts))
+            cv.addGlobalParameter("lambda_torsions", 0.0)
+            for name, _, f in parts:
+                cv.addCollectiveVariable(name, f)
+            cv.setName("hybrid_core_cmap")
+            self.h.addForce(cv)
 
     def _constants(self):
         """boonza's constant energies (cos terms written as constants): A's fade to B's."""

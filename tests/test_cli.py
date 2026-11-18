@@ -97,3 +97,20 @@ def test_every_command_can_print_its_help():
     assert len(seen) > 10  # it would pass vacuously if the commands moved
     for _name, sub in sorted(seen.items()):
         sub.format_help()
+
+
+def test_parameterize_pseudopeptide_flags_go_with_gaff2(tmp_path):
+    """--pseudopeptide and --pdf belong to --gaff2, and --pdf to --pseudopeptide: it
+    draws what that matched, and there is nothing to draw without it."""
+    import pytest
+
+    lig = tmp_path / "lig.sdf"
+    boonza.save(boonza.from_smiles("CC(=O)N[C@@H](C)C(=O)NC", name="LIG"), lig)
+    out = str(tmp_path / "out.dms")
+    base = ["parameterize", str(lig), out, "-f", "aa.amber.ff19SB"]
+    with pytest.raises(SystemExit, match="go with --gaff2"):
+        main([*base, "--pseudopeptide"])
+    with pytest.raises(SystemExit, match="go with --gaff2"):
+        main([*base, "--pdf", str(tmp_path / "x.pdf")])
+    with pytest.raises(SystemExit, match="--pseudopeptide matched"):
+        main([*base, "--gaff2", "--pdf", str(tmp_path / "x.pdf")])

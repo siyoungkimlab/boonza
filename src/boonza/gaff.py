@@ -14,6 +14,11 @@ neighbours match the parent residue, so backbone and CB terms, protein
 impropers and CMAP come from the protein force field; every term that
 touches a GAFF2 atom takes the value tleap gave it.  Each residue's charge
 is brought to its formal charge by shifting its GAFF2 atoms evenly.
+
+A pseudopeptide -- one ligand residue that is part peptide -- has no residues
+to cut at.  With ``pseudopeptide`` on, the amino acids inside it are found by
+their bonds (:meth:`_Builder._units`) and keep the protein force field in the
+same way, CMAP included, while the molecule stays one residue and one template.
 """
 
 from __future__ import annotations
@@ -40,7 +45,14 @@ from .viparr import (
     load_forcefield,
 )
 
-__all__ = ["AmberToolsError", "find_amber_tools", "find_unmatched", "gaff2_patch", "run_gaff2"]
+__all__ = [
+    "AmberToolsError",
+    "describe_units",
+    "find_amber_tools",
+    "find_unmatched",
+    "gaff2_patch",
+    "run_gaff2",
+]
 
 #: GAFF2 releases and the AmberTools parameter files that may hold them, in
 #: order: newer AmberTools ship 2.11 as gaff211.dat and a later GAFF2 as
@@ -243,7 +255,8 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
                 gaff: str = "2.11", charge_method: str = "bcc",
                 charge_geometry: str = "optimized", amberhome=None,
                 workdir=None, path=None, protein_extent: str = "matched",
-                draw=None, tag=None) -> ViparrForcefield:  # fmt: skip
+                draw=None, tag=None, pseudopeptide: str = "off",
+                pdf=None) -> ViparrForcefield:  # fmt: skip
     """A viparr patch with GAFF2 templates for what ``forcefields`` cannot parameterize.
 
     ``forcefields`` is the list to be given to :func:`boonza.parameterize`;
@@ -287,9 +300,31 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     with heavy atoms colored by where their types come from. ``tag`` makes
     the GAFF2 types (``c3~<tag>``) and template names of this patch unique,
     so patches made separately (one per ligand) can join one force field.
+
+    ``pseudopeptide`` (:data:`PSEUDOPEPTIDE`) looks for amino acids inside a
+    residue that is not one itself: a ligand that is part peptide, drawn or
+    read as one molecule.  Each N-CA-C(=O) in it is compared with the protein
+    force field's own templates.  A *residue match* is a whole template found
+    atom for atom, hydrogens and all (ALA, LYS, a charged N-terminal NALA...),
+    and with it the ACE, NME or NHE cap bonded to it; a *backbone match* is
+    what is left where the side chain is not a standard one: the backbone on
+    alanine's types, glycine's (no side chain) or proline's (a ring back to
+    N), the side chain GAFF2.  Matched atoms take the protein types, so every
+    bond, angle, torsion and improper among them and the CMAP of each matched
+    N-CA-C are the protein force field's; terms that touch a GAFF2 atom are
+    GAFF2's.  "protein" copies the template charges as well and brings the
+    residue back to its formal charge by shifting the GAFF2 atoms evenly;
+    "types" keeps AM1-BCC charges on every atom.  Such a molecule is charged
+    at its reference conformer whatever ``charge_geometry`` says.  The
+    patch's ``units`` attribute lists what was found, and ``pdf`` (a file) or
+    ``draw`` (a directory, ``pseudopeptide_<residue>.pdf``) gets a 2D drawing
+    of the molecule on a transparent page, the atoms with protein parameters
+    on yellow.
     """
     if protein_extent not in PROTEIN_EXTENTS:
         raise ValueError(f"protein_extent must be one of {PROTEIN_EXTENTS}")
+    if pseudopeptide not in PSEUDOPEPTIDE:
+        raise ValueError(f"pseudopeptide must be one of {PSEUDOPEPTIDE}")
     ffs = _load(forcefields, path)
     b = _Builder(system, ffs, charges or {}, parents or {},
                  dict(gaff=gaff, charge_method=charge_method, charge_geometry=charge_geometry,
@@ -297,7 +332,32 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
                  None if workdir is None else Path(workdir), protein_extent,
                  None if draw is None else Path(draw))  # fmt: skip
     b.tag = None if tag is None else str(tag)
+    b.pseudopeptide = pseudopeptide
+    b.pdf = None if pdf is None else Path(pdf)
     return b.patch()
+
+
+def describe_units(patch) -> list[str]:
+    """What a patch's pseudopeptides matched, a line per ligand residue and one per
+    drawing: for a log."""
+    by: dict[tuple, list[dict]] = {}
+    for u in getattr(patch, "units", ()):
+        by.setdefault((u["residue"], u["chain"]), []).append(u)
+    out = []
+    for (residue, chain), units in by.items():
+        kinds = {"residue": [], "backbone": [], "cap": []}
+        for u in units:
+            kinds[u["match"]].append(u["template"])
+        parts = [f"{len(v)} {k} match{'es' if len(v) > 1 else ''} ({' '.join(v)})"
+                 for k, v in kinds.items() if v]  # fmt: skip
+        heavy = sum(len(u["atoms"]) for u in units)
+        where = f" ({chain.strip()})" if chain.strip() else ""
+        out.append(f"{residue}{where} pseudopeptide: {', '.join(parts)}; {heavy} heavy atoms "
+                   "take the protein force field (AM1-BCC at the reference conformer)")  # fmt: skip
+    for d in getattr(patch, "drawings", ()):
+        if str(d).endswith(".pdf"):
+            out.append(f"Pseudopeptide drawn in {Path(d).name} (yellow: protein parameters)")
+    return out
 
 
 #: Standard parents of common modified residues, from the PDB's chemical
@@ -329,6 +389,24 @@ def _family(name: str) -> str:
 #: How far amino-acid atoms keep protein types (see :func:`gaff2_patch`).
 PROTEIN_EXTENTS = ("matched", "cb")
 _UP_TO_CB = {"N", "H", "H1", "H2", "H3", "HN", "CA", "HA", "HA2", "HA3", "C", "O", "OXT", "CB"}
+#: Amino acids inside a ligand residue (see :func:`gaff2_patch`): "off"; "protein",
+#: their protein types and charges; "types", their protein types under AM1-BCC charges.
+PSEUDOPEPTIDE = ("off", "protein", "types")
+_BACKBONES = ("ALA", "GLY", "PRO")  # the backbones a non-standard side chain stands on
+_BACKBONE = _UP_TO_CB - {"CB"}
+_CAPS = ("ACE", "NME", "NHE")
+_REACH = 9  # bonds from CA within which a unit's atoms are looked for (ARG: 7)
+#: the yellow under atoms with protein parameters in a pseudopeptide's drawing
+YELLOW = (1.0, 0.9, 0.2)
+
+
+class _Conflict(ViparrError):
+    """Two terms with the same types and different GAFF2 parameters: ``atoms`` and
+    ``first`` are the fragment atoms of the term refused and of the one kept."""
+
+    def __init__(self, message, atoms, first):
+        super().__init__(message)
+        self.atoms, self.first = atoms, first
 
 
 def _up_to_cb(t: Template, ti: int) -> bool:
@@ -371,6 +449,10 @@ class _Builder:
                  extent="matched", draw=None):  # fmt: skip
         self.extent, self.draw = extent, draw
         self.tag: str | None = None
+        self.pseudopeptide = "off"
+        self.pdf: Path | None = None
+        self.units: list[dict] = []  # the amino acids found inside ligand residues
+        self.row_atoms: dict[tuple, tuple] = {}
         self.drawings: list[Path] = []
         self.P = P = _Parameterizer(system, ffs, False, False, True)
         self.ffs = ffs
@@ -662,11 +744,11 @@ class _Builder:
             return None, {}, set(), None
         return t, m, ok, source
 
-    def _map(self, r: int, t: Template, bb: dict) -> dict[int, int]:
-        """Atoms of residue ``r`` to atoms of ``t``: the backbone, then the
-        most heavy atoms bonded as in ``t`` (equal names preferred; names are
-        not needed), and each hydrogen after its atom."""
-        atoms = self.res_atoms[r]
+    def _map(self, r: int, t: Template, bb: dict, atoms=None) -> dict[int, int]:
+        """Atoms of residue ``r`` (or ``atoms``, some of it) to atoms of ``t``:
+        the backbone, then the most heavy atoms bonded as in ``t`` (equal names
+        preferred; names are not needed), and each hydrogen after its atom."""
+        atoms = self.res_atoms[r] if atoms is None else atoms
         inside = set(atoms)
         anum, nbrs, names = self.anum, self.nbrs, self.names
         where = {nm: i for i, nm in enumerate(t.names) if t.anum[i] > 0}
@@ -754,6 +836,180 @@ class _Builder:
         with_atom = {a for a in ok if any(b in ok for b in self.nbrs[a] if b in inside)}
         return {a for a in ok if self.anum[a] > 1 or a in with_atom}
 
+    # -- amino acids inside a ligand residue ---------------------------------------
+    def _real(self, a: int) -> list[int]:
+        return [b for b in self.nbrs[a] if self.anum[b] > 0]
+
+    def _carbonyl(self, c: int) -> bool:
+        """A carbon with three neighbours, one of them an oxygen or sulfur on it alone."""
+        return (self.anum[c] == 6 and len(self._real(c)) == 3
+                and any(self.anum[o] in (8, 16) and len(self._real(o)) == 1
+                        for o in self.nbrs[c]))  # fmt: skip
+
+    def _unit_link(self, name: str, b: int) -> bool:
+        """Whether ``b`` may stand where the template atom ``name`` has its external
+        bond: an amide carbon on N, an amide nitrogen on C, a sulfur on SG."""
+        if name == "N":
+            return self._carbonyl(b)
+        if name == "C":
+            return self.anum[b] == 7 and len(self._real(b)) == 3
+        if name == "SG":
+            return self.anum[b] == 16 and len(self._real(b)) == 2
+        return False
+
+    def _unit_fits(self, t: Template, m: dict[int, int]) -> set[int]:
+        """Mapped atoms bonded exactly as their template atoms are: the same atoms
+        of the template around them, and where it has an external bond, one atom
+        more that could be the next residue's.  An atom with a single neighbour (a
+        hydrogen, a carbonyl oxygen) keeps its protein type only with that neighbour,
+        and that neighbour only with it."""
+        ok = set()
+        for a, i in m.items():
+            t_in = {j for j in t._nbrs[i] if t.anum[j] > 0}
+            n_out = sum(1 for j in t._nbrs[i] if t.anum[j] == -1)
+            mine = self._real(a)
+            out = [b for b in mine if m.get(b) not in t_in]
+            if len(mine) - len(out) != len(t_in) or len(out) != n_out:
+                continue
+            if all(self._unit_link(t.names[i], b) for b in out):
+                ok.add(a)
+        # an atom is the template's only with the template's end atoms on it: the
+        # carbon of an ester has a carboxylate's neighbours by element, and is not one
+        ends = {a for a, i in m.items() if len(t._nbrs[i]) == 1}
+        ok = {a for a in ok if all(b in ok for b in self.nbrs[a] if b in ends)}
+        return {a for a in ok if len(self._real(a)) > 1 or self._real(a)[0] in ok}
+
+    def _backbones(self, r: int) -> list[dict]:
+        """Every N-CA-C(=O) of residue ``r``: a nitrogen, a carbon with four
+        neighbours on it, and a carbonyl carbon on that."""
+        inside = set(self.res_atoms[r])
+        out = []
+        for n in self.res_atoms[r]:
+            if self.anum[n] != 7:
+                continue
+            for ca in self.nbrs[n]:
+                if ca not in inside or self.anum[ca] != 6 or len(self._real(ca)) != 4:
+                    continue
+                for c in self.nbrs[ca]:
+                    if c == n or c not in inside or not self._carbonyl(c):
+                        continue
+                    os_ = [o for o in self.nbrs[c] if self.anum[o] == 8 and o in inside
+                           and sum(1 for x in self.nbrs[o] if self.anum[x] > 1) == 1]  # fmt: skip
+                    if os_:  # the carbonyl oxygen before a hydroxyl one
+                        o = min(os_, key=lambda o: len(self._real(o)))
+                        out.append({"N": n, "CA": ca, "C": c, "O": o})
+        return out
+
+    def _near(self, r: int, ca: int, without=()) -> list[int]:
+        """Atoms of residue ``r`` within :data:`_REACH` bonds of ``ca``."""
+        inside = set(self.res_atoms[r]) - set(without)
+        seen, shell = {ca}, [ca]
+        for _ in range(_REACH):
+            shell = [b for a in shell for b in self.nbrs[a] if b in inside and b not in seen
+                     and not seen.add(b)]  # fmt: skip
+        return [a for a in self.res_atoms[r] if a in seen]
+
+    def _units(self, r: int) -> list[dict]:
+        """The amino acids inside residue ``r``, a ligand: dicts with the template
+        ``t``, the atom map ``m``, the atoms ``ok`` that keep its types and the
+        ``match``, "residue" (the whole template, atom for atom), "backbone" (the
+        backbone of ALA, GLY or PRO under another side chain) or "cap"."""
+        if self.host is None or self.pseudopeptide == "off":
+            return []
+        amino = [t for t in self.host.templates if {"N", "CA", "C"} <= set(t.names)]
+        backbones = self._backbones(r)
+        whole = []
+        for bb in backbones:
+            near = self._near(r, bb["CA"])
+            best = None
+            for t in amino:
+                if t.natoms > len(near):
+                    continue
+                m = self._map(r, t, bb, near)
+                if len(m) != t.natoms:
+                    continue
+                ok = self._unit_fits(t, m)
+                if len(ok) == t.natoms:
+                    agree = sum(1 for a, i in m.items() if self.names[a] == t.names[i])
+                    key = (t.natoms, agree, _family(t.name) == t.name)
+                    if best is None or key > best[0]:
+                        best = (key, {"t": t, "m": m, "ok": ok, "match": "residue", "bb": bb})
+            if best is not None:
+                whole.append(best)
+        units, taken = [], set()
+        for _, u in sorted(whole, key=lambda x: x[0], reverse=True):
+            if not taken & set(u["m"]):
+                units.append(u)
+                taken |= set(u["m"])
+        frames = [t for t in amino if _family(t.name) in _BACKBONES]
+        for bb in backbones:
+            if bb["CA"] in taken:
+                continue
+            near = self._near(r, bb["CA"], taken - set(bb.values()))
+            best = None
+            for t in frames:
+                m = self._map(r, t, bb, near)
+                ok = {a for a in self._unit_fits(t, m) if t.names[m[a]] in _BACKBONE} - taken
+                if bb["CA"] not in ok:  # no alpha carbon of the protein's: not a unit
+                    continue
+                if _family(t.name) == "PRO" and bb["N"] not in ok:
+                    continue  # proline's backbone is its ring closing on N
+                key = (sum(1 for a in ok if self.anum[a] > 1), len(ok), -t.natoms)
+                if best is None or key > best[0]:
+                    best = (key, {"t": t, "m": {a: m[a] for a in ok}, "ok": ok,
+                                  "match": "backbone", "bb": bb})  # fmt: skip
+            if best is not None:
+                units.append(best[1])
+                taken |= best[1]["ok"]
+        units.sort(key=lambda u: u["bb"]["CA"])
+        return units + self._caps(r, units, taken)
+
+    def _caps(self, r: int, units, taken) -> list[dict]:
+        """ACE, NME and NHE where they are bonded to a unit's backbone N or C that
+        keeps its protein type: the caps of a peptide, not any acetyl or amide."""
+        ends = {"N": set(), "C": set()}
+        for u in units:
+            for key in ends:
+                a = u["bb"][key]
+                if a in u["ok"]:
+                    ends[key].add(a)
+        inside = set(self.res_atoms[r])
+        out = []
+        for t in self.host.templates:
+            if t.name not in _CAPS:
+                continue
+            roots = [i for i in range(len(t.names)) if t.anum[i] > 0
+                     and any(t.anum[j] == -1 for j in t._nbrs[i])]  # fmt: skip
+            if len(roots) != 1:
+                continue
+            root = roots[0]
+            partner = ends["N" if t.anum[root] == 6 else "C"]  # ACE's C is on a unit's N
+            for a in sorted({b for p in partner for b in self.nbrs[p]} & inside - taken):
+                if self.anum[a] != t.anum[root]:
+                    continue
+                m = {a: root}
+                self._grow(t, a, root, m, inside - taken)
+                if len(m) == t.natoms and len(self._unit_fits(t, m)) == t.natoms:
+                    out.append({"t": t, "m": m, "ok": set(m), "match": "cap", "bb": None})
+                    taken |= set(m)
+        return out
+
+    def _grow(self, t: Template, a: int, i: int, m: dict[int, int], free) -> None:
+        """Map the template atoms around ``i`` onto the atoms around ``a``, outward:
+        each onto a free atom of its element with as many neighbours (a cap is a small
+        tree, where the first that fits is as good as any)."""
+        used = set(m.values())
+        for j in t._nbrs[i]:
+            if t.anum[j] <= 0 or j in used:
+                continue
+            b = next((b for b in self.nbrs[a] if b in free and b not in m
+                      and self.anum[b] == t.anum[j]
+                      and len(self._real(b)) == len(t._nbrs[j])), None)  # fmt: skip
+            if b is not None:
+                m[b] = j
+                used.add(j)
+                self._grow(t, b, j, m, free)
+
     # -- one group ---------------------------------------------------------------
     def patch(self) -> ViparrForcefield:
         groups = self.groups()
@@ -791,6 +1047,8 @@ class _Builder:
             rules = Rules(es_scale=[], lj_scale=[])
         out = ViparrForcefield("gaff2-patch", rules, self.templates, params)
         out.parents = self.chosen  # the parent each amino acid got, and why
+        out.units = self.units  # the amino acids found inside ligand residues
+        out.drawings = self.drawings
         return out
 
     def _known(self, residues) -> bool:
@@ -819,11 +1077,29 @@ class _Builder:
                                     "heavy_atoms": len(heavy)})  # fmt: skip
             for a in ok:
                 protein[a] = (t, m[a])
+        # a ligand residue that is part peptide: the amino acids inside it
+        found: dict[int, list[dict]] = {}
+        am1: set[int] = set()  # protein-typed atoms that keep their AM1-BCC charge
+        for r in residues:
+            if parents[r][0] is not None or r in self.grown:
+                continue
+            found[r] = self._units(r)
+            for u in found[r]:
+                for a in u["ok"]:
+                    protein[a] = (u["t"], u["m"][a])
+                if self.pseudopeptide == "types":
+                    am1 |= u["ok"]
+            self._report(r, found[r])
         frag, f = self._capped(atoms, residues)
         index = {a: i for i, a in enumerate(frag)}
         name = self._template_name(residues)
         workdir = None if self.workdir is None else self.workdir / name
-        p = run_gaff2(f, int(f.atoms["formal_charge"].sum()), workdir=workdir, **self.run_opts)
+        opts = dict(self.run_opts)
+        if any(found.values()):
+            # sqm would optimize a molecule this size for hours, and charges fitted to
+            # one pose have little to say next to charges copied from a force field
+            opts["charge_geometry"] = "reference"
+        p = run_gaff2(f, int(f.atoms["formal_charge"].sum()), workdir=workdir, **opts)
         self.runs.append((frag, p))
 
         nb = p.table("nonbonded")
@@ -836,39 +1112,119 @@ class _Builder:
         gcharge, gmass = p.atoms["charge"], p.atoms["mass"]
         tag = f"~{k}" if self.tag is None else f"~{self.tag}" + (f".{k}" if k > 1 else "")
         memo = f"GAFF2 {self.run_opts.get('gaff', '2.11')} with AmberTools ({name})"
-        types: list[tuple[str, str] | None] = [None] * f.natoms
-        gaff_atoms = set()
-        for i, a in enumerate(frag):
-            if a in inside:
-                if a in protein:
-                    t, ti = protein[a]
-                    types[i] = (t.btype[ti], t.nbtype[ti])
+        # Two terms may have the same types and different GAFF2 parameters: the
+        # protein types are coarser than GAFF2's where they meet (an acyl carbon on
+        # proline's N and one on alanine's are both "c - N", and GAFF2 has n and ns
+        # there).  A GAFF2 atom of one of the two then takes a type of its own.
+        split: dict[int, int] = {}
+        kept = ({t: dict(rows) for t, rows in self.rows.items()}, dict(self.memo))
+        while True:
+            self.row_atoms = {}
+            types: list[tuple[str, str] | None] = [None] * f.natoms
+            gaff_atoms = set()
+            for i, a in enumerate(frag):
+                if a in inside:
+                    if a in protein:
+                        t, ti = protein[a]
+                        types[i] = (t.btype[ti], t.nbtype[ti])
+                    else:
+                        own = f":{split[i]}" if i in split else ""
+                        types[i] = (gtype[i] + tag + own,) * 2
+                        gaff_atoms.add(i)
+                        self._add(
+                            "vdw1",
+                            (types[i][1],),
+                            [{"sigma": float(sigma[i]), "epsilon": float(epsilon[i])}],
+                            memo,
+                        )
+                        self._add("mass", (types[i][0],), [{"amu": float(gmass[i])}], memo)
                 else:
-                    types[i] = (gtype[i] + tag,) * 2
-                    gaff_atoms.add(i)
-                    self._add(
-                        "vdw1",
-                        (types[i][1],),
-                        [{"sigma": float(sigma[i]), "epsilon": float(epsilon[i])}],
-                        memo,
-                    )
-                    self._add("mass", (types[i][0],), [{"amu": float(gmass[i])}], memo)
-            else:
-                matched = self._matched(self.residue[a])
-                types[i] = matched[a]
-        impropers = self._terms(p, f, types, gaff_atoms, len(frag), memo)
+                    matched = self._matched(self.residue[a])
+                    types[i] = matched[a]
+            try:
+                impropers = self._terms(p, f, types, gaff_atoms, len(frag), memo)
+                break
+            except _Conflict as e:
+                mine, first = set(e.atoms) & gaff_atoms, set(e.first) & gaff_atoms
+                free = sorted((mine ^ first) - set(split))
+                if not free:
+                    raise
+                split[free[0]] = len(split) + 1
+                self.rows = {t: dict(rows) for t, rows in kept[0].items()}
+                self.memo = dict(kept[1])
         if self.draw is not None and self._covalent(residues):
             self.drawings.append(self._draw(residues, frag, f, gaff_atoms))
+        for r, units in found.items():
+            if units and (self.draw is not None or self.pdf is not None):
+                self.drawings.append(self._draw_units(r, units))
 
         parts = [self.resnames[r] or "LIG" for r in residues]
         for i, r in enumerate(residues):
             if r in self.grown:  # the host force field parameterizes it, as before
                 continue
             t, m, _ = parents[r]
+            units = [(t, m)] if t is not None else [(u["t"], u["m"]) for u in found.get(r, [])]
             part = parts[i] if parts.count(parts[i]) == 1 else f"{parts[i]}{i + 1}"
             tname = name if len(residues) == 1 else f"{name}_{part}"
             self.templates.append(self._template(r, tname, types, index, protein, gcharge, f,
-                                                 t, m, impropers))  # fmt: skip
+                                                 units, impropers, inside, am1))  # fmt: skip
+
+    def _report(self, r: int, units) -> None:
+        chain = str(self.P.s.chains["name"][self.P.s.residues["chain"][r]])
+        for u in units:
+            heavy = sorted(a for a in u["ok"] if self.anum[a] > 1)
+            label = f"{self.resnames[r] or 'LIG'}{self.resid[r]}"
+            self.units.append({"residue": label, "chain": chain,
+                               "template": u["t"].name, "match": u["match"],
+                               "atoms": [str(self.names[a]) for a in heavy],
+                               "indices": heavy})  # fmt: skip
+
+    def _draw_units(self, r: int, units) -> Path:
+        """A 2D drawing of ligand residue ``r`` as a PDF with a transparent page: the
+        heavy atoms that carry protein parameters, and the bonds among them, on yellow."""
+        from rdkit import Chem
+        from rdkit.Chem import rdDepictor
+        from rdkit.Chem.Draw import rdMolDraw2D
+
+        from .chem import to_rdkit
+        from .draw import svg_to_pdf
+
+        atoms = self.res_atoms[r]
+        protein = {a for u in units for a in u["ok"]}
+        try:
+            mol = to_rdkit(self.P.s, atoms, sanitize=True, implicit_hydrogens=False,
+                           residue_info=False)  # fmt: skip
+        except Exception:  # as it is, without stereo: a drawing is not worth an error
+            mol = to_rdkit(self.P.s, atoms, sanitize=False, implicit_hydrogens=False,
+                           stereo=False, residue_info=False, conformer=False)  # fmt: skip
+        for atom in mol.GetAtoms():
+            atom.SetIntProp("at", atoms[atom.GetIdx()])
+        mol = Chem.RemoveHs(mol, sanitize=False)
+        marked = [a.GetIdx() for a in mol.GetAtoms() if a.GetIntProp("at") in protein]
+        on = set(marked)
+        bonds = [b.GetIdx() for b in mol.GetBonds()
+                 if b.GetBeginAtomIdx() in on and b.GetEndAtomIdx() in on]  # fmt: skip
+        rdDepictor.SetPreferCoordGen(True)
+        rdDepictor.Compute2DCoords(mol)
+        side = int(min(2400, max(500, 60 * mol.GetNumAtoms() ** 0.5 * 4)))
+        drawer = rdMolDraw2D.MolDraw2DSVG(side, int(side * 0.75))
+        o = drawer.drawOptions()
+        o.clearBackground = False  # a transparent page
+        o.fillHighlights = True
+        rdMolDraw2D.PrepareAndDrawMolecule(
+            drawer, mol, highlightAtoms=marked, highlightAtomColors=dict.fromkeys(marked, YELLOW),
+            highlightBonds=bonds, highlightBondColors=dict.fromkeys(bonds, YELLOW))  # fmt: skip
+        drawer.FinishDrawing()
+        label = re.sub(r"[^A-Za-z0-9+_-]", "_", f"{self.resnames[r] or 'LIG'}{self.resid[r]}")
+        if self.pdf is not None:
+            n = sum(1 for d in self.drawings if d.suffix == ".pdf")
+            out = self.pdf if n == 0 else self.pdf.with_name(
+                f"{self.pdf.stem}-{n + 1}{self.pdf.suffix}")  # fmt: skip
+        else:
+            out = self.draw / f"pseudopeptide_{label}.pdf"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(svg_to_pdf(drawer.GetDrawingText()))
+        return out
 
     def _amino_acids(self, residues) -> set[int]:
         return {r for r in residues if self._amino(r)}
@@ -1017,16 +1373,18 @@ class _Builder:
             assign_bond_orders(f, charge=total)
         return frag, f
 
-    def _add(self, table: str, types: tuple, params: list[dict], memo: str) -> None:
+    def _add(self, table: str, types: tuple, params: list[dict], memo: str, atoms=()) -> None:
         rows = self.rows.setdefault(table, {})
         key, rkey = " ".join(types), " ".join(reversed(types))
         for kk in (key, rkey):
             if kk in rows:
                 if _canon(rows[kk]) != _canon(params):
-                    raise ViparrError(f"conflicting GAFF2 parameters for {table} {kk}")
+                    raise _Conflict(f"conflicting GAFF2 parameters for {table} {kk}",
+                                    atoms, self.row_atoms.get((table, kk), ()))  # fmt: skip
                 return
         rows[key] = params
         self.memo[key] = memo
+        self.row_atoms[(table, key)] = tuple(atoms)
 
     def _terms(self, p, f, types, gaff_atoms, ncap, memo) -> list[tuple[int, ...]]:
         """Rows for every term that touches a GAFF2 atom; returns the impropers."""
@@ -1052,7 +1410,7 @@ class _Builder:
         for table, cols in (("stretch_harm", ("r0", "fc")), ("angle_harm", ("theta0", "fc"))):
             for t, row in rows_of(table, cols):
                 if wanted(t):
-                    self._add(table, tuple(types[i][0] for i in t), [row], memo)
+                    self._add(table, tuple(types[i][0] for i in t), [row], memo, t)
         cols = ("phi0", *(f"fc{k}" for k in range(7)))
         propers: dict[tuple, list[dict]] = {}
         impropers: dict[tuple, list[dict]] = {}
@@ -1079,25 +1437,30 @@ class _Builder:
                             seen.add(min((i, j, k, m), (m, k, j, i)))
         for t, plist in propers.items():
             if wanted(t):
-                self._add("dihedral_trig", tuple(types[i][0] for i in t), plist, memo)
+                self._add("dihedral_trig", tuple(types[i][0] for i in t), plist, memo, t)
         out = []
         for t, plist in impropers.items():
             if wanted(t):
                 if len(plist) != 1:
                     raise ViparrError("an improper with several terms is not supported")
-                self._add("improper_trig", tuple(types[i][0] for i in t), plist, memo)
+                self._add("improper_trig", tuple(types[i][0] for i in t), plist, memo, t)
                 out.append(t)
         return out
 
-    def _template(self, r, name, types, index, protein, gcharge, f, parent, pmap, impropers):
+    def _template(self, r, name, types, index, protein, gcharge, f, units, impropers,
+                  group, am1=()):  # fmt: skip
+        """The template of residue ``r``.  ``units`` are the (template, atom map)
+        pairs its protein-typed atoms come from: its parent, or the amino acids
+        found inside a ligand; ``group`` the atoms typed with it, ``am1`` those of
+        them that keep an AM1-BCC charge under a protein type."""
         ratoms = self.res_atoms[r]
         local = {a: i for i, a in enumerate(ratoms)}
         anum = [self.anum[a] for a in ratoms]
         names = _unique_names([self.names[a] for a in ratoms], anum)
         btype = [types[index[a]][0] for a in ratoms]
         nbtype = [types[index[a]][1] for a in ratoms]
-        charge = [protein[a][0].charge[protein[a][1]] if a in protein else float(gcharge[index[a]])
-                  for a in ratoms]  # fmt: skip
+        charge = [protein[a][0].charge[protein[a][1]] if a in protein and a not in am1
+                  else float(gcharge[index[a]]) for a in ratoms]  # fmt: skip
         bonds, ext, pinned, formulas = [], {}, {}, {}
         for a in ratoms:
             for b in self.nbrs[a]:
@@ -1121,7 +1484,7 @@ class _Builder:
         where = {**local, **ext}
 
         # formal charge by shifting the GAFF2 atoms evenly
-        gaff = [i for i, a in enumerate(ratoms) if a not in protein]
+        gaff = [i for i, a in enumerate(ratoms) if a not in protein or a in am1]
         q = self.charges.get(self.resnames[r])
         want = int(q) if q is not None else int(round(sum(
             int(f.atoms["formal_charge"][index[a]]) for a in ratoms)))  # fmt: skip
@@ -1140,24 +1503,30 @@ class _Builder:
 
         # the parent's impropers and CMAP where all their atoms keep its types
         tuples = {"impropers": [], "cmap": []}
-        if parent is not None:
+        for parent, pmap in units:
             inv = {i: a for a, i in pmap.items()}
 
-            def system_atom(ti):
+            def system_atom(ti, parent=parent, pmap=pmap, inv=inv):
                 if parent.anum[ti] > 0:
                     a = inv.get(ti)
                     return a if a in protein else None
                 inner = inv.get(parent._nbrs[ti][0])
                 if inner is None or inner not in protein:
                     return None
-                out = [b for b in self.nbrs[inner] if b not in local and self.anum[b] > 0]
+                out = [b for b in self.nbrs[inner] if b not in pmap and self.anum[b] > 0]
                 return out[0] if len(out) == 1 else None
 
             for key, src in (("impropers", parent.impropers), ("cmap", parent.cmaps)):
                 for tup in src:
                     mapped = [system_atom(ti) for ti in tup]
-                    if all(a is not None for a in mapped):
-                        tuples[key].append(tuple(where[a] for a in mapped))
+                    if any(a is None for a in mapped):
+                        continue
+                    # an improper over a GAFF2 atom of this group is tleap's (below);
+                    # a CMAP only needs its N, CA and C to be the protein's
+                    if key == "impropers" and any(a in group and a not in protein
+                                                  for a in mapped):  # fmt: skip
+                        continue
+                    tuples[key].append(tuple(where[a] for a in mapped))
         # GAFF2 impropers centred on this residue's atoms
         frag_of = {i: a for a, i in index.items()}
         for t in impropers:

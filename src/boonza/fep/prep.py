@@ -725,7 +725,10 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         log("GAFF2 templates, AM1-BCC charges at reference conformers")
     patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges, parents=args.parents,
                              protein_extent=args.protein_extent,
-                             charge_geometry="reference")  # fmt: skip
+                             pseudopeptide=getattr(args, "pseudopeptide", None) or "off",
+                             draw=work, charge_geometry="reference")  # fmt: skip
+    for line in gaff.describe_units(patch):
+        log(line)
     if kept is not None:
         patch = _not_kept(patch, kept)
     viparr.write_forcefield(patch if kept is None else viparr.merge_forcefields(kept, patch),
