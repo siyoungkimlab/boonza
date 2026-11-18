@@ -2678,6 +2678,12 @@ def _amide_slot(s, anchor: int, residue: int, leaving: int) -> np.ndarray:
     e2 = np.cross(axis, e1)
     theta = np.radians(SP2_ANGLE)
     others = np.flatnonzero((anum > 1) & (res != residue) & (np.arange(s.natoms) != leaving))
+    if not len(others):  # a peptide of one residue: its own atoms are all there is
+        apart = {anchor, leaving, *heavy}
+        others = np.array([a for a in np.flatnonzero((anum > 1) & (res == residue)).tolist()
+                           if a not in apart], dtype=np.int64)  # fmt: skip
+    if not len(others):
+        return _unit(np.cos(theta) * axis + np.sin(theta) * e1)
     best = None
     for k in range(SLOT_TURNS):
         phi = 2 * np.pi * k / SLOT_TURNS
@@ -2688,6 +2694,22 @@ def _amide_slot(s, anchor: int, residue: int, leaving: int) -> np.ndarray:
         if best is None or room > best[0]:
             best = (room, d)
     return _unit(best[1])
+
+
+def _planar_amide_h(s, n: int) -> None:
+    """The one hydrogen of amide nitrogen ``n`` into the amide's plane: opposite its two
+    heavy neighbours, so trans to the carbonyl oxygen across a trans peptide bond.
+    Hydrogens are grown tetrahedrally, which leaves an amide's standing 0.4-0.65 Å out
+    of the plane and its O=C-N-H anywhere."""
+    anum = np.asarray(s.atoms["anum"])
+    heavy = [b for b, _ in neighbors(s, n) if anum[b] > 1]
+    hs = [b for b, _ in neighbors(s, n) if anum[b] == 1]
+    if len(heavy) != 2 or len(hs) != 1:
+        return
+    x = np.array(s.positions, float)
+    d = -(_unit(x[heavy[0]] - x[n]) + _unit(x[heavy[1]] - x[n]))
+    x[hs[0]] = x[n] + H_BOND[7] * _unit(d)
+    s.positions = x
 
 
 def pieces(s, chain: int) -> list[list[int]]:
@@ -2789,6 +2811,7 @@ def cap(s, chain: int, end: str, residue: int | None = None) -> int:
         n, ca = _find(s, r, "N"), _find(s, r, "CA")
         cc, ch3 = _find(s, new_res, "C"), _find(s, new_res, "CH3")
         set_dihedral(s, ch3, cc, n, ca, 180.0)
+        _planar_amide_h(s, n)  # N-H in the plane of the acetyl's C=O, trans to it
         _name_amide_h(s, r)
         _place(s, new_res, r, after=False)
     else:
@@ -2810,6 +2833,7 @@ def cap(s, chain: int, end: str, residue: int | None = None) -> int:
         x[methyl] += shift  # the methyl's own geometry rides along; its turn is free
         s.positions = x
         adjust_hydrogens(s, [nn, o])
+        _planar_amide_h(s, _find(s, new_res, "N"))  # and its N-H, trans to the C=O
         _place(s, new_res, r, after=True)
     # placing it renumbered the residues: the cap is the one of that name and number
     return int(s.atoms["residue"][_residue_atom_any(s, name, resid, chain)])
@@ -2993,6 +3017,8 @@ def extend(s, chain: int, end: str | None, new: str, residue: int | None = None)
     if moving:
         _best_turn(s, b, c, moving, steps=24)
     _best_rotamer(s, new_res)
+    if not bare:  # the new peptide bond's N-H in its plane, trans to the C=O
+        _planar_amide_h(s, _residue_atom(s, r if end == "N" else new_res, "N"))
     _gather(s, r)  # the old end's new hydrogen, appended, back with its residue
     r = int(s.atoms["residue"][_residue_atom_any_name(s, here_key)])
     new_res = int(s.atoms["residue"][_residue_atom_any(s, new, resid, chain)])

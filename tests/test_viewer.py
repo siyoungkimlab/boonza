@@ -1934,6 +1934,60 @@ def _bonded(topo, a: int) -> set[int]:
     return {j if i == a else i for i, j in pairs if a in (i, j)}
 
 
+def test_caps_and_new_residues_make_flat_trans_amides():
+    """ACE, NME and an added residue each make a peptide bond: trans, and flat with its
+    N-H and C=O -- the hydrogen included, which was grown tetrahedrally and stood up
+    to 0.65 A out of the plane, its O=C-N-H anywhere between 40 and 140 degrees off.
+    A peptide of one residue is capped like any other (it used to stop: nothing
+    outside the residue to turn the cap away from)."""
+    from boonza import pbc
+    from boonza.viewer import edit
+
+    def off(s, *atoms):  # degrees from 180
+        x = np.asarray(s.positions, float)
+        got = np.degrees(pbc.dihedrals(*(x[a][None] for a in atoms))[0])
+        return abs(got % 360.0 - 180.0)
+
+    def height(s, n):  # of a nitrogen above the plane of its three neighbours
+        x = np.asarray(s.positions, float)
+        a, b, c = (x[k] for k in s.bonded_atoms(n).tolist())
+        normal = np.cross(b - a, c - a)
+        return abs((x[n] - a) @ normal) / np.linalg.norm(normal)
+
+    def amide(s, r):  # the bond from residue r to r + 1: CA, C, O and N, CA or CH3, H
+        at = lambda k, *names: next(  # noqa: E731
+            (int(a) for a in s.residue_atoms(k) for n in names if s.atoms["name"][a] == n), None
+        )
+        return (at(r, "CA", "CH3"), at(r, "C"), at(r, "O"),
+                at(r + 1, "N"), at(r + 1, "CA", "CH3"), at(r + 1, "H"))  # fmt: skip
+
+    def flat(s, r):
+        ca, c, o, n, ca2, h = amide(s, r)
+        assert off(s, ca, c, n, ca2) < 1.5, "omega"
+        if h is not None:  # proline has none
+            assert off(s, o, c, n, h) < 1.5, "O=C-N-H"
+            assert height(s, n) < 0.02, "N out of its plane"
+
+    for seq in ("A", "G", "P", "WGK", "PAP"):
+        for conformation in ("helix", "extended"):
+            v = viewer.Viewer([])
+            v.build_peptide(seq, conformation)
+            s = v.models[0].load().system
+            edit.cap(s, 0, "N")
+            edit.cap(s, 0, "C")
+            names = [str(x) for x in s.residues["name"]]
+            assert names[0] == "ACE" and names[-1] == "NME"
+            flat(s, 0)
+            flat(s, s.nresidues - 2)
+    for end in ("N", "C"):
+        for new in ("ALA", "TRP", "GLY"):
+            v = viewer.Viewer([])
+            v.build_peptide("AKD", "helix")
+            s = v.models[0].load().system
+            edit.extend(s, 0, end, new)
+            flat(s, 0 if end == "N" else s.nresidues - 2)
+
+
 def test_an_empty_view_builds_a_peptide(served):
     """The Protein Builder had nothing to start from: Mutate, Extend and Caps all need a
     residue.  A sequence is one now, in the backbone asked for, protonated as a file's
