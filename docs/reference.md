@@ -1610,8 +1610,8 @@ residues bonded to them other than through a peptide bond or disulfide
 
 A 3D molecule from a SMILES string (through RDKit).
 
-Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG
-from random coordinates, reproducible with ``seed``) and, with
+Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
+from random coordinates where its own start fails; reproducible with ``seed``) and, with
 ``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
 lowest-energy one is kept.  Bond
 orders, formal charges and stereochemistry come from the SMILES; a
