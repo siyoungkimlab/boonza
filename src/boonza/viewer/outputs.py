@@ -60,6 +60,8 @@ PHARM_COLOURS = {"DON": "#87ceeb", "ACC": "#fa8072", "CAT": "#3f6fff", "ANI": "#
 MIN_RIBBON = 5
 #: split refuses to make more models than this
 SPLIT_MAX = 200
+#: the backbones a new peptide can be built in (boonza.build.CONFORMATIONS, less its aliases)
+PEPTIDE_CONFORMATIONS = ("helix", "sheet", "extended", "polyproline")
 
 
 @dataclass
@@ -253,6 +255,38 @@ class Viewer:
         k = sum(1 for m in self.models if m.group == "built") + 1
         name = name or f"molecule {k}"
         # every atom, hydrogens too: they are where the builder grows the molecule
+        reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
+        session = Session(s, title=name, reps=reps)
+        self.models.append(Model(name, lambda: session, group="built", _session=session))
+        return [len(self.models) - 1]
+
+    def build_peptide(self, sequence: str, conformation: str = "helix",
+                      centre=(0.0, 0.0, 0.0)) -> list[int]:  # fmt: skip
+        """A new model of a peptide from its one-letter ``sequence``, centred at
+        ``centre``: what the Protein Builder starts from, since Mutate, Extend and Caps
+        all need a residue to work on.  ``conformation`` is one of
+        :data:`boonza.build.CONFORMATIONS`.  It is protonated as a structure read from
+        a file would be (charged termini, Lys, Arg, Asp and Glu charged), so the force
+        field's templates match it as it stands."""
+        from ..build import CONFORMATIONS, peptide
+        from .edit import ONE_LETTER, protonate
+
+        seq = "".join(str(sequence).split()).upper()
+        if not seq:
+            raise ValueError("give a sequence in one-letter codes, e.g. ACDEFK")
+        bad = sorted(set(seq) - set(ONE_LETTER.values()))
+        if bad:
+            raise ValueError(f"not one of the twenty amino acids: {' '.join(bad)} "
+                             "(one-letter codes, e.g. ACDEFK)")  # fmt: skip
+        if conformation not in CONFORMATIONS:
+            raise ValueError(f"conformation must be one of {', '.join(PEPTIDE_CONFORMATIONS)}")
+        s = peptide(seq, conformation=conformation)
+        s = s.clone(np.flatnonzero(np.asarray(s.atoms["anum"]) > 1))
+        protonate(s)
+        s.positions = np.asarray(s.positions, float) - np.asarray(s.positions, float).mean(0) \
+            + np.asarray(centre, float)  # fmt: skip
+        name = f"peptide {seq}" if len(seq) <= 12 else f"peptide {seq[:10]}... ({len(seq)})"
+        # every atom, hydrogens too, as a built molecule is drawn
         reps = [{"sel": "all", "style": "ballstick", "color": "element"}]
         session = Session(s, title=name, reps=reps)
         self.models.append(Model(name, lambda: session, group="built", _session=session))

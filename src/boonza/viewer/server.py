@@ -18,7 +18,9 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/set_positions   {"m": M, "atoms": [...], "xyz": [...]} (atoms moved by mouse)
     POST /api/set_distance, /api/set_angle   {"m": M, "atoms": [...], "value": x}
     POST /api/open            {"path": file or folder} -> the new models; /api/close {"m": M}
-    POST /api/build           {"smiles": ..., "centre": [x, y, z]} -> a new model of it
+    POST /api/build           {"smiles": ..., "centre": [x, y, z]} -> a new model of it; or
+                              {"sequence": one-letter codes, "conformation":
+                              helix|sheet|extended|polyproline, "centre"} -> a peptide
     POST /api/upload          a file's bytes (its name in X-Filename) -> opened
     POST /api/copy_into       {"m": from, "into": to, "atoms": [...]} -> appended there
     POST /api/clone           {"m": M, "atoms": [...], "frame": N} -> a new model of them
@@ -209,7 +211,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"added": self.viewer.open(body["path"]), **self.viewer.listing()})
             return
         if url.path == "/api/build":
-            added = self.viewer.build(str(body["smiles"]), body.get("centre") or (0, 0, 0))
+            centre = body.get("centre") or (0, 0, 0)
+            if body.get("sequence") is not None:
+                added = self.viewer.build_peptide(str(body["sequence"]),
+                                                  str(body.get("conformation") or "helix"),
+                                                  centre)  # fmt: skip
+            else:
+                added = self.viewer.build(str(body["smiles"]), centre)
             self._json({"added": added, **self.viewer.listing()})
             return
         if url.path == "/api/fetch":
