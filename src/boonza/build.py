@@ -618,7 +618,7 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
     ``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
     lowest-energy one is kept.  Bond
     orders, formal charges and stereochemistry come from the SMILES; a
-    stereocentre it leaves open comes out either way.  The molecule is one
+    stereocentre it leaves open comes out either way, with a warning.  The molecule is one
     residue named ``name`` with atoms named C1, C2, ..., H1, ...
     """
     from rdkit.Chem import AllChem
@@ -629,6 +629,18 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError(f"RDKit cannot parse the SMILES {smiles!r}")
+    open_ = [i for i, tag in Chem.FindMolChiralCenters(mol, includeUnassigned=True,
+                                                       useLegacyImplementation=False)
+             if tag == "?"]  # fmt: skip
+    if open_:
+        import warnings
+
+        which = ", ".join(f"{mol.GetAtomWithIdx(i).GetSymbol()}{i + 1}" for i in open_[:6])
+        warnings.warn(
+            f"{smiles!r} leaves {len(open_)} stereocentre{'s' if len(open_) > 1 else ''} open "
+            f"(atom {which}{', ...' if len(open_) > 6 else ''} of the SMILES): each comes out "
+            "R or S as the embedding falls, so an amino acid may be L or D; write @ or @@",
+            stacklevel=2)  # fmt: skip
     mol = Chem.AddHs(mol)
     params = AllChem.ETKDGv3()
     params.randomSeed = int(seed)

@@ -1615,7 +1615,7 @@ from random coordinates, reproducible with ``seed``) and, with
 ``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
 lowest-energy one is kept.  Bond
 orders, formal charges and stereochemistry come from the SMILES; a
-stereocentre it leaves open comes out either way.  The molecule is one
+stereocentre it leaves open comes out either way, with a warning.  The molecule is one
 residue named ``name`` with atoms named C1, C2, ..., H1, ...
 
 ### `boonza.gaff`
