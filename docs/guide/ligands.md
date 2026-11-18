@@ -111,6 +111,82 @@ carrying GAFF2 atoms keeps the protein force field:
   same Lys, CG, CD, CE and NZ are GAFF2. The residue's charge correction is
   then spread over more atoms.
 
+## Pseudopeptides
+
+A pseudopeptide is a ligand that is part peptide: a peptidomimetic, a capped
+or cyclic peptide with unnatural pieces, drawn or read as one molecule and so
+**one residue**. Nothing above applies to it, because there are no residues to
+cut at and no peptide bonds to a protein, and by default it is GAFF2 from end
+to end. `pseudopeptide` (`--pseudopeptide`) gives its peptide part the protein
+force field instead:
+
+1. **GAFF2 for the whole molecule**, as for any ligand, with AM1-BCC charges
+   from one AM1 calculation at the reference conformer (no geometry
+   optimization, whatever `charge_geometry` says). This takes about a second
+   at 90 atoms and three at 150; the optimization is what takes hours on a
+   molecule this size.
+2. **Residue matches.** Every N-CA-C(=O) in the molecule is compared with the
+   amino-acid templates of the protein force field itself. Where a whole
+   template is there atom for atom, hydrogens included -- ALA, LYS, a
+   protonation state such as ASH, a charged terminus such as NALA or CLYS,
+   CYX on each side of a disulfide -- those atoms are that residue. N must be
+   an amide nitrogen and C an amide carbon, as in a chain. An acetyl, N-methyl
+   amide or primary amide on a matched residue is ACE, NME or NHE.
+3. **Backbone matches.** Where the side chain is not a standard one, the
+   backbone alone is matched, as far as each atom is bonded like the
+   template's: on alanine's types when there is a side chain, glycine's when
+   there is none, proline's when a ring closes on N. The side chain, CB
+   included, is GAFF2. An atom that is not bonded like the template's stays
+   GAFF2 too: the nitrogen of an amine or an N-alkylated residue, the carbon
+   of an ester.
+4. **Parameters.** Matched atoms take the protein's atom types, so every
+   bond, angle, torsion and improper among them is the protein force field's,
+   and each N-CA-C whose three atoms matched gets its CMAP (mirrored for a D
+   residue). The atoms on either side of it may be GAFF2. A term that touches
+   a GAFF2 atom is GAFF2's, as for a covalent adduct.
+5. **Charges**, one of two ways:
+   - `"protein"` copies the template charges onto the matched atoms. They no
+     longer sum to the molecule's charge with the AM1-BCC charges of the
+     rest, so the difference is spread evenly over the GAFF2 atoms. A shift
+     above 0.1 e per atom is reported with a `ViparrWarning`: it means few
+     GAFF2 atoms are carrying a large correction.
+   - `"types"` keeps the AM1-BCC charges on every atom, under the protein's
+     types and bonded terms. Nothing has to be spread.
+
+A molecule in which everything matches, such as Ac-Ala-Lys-Pro-Gly-Asp-NHMe
+given as one residue, comes out with exactly the energies ff19SB gives it
+residue by residue.
+
+```python
+lig = boonza.load("ligand.sdf")
+patch = boonza.gaff2_patch(lig, ["aa.amber.ff19SB"], pseudopeptide="protein",
+                           pdf="ligand.pdf")
+for u in patch.units:  # what was found
+    print(u["template"], u["match"], u["atoms"])
+```
+
+```bash
+boonza parameterize ligand.sdf out.dms -f aa.amber.ff19SB --gaff2 \
+    --pseudopeptide --pdf ligand.pdf
+```
+
+`--pdf` (`pdf=`) writes the ligand in 2D as a vector PDF with a transparent
+page, the atoms that carry protein parameters on yellow -- look at it before
+running anything. `boonza md` and `boonza fep prep` write it into their work
+directory as `pseudopeptide_<residue>.pdf`, and `boonza swim` into each
+ligand's directory.
+
+`pseudopeptide` is off unless asked for, in `boonza md`, `boonza swim` and
+`boonza fep` alike (`--pseudopeptide`, or `pseudopeptide = "protein"` in the
+settings file), so ligands that happen to contain an amino acid keep the
+parameters they had. A swim's kept ligand templates are made again when the
+setting changes. In a relative free-energy calculation every ligand of the
+series is typed the same way, and atoms that keep the protein's types in two
+ligands have identical parameters in both.
+
+Residues of a chain are not affected: a non-standard residue in a protein or
+in a peptide given residue by residue is handled as described above.
+
 ## Drawings of covalent adducts
 
 When a ligand is bound to an amino acid other than by a peptide bond,

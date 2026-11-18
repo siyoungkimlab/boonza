@@ -602,3 +602,168 @@ def test_a_stripped_swim_probe_side_chain_is_a_gaff2_molecule():
         assert not {"GN", "GC", "GO"} & on_probes[name], name
     assert {"GN", "GC"} <= on_probes["P"]  # proline keeps them, so they hold it too
     assert on_probes["E"] and on_probes["R"] & {"BCG", "BCZ"}
+
+
+# ---- pseudopeptides: amino acids inside one ligand residue ---------------------------
+
+#: Ac-Ala-Lys(+)-(4-fluoro-Phe)-Pro-NH-benzyl, drawn as one molecule
+PSEUDOPEPTIDE = ("CC(=O)N[C@@H](C)C(=O)N[C@@H](CCCC[NH3+])C(=O)N[C@@H](Cc1ccc(F)cc1)C(=O)"
+                 "N1CCC[C@H]1C(=O)NCc1ccccc1")  # fmt: skip
+
+
+def _units_of(smiles: str, mode: str = "protein"):
+    s = boonza.from_smiles(smiles, name="LIG")
+    b = gaff._Builder(s, [viparr.load_forcefield("aa.amber.ff19SB")])
+    b.pseudopeptide = mode
+    return s, b._units(0)
+
+
+def test_amino_acids_inside_a_ligand_are_found():
+    """A ligand that is part peptide is one residue, with no peptide bonds to cut at:
+    its amino acids are found by their bonds.  A whole template found atom for atom is
+    a residue match; under another side chain the backbone alone matches, on alanine's
+    types; the acetyl on a matched N is ACE.  The rest is left to GAFF2."""
+    s, units = _units_of(PSEUDOPEPTIDE)
+    found = [(u["t"].name, u["match"]) for u in units]
+    assert found == [("ALA", "residue"), ("LYS", "residue"), ("ALA", "backbone"),
+                     ("PRO", "residue"), ("ACE", "cap")]  # fmt: skip
+    anum = s.atoms["anum"]
+    heavy = [sorted(int(anum[a]) for a in u["ok"] if anum[a] > 1) for u in units]
+    assert heavy[0] == [6, 6, 6, 7, 8] and len(heavy[1]) == 9  # all of Ala, all of Lys
+    assert heavy[2] == [6, 6, 7, 8]  # fluoro-Phe: N, CA, C, O, and no CB
+    # no atom is claimed twice, and neither the fluorophenyl nor the benzylamide is
+    claimed = [a for u in units for a in u["ok"]]
+    assert len(claimed) == len(set(claimed))
+    assert not {9} & {int(anum[a]) for a in claimed}
+    assert sum(1 for a in set(range(s.natoms)) - set(claimed) if anum[a] == 7) == 1
+    # off is off
+    assert _units_of(PSEUDOPEPTIDE, "off")[1] == []
+
+
+def test_what_is_not_an_amino_acid_stays_gaff2():
+    """Bonded as the template is, or not at all: an ester is no carboxylate although
+    its carbon has the same elements around it, an amine is no amide, and a ring that
+    does not close on N is not proline's."""
+    # zwitterionic Ala-Lys: the charged termini are templates of their own
+    _, units = _units_of("[NH3+][C@@H](C)C(=O)N[C@@H](CCCC[NH3+])C(=O)[O-]")
+    assert [(u["t"].name, u["match"]) for u in units] == [("NALA", "residue"),
+                                                          ("CLYS", "residue")]  # fmt: skip
+    # a serine methyl ester after an acetyl: N and CA are alanine's, the ester C and O
+    # are not a C-terminal carboxylate's
+    s, units = _units_of("CC(=O)N[C@@H](CO)C(=O)OC")
+    (u,) = [u for u in units if u["match"] == "backbone"]
+    assert sorted(int(s.atoms["anum"][a]) for a in u["ok"] if s.atoms["anum"][a] > 1) == [6, 7]
+    # a neutral amine on CA: the nitrogen is GAFF2, the rest of the backbone the protein's
+    s, units = _units_of("N[C@@H](C)C(=O)NC")
+    u, cap = units  # and the N-methyl amide after it is NME
+    assert (u["match"], cap["t"].name) == ("backbone", "NME")
+    assert not any(s.atoms["anum"][a] == 7 for a in u["ok"])
+    # nothing like an amino acid: nothing found
+    assert _units_of("CCOC(=O)c1ccccc1")[1] == []
+    # a disulfide inside the ligand: both halves are CYX
+    _, units = _units_of("CC(=O)N[C@H]1CSSC[C@@H](C(=O)NC)NC(=O)CNC1=O")
+    assert sorted(u["t"].name for u in units) == ["ACE", "CYX", "CYX", "GLY", "NME"]
+
+
+@needs_amber
+def test_a_peptide_given_as_one_ligand_is_the_protein_force_field():
+    """Where every atom matches, nothing of GAFF2 is left: the peptide as one LIG
+    residue has the energies ff19SB gives it as ACE, ALA, LYS, PRO, GLY, ASP and NME,
+    term by term, CMAP included."""
+    from boonza import omm
+
+    smi = ("[CH3:1][C:2](=[O:3])[NH:4][C@@H:5]([CH3:6])[C:7](=[O:8])[NH:9][C@@H:10]([CH2:11]"
+           "[CH2:12][CH2:13][CH2:14][NH3+:15])[C:16](=[O:17])[N:18]1[CH2:19][CH2:20][CH2:21]"
+           "[C@H:22]1[C:23](=[O:24])[NH:25][CH2:26][C:27](=[O:28])[NH:29][C@@H:30]([CH2:31]"
+           "[C:32](=[O:33])[O-:34])[C:35](=[O:36])[NH:37][CH3:38]")  # fmt: skip
+    spec = ["ACE 1 CH3", "ACE 1 C", "ACE 1 O", "ALA 2 N", "ALA 2 CA", "ALA 2 CB", "ALA 2 C",
+            "ALA 2 O", "LYS 3 N", "LYS 3 CA", "LYS 3 CB", "LYS 3 CG", "LYS 3 CD", "LYS 3 CE",
+            "LYS 3 NZ", "LYS 3 C", "LYS 3 O", "PRO 4 N", "PRO 4 CD", "PRO 4 CG", "PRO 4 CB",
+            "PRO 4 CA", "PRO 4 C", "PRO 4 O", "GLY 5 N", "GLY 5 CA", "GLY 5 C", "GLY 5 O",
+            "ASP 6 N", "ASP 6 CA", "ASP 6 CB", "ASP 6 CG", "ASP 6 OD1", "ASP 6 OD2", "ASP 6 C",
+            "ASP 6 O", "NME 7 N", "NME 7 CH3"]  # fmt: skip
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    as_residues = viparr.parameterize(_mapped(smi, spec, "A"), [ff])
+    one = _mapped(smi, [f"LIG 1 X{k}" for k in range(len(spec))], "A")
+    patch = gaff.gaff2_patch(one, [ff], pseudopeptide="protein", amberhome=AMBERHOME)
+    assert sorted(u["template"] for u in patch.units) == ["ACE", "ALA", "ASP", "GLY", "LYS",
+                                                          "NME", "PRO"]  # fmt: skip
+    as_ligand = viparr.parameterize(one, [viparr.merge_forcefields(ff, patch)])
+    assert len(as_ligand.table("torsiontorsion_cmap")) == 5
+    want, got = omm.openmm_energies(as_residues), omm.openmm_energies(as_ligand)
+    assert set(want) == set(got)
+    for term, e in want.items():
+        assert got[term] == pytest.approx(e, abs=1e-4), term
+
+
+@needs_amber
+def test_pseudopeptide_charges_cmap_and_drawing(tmp_path):
+    """The matched atoms carry the protein's types and CMAP in both modes.  "protein"
+    copies its charges and spreads what is left over the GAFF2 atoms, so the molecule
+    still has its formal charge; "types" keeps AM1-BCC on every atom.  The drawing is a
+    PDF without a background."""
+    s = boonza.from_smiles(PSEUDOPEPTIDE, name="LIG")
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    made = {}
+    for mode in gaff.PSEUDOPEPTIDE:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", viparr.ViparrWarning)  # no large charge shift
+            patch = gaff.gaff2_patch(s, [ff], pseudopeptide=mode, amberhome=AMBERHOME,
+                                     charge_geometry="reference", draw=tmp_path / mode)  # fmt: skip
+            made[mode] = viparr.parameterize(s, [viparr.merge_forcefields(ff, patch)])
+        assert patch.templates[0].total_charge == pytest.approx(1.0, abs=1e-6)
+        assert bool(patch.units) == (mode != "off")
+    off, protein, types = (made[m] for m in gaff.PSEUDOPEPTIDE)
+    assert "torsiontorsion_cmap" not in off.table_names
+    for out in (protein, types):  # Ala, Lys, fluoro-Phe (alanine's map) and Pro
+        assert len(out.table("torsiontorsion_cmap")) == 4
+    # the same atoms and bonds, so the same number of terms whichever force field has them
+    for table in ("stretch_harm", "angle_harm"):
+        assert len(protein.table(table)) == len(off.table(table))
+    alanine_n = int(np.flatnonzero(s.atoms["anum"] == 7)[0])
+    assert protein.atoms["charge"][alanine_n] == pytest.approx(-0.4157)  # ff19SB's amide N
+    np.testing.assert_allclose(types.atoms["charge"], off.atoms["charge"], atol=1e-6)
+    assert not np.allclose(protein.atoms["charge"], off.atoms["charge"], atol=1e-3)
+    # the drawing: vector, one page, and no rectangle painted behind the molecule
+    assert not list((tmp_path / "off").glob("*.pdf"))
+    (pdf,) = (tmp_path / "protein").glob("pseudopeptide_*.pdf")
+    data = pdf.read_bytes()
+    assert data.startswith(b"%PDF-") and data.rstrip().endswith(b"%%EOF")
+    assert any("Pseudopeptide drawn in" in line for line in gaff.describe_units(patch))
+    with pytest.raises(ValueError, match="pseudopeptide"):
+        gaff.gaff2_patch(s, [ff], pseudopeptide="on")
+
+
+@needs_amber
+def test_gaff2_atoms_split_where_protein_types_are_coarser():
+    """GAFF 2.2 tells the amide N of proline (n) from alanine's (ns) and ff19SB calls
+    both N, so one acyl carbon type bonded to each would need two parameters under one
+    name: that was "conflicting GAFF2 parameters".  One of the two carbons now takes a
+    type of its own."""
+    try:
+        gaff.gaff_parameters(AMBERHOME, "2.2")
+    except gaff.AmberToolsError:
+        pytest.skip("this AmberTools has no GAFF 2.2")
+    s = boonza.from_smiles("CC(C)(C)C(=O)N1CCC[C@H]1C(=O)NCCNC(=O)[C@H](C)NC(=O)C(C)(C)C",
+                           name="LIG")  # fmt: skip
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    patch = gaff.gaff2_patch(s, [ff], pseudopeptide="protein", gaff="2.2", amberhome=AMBERHOME)
+    own = {t for t in patch.templates[0].btype if ":" in t}
+    assert len(own) == 1 and own.pop().startswith("c~1:")
+    out = viparr.parameterize(s, [viparr.merge_forcefields(ff, patch)])
+    assert len(out.table("torsiontorsion_cmap")) == 2
+
+
+def test_a_peptide_sized_smiles_embeds_with_its_chirality():
+    """from_smiles builds a pseudopeptide too large for ETKDG's own start (it used to
+    stop at "could not embed"), and each CA has the handedness the SMILES gives it:
+    that is what picks the L or the mirrored CMAP."""
+    unit = "N[C@@H](Cc1ccc(F)cc1)C(=O)N[C@H](C)C(=O)N[C@@H](CCCC[NH3+])C(=O)N[C@H](CC(=O)[O-])C(=O)"
+    s = boonza.from_smiles("CC(=O)" + unit * 4 + "NCc1ccccc1", name="LIG", optimize=False)
+    assert s.natoms == 278
+    b = gaff._Builder(s, [viparr.load_forcefield("aa.amber.ff19SB")])
+    b.pseudopeptide = "protein"
+    units = [u for u in b._units(0) if u["bb"] is not None]
+    assert [u["t"].name for u in units] == ["ALA", "ALA", "LYS", "ASP"] * 4
+    handed = [b.P._is_d(u["bb"]["N"], u["bb"]["CA"], u["bb"]["C"]) for u in units]
+    assert handed == [False, True, False, True] * 4  # L, D, L, D as written

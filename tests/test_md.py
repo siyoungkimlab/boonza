@@ -1383,6 +1383,42 @@ def test_the_elastic_network_leaves_out_what_is_already_close():
     assert springs(0.05) > springs(0.5) > 0
 
 
+def test_pseudopeptide_reaches_gaff2(tmp_path, dipeptide, monkeypatch):
+    """--pseudopeptide (or pseudopeptide in the TOML) is what gaff2_patch is given: off
+    unless asked, "protein" for the bare flag; a Martini run refuses it."""
+    from boonza import gaff
+
+    assert config.PSEUDOPEPTIDE == gaff.PSEUDOPEPTIDE
+    s = boonza.load(dipeptide)
+    lig = boonza.from_smiles("CC(=O)N[C@@H](C)C(=O)NCc1ccccc1", name="LIG")
+    lig.positions = lig.positions + s.positions.mean(0) + np.array([9.0, 0.0, 0.0])
+    s.append(lig)
+    path = tmp_path / "complex.dms"
+    boonza.save(s, path)
+    given = []
+
+    class Stop(Exception):
+        pass
+
+    def patch(*a, **kw):
+        given.append(kw["pseudopeptide"])
+        raise Stop
+
+    monkeypatch.setattr(gaff, "gaff2_patch", patch)
+    toml = tmp_path / "md.toml"
+    toml.write_text('pseudopeptide = "types"\n', encoding="utf-8")
+    for argv, want in (([], "off"), (["--pseudopeptide"], "protein"),
+                       (["--pseudopeptide", "types"], "types"),
+                       (["--config", str(toml)], "types")):  # fmt: skip
+        with pytest.raises(Stop):
+            build_system(parse_arguments([str(path), *argv]), tmp_path / "w", log=quiet)
+        assert given[-1] == want
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--model", "martini3", "--pseudopeptide"])
+    with pytest.raises(SystemExit):
+        parse_arguments(["x.pdb", "--pseudopeptide", "on"])
+
+
 def test_charge_geometry_reaches_gaff2(tmp_path, dipeptide, monkeypatch):
     """--charge-geometry (or charge_geometry in the TOML) is what gaff2_patch is given,
     and is recorded; optimized unless asked; a Martini run refuses it."""

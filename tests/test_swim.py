@@ -339,3 +339,31 @@ def test_swim_charges_ligands_at_the_geometry_asked_for(tmp_path, protein, monke
     assert (root / ligands[0].code / "charge_geometry").read_text(
         encoding="utf-8"
     ).strip() == "optimized"
+
+
+def test_swim_gives_each_ligand_the_pseudopeptide_mode(tmp_path, protein, monkeypatch):
+    """--pseudopeptide reaches each ligand's GAFF2 job, as it reaches boonza md's; a
+    patch kept from a swim made without it (or in the other mode) is made again."""
+    # part peptide: a benzylamide is no residue, so the swim does not take it as one
+    lib = boonza.from_smiles("CC(=O)N[C@@H](C)C(=O)NCc1ccccc1")
+    path = tmp_path / "small.sdf"
+    boonza.save(lib, path)
+    given = []
+
+    def job(work):
+        d, _, _, opts = work
+        given.append(opts["pseudopeptide"])
+        (Path(d) / "patch").mkdir(exist_ok=True)
+        (Path(d) / "patch" / "templates").write_text("", encoding="utf-8")
+        return str(Path(d) / "patch")
+
+    monkeypatch.setattr(swim, "_gaff2_job", job)
+    args = parse_arguments([str(protein), "--pseudopeptide"])
+    assert args.pseudopeptide == "protein"
+    ffs = swim._load_forcefields(args.forcefields)
+    ligands = swim.load_library(path, ffs)
+    root = tmp_path / "ligands"
+    for mode in ("off", "off", "protein", "protein", "types"):
+        args.pseudopeptide = mode
+        swim.ligand_patches(ligands, args, ffs, root, log=quiet)
+    assert given == ["off", "protein", "types"]

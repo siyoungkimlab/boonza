@@ -168,3 +168,31 @@ def test_the_command_line_reads_a_file_given_without_input(tmp_path, capsys):
     assert main(["draw", str(lib), "c1ccccc1", "-o", str(out)]) == 0
     assert "3 molecules" in capsys.readouterr().out
     assert out.is_file()
+
+
+def test_an_rdkit_drawing_becomes_a_pdf_with_a_transparent_page():
+    """svg_to_pdf paints what the SVG paints and nothing else: no background rectangle
+    when RDKit was told not to clear one, the highlights in their colour."""
+    import zlib
+
+    from rdkit import Chem
+    from rdkit.Chem.Draw import rdMolDraw2D
+
+    from boonza.draw import svg_to_pdf
+
+    mol = Chem.MolFromSmiles("CC(=O)N[C@@H](C)C(=O)O")
+    pages = {}
+    for clear in (False, True):
+        d = rdMolDraw2D.MolDraw2DSVG(300, 200)
+        d.drawOptions().clearBackground = clear
+        rdMolDraw2D.PrepareAndDrawMolecule(d, mol, highlightAtoms=[3, 4],
+                                           highlightAtomColors={3: (1, 0.9, 0.2),
+                                                                4: (1, 0.9, 0.2)})  # fmt: skip
+        d.FinishDrawing()
+        pdf = svg_to_pdf(d.GetDrawingText())
+        assert pdf.startswith(b"%PDF-1.4") and b"/MediaBox [0 0 300.00 200.00]" in pdf
+        body = pdf.split(b"stream\n", 1)[1].split(b"\nendstream", 1)[0]
+        pages[clear] = zlib.decompress(body).decode("latin-1")
+    assert " re" not in pages[False] and " re" in pages[True]  # the background, only if asked
+    assert "1.000 0.898 0.200 rg" in pages[False]  # the yellow under the marked atoms
+    assert pages[False].count(" c") > 20  # the letters, as curves
