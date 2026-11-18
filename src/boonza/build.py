@@ -613,8 +613,8 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
                 conformers: int = 1) -> System:  # fmt: skip
     """A 3D molecule from a SMILES string (through RDKit).
 
-    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG
-    from random coordinates, reproducible with ``seed``) and, with
+    Hydrogens are added, ``conformers`` conformers are embedded (RDKit ETKDG,
+    from random coordinates where its own start fails; reproducible with ``seed``) and, with
     ``optimize``, minimized with MMFF94 (UFF when MMFF lacks parameters); the
     lowest-energy one is kept.  Bond
     orders, formal charges and stereochemistry come from the SMILES; a
@@ -644,11 +644,16 @@ def from_smiles(smiles: str, name: str = "LIG", seed: int = 42, optimize: bool =
     mol = Chem.AddHs(mol)
     params = AllChem.ETKDGv3()
     params.randomSeed = int(seed)
-    # from random coordinates: ETKDG's own start (from a distance matrix) fails from
-    # about 250 atoms on, and this one embeds a peptide of 500, the stereocentres
-    # still the SMILES's
-    params.useRandomCoords = True
     ids = list(AllChem.EmbedMultipleConfs(mol, numConfs=max(1, int(conformers)), params=params))
+    if not ids:
+        # a peptide-sized molecule: ETKDG's own start (from a distance matrix) fails
+        # from about 250 atoms on, and from random coordinates it embeds one of 500,
+        # the stereocentres still the SMILES's.  Only then: a random start gives a
+        # molecule that embeds either way a different conformer on Linux and on
+        # macOS, and tests that place a benzene by its coordinates told the two apart
+        params.useRandomCoords = True
+        ids = list(AllChem.EmbedMultipleConfs(mol, numConfs=max(1, int(conformers)),
+                                              params=params))  # fmt: skip
     if not ids:
         raise ValueError(f"RDKit could not embed {smiles!r} in 3D")
     best = ids[0]

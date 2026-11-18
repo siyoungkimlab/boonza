@@ -2337,8 +2337,7 @@ def test_a_design_in_its_receptor(served, tmp_path):
     g = DATA / "gmx_amber"
     pep = boonza.load(g / "topol.top", coordinates=g / "conf.gro")
     pep = pep.clone(pep.select("protein").ids)
-    # a conformer whose arbitrary orientation leaves the phenol touching the peptide
-    lig = boonza.from_smiles("c1ccccc1O", seed=3)
+    lig = boonza.from_smiles("c1ccccc1O")
     centre = pep.positions[pep.select("resid 2 and not hydrogen").ids].mean(0)
     lig.positions = lig.positions - lig.positions.mean(0) + centre + [0, 0, 5]
     n = pep.natoms
