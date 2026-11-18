@@ -1,7 +1,7 @@
 # boonza with OpenMM and AmberTools (GAFF2 ligands), from conda-forge:
 #   conda env create -f environment.yml && conda activate boonza && pip install -e . --no-deps
-# install.sh does the same, and pins OpenMM's CUDA release or version on request
-# (bash install.sh --help).
+# install.sh does the same, pins OpenMM's CUDA release or version on request, and
+# adds the optional OpenFF ligand force fields with --openff (bash install.sh --help).
 name: boonza
 channels:
   - conda-forge
@@ -21,3 +21,10 @@ dependencies:
   - pdb2pqr
   - requests
   - pip
+  # Optional: OpenFF ligand force fields (ligandff = "openff-2.2.1") and NAGL charges.
+  # GAFF2, the default, needs none of them, and they bring PyTorch (about 60
+  # packages, 150 MB).  Uncomment, or run: bash install.sh --openff
+  # - openmmforcefields
+  # - openff-forcefields
+  # - openff-nagl
+  # - openff-nagl-models

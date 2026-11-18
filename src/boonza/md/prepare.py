@@ -278,9 +278,12 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
         from .. import openff
 
         openff.refuse_pseudopeptide(args)
-        log(f"OpenFF {args.ligandff} templates (openmmforcefields; AM1-BCC charges, "
-            f"{geometry} geometry) for {_label(s, groups)}")  # fmt: skip
+        model = getattr(args, "charge_model", None) or "auto"
+        log(f"OpenFF {args.ligandff} templates (openmmforcefields; "
+            f"{openff.describe_charges(args.ligandff, model, geometry)}) for "
+            f"{_label(s, groups)}")  # fmt: skip
         patch = openff.ligand_patch(s, ff, ligandff=args.ligandff, charges=args.ligand_charges,
+                                    charge_model=model,
                                     charge_geometry=geometry, log=log, parents=args.parents,
                                     protein_extent=args.protein_extent, draw=workdir,
                                     workdir=workdir / "gaff2")  # fmt: skip
@@ -289,6 +292,9 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
         host = gaff.host_index(ff)
         ff[host] = viparr.merge_forcefields(ff[host], patch)
     elif groups:
+        from .. import openff
+
+        openff.check_charge_model(args.ligandff, getattr(args, "charge_model", None) or "auto")
         log(f"GAFF2 {args.ligandff} templates (AM1-BCC charges, {geometry} geometry) for "
             f"{_label(s, groups)}")  # fmt: skip
         patch = gaff.gaff2_patch(
@@ -389,6 +395,7 @@ def write_components(path, info: dict, args) -> None:
         "forcefields": [list(x) for x in args.forcefields],
         "ligand_mode": args.ligand_mode,
         "ligandff": args.ligandff,
+        "charge_model": getattr(args, "charge_model", None) or "auto",
         "charge_geometry": getattr(args, "charge_geometry", None) or "optimized",
         **info,
     }

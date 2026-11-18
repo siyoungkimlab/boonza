@@ -34,6 +34,7 @@ bash install.sh                            # conda environment "boonza"
 bash install.sh --cuda 12.6                # OpenMM for GPU nodes whose driver supports CUDA 12.6
 bash install.sh --cuda none --openmm 8.2   # OpenMM 8.2 without CUDA: CPU and OpenCL
 bash install.sh --dev                      # + pytest, ruff and MDAnalysis, for the tests
+bash install.sh --openff                   # + OpenFF ligand force fields and NAGL charges (optional)
 conda activate boonza
 ```
 

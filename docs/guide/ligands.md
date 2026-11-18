@@ -210,26 +210,37 @@ GAFF2 stays the default. `ligandff` (`--ligandff`) names the force field:
 `gaff-2.11`, or one of Sage's releases, `openff-2.0.0` to `openff-2.3.0`, as
 far as the installed openmmforcefields has it.
 
-It needs openmmforcefields and the OpenFF toolkit beside AmberTools, which
-still computes the charges:
+It needs openmmforcefields, which brings the OpenFF toolkit, and for NAGL
+charges openff-nagl. They are optional: GAFF2 needs none of them, and they
+bring PyTorch (about 60 packages, 150 MB).
 
 ```bash
-conda install -c conda-forge openmmforcefields
+bash install.sh --openff          # with boonza's environment
+conda install -c conda-forge openmmforcefields openff-forcefields openff-nagl openff-nagl-models
 ```
 
-That brings the OpenFF toolkit and, with it, PyTorch; boonza's own
-environment does not install it, and without it `ligandff = "openff-..."`
-stops with that command.
+`environment.yml` lists them commented out. Without them
+`ligandff = "openff-..."` stops with the command to install them.
 
 - **What is OpenFF's.** openmmforcefields' `SMIRNOFFTemplateGenerator` types
   the molecule, and its bonds, angles, torsions, impropers and Lennard-Jones
   become the patch as they are: the energies of those terms equal
   openmmforcefields' own. Sage has three impropers to a planar centre, one
   for each order of the outer atoms, and all three are kept.
-- **Charges** are AM1-BCC from AmberTools, computed as for GAFF2, so
-  `charge_geometry` means the same and a molecule has the same charges under
-  either force field. They are handed to OpenFF, which would otherwise
-  compute them itself.
+- **Charges** are the kind the force field specifies, unless `charge_model`
+  (`--charge-model`) names one:
+  - `openff-2.3.0` specifies **NAGL** charges: a graph network trained on
+    AM1-BCC, from openff-nagl. There is no quantum calculation, so a ligand
+    of 500 atoms is charged in under a second, the charges do not depend on
+    the pose (`charge_geometry` does not apply), and AmberTools is not
+    needed. They are the charges openmmforcefields assigns on its own.
+  - `openff-2.2.1` and earlier specify **AM1-BCC**, computed by AmberTools
+    as for GAFF2: `charge_geometry` means the same, and a molecule has the
+    same charges under GAFF2 and under these.
+  - `charge_model = "nagl"` gives an earlier release NAGL charges (what to
+    reach for when the ligand is peptide-sized), and `"am1bcc"` gives 2.3.0
+    AmberTools'. The two differ by more than rounding: 0.28 e on the sulfur
+    of a sulfonamide. GAFF2 has AM1-BCC alone.
 - **1-4 electrostatics** take the scale of the Amber force field the patch
   joins, 0.8333 in viparr's files where Sage says 0.833333: hundredths of a
   kcal/mol in a drug-sized molecule, and the one place the result is not

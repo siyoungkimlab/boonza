@@ -405,13 +405,14 @@ def _gaff2_job(job) -> str:
     d = Path(d)
     opts = dict(opts)
     ligandff = opts.pop("ligandff", None) or "gaff-2.11"
+    model = opts.pop("charge_model", None) or "auto"
     if ligandff.startswith("openff"):  # the other ligand force field, the same job
         from .. import openff
 
         opts.pop("pseudopeptide", None)
         patch = openff.ligand_patch(load(d / "ligand.dms"), _load_forcefields(spec),
-                                    ligandff=ligandff, tag=tag, workdir=d / "gaff2", draw=d,
-                                    **opts)  # fmt: skip
+                                    ligandff=ligandff, charge_model=model, tag=tag,
+                                    workdir=d / "gaff2", draw=d, **opts)  # fmt: skip
     else:
         patch = gaff.gaff2_patch(load(d / "ligand.dms"), _load_forcefields(spec),
                                  workdir=d / "gaff2", tag=tag, draw=d, **opts)  # fmt: skip
@@ -430,15 +431,17 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
     pseudo = getattr(args, "pseudopeptide", None) or "off"
     ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
     openff_ = ligandff.startswith("openff")
-    if openff_:
-        from .. import openff
+    from .. import openff
 
+    model = getattr(args, "charge_model", None) or "auto"
+    openff.check_charge_model(ligandff, model)  # nagl is an OpenFF ligand's
+    if openff_:
         openff.refuse_pseudopeptide(args)
     # what a kept patch was made with: the geometry, the pseudopeptide mode when on, and
     # the force field when it is not GAFF2 -- a patch made with another is made again
     how = geometry if pseudo == "off" else f"{geometry} pseudopeptide={pseudo}"
     if openff_:
-        how = f"{how} {ligandff}"
+        how = f"{how} {ligandff}" + ("" if model == "auto" else f" {model}")
     out: list[Path | None] = [None] * len(ligands)
     todo = []
     for k, lig in enumerate(ligands):
@@ -465,12 +468,12 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
             todo.append(k)
     if todo:
         what = f"OpenFF {ligandff} (openmmforcefields)" if openff_ else f"GAFF2 {ligandff}"
-        log(f"{what} templates (AM1-BCC, {geometry} geometry) for "
+        log(f"{what} templates ({openff.describe_charges(ligandff, model, geometry)}) for "
             f"{len(todo)} ligands, {jobs} at a time...")  # fmt: skip
         spec = [list(e) for e in args.forcefields]
         opts = dict(charges=args.ligand_charges, parents=args.parents,
                     protein_extent=args.protein_extent, charge_geometry=geometry,
-                    pseudopeptide=pseudo, ligandff=ligandff)  # fmt: skip
+                    pseudopeptide=pseudo, ligandff=ligandff, charge_model=model)  # fmt: skip
         work = [(str(root / ligands[k].code), ligands[k].code, spec, opts) for k in todo]
         if jobs > 1:
             with ProcessPoolExecutor(max_workers=jobs) as pool:

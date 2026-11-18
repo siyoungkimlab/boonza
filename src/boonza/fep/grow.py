@@ -543,11 +543,13 @@ def _forcefield(receptor, lig, ff, args):
                 parents=getattr(args, "parents", None),
                 protein_extent=getattr(args, "protein_extent", "matched"),
                 charge_geometry="reference")  # fmt: skip
-    if ligandff.startswith("openff"):
-        from .. import openff
+    from .. import openff
 
+    model = getattr(args, "charge_model", None) or "auto"
+    openff.check_charge_model(ligandff, model)  # nagl is an OpenFF ligand's
+    if ligandff.startswith("openff"):
         openff.refuse_pseudopeptide(args)
-        patch = openff.ligand_patch(both, ff, ligandff=ligandff, **opts)
+        patch = openff.ligand_patch(both, ff, ligandff=ligandff, charge_model=model, **opts)
     else:
         pseudo = getattr(args, "pseudopeptide", None) or "off"
         patch = gaff.gaff2_patch(both, ff, **opts, pseudopeptide=pseudo)

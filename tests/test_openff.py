@@ -3,6 +3,8 @@
 The tests that type a molecule skip without openmmforcefields and AmberTools; what
 is refused, and where the setting goes, is tested everywhere."""
 
+import importlib.util
+import os
 import warnings
 
 import numpy as np
@@ -17,8 +19,17 @@ try:
     AMBERHOME = gaff.find_amber_tools()
     HAVE = True
 except (openff.OpenFFError, gaff.AmberToolsError):
+    if os.environ.get("BOONZA_REQUIRE_OPENFF"):  # CI's AmberTools job must not skip
+        raise
     HAVE = False
 needs_openff = pytest.mark.skipif(not HAVE, reason="openmmforcefields or AmberTools is missing")
+try:  # found, not imported: "import openff.nagl" would rename boonza's openff here
+    NAGL = HAVE and all(importlib.util.find_spec(m) for m in ("openff.nagl", "openff.nagl_models"))
+except ImportError:
+    NAGL = False
+if os.environ.get("BOONZA_REQUIRE_OPENFF") and not NAGL:
+    raise ImportError("openff-nagl is missing, and BOONZA_REQUIRE_OPENFF asks for it")
+needs_nagl = pytest.mark.skipif(not NAGL, reason="openff-nagl (or openmmforcefields) is missing")
 
 LIGANDS = ("CC(=O)Nc1ccc(O)cc1", "O=C(N)c1ccc[n+](C)c1", "CS(=O)(=O)Nc1ccc(Cl)cc1C#N",
            "CC(C)Cc1ccc(cc1)[C@@H](C)C(=O)[O-]")  # fmt: skip
@@ -29,7 +40,8 @@ def quiet(*_):
 
 
 def _reference(s, charge, name="openff-2.2.1"):
-    """The molecule as openmmforcefields itself parameterizes it, an OpenMM system."""
+    """The molecule as openmmforcefields itself parameterizes it, an OpenMM system:
+    with the partial charges ``charge``, or its own where that is None."""
     import openmm.app as app
     from openff.toolkit import Molecule
     from openff.units import unit
@@ -39,7 +51,8 @@ def _reference(s, charge, name="openff-2.2.1"):
 
     mol = Molecule.from_rdkit(to_rdkit(s, implicit_hydrogens=False),
                               allow_undefined_stereo=True, hydrogens_are_explicit=True)  # fmt: skip
-    mol.partial_charges = np.asarray(charge, float) * unit.elementary_charge
+    if charge is not None:
+        mol.partial_charges = np.asarray(charge, float) * unit.elementary_charge
     ff = app.ForceField()
     ff.registerTemplateGenerator(
         SMIRNOFFTemplateGenerator(molecules=[mol], forcefield=name).generator)  # fmt: skip
@@ -168,11 +181,21 @@ def test_the_setting_reaches_md_swim_and_fep(tmp_path, monkeypatch):
 
     monkeypatch.setattr(openff, "ligand_patch", patch)
     # boonza md
-    args = parse_arguments([str(tmp_path / "complex.dms"), "--ligandff", "openff-2.1.0",
-                            "--charge-geometry", "reference"])  # fmt: skip
+    args = parse_arguments(
+        [
+            str(tmp_path / "complex.dms"),
+            "--ligandff",
+            "openff-2.1.0",
+            "--charge-geometry",
+            "reference",
+            "--charge-model",
+            "nagl",
+        ]
+    )
     with pytest.raises(Stop):
         build_system(args, tmp_path / "md", log=quiet)
     assert given[-1]["ligandff"] == "openff-2.1.0" and given[-1]["charge_geometry"] == "reference"
+    assert given[-1]["charge_model"] == "nagl"
     # boonza fep (grow's force field is the one function; prep calls the same)
     with pytest.raises(Stop):
         grow._forcefield(receptor, lig, swim._load_forcefields(args.forcefields), args)
@@ -205,6 +228,17 @@ def test_the_setting_reaches_md_swim_and_fep(tmp_path, monkeypatch):
                          {"ligandff": "openff-2.2.1", "charge_geometry": "reference",
                           "pseudopeptide": "off"}))  # fmt: skip
     assert given[-1]["ligandff"] == "openff-2.2.1" and given[-1]["tag"] == "L0"
+    assert given[-1]["charge_model"] == "auto"
+    # NAGL charges are an OpenFF ligand's: GAFF2 has AM1-BCC alone, in every command
+    gargs = parse_arguments([str(tmp_path / "complex.dms"), "--charge-model", "nagl"])
+    with pytest.raises(ValueError, match="goes with an OpenFF ligandff, not gaff-2.11"):
+        build_system(gargs, tmp_path / "md3", log=quiet)
+    with pytest.raises(ValueError, match="goes with an OpenFF ligandff"):
+        swim.ligand_patches(ligands, gargs, ffs, tmp_path / "ligands3", log=quiet)
+    with pytest.raises(ValueError, match="goes with an OpenFF ligandff"):
+        grow._forcefield(receptor, lig, ffs, gargs)
+    with pytest.raises(SystemExit):
+        parse_arguments([str(tmp_path / "complex.dms"), "--charge-model", "resp"])
     # a pseudopeptide is GAFF2's
     args.pseudopeptide = sargs.pseudopeptide = "protein"
     sargs.ligandff = "openff-2.2.1"
@@ -322,3 +356,68 @@ def test_boonza_fep_preps_runs_and_extends_with_openff_ligands(tmp_path, capsys)
     assert cli.main(["prep", "--ligands", str(again), "--workdir", str(work), "--extend",
                      *tiny]) == 1  # fmt: skip
     assert "one network, one ligand force field" in capsys.readouterr().err
+
+
+@needs_nagl
+def test_openff_2_3_takes_the_nagl_charges_it_specifies():
+    """Sage 2.3.0 says its charges are NAGL's, a graph network trained on AM1-BCC, and
+    so they are unless AM1-BCC is asked for: the charges openmmforcefields assigns when
+    it is given none, and with them its energies, nonbonded included.  Releases before
+    it say AM1-BCC, and take NAGL's when asked."""
+    import openmm.unit as u
+
+    assert openff.nagl_model("openff-2.2.1") is None
+    assert openff.nagl_model("openff-2.3.0").startswith("openff-gnn-am1bcc")
+    assert [openff.charge_model(*x) for x in (("openff-2.2.1", "auto"), ("openff-2.3.0", "auto"),
+                                              ("gaff-2.11", "auto"))] == ["am1bcc", "nagl",
+                                                                          "am1bcc"]  # fmt: skip
+    s = boonza.from_smiles("CS(=O)(=O)Nc1ccc(Cl)cc1C#N", name="LIG")
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    made = {}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for name, model in (("openff-2.3.0", "auto"), ("openff-2.3.0", "am1bcc"),
+                            ("openff-2.2.1", "nagl"), ("openff-2.2.1", "auto")):  # fmt: skip
+            patch = openff.openff_patch(s, [ff], ligandff=name, charge_model=model,
+                                        charge_geometry="reference")  # fmt: skip
+            made[name, model] = (patch, np.array(patch.templates[0].charge))
+        top, system = _reference(s, None, "openff-2.3.0")
+        mine = viparr.parameterize(
+            s, [viparr.merge_forcefields(ff, made["openff-2.3.0", "auto"][0])], constraints=False
+        )
+    assert [made[k][0].charge_model for k in made] == ["nagl", "am1bcc", "nagl", "am1bcc"]
+    theirs = boonza.from_openmm(top, system, np.asarray(s.positions) / 10.0 * u.nanometer)
+    np.testing.assert_allclose(mine.atoms["charge"], theirs.atoms["charge"], atol=1e-5)
+    a, b = boonza.omm.openmm_energies(mine), boonza.omm.openmm_energies(theirs)
+    for term in ("stretch_harm", "angle_harm", "dihedral_trig"):
+        assert a[term] == pytest.approx(b[term], abs=1e-4), term
+    assert a["nonbonded"] == pytest.approx(b["nonbonded"], abs=0.03)
+    # one model, whichever release asks for it; and not AM1-BCC's numbers
+    np.testing.assert_allclose(made["openff-2.3.0", "auto"][1], made["openff-2.2.1", "nagl"][1],
+                               atol=1e-6)  # fmt: skip
+    assert np.abs(made["openff-2.3.0", "auto"][1] - made["openff-2.3.0", "am1bcc"][1]).max() > 0.01
+    for _, q in made.values():
+        assert q.sum() == pytest.approx(0.0, abs=1e-6)
+
+
+@needs_nagl
+def test_nagl_charges_a_peptide_sized_ligand_in_seconds():
+    """What AM1 cannot do: a ligand of 278 atoms, charged without a quantum calculation
+    and without AmberTools, with its net charge and the same charges on the same
+    residue wherever it is in the chain."""
+    import time
+
+    unit = ("N[C@@H](Cc1ccc(F)cc1)C(=O)N[C@H](C)C(=O)N[C@@H](CCCC[NH3+])C(=O)"
+            "N[C@H](CC(=O)[O-])C(=O)")  # fmt: skip
+    s = boonza.from_smiles("CC(=O)" + unit * 4 + "NCc1ccccc1", name="LIG", optimize=False)
+    assert s.natoms == 278
+    start = time.time()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        patch = openff.openff_patch(s, [], ligandff="openff-2.3.0", amberhome="/nowhere")
+    assert time.time() - start < 60
+    t = patch.templates[0]
+    assert patch.charge_model == "nagl" and t.natoms == 278
+    assert sum(t.charge) == pytest.approx(0.0, abs=1e-6)  # four Lys+ and four Asp-
+    fluorine = [q for q, z in zip(t.charge, t.anum, strict=True) if z == 9]
+    assert len(fluorine) == 4 and max(fluorine) - min(fluorine) < 0.02

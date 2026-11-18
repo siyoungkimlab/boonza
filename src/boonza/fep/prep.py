@@ -730,17 +730,19 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
                 f"{'an OpenFF force field' if was else 'GAFF2'}, and ligandff = '{ligandff}' "
                 "would give the new ligands another: one network, one ligand force field"
             )
-    if before is not None:
-        log(f"{what} templates of the first prep kept; the new ligands' AM1-BCC charges at "
-            "reference conformers")  # fmt: skip
-    else:
-        log(f"{what} templates, AM1-BCC charges at reference conformers")
-    if ligandff.startswith("openff"):
-        from .. import openff
+    from .. import openff
 
+    model = getattr(args, "charge_model", None) or "auto"
+    how = openff.describe_charges(ligandff, model, "reference")
+    if before is not None:
+        log(f"{what} templates of the first prep kept; the new ligands' {how}")
+    else:
+        log(f"{what} templates, {how}")
+    if ligandff.startswith("openff"):
         openff.refuse_pseudopeptide(args)
         patch = openff.ligand_patch(everything, ff, ligandff=ligandff,
-                                    charges=args.ligand_charges, charge_geometry="reference",
+                                    charges=args.ligand_charges, charge_model=model,
+                                    charge_geometry="reference",
                                     log=log, parents=args.parents,
                                     protein_extent=args.protein_extent, draw=work)  # fmt: skip
     else:

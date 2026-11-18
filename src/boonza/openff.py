@@ -7,9 +7,13 @@ field such as Sage (``openff-2.2.1``) with openmmforcefields'
 into a viparr patch, merged onto an Amber protein force field like a GAFF2
 patch is.
 
-Charges are AM1-BCC from AmberTools, computed as boonza's GAFF2 path computes
-them (so ``charge_geometry`` means the same) and handed to OpenFF, which
-would otherwise compute them itself.  The valence terms and Lennard-Jones are
+Charges are the force field's own kind (:data:`CHARGE_MODELS`).  A release
+that specifies NAGL charges (``openff-2.3.0``) gets them from openff-nagl, a
+graph network trained on AM1-BCC: no quantum calculation, half a second for
+a molecule of five hundred atoms, and the same in every pose.  The earlier
+releases specify AM1-BCC, which AmberTools computes as boonza's GAFF2 path
+does (so ``charge_geometry`` means the same).  Either can be asked for by
+name.  The valence terms and Lennard-Jones are
 OpenFF's to the last digit; the 1-4 electrostatics take the host force
 field's scale (viparr's Amber files say 0.8333 where Sage says 0.833333),
 which is a few thousandths of a kcal/mol in a drug-sized molecule.
@@ -30,10 +34,14 @@ import numpy as np
 from .system import System
 from .viparr import Rules, ViparrError, ViparrForcefield, patch_from_system
 
-__all__ = ["OpenFFError", "find_openff", "ligand_patch", "openff_patch"]
+__all__ = ["CHARGE_MODELS", "OpenFFError", "find_openff", "ligand_patch", "openff_patch"]
 
 #: the OpenFF force field taken when none is named: Sage
 DEFAULT = "openff-2.2.1"
+#: where a ligand's partial charges come from: "auto", what its force field
+#: specifies (NAGL for openff-2.3.0, AM1-BCC before it, and always for GAFF2);
+#: "am1bcc", AmberTools' sqm; "nagl", openff-nagl's graph network
+CHARGE_MODELS = ("auto", "am1bcc", "nagl")
 _NAME = re.compile(r"openff-\d+\.\d+\.\d+")
 _PLUGINS = ["exclusions", "mass", "bonds", "angles", "vdw1", "propers", "impropers"]
 
@@ -61,9 +69,70 @@ def find_openff(ligandff: str = DEFAULT):
     return SMIRNOFFTemplateGenerator
 
 
+def nagl_model(ligandff: str = DEFAULT) -> str | None:
+    """The NAGL model ``ligandff`` specifies for its charges, or None where it
+    specifies AM1-BCC."""
+    find_openff(ligandff)
+    from openff.toolkit import ForceField
+
+    handlers = ForceField(f"{ligandff}.offxml")._parameter_handlers
+    return str(handlers["NAGLCharges"].model_file) if "NAGLCharges" in handlers else None
+
+
+def check_charge_model(ligandff: str, model: str = "auto") -> None:
+    """Refuse a charge model the ligand force field does not have: GAFF2 has
+    AM1-BCC alone.  Nothing is imported, so it can be asked anywhere."""
+    if model not in CHARGE_MODELS:
+        raise ValueError(f"charge_model must be one of {CHARGE_MODELS}")
+    if model == "nagl" and not str(ligandff).startswith("openff"):
+        raise ValueError(f"charge_model = 'nagl' goes with an OpenFF ligandff, not {ligandff}")
+
+
+def charge_model(ligandff: str, model: str = "auto") -> str:
+    """ "am1bcc" or "nagl": ``model``, or for "auto" what ``ligandff`` specifies."""
+    check_charge_model(ligandff, model)
+    if not str(ligandff).startswith("openff"):
+        return "am1bcc"
+    if model != "auto":
+        return model
+    return "nagl" if nagl_model(ligandff) else "am1bcc"
+
+
+def describe_charges(ligandff: str, model: str = "auto", geometry: str = "optimized") -> str:
+    """The charges a run's ligands get, for its log."""
+    check_charge_model(ligandff, model)
+    try:
+        model = charge_model(ligandff, model)
+    except OpenFFError:  # not installed: the build itself will say so
+        return "the charges its force field specifies"
+    if model == "nagl":
+        return "NAGL charges"
+    return f"AM1-BCC charges, {geometry} geometry"
+
+
+def _nagl_charges(mol, ligandff: str) -> np.ndarray:
+    """Partial charges of an OpenFF molecule from openff-nagl: the model the force
+    field names, or the newest production AM1-BCC model where it names none."""
+    try:
+        from openff.nagl_models import get_models_by_type
+        from openff.toolkit.utils.nagl_wrapper import NAGLToolkitWrapper
+
+        wrapper = NAGLToolkitWrapper()
+    except Exception as e:
+        raise OpenFFError(
+            "openff-nagl was not found, and NAGL charges need it: install it with 'conda "
+            "install -c conda-forge openff-nagl openff-nagl-models', or ask for charge_model "
+            f"= \"am1bcc\" ({e})") from e  # fmt: skip
+    model = nagl_model(ligandff)
+    if model is None:
+        model = Path(get_models_by_type("am1bcc", production_only=True)[-1]).name
+    mol.assign_partial_charges(model, toolkit_registry=wrapper)
+    return np.asarray(mol.partial_charges.m_as("elementary_charge"), float)
+
+
 def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, charges=None,
-                 charge_method: str = "bcc", charge_geometry: str = "optimized",
-                 amberhome=None, path=None, tag=None,
+                 charge_model: str = "auto", charge_method: str = "bcc",
+                 charge_geometry: str = "optimized", amberhome=None, path=None, tag=None,
                  bound: str = "raise") -> ViparrForcefield:  # fmt: skip
     """A viparr patch with OpenFF templates for what ``forcefields`` cannot parameterize.
 
@@ -78,9 +147,12 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
     and points at GAFF2 -- or, with ``bound="skip"``, is left without a
     template for GAFF2 to make (:func:`ligand_patch` does both).  ``ligandff``
     is an OpenFF force field openmmforcefields has (``openff-2.2.1``, Sage).
-    ``charges`` maps residue names to formal charges where the input has none; ``charge_method`` and
-    ``charge_geometry`` are :func:`boonza.gaff.run_gaff2`'s, which computes
-    the AM1-BCC charges.  ``tag`` makes the types (``C1~<tag>``) and template
+    ``charges`` maps residue names to formal charges where the input has none.
+    ``charge_model`` (:data:`CHARGE_MODELS`) says where partial charges come
+    from: by default what the force field specifies, NAGL for openff-2.3.0
+    and AM1-BCC before it.  ``charge_method`` and ``charge_geometry`` are
+    :func:`boonza.gaff.run_gaff2`'s, which computes AM1-BCC charges; NAGL
+    charges need neither, and no AmberTools.  ``tag`` makes the types (``C1~<tag>``) and template
     names of this patch unique, so patches made separately can join one force
     field.  With no force fields, the patch is a complete force field.
     """
@@ -117,6 +189,7 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
     used = {t.partition("~")[2] for tp in (b.host.templates if b.host else ())
             for t in tp.btype if "~" in t}  # fmt: skip
     generator = find_openff(ligandff) if groups else None
+    model = globals()["charge_model"](ligandff, charge_model) if groups else "am1bcc"
     templates, params = [], {}
     made = 0
     for residues in groups:
@@ -129,10 +202,13 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
         frag, f = b._capped(atoms, residues)
         q = b.charges.get(b.resnames[r])
         net = int(q) if q is not None else int(f.atoms["formal_charge"].sum())
-        am1 = gaff.run_gaff2(f, net, charge_method=charge_method,
-                             charge_geometry=charge_geometry, amberhome=amberhome)  # fmt: skip
-        charge = np.asarray(am1.atoms["charge"], float)
-        charge = charge + (net - charge.sum()) / len(charge)  # antechamber's rounding
+        if model == "nagl":
+            charge = _nagl_charges(_molecule(f, net), ligandff)
+        else:
+            am1 = gaff.run_gaff2(f, net, charge_method=charge_method,
+                                 charge_geometry=charge_geometry, amberhome=amberhome)  # fmt: skip
+            charge = np.asarray(am1.atoms["charge"], float)
+        charge = charge + (net - charge.sum()) / len(charge)  # rounding, to the charge
         name = f"{b.resnames[r] or 'LIG'}_openff"
         if tag is not None:
             name = f"{tag}_{name}"
@@ -162,13 +238,13 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
         rules = Rules(es_scale=[], lj_scale=[])
     out = ViparrForcefield("openff-patch", rules, templates, params)
     out.parents, out.units, out.drawings = [], [], []  # as a GAFF2 patch has them
-    out.ligandff, out.skipped = ligandff, skipped
+    out.ligandff, out.skipped, out.charge_model = ligandff, skipped, model
     return out
 
 
 def ligand_patch(system: System, forcefields, *, ligandff: str = DEFAULT, charges=None,
-                 charge_geometry: str = "optimized", tag=None, path=None, log=None,
-                 **gaff2) -> ViparrForcefield:  # fmt: skip
+                 charge_model: str = "auto", charge_geometry: str = "optimized", tag=None,
+                 path=None, log=None, **gaff2) -> ViparrForcefield:  # fmt: skip
     """One patch for everything ``forcefields`` cannot parameterize, as boonza md,
     swim and fep make it: OpenFF templates for the free ligands, and GAFF2 templates
     (``gaff2``: :func:`boonza.gaff2_patch`'s other arguments) for what OpenFF is not
@@ -179,7 +255,8 @@ def ligand_patch(system: System, forcefields, *, ligandff: str = DEFAULT, charge
 
     ffs = gaff._load(forcefields, path)
     patch = openff_patch(system, ffs, ligandff=ligandff, charges=charges,
-                         charge_geometry=charge_geometry, tag=tag, bound="skip")  # fmt: skip
+                         charge_model=charge_model, charge_geometry=charge_geometry, tag=tag,
+                         bound="skip")  # fmt: skip
     if not patch.skipped:
         return patch
     if log is not None:
@@ -197,7 +274,7 @@ def ligand_patch(system: System, forcefields, *, ligandff: str = DEFAULT, charge
     out = ViparrForcefield("openff-patch", rest.rules if not ffs else patch.rules,
                            [*patch.templates, *rest.templates], params)  # fmt: skip
     out.parents, out.units, out.drawings = rest.parents, rest.units, rest.drawings
-    out.ligandff, out.skipped = ligandff, patch.skipped
+    out.ligandff, out.skipped, out.charge_model = ligandff, patch.skipped, patch.charge_model
     return out
 
 
@@ -215,16 +292,11 @@ def _typed(f: System, charge, generator, ligandff: str) -> System:
     with the partial charges ``charge``: a system with its force-field tables."""
     import openmm.app as app
     import openmm.unit as u
-    from openff.toolkit import Molecule
     from openff.units import unit as offunit
 
-    from .chem import to_rdkit
     from .omm import from_openmm
 
-    mol = Molecule.from_rdkit(to_rdkit(f, implicit_hydrogens=False),
-                              allow_undefined_stereo=True, hydrogens_are_explicit=True)  # fmt: skip
-    if [a.atomic_number for a in mol.atoms] != f.atoms["anum"].tolist():
-        raise OpenFFError("the OpenFF toolkit changed the atoms of the molecule")
+    mol = _molecule(f)
     mol.partial_charges = np.asarray(charge, float) * offunit.elementary_charge
     ff = app.ForceField()
     ff.registerTemplateGenerator(generator(molecules=[mol], forcefield=ligandff).generator)
@@ -238,6 +310,23 @@ def _typed(f: System, charge, generator, ligandff: str) -> System:
     if not np.allclose(out.atoms["charge"], charge, atol=1e-5):
         raise OpenFFError("openmmforcefields did not keep the AM1-BCC charges it was given")
     return out
+
+
+def _molecule(f: System, net: int | None = None):
+    """``f`` (all hydrogens, bond orders) as an OpenFF molecule, atoms in order."""
+    from openff.toolkit import Molecule
+
+    from .chem import to_rdkit
+
+    mol = Molecule.from_rdkit(to_rdkit(f, implicit_hydrogens=False),
+                              allow_undefined_stereo=True, hydrogens_are_explicit=True)  # fmt: skip
+    if [a.atomic_number for a in mol.atoms] != f.atoms["anum"].tolist():
+        raise OpenFFError("the OpenFF toolkit changed the atoms of the molecule")
+    if net is not None and int(mol.total_charge.m) != int(net):
+        raise OpenFFError(f"the molecule's formal charges sum to {int(mol.total_charge.m):+d}, "
+                          f"not the {int(net):+d} asked for: NAGL charges follow the formal "
+                          "charges, so give them on the atoms")  # fmt: skip
+    return mol
 
 
 def patch_directory(workdir) -> Path:

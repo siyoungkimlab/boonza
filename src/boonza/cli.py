@@ -1892,11 +1892,12 @@ def _parameterize(args) -> int:
             if not res or not q.lstrip("+-").isdigit():
                 raise SystemExit(f"--charge {item}: give RESNAME=CHARGE, e.g. LIG=-1")
             charges[res] = int(q)
-        patch = openff.openff_patch(system, ffs, ligandff=args.openff, charges=charges)
+        patch = openff.openff_patch(system, ffs, ligandff=args.openff, charges=charges,
+                                    charge_model=args.charge_model)  # fmt: skip
         if args.save_patch:
             viparr.write_forcefield(patch, args.save_patch)
         names = ", ".join(t.name for t in patch.templates) or "none needed"
-        print(f"OpenFF {args.openff} templates: {names}")
+        print(f"OpenFF {args.openff} templates ({patch.charge_model} charges): {names}")
         if ffs:
             host = gaff.host_index(ffs)
             ffs[host] = viparr.merge_forcefields(ffs[host], patch)
@@ -2398,9 +2399,17 @@ def _parser() -> argparse.ArgumentParser:
         nargs="?",
         const="openff-2.2.1",
         metavar="NAME",
-        help="OpenFF templates (through openmmforcefields; AM1-BCC charges from AmberTools) "
-        "for the free ligands the force fields cannot match, where --gaff2 would make "
-        "GAFF2's: openff-2.2.1 (Sage) unless another is named",
+        help="OpenFF templates (through openmmforcefields) for the free ligands the force "
+        "fields cannot match, where --gaff2 would make GAFF2's: openff-2.2.1 (Sage) "
+        "unless another is named",
+    )
+    q.add_argument(
+        "--charge-model",
+        choices=("auto", "am1bcc", "nagl"),
+        default="auto",
+        help="--openff: where partial charges come from. auto: what the force field "
+        "specifies (NAGL for openff-2.3.0, AM1-BCC before it); nagl: openff-nagl's graph "
+        "network; am1bcc: AmberTools",
     )
     q.add_argument(
         "--charge",
