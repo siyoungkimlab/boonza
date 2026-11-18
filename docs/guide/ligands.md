@@ -159,8 +159,7 @@ residue by residue.
 
 ```python
 lig = boonza.load("ligand.sdf")
-patch = boonza.gaff2_patch(lig, ["aa.amber.ff19SB"], pseudopeptide="protein",
-                           pdf="ligand.pdf")
+patch = boonza.gaff2_patch(lig, ["aa.amber.ff19SB"], pseudopeptide="protein", pdf="ligand.pdf")
 for u in patch.units:  # what was found
     print(u["template"], u["match"], u["atoms"])
 ```
