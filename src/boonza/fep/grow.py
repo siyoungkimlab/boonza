@@ -538,6 +538,7 @@ def _forcefield(receptor, lig, ff, args):
 
     both = receptor.copy()
     both.append(lig)
+    gaff.only_gaff2(args, "boonza fep grow")
     patch = gaff.gaff2_patch(both, ff, charges=getattr(args, "ligand_charges", None),
                              parents=getattr(args, "parents", None),
                              protein_extent=getattr(args, "protein_extent", "matched"),

@@ -723,6 +723,7 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
             "reference conformers")  # fmt: skip
     else:
         log("GAFF2 templates, AM1-BCC charges at reference conformers")
+    gaff.only_gaff2(args, "boonza fep")
     patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges, parents=args.parents,
                              protein_extent=args.protein_extent,
                              pseudopeptide=getattr(args, "pseudopeptide", None) or "off",

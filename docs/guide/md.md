@@ -155,6 +155,7 @@ ligands included.
 | `model` (`--model`) | `aa` | `martini3`, `martini2` or `sirah` coarse-grain instead; see [Martini runs](#martini-runs) and [SIRAH runs](#sirah-runs) |
 | `forcefields` (`-f`, `-m`) | see above | viparr force fields, or OpenMM XML files (all-atom only) |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
+| `ligandff` | `gaff-2.11` | the ligands' force field: GAFF2, or an OpenFF one such as `openff-2.2.1` (Sage) through openmmforcefields, for free ligands; see [Ligands](ligands.md#openff-instead-of-gaff2) |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |

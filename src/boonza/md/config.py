@@ -43,7 +43,10 @@ POSITION_RESTRAINT_SCALINGS = ("com", "none")
 #: lipid bilayer around the solute (Martini only), or nothing.
 SOLVATE_MODES = ("box", "fill", "membrane", "none")
 LIGAND_MODES = ("disabled", "auto")
-LIGAND_FORCE_FIELDS = ("gaff-2.11",)
+#: GAFF2 from AmberTools (boonza.gaff), or an OpenFF force field through
+#: openmmforcefields (boonza.openff): Sage's releases
+LIGAND_FORCE_FIELDS = ("gaff-2.11", "openff-2.0.0", "openff-2.1.0", "openff-2.1.1", "openff-2.2.0",
+                       "openff-2.2.1", "openff-2.3.0")  # fmt: skip
 #: where a GAFF2 ligand's AM1-BCC charges are computed (boonza.gaff.CHARGE_GEOMETRIES)
 CHARGE_GEOMETRIES = ("optimized", "reference")
 PROTEIN_EXTENTS = ("matched", "cb")
@@ -649,7 +652,9 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "match; disabled: that is an error",
     )
     ff.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
-                    help="GAFF release for ligands: gaff-2.11 (default)")  # fmt: skip
+                    help="the ligands' force field: gaff-2.11 (default, AmberTools), or an "
+                    "OpenFF one such as openff-2.2.1 (Sage, through openmmforcefields; "
+                    "free ligands only, boonza md only)")  # fmt: skip
     ff.add_argument(
         "--charge-geometry",
         dest="charge_geometry",
@@ -1411,6 +1416,8 @@ workdir = "boonza_md"
 
 # GAFF2 (AM1-BCC, AmberTools) templates for ligands and covalent adducts.
 ligand_mode = "auto"
+# "gaff-2.11", or an OpenFF force field through openmmforcefields, e.g. "openff-2.2.1"
+# (Sage): for free ligands; a covalent adduct or a non-standard residue needs GAFF2.
 ligandff = "gaff-2.11"
 # Where their AM1-BCC charges are computed: "optimized" (the pose as given, optimized
 # by sqm: minutes for a drug-sized molecule) or "reference" (one AM1 calculation at a

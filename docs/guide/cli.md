@@ -24,6 +24,7 @@ boonza parameterize in.dms out.dms -f aa.charmm.c36m -f water.tip3p_charmm   # v
 boonza parameterize in.dms out.dms -f aa.amber.ff99SB -m aa.amber.ff99SB-ILDN   # with a patch
 boonza parameterize in.dms out.dms -x amber19-all.xml -x amber19/opc.xml   # OpenMM XML force fields
 boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --gaff2   # + GAFF2 ligands
+boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --openff   # + OpenFF Sage ligands
 boonza martinize protein.pdb cg [--elastic] [--ss CODES]   # Martini 3 topology, as martinize2
 boonza martinize protein.pdb cg --model martini2 --elastic   # ... Martini 2.2 instead
 boonza martinize protein.pdb cg --elastic --solvate [--salt 0.15]   # ... in water with NaCl

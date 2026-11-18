@@ -8,7 +8,8 @@ viparr patch. The protein keeps the protein force field's parameters as far
 as its chemistry allows.
 
 It needs [AmberTools](https://ambermd.org/AmberTools.php) (antechamber, sqm,
-parmchk2, tleap), which is installed with conda; OpenFF is not needed:
+parmchk2, tleap), which is installed with conda; OpenFF is not needed (it is an
+option for free ligands, [below](#openff-instead-of-gaff2)):
 
 ```bash
 conda install -c conda-forge ambertools
@@ -188,6 +189,57 @@ one that touches an atom only one ligand has stays on throughout.
 
 Residues of a chain are not affected: a non-standard residue in a protein or
 in a peptide given residue by residue is handled as described above.
+
+## OpenFF instead of GAFF2
+
+A free ligand can take an OpenFF force field such as Sage in place of GAFF2,
+through [openmmforcefields](https://github.com/openmm/openmmforcefields):
+
+```python
+patch = boonza.openff_patch(s, ffs, ligandff="openff-2.2.1")
+ff = boonza.merge_forcefields("aa.amber.ff19SB", patch)
+p = boonza.parameterize(s, [ff, "water.tip3p", "ions.amber1jc.tip3p"])
+```
+
+```bash
+boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --openff
+boonza md complex.dms --ligandff openff-2.2.1
+```
+
+GAFF2 stays the default. `ligandff` (`--ligandff`) names the force field:
+`gaff-2.11`, or one of Sage's releases, `openff-2.0.0` to `openff-2.3.0`, as
+far as the installed openmmforcefields has it.
+
+It needs openmmforcefields and the OpenFF toolkit beside AmberTools, which
+still computes the charges:
+
+```bash
+conda install -c conda-forge openmmforcefields
+```
+
+That brings the OpenFF toolkit and, with it, PyTorch; boonza's own
+environment does not install it, and without it `ligandff = "openff-..."`
+stops with that command.
+
+- **What is OpenFF's.** openmmforcefields' `SMIRNOFFTemplateGenerator` types
+  the molecule, and its bonds, angles, torsions, impropers and Lennard-Jones
+  become the patch as they are: the energies of those terms equal
+  openmmforcefields' own. Sage has three impropers to a planar centre, one
+  for each order of the outer atoms, and all three are kept.
+- **Charges** are AM1-BCC from AmberTools, computed as for GAFF2, so
+  `charge_geometry` means the same and a molecule has the same charges under
+  either force field. They are handed to OpenFF, which would otherwise
+  compute them itself.
+- **1-4 electrostatics** take the scale of the Amber force field the patch
+  joins, 0.8333 in viparr's files where Sage says 0.833333: hundredths of a
+  kcal/mol in a drug-sized molecule, and the one place the result is not
+  openmmforcefields' to the last digit.
+- **Free ligands of one residue only.** A covalent adduct, a non-standard
+  residue and a pseudopeptide mix protein types with the ligand's, which is
+  built on GAFF2: they stop with a message that says so.
+- **`boonza md` and `boonza parameterize` so far.** `boonza swim` and
+  `boonza fep` build their ligands with GAFF2 and refuse another `ligandff`
+  rather than ignore it.
 
 ## Drawings of covalent adducts
 

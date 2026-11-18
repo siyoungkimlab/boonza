@@ -415,6 +415,7 @@ def _gaff2_job(job) -> str:
 def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=print):
     """The patch directory for each ligand (None when the force fields match it),
     made once and kept in ``root/<code>/``."""
+    gaff.only_gaff2(args, "boonza swim")
     host = forcefields[gaff.host_index(forcefields)]
     geometry = getattr(args, "charge_geometry", None) or "optimized"
     pseudo = getattr(args, "pseudopeptide", None) or "off"

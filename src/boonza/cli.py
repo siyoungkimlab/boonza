@@ -1880,7 +1880,29 @@ def _parameterize(args) -> int:
             ffs[-1] = viparr.merge_forcefields(ffs[-1], name, append_only=kind == "a",
                                                path=args.ffpath)  # fmt: skip
     system = _load(args.input)
-    if args.gaff2:
+    if args.openff:
+        from boonza import gaff, openff
+
+        if args.gaff2 or args.parent or args.draw or args.pdf or args.pseudopeptide != "off":
+            raise SystemExit("--openff is for free ligands: --gaff2, --parent, --draw, "
+                             "--pseudopeptide and --pdf go with GAFF2, not with it")  # fmt: skip
+        charges = {}
+        for item in args.charge:
+            res, _, q = item.partition("=")
+            if not res or not q.lstrip("+-").isdigit():
+                raise SystemExit(f"--charge {item}: give RESNAME=CHARGE, e.g. LIG=-1")
+            charges[res] = int(q)
+        patch = openff.openff_patch(system, ffs, ligandff=args.openff, charges=charges)
+        if args.save_patch:
+            viparr.write_forcefield(patch, args.save_patch)
+        names = ", ".join(t.name for t in patch.templates) or "none needed"
+        print(f"OpenFF {args.openff} templates: {names}")
+        if ffs:
+            host = gaff.host_index(ffs)
+            ffs[host] = viparr.merge_forcefields(ffs[host], patch)
+        else:
+            ffs = [patch]
+    elif args.gaff2:
         from boonza import gaff
 
         charges = {}
@@ -1920,7 +1942,7 @@ def _parameterize(args) -> int:
     elif (args.charge or args.parent or args.save_patch or args.draw or args.pdf
           or args.pseudopeptide != "off"):  # fmt: skip
         raise SystemExit("--charge, --parent, --save-patch, --draw, --pseudopeptide and --pdf "
-                         "go with --gaff2")  # fmt: skip
+                         "go with --gaff2 (--charge, --save-patch: --openff too)")  # fmt: skip
     s = viparr.parameterize(system, ffs, rename_atoms=args.rename_atoms,
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
@@ -2372,11 +2394,20 @@ def _parser() -> argparse.ArgumentParser:
         "match, ligands and covalent adducts included, merged onto the first -f",
     )
     q.add_argument(
+        "--openff",
+        nargs="?",
+        const="openff-2.2.1",
+        metavar="NAME",
+        help="OpenFF templates (through openmmforcefields; AM1-BCC charges from AmberTools) "
+        "for the free ligands the force fields cannot match, where --gaff2 would make "
+        "GAFF2's: openff-2.2.1 (Sage) unless another is named",
+    )
+    q.add_argument(
         "--charge",
         action="append",
         default=[],
         metavar="RES=Q",
-        help="formal charge of a residue for --gaff2, where the input has none",
+        help="formal charge of a residue for --gaff2 or --openff, where the input has none",
     )
     q.add_argument(
         "--parent",
@@ -2634,6 +2665,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from .openff import OpenFFError
+
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv and argv[0] == "md":  # its own parser: settings files, restarts
         from .md.cli import main as md_main
@@ -2665,7 +2698,7 @@ def main(argv=None) -> int:
     args = _parser().parse_args(argv)
     try:
         return args.run(args)
-    except (ValueError, FileNotFoundError, NotADirectoryError) as e:
+    except (ValueError, FileNotFoundError, NotADirectoryError, OpenFFError) as e:
         print(f"boonza {argv[0]}: error: {e}", file=sys.stderr)
         return 1
 

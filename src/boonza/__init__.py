@@ -67,6 +67,7 @@ from .martini import Martinized, martinize  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
+from .openff import openff_patch  # noqa: E402
 from .pharmacophore import (  # noqa: E402
     Hotspot,
     feature_maps,
@@ -143,6 +144,7 @@ __all__ = [
     "gaff",
     "find_unmatched",
     "gaff2_patch",
+    "openff_patch",
     "OpenMMForcefield",
     "load_openmm_forcefield",
     "parameterize_openmm",

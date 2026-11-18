@@ -416,6 +416,10 @@ class Template:
     pseudos: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
     external_anum: dict[int, int] = field(default_factory=dict)
     external_formula: dict[int, str] = field(default_factory=dict)
+    #: every improper is a term of its own, the same four atoms in another order
+    #: too (``each_improper`` in the template file, a boonza extension): SMIRNOFF
+    #: has three per centre, where viparr keeps the last one named for an atom set
+    each_improper: bool = False
 
     def __post_init__(self):
         self._nbrs = [[] for _ in self.names]
@@ -541,7 +545,8 @@ def _template(name: str, js: dict) -> Template:
             raise ViparrError(f"external_residues: '{ext}' is not an external atom")
         formulas[k] = str(formula)
     return Template(name, names, anum, charge, btype, nbtype, pset, bonds, tuples["impropers"],
-                    tuples["cmap"], tuples["exclusions"], pseudos, pinned, formulas)  # fmt: skip
+                    tuples["cmap"], tuples["exclusions"], pseudos, pinned, formulas,
+                    bool(js.get("each_improper", False)))  # fmt: skip
 
 
 def _check_connected(name, names, bonds) -> None:
@@ -918,16 +923,19 @@ def patch_from_system(system: System, name: str, tag: str, rules: Rules | None =
         add("angle_harm", atoms, row)
     propers: dict[tuple, list[dict]] = {}
     impropers: list[tuple[int, ...]] = []
-    seen_improper: set[frozenset] = set()
+    seen_improper: set[tuple] = set()
     for atoms, row in rows_of("dihedral_trig"):
         a, b, c, d = atoms
         if (a, b) in bonded and (b, c) in bonded and (c, d) in bonded:
             key = atoms if atoms <= atoms[::-1] else atoms[::-1]
             propers.setdefault(key, []).append(row)
         else:
-            if frozenset(atoms) in seen_improper:
+            # one row per ordered tuple: the same four atoms in another order are
+            # another term (SMIRNOFF's impropers are three, each a third of the
+            # barrier, one per order of the outer atoms), the same order twice is not
+            if atoms in seen_improper:
                 raise ViparrError(f"{name}: an improper with several terms cannot be carried")
-            seen_improper.add(frozenset(atoms))
+            seen_improper |= {atoms, atoms[::-1]}
             add("improper_trig", atoms, row)
             impropers.append(atoms)
     for atoms, row in rows_of("improper_harm"):
@@ -960,8 +968,10 @@ def patch_from_system(system: System, name: str, tag: str, rules: Rules | None =
         add("mass", (a,), {"amu": float(mass[a])})
     if rules is not None and len(rules.es_scale) >= 3:
         _check_pairs(s, name, nbrs, per_atom, sigma, epsilon, charge, rules)
+    sets = [frozenset(t) for t in impropers]
     tpl = Template(name, names, anum, [float(q) for q in charge], list(types), list(types),
-                   [""] * len(anum), bonds, impropers)  # fmt: skip
+                   [""] * len(anum), bonds, impropers,
+                   each_improper=len(set(sets)) < len(sets))  # fmt: skip
     return ViparrForcefield(tag, Rules(es_scale=[], lj_scale=[]), [tpl], params)
 
 
@@ -1031,6 +1041,8 @@ def _template_json(t: Template) -> dict:
         js["external_elements"] = {t.names[k]: symbol(z) for k, z in t.external_anum.items()}
     if t.external_formula:
         js["external_residues"] = {t.names[k]: f for k, f in t.external_formula.items()}
+    if t.each_improper:
+        js["each_improper"] = True
     return js
 
 
@@ -1260,6 +1272,7 @@ class _Parameterizer:
         self.cmap_terms: list[tuple] = []  # (atoms, ff index, row)
         self.ub_terms: list[tuple] = []
         self.improper_trig: list[tuple] = []
+        self.each_improper: set[tuple] = set()  # those no other term on their atoms replaces
         self.nonbonded: dict[int, tuple[int, int]] = {}
         self.vdw14: dict[int, tuple[int, int]] | None = None
         self.vdw2: list[tuple[int, ParamRow]] = []
@@ -1404,7 +1417,10 @@ class _Parameterizer:
             typed.exclusions += [
                 _mapped(t, tmap, ambiguous, tpl, "Exclusion") for t in tpl.exclusions
             ]
-            typed.impropers += [_mapped(t, tmap, ambiguous, tpl, "Improper") for t in tpl.impropers]
+            mine = [_mapped(t, tmap, ambiguous, tpl, "Improper") for t in tpl.impropers]
+            typed.impropers += mine
+            if tpl.each_improper:
+                self.each_improper.update(mine)
             typed.cmaps += [_mapped(t, tmap, ambiguous, tpl, "Cmap") for t in tpl.cmaps]
             kinds = list(dict.fromkeys(k for k, _ in tpl.pseudos))
             kinds = [k for k in kinds if not k.startswith("drude")] + [
@@ -1740,6 +1756,9 @@ class _Parameterizer:
             seen: dict[frozenset, int] = {}
             for n, (t, _ffi, r) in enumerate(self.improper_trig):
                 row = _row(r)
+                if t in self.each_improper:
+                    tab.add(t, ("improper", n), row)
+                    continue
                 old = seen.get(frozenset(t))
                 if old is not None:  # viparr overwrites an earlier improper on the same atoms
                     tab.params[tab.keys[old]] = row
