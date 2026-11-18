@@ -654,7 +654,7 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     ff.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
                     help="the ligands' force field: gaff-2.11 (default, AmberTools), or an "
                     "OpenFF one such as openff-2.2.1 (Sage, through openmmforcefields; "
-                    "free ligands only, boonza md only)")  # fmt: skip
+                    "for free ligands -- what is bonded to the protein stays GAFF2)")  # fmt: skip
     ff.add_argument(
         "--charge-geometry",
         dest="charge_geometry",

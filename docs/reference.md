@@ -1856,7 +1856,7 @@ replaced water's mass-weighted center, in a new ct: counterions in chain
 ``chain`` and the others in ``chain2``, numbered from 1.  Unlike msys,
 ions get their element mass.
 
-### `boonza.openff_patch(system: 'System', forcefields=(), *, ligandff: 'str' = 'openff-2.2.1', charges=None, charge_method: 'str' = 'bcc', charge_geometry: 'str' = 'optimized', amberhome=None, path=None, tag=None) -> 'ViparrForcefield'`
+### `boonza.openff_patch(system: 'System', forcefields=(), *, ligandff: 'str' = 'openff-2.2.1', charges=None, charge_method: 'str' = 'bcc', charge_geometry: 'str' = 'optimized', amberhome=None, path=None, tag=None, bound: 'str' = 'raise') -> 'ViparrForcefield'`
 
 A viparr patch with OpenFF templates for what ``forcefields`` cannot parameterize.
 
@@ -1868,9 +1868,10 @@ Used like :func:`boonza.gaff2_patch`, and merged the same way::
 
 Each group from :func:`boonza.find_unmatched` must be one free molecule in
 one residue; anything bonded to the protein, and any amino acid, raises
-and points at GAFF2.  ``ligandff`` is an OpenFF force field
-openmmforcefields has (``openff-2.2.1``, Sage).  ``charges`` maps residue
-names to formal charges where the input has none; ``charge_method`` and
+and points at GAFF2 -- or, with ``bound="skip"``, is left without a
+template for GAFF2 to make (:func:`ligand_patch` does both).  ``ligandff``
+is an OpenFF force field openmmforcefields has (``openff-2.2.1``, Sage).
+``charges`` maps residue names to formal charges where the input has none; ``charge_method`` and
 ``charge_geometry`` are :func:`boonza.gaff.run_gaff2`'s, which computes
 the AM1-BCC charges.  ``tag`` makes the types (``C1~<tag>``) and template
 names of this patch unique, so patches made separately can join one force

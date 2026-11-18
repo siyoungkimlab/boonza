@@ -135,18 +135,26 @@ def test_openff_is_for_free_ligands():
     assert openff.openff_patch(water, ["aa.amber.ff19SB", "water.tip3p"]).templates == []
 
 
-def test_the_setting_is_md_and_parameterize_only(tmp_path, monkeypatch):
-    """ligandff = openff-... reaches boonza md's build; swim and fep, which build their
-    ligands with GAFF2, refuse it rather than build with GAFF2 and say nothing."""
+def test_the_setting_reaches_md_swim_and_fep(tmp_path, monkeypatch):
+    """ligandff = openff-... is what each command's ligands are built with: boonza md's
+    build, each ligand's job in a swim (whose kept templates are made again when the
+    force field changes), and boonza fep's one patch.  A pseudopeptide, which is GAFF2's
+    to mix with protein types, is refused by all three."""
+    from pathlib import Path
+
     from test_md import DIPEPTIDE, _mapped
 
     from boonza.cli import main
+    from boonza.fep import grow
+    from boonza.md import swim
     from boonza.md.prepare import build_system
 
     assert "openff-2.2.1" in LIGAND_FORCE_FIELDS and LIGAND_FORCE_FIELDS[0] == "gaff-2.11"
-    s = _mapped(*DIPEPTIDE, "A")
+    receptor = _mapped(*DIPEPTIDE, "A")
+    boonza.save(receptor, tmp_path / "receptor.dms")
     lig = boonza.from_smiles("c1ccccc1", name="BNZ")
-    lig.positions = lig.positions + s.positions.mean(0) + np.array([8.0, 0.0, 0.0])
+    lig.positions = lig.positions + receptor.positions.mean(0) + np.array([8.0, 0.0, 0.0])
+    s = receptor.copy()
     s.append(lig)
     boonza.save(s, tmp_path / "complex.dms")
     given = []
@@ -158,22 +166,159 @@ def test_the_setting_is_md_and_parameterize_only(tmp_path, monkeypatch):
         given.append(kw)
         raise Stop
 
-    monkeypatch.setattr(openff, "openff_patch", patch)
+    monkeypatch.setattr(openff, "ligand_patch", patch)
+    # boonza md
     args = parse_arguments([str(tmp_path / "complex.dms"), "--ligandff", "openff-2.1.0",
                             "--charge-geometry", "reference"])  # fmt: skip
     with pytest.raises(Stop):
         build_system(args, tmp_path / "md", log=quiet)
-    assert given[0]["ligandff"] == "openff-2.1.0" and given[0]["charge_geometry"] == "reference"
-    args.pseudopeptide = "protein"
+    assert given[-1]["ligandff"] == "openff-2.1.0" and given[-1]["charge_geometry"] == "reference"
+    # boonza fep (grow's force field is the one function; prep calls the same)
+    with pytest.raises(Stop):
+        grow._forcefield(receptor, lig, swim._load_forcefields(args.forcefields), args)
+    assert given[-1]["ligandff"] == "openff-2.1.0" and given[-1]["charge_geometry"] == "reference"
+    # boonza swim: the job of each ligand, and what a kept patch was made with
+    boonza.save(lig, tmp_path / "lig.sdf")
+    jobs = []
+
+    def job(work):
+        d, _, _, opts = work
+        jobs.append(opts["ligandff"])
+        (Path(d) / "patch").mkdir(exist_ok=True)
+        (Path(d) / "patch" / "templates").write_text("", encoding="utf-8")
+        return str(Path(d) / "patch")
+
+    monkeypatch.setattr(swim, "_gaff2_job", job)
+    sargs = parse_arguments([str(tmp_path / "receptor.dms")])
+    ffs = swim._load_forcefields(sargs.forcefields)
+    ligands = swim.load_library(tmp_path / "lig.sdf", ffs)
+    for ligandff in ("gaff-2.11", "openff-2.2.1", "openff-2.2.1", "openff-2.3.0", "gaff-2.11"):
+        sargs.ligandff = ligandff
+        swim.ligand_patches(ligands, sargs, ffs, tmp_path / "ligands", log=quiet)
+    assert jobs == ["gaff-2.11", "openff-2.2.1", "openff-2.3.0", "gaff-2.11"]
+    monkeypatch.undo()
+    monkeypatch.setattr(openff, "ligand_patch", patch)
+    with pytest.raises(Stop):  # the real job hands an OpenFF ligand to boonza.openff
+        (tmp_path / "one").mkdir()
+        boonza.save(lig, tmp_path / "one" / "ligand.dms")
+        swim._gaff2_job((str(tmp_path / "one"), "L0", [list(e) for e in sargs.forcefields],
+                         {"ligandff": "openff-2.2.1", "charge_geometry": "reference",
+                          "pseudopeptide": "off"}))  # fmt: skip
+    assert given[-1]["ligandff"] == "openff-2.2.1" and given[-1]["tag"] == "L0"
+    # a pseudopeptide is GAFF2's
+    args.pseudopeptide = sargs.pseudopeptide = "protein"
+    sargs.ligandff = "openff-2.2.1"
     with pytest.raises(ValueError, match="goes with ligandff = 'gaff-2.11'"):
         build_system(args, tmp_path / "md2", log=quiet)
-    for command in ("boonza swim", "boonza fep"):
-        with pytest.raises(ValueError, match=f"{command} builds its ligands with GAFF2"):
-            gaff.only_gaff2(args, command)
-    gaff.only_gaff2(parse_arguments([str(tmp_path / "complex.dms")]), "boonza swim")
+    with pytest.raises(ValueError, match="goes with ligandff = 'gaff-2.11'"):
+        swim.ligand_patches(ligands, sargs, ffs, tmp_path / "ligands2", log=quiet)
+    with pytest.raises(ValueError, match="goes with ligandff = 'gaff-2.11'"):
+        grow._forcefield(receptor, lig, ffs, args)
     with pytest.raises(SystemExit):
         parse_arguments([str(tmp_path / "complex.dms"), "--ligandff", "openff-9.9.9"])
-    boonza.save(lig, tmp_path / "lig.sdf")
     with pytest.raises(SystemExit, match="--openff is for free ligands"):
         main(["parameterize", str(tmp_path / "lig.sdf"), str(tmp_path / "o.dms"),
               "-f", "aa.amber.ff19SB", "--openff", "--gaff2"])  # fmt: skip
+
+
+@needs_openff
+def test_what_is_bonded_to_the_protein_takes_gaff2_beside_an_openff_ligand():
+    """One system with a free ligand and a covalent adduct: OpenFF for the first, GAFF2
+    for the Cys and what is bound to it, in one patch, and the log says which."""
+    from test_gaff import _cys_adduct
+
+    s = _cys_adduct()
+    free = boonza.from_smiles("CC(=O)Nc1ccc(O)cc1", name="APA")
+    free.positions = free.positions + [25.0, 0.0, 0.0]
+    s.append(free)
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    said = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        patch = openff.ligand_patch(s, [ff], charge_geometry="reference", log=said.append)
+        out = viparr.parameterize(s, [viparr.merge_forcefields(ff, patch)])
+    names = sorted(t.name for t in patch.templates)
+    assert names[0] == "APA_openff" and all("_gaff2" in n for n in names[1:]) and len(names) == 3
+    assert len(said) == 1 and "GAFF2 templates for CYS3+LIG4" in said[0]
+    types = [str(t) for t in out.table("nonbonded").params["type"]]
+    assert any(t.startswith("C1~") for t in types) and any(t.startswith("c3~") for t in types)
+    assert float(np.asarray(out.atoms["charge"]).sum()) == pytest.approx(0.0, abs=1e-4)
+
+
+@needs_openff
+def test_an_openff_pair_makes_a_hybrid_exact_at_its_ends():
+    """boonza fep between two OpenFF ligands, toluene to phenol on one ring: each end of
+    the hybrid is that ligand as parameterized alone, plus the other's dummies -- three
+    impropers to a ring carbon and all."""
+    import test_fep_hybrid as H
+
+    from boonza.chem import to_rdkit
+    from boonza.fep import hybrid, mapping
+
+    ligs = [boonza.from_smiles(smi, name=n) for smi, n in (("Cc1ccccc1", "TOL"),
+                                                            ("Oc1ccccc1", "PHE"))]  # fmt: skip
+    both = ligs[0].copy()
+    far = ligs[1].copy()
+    far.positions = far.positions + [30.0, 0.0, 0.0]
+    both.append(far)
+    ff = viparr.load_forcefield("aa.amber.ff19SB")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        patch = openff.ligand_patch(both, [ff], charge_geometry="reference")
+        ff = viparr.merge_forcefields(ff, patch)
+        made = [viparr.parameterize(s, [ff]) for s in ligs]
+    assert sorted(t.name for t in patch.templates) == ["PHE_openff", "TOL_openff"]
+    assert {t.btype[0].partition("~")[2] for t in patch.templates} == {"1", "2"}
+    sa, sb = (boonza.to_openmm(p, nonbonded_method="NoCutoff", constraints=False,
+                               dispersion_correction=False)[1] for p in made)  # fmt: skip
+    ra, rb = (to_rdkit(s, implicit_hydrogens=False) for s in ligs)
+    core = mapping.map_graph(ra, rb)
+    h = hybrid.build(sa, sb, np.asarray(ligs[0].positions) / 10.0,
+                     mapping.fit_on_core(ra, rb, core) / 10.0, core, {})  # fmt: skip
+    unique_new = [k for k in range(made[1].natoms) if h.new_to_hybrid[k] >= made[0].natoms]
+    # the methyl carbon becomes the oxygen, and two of its hydrogens have nowhere to go
+    assert len(core) >= 10 and (unique_new or h.unique_old)
+    x_old, x_new = h.positions[h.old_to_hybrid], h.positions[h.new_to_hybrid]
+    e_old = H._energy(sa, x_old)[1] + H._valence(sb, unique_new, x_new)
+    e_new = H._energy(sb, x_new)[1] + H._valence(sa, h.unique_old, x_old)
+    assert H._hybrid_energy(h, 0.0) == pytest.approx(e_old, rel=1e-6, abs=1e-3)
+    assert H._hybrid_energy(h, 1.0) == pytest.approx(e_new, rel=1e-6, abs=1e-3)
+
+
+@needs_openff
+def test_boonza_fep_preps_runs_and_extends_with_openff_ligands(tmp_path, capsys):
+    """The whole of boonza fep on OpenFF ligands: prep, a leg of each kind run, a ligand
+    added later whose atoms are not named as an earlier ligand's were (C1~3 beside C1~1),
+    and a ligand added under GAFF2 refused -- one network, one ligand force field."""
+    from pathlib import Path
+
+    import test_fep_pipeline as T
+
+    from boonza.fep import cli
+    from boonza.fep.run import run_leg
+
+    tiny = ["--windows", "3", "--repeats", "1", "--iteration-ps", "0.02",
+            "--equilibration-ns", "0.00002", "--production-ns", "0.0001"]  # fmt: skip
+    work = tmp_path / "work"
+    sage = ["--ligandff", "openff-2.2.1"]
+    first = T._sdf(tmp_path / "first.sdf", ["benzene", "toluene"], {})
+    assert cli.main(["prep", "--ligands", str(first), "--workdir", str(work), *tiny, *sage]) == 0
+    assert "OpenFF openff-2.2.1 (openmmforcefields) templates" in capsys.readouterr().out
+    made = viparr.load_forcefield(str(work / "forcefield"), require_rules=False)
+    assert [t.name.endswith("_openff") and t.each_improper for t in made.templates] == [True] * 2
+    for line in (work / "commands.txt").read_text(encoding="utf-8").splitlines():
+        run_leg(Path(line.split()[3]), int(line.split()[-1]), platform="CPU", minimize=20,
+                log=lambda *_: None)  # fmt: skip
+    assert len(list((work / "edges").glob("*/*/run_1.npz"))) == 2  # solvent and vacuum
+    more = T._sdf(tmp_path / "more.sdf", ["benzene", "toluene", "anisole"], {})
+    assert cli.main(["prep", "--ligands", str(more), "--workdir", str(work), "--extend",
+                     *tiny, *sage]) == 0  # fmt: skip
+    made = viparr.load_forcefield(str(work / "forcefield"), require_rules=False)
+    tags = [t.btype[0].partition("~")[2] for t in made.templates]
+    assert len(made.templates) == 3 and len(set(tags)) == 3
+    assert cli.main(["result", str(work)]) == 0
+    capsys.readouterr()
+    again = T._sdf(tmp_path / "again.sdf", ["benzene", "toluene", "anisole", "phenol"], {})
+    assert cli.main(["prep", "--ligands", str(again), "--workdir", str(work), "--extend",
+                     *tiny]) == 1  # fmt: skip
+    assert "one network, one ligand force field" in capsys.readouterr().err

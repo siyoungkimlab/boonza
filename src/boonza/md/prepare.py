@@ -274,20 +274,18 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
                 "ligand_mode = 'auto' makes GAFF2 templates for them"
             )
         geometry = getattr(args, "charge_geometry", None) or "optimized"
-        pseudo = getattr(args, "pseudopeptide", None) or "off"
     if groups and str(args.ligandff).startswith("openff"):
         from .. import openff
 
-        if pseudo != "off":
-            raise ValueError(
-                f"pseudopeptide = '{pseudo}' mixes protein types with GAFF2's: "
-                f"it goes with ligandff = 'gaff-2.11', not {args.ligandff}"
-            )
+        openff.refuse_pseudopeptide(args)
         log(f"OpenFF {args.ligandff} templates (openmmforcefields; AM1-BCC charges, "
             f"{geometry} geometry) for {_label(s, groups)}")  # fmt: skip
-        patch = openff.openff_patch(s, ff, ligandff=args.ligandff, charges=args.ligand_charges,
-                                    charge_geometry=geometry)  # fmt: skip
+        patch = openff.ligand_patch(s, ff, ligandff=args.ligandff, charges=args.ligand_charges,
+                                    charge_geometry=geometry, log=log, parents=args.parents,
+                                    protein_extent=args.protein_extent, draw=workdir,
+                                    workdir=workdir / "gaff2")  # fmt: skip
         viparr.write_forcefield(patch, openff.patch_directory(workdir))
+        info["parents"] = patch.parents
         host = gaff.host_index(ff)
         ff[host] = viparr.merge_forcefields(ff[host], patch)
     elif groups:

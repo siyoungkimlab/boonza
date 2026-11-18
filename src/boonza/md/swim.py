@@ -403,8 +403,18 @@ def _gaff2_job(job) -> str:
     """GAFF2 templates for one ligand (a separate process)."""
     d, tag, spec, opts = job
     d = Path(d)
-    patch = gaff.gaff2_patch(load(d / "ligand.dms"), _load_forcefields(spec),
-                             workdir=d / "gaff2", tag=tag, draw=d, **opts)  # fmt: skip
+    opts = dict(opts)
+    ligandff = opts.pop("ligandff", None) or "gaff-2.11"
+    if ligandff.startswith("openff"):  # the other ligand force field, the same job
+        from .. import openff
+
+        opts.pop("pseudopeptide", None)
+        patch = openff.ligand_patch(load(d / "ligand.dms"), _load_forcefields(spec),
+                                    ligandff=ligandff, tag=tag, workdir=d / "gaff2", draw=d,
+                                    **opts)  # fmt: skip
+    else:
+        patch = gaff.gaff2_patch(load(d / "ligand.dms"), _load_forcefields(spec),
+                                 workdir=d / "gaff2", tag=tag, draw=d, **opts)  # fmt: skip
     viparr.write_forcefield(patch, d / "patch")
     # what matched the protein force field, for the swim's log (a separate process)
     (d / "pseudopeptide.txt").write_text(
@@ -415,12 +425,20 @@ def _gaff2_job(job) -> str:
 def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=print):
     """The patch directory for each ligand (None when the force fields match it),
     made once and kept in ``root/<code>/``."""
-    gaff.only_gaff2(args, "boonza swim")
     host = forcefields[gaff.host_index(forcefields)]
     geometry = getattr(args, "charge_geometry", None) or "optimized"
     pseudo = getattr(args, "pseudopeptide", None) or "off"
-    # what a kept patch was made with: the geometry, and the pseudopeptide mode when on
+    ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
+    openff_ = ligandff.startswith("openff")
+    if openff_:
+        from .. import openff
+
+        openff.refuse_pseudopeptide(args)
+    # what a kept patch was made with: the geometry, the pseudopeptide mode when on, and
+    # the force field when it is not GAFF2 -- a patch made with another is made again
     how = geometry if pseudo == "off" else f"{geometry} pseudopeptide={pseudo}"
+    if openff_:
+        how = f"{how} {ligandff}"
     out: list[Path | None] = [None] * len(ligands)
     todo = []
     for k, lig in enumerate(ligands):
@@ -446,12 +464,13 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
         else:
             todo.append(k)
     if todo:
-        log(f"GAFF2 {args.ligandff} templates (AM1-BCC, {geometry} geometry) for "
+        what = f"OpenFF {ligandff} (openmmforcefields)" if openff_ else f"GAFF2 {ligandff}"
+        log(f"{what} templates (AM1-BCC, {geometry} geometry) for "
             f"{len(todo)} ligands, {jobs} at a time...")  # fmt: skip
         spec = [list(e) for e in args.forcefields]
         opts = dict(charges=args.ligand_charges, parents=args.parents,
                     protein_extent=args.protein_extent, charge_geometry=geometry,
-                    pseudopeptide=pseudo)  # fmt: skip
+                    pseudopeptide=pseudo, ligandff=ligandff)  # fmt: skip
         work = [(str(root / ligands[k].code), ligands[k].code, spec, opts) for k in todo]
         if jobs > 1:
             with ProcessPoolExecutor(max_workers=jobs) as pool:

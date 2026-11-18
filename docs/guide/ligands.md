@@ -234,12 +234,16 @@ stops with that command.
   joins, 0.8333 in viparr's files where Sage says 0.833333: hundredths of a
   kcal/mol in a drug-sized molecule, and the one place the result is not
   openmmforcefields' to the last digit.
-- **Free ligands of one residue only.** A covalent adduct, a non-standard
-  residue and a pseudopeptide mix protein types with the ligand's, which is
-  built on GAFF2: they stop with a message that says so.
-- **`boonza md` and `boonza parameterize` so far.** `boonza swim` and
-  `boonza fep` build their ligands with GAFF2 and refuse another `ligandff`
-  rather than ignore it.
+- **Free ligands of one residue.** A covalent adduct and a non-standard
+  residue mix protein types with the ligand's, which is built on GAFF2: in
+  `boonza md`, `swim` and `fep` they get GAFF2 templates beside the OpenFF
+  ones, and the log says which (`boonza.openff.ligand_patch` does both;
+  `openff_patch` alone stops at them). A pseudopeptide is refused: it is a
+  free ligand, and its protein types are GAFF2's to mix.
+- **`boonza md`, `boonza swim` and `boonza fep`** all take `--ligandff`.
+  A swim's kept ligand templates are made again when the force field
+  changes. A `boonza fep prep --extend` must name the force field the first
+  prep used: one network has one ligand force field.
 
 ## Drawings of covalent adducts
 

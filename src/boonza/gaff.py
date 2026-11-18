@@ -337,15 +337,6 @@ def gaff2_patch(system: System, forcefields=(), *, charges=None, parents=None,
     return b.patch()
 
 
-def only_gaff2(args, command: str) -> None:
-    """Refuse a ligand force field other than GAFF2 where ``command`` builds its
-    ligands with GAFF2 alone, rather than build them with GAFF2 and say nothing."""
-    ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
-    if not ligandff.startswith("gaff"):
-        raise ValueError(f"{command} builds its ligands with GAFF2: ligandff = '{ligandff}' "
-                         "is boonza md's and boonza parameterize's so far")  # fmt: skip
-
-
 def describe_units(patch) -> list[str]:
     """What a patch's pseudopeptides matched, a line per ligand residue and one per
     drawing: for a log."""
