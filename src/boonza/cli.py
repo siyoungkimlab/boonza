@@ -1880,24 +1880,33 @@ def _parameterize(args) -> int:
             ffs[-1] = viparr.merge_forcefields(ffs[-1], name, append_only=kind == "a",
                                                path=args.ffpath)  # fmt: skip
     system = _load(args.input)
-    if args.openff:
-        from boonza import gaff, openff
+    if args.openff and args.mmff:
+        raise SystemExit("--openff or --mmff: a ligand has one force field")
+    if args.openff or args.mmff:
+        from boonza import gaff, mmff, openff
 
+        flag = "--openff" if args.openff else "--mmff"
         if args.gaff2 or args.parent or args.draw or args.pdf or args.pseudopeptide != "off":
-            raise SystemExit("--openff is for free ligands: --gaff2, --parent, --draw, "
+            raise SystemExit(f"{flag} is for free ligands: --gaff2, --parent, --draw, "
                              "--pseudopeptide and --pdf go with GAFF2, not with it")  # fmt: skip
+        if args.mmff and args.charge_model != "auto":
+            raise SystemExit("--charge-model goes with --openff: MMFF94 has its own charges")
         charges = {}
         for item in args.charge:
             res, _, q = item.partition("=")
             if not res or not q.lstrip("+-").isdigit():
                 raise SystemExit(f"--charge {item}: give RESNAME=CHARGE, e.g. LIG=-1")
             charges[res] = int(q)
-        patch = openff.openff_patch(system, ffs, ligandff=args.openff, charges=charges,
-                                    charge_model=args.charge_model)  # fmt: skip
+        if args.mmff:
+            patch = mmff.mmff_patch(system, ffs, ligandff=args.mmff, charges=charges)
+        else:
+            patch = openff.openff_patch(system, ffs, ligandff=args.openff, charges=charges,
+                                        charge_model=args.charge_model)  # fmt: skip
         if args.save_patch:
             viparr.write_forcefield(patch, args.save_patch)
         names = ", ".join(t.name for t in patch.templates) or "none needed"
-        print(f"OpenFF {args.openff} templates ({patch.charge_model} charges): {names}")
+        print(f"{openff.describe_ff(patch.ligandff)} templates ({patch.charge_model} charges): "
+              f"{names}")  # fmt: skip
         if ffs:
             host = gaff.host_index(ffs)
             ffs[host] = viparr.merge_forcefields(ffs[host], patch)
@@ -1943,7 +1952,8 @@ def _parameterize(args) -> int:
     elif (args.charge or args.parent or args.save_patch or args.draw or args.pdf
           or args.pseudopeptide != "off"):  # fmt: skip
         raise SystemExit("--charge, --parent, --save-patch, --draw, --pseudopeptide and --pdf "
-                         "go with --gaff2 (--charge, --save-patch: --openff too)")  # fmt: skip
+                         "go with --gaff2 (--charge, --save-patch: --openff and --mmff "
+                         "too)")  # fmt: skip
     s = viparr.parameterize(system, ffs, rename_atoms=args.rename_atoms,
                             rename_residues=args.rename_residues,
                             fix_masses=not args.without_fix_masses, fatal=not args.non_fatal,
@@ -2404,6 +2414,17 @@ def _parser() -> argparse.ArgumentParser:
         "unless another is named",
     )
     q.add_argument(
+        "--mmff",
+        nargs="?",
+        const="mmff94",
+        choices=("mmff94", "mmff94s"),
+        metavar="NAME",
+        help="MMFF94 templates (RDKit alone, no AmberTools) for the free ligands the force "
+        "fields cannot match: mmff94 unless mmff94s is named.  The ligand's own energy is "
+        "MMFF94's exactly; with a protein force field, how the two meet is boonza's own "
+        "rule (see the ligands guide)",
+    )
+    q.add_argument(
         "--charge-model",
         choices=("auto", "am1bcc", "nagl"),
         default="auto",
@@ -2416,7 +2437,8 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="RES=Q",
-        help="formal charge of a residue for --gaff2 or --openff, where the input has none",
+        help="formal charge of a residue for --gaff2 or --openff, where the input has none "
+        "(--mmff takes the formal charges on the atoms, and this can only confirm them)",
     )
     q.add_argument(
         "--parent",

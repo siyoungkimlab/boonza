@@ -46,7 +46,7 @@ LIGAND_MODES = ("disabled", "auto")
 #: GAFF2 from AmberTools (boonza.gaff), or an OpenFF force field through
 #: openmmforcefields (boonza.openff): Sage's releases
 LIGAND_FORCE_FIELDS = ("gaff-2.11", "openff-2.0.0", "openff-2.1.0", "openff-2.1.1", "openff-2.2.0",
-                       "openff-2.2.1", "openff-2.3.0")  # fmt: skip
+                       "openff-2.2.1", "openff-2.3.0", "mmff94", "mmff94s")  # fmt: skip
 #: where a ligand's partial charges come from (boonza.openff.CHARGE_MODELS)
 CHARGE_MODELS = ("auto", "am1bcc", "nagl")
 #: where a ligand's AM1-BCC charges are computed (boonza.gaff.CHARGE_GEOMETRIES)
@@ -659,7 +659,10 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
     ff.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
                     help="the ligands' force field: gaff-2.11 (default, AmberTools), or an "
                     "OpenFF one such as openff-2.2.1 (Sage, through openmmforcefields; "
-                    "for free ligands -- what is bonded to the protein stays GAFF2)")  # fmt: skip
+                    "for free ligands -- what is bonded to the protein stays GAFF2), or "
+                    "mmff94 / mmff94s (RDKit alone, instant: the ligand's own energy is "
+                    "MMFF94's exactly, its meeting with protein and water is boonza's own "
+                    "rule and nobody's validated model; not for boonza fep)")  # fmt: skip
     ff.add_argument(
         "--charge-model",
         dest="charge_model",
@@ -667,7 +670,8 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         help="where an OpenFF ligand's partial charges come from: auto (default), what "
         "its force field specifies -- NAGL for openff-2.3.0, AM1-BCC before it; nagl, "
         "openff-nagl's graph network (no quantum calculation: half a second for 500 "
-        "atoms, the same in every pose); am1bcc, AmberTools' sqm.  GAFF2 has am1bcc alone",
+        "atoms, the same in every pose); am1bcc, AmberTools' sqm.  GAFF2 has am1bcc alone, "
+        "and MMFF94 its own charges (auto)",
     )
     ff.add_argument(
         "--charge-geometry",
@@ -1432,6 +1436,9 @@ workdir = "boonza_md"
 ligand_mode = "auto"
 # "gaff-2.11", or an OpenFF force field through openmmforcefields, e.g. "openff-2.2.1"
 # (Sage): for free ligands; a covalent adduct or a non-standard residue needs GAFF2.
+# "mmff94" or "mmff94s" (RDKit alone, no AmberTools): the ligand's own energy is
+# MMFF94's exactly; how it meets protein and water is boonza's own rule (plain Coulomb,
+# 12-6 at MMFF94's sizes, none on donor hydrogens), not a validated model.  Not for fep.
 ligandff = "gaff-2.11"
 # Where an OpenFF ligand's charges come from: "auto" is what its force field specifies
 # (NAGL, openff-nagl's graph network, for openff-2.3.0; AM1-BCC before it); "nagl" or

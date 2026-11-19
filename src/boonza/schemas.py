@@ -58,6 +58,19 @@ _TERM = [
     _s("pair_12_6_es", "bond", 2, ["aij", "bij", "qij"]),
     _s("pair_softcore_es", "bond", 2, ["aij", "bij", "qij", "lambda"]),
     _s("pair_exp_6_es", "bond", 2, ["aij", "bij", "cij", "qij"]),
+    # MMFF94's terms beyond the harmonic ones (boonza's own tables, not msys's).  A
+    # bond is stretch_harm plus fc3 (r - r0)^3 + fc4 (r - r0)^4, an angle angle_harm
+    # plus fc3 (theta - theta0)^3; an angle that is linear at rest is fc (1 + cos theta)
+    _s("stretch_anharm", "bond", 2, ["r0", "fc3", "fc4"]),
+    _s("angle_anharm", "bond", 3, ["theta0", "fc3"]),
+    _s("angle_linear", "bond", 3, ["fc"]),
+    # (fc1 (r12 - r1) + fc2 (r32 - r2)) (theta - theta0), atom 2 at the corner
+    _s("stretchbend_harm", "bond", 3, ["r1", "r2", "theta0", "fc1", "fc2"]),
+    # fc chi^2, chi the Wilson angle of the bond 1-4 with the plane of atoms 2, 1, 3
+    _s("wilson_harm", "bond", 4, ["fc"]),
+    # eij (1.07 rij/(r + 0.07 rij))^7 (1.12 rij^7/(r^7 + 0.12 rij^7) - 2)
+    # + 332.0716 qij/(r + 0.05): MMFF94's buffered 14-7 and buffered Coulomb
+    _s("pair_buf14_7_es", "bond", 2, ["rij", "eij", "qij"]),
     _s("posre_harm", "bond", 1, ["fcx", "fcy", "fcz"], ["x0", "y0", "z0"]),
     _s("posre_fbhw", "bond", 1, ["fc", "sigma"], ["x0", "y0", "z0"]),
     _s("stretch_harm", "bond", 2, ["r0", "fc"], _CONSTRAINED),

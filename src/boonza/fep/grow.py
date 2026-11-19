@@ -547,6 +547,7 @@ def _forcefield(receptor, lig, ff, args):
 
     model = getattr(args, "charge_model", None) or "auto"
     openff.check_charge_model(ligandff, model)  # nagl is an OpenFF ligand's
+    refuse_mmff(ligandff)
     if ligandff.startswith("openff"):
         openff.refuse_pseudopeptide(args)
         patch = openff.ligand_patch(both, ff, ligandff=ligandff, charge_model=model, **opts)
@@ -1098,3 +1099,16 @@ def grow(receptor, reference, target, name: str, ff, args, workdir, beam: int = 
     )
     _write_candidates(work / "grow" / f"{name}_candidates.sdf", poses)
     return path
+
+
+def refuse_mmff(ligandff) -> None:
+    """boonza fep has no hybrid of two MMFF94 ligands: its anharmonic, stretch-bend,
+    out-of-plane and buffered 14-7 terms are not ones the hybrid topology morphs."""
+    from .. import mmff
+
+    if mmff.is_mmff(ligandff):
+        raise ValueError(
+            f"ligandff = '{ligandff}' is for boonza md and boonza swim: boonza fep morphs "
+            "harmonic, torsion, Lennard-Jones and Coulomb terms, not MMFF94's own (stretch-"
+            "bend, out-of-plane, buffered 14-7); use gaff-2.11 or an OpenFF force field"
+        )

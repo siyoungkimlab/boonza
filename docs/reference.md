@@ -93,7 +93,7 @@ Pairwise replacement parameters, keyed by a pair of param ids (NBFIX-style).
 
 ### `boonza.TERM_SCHEMAS`
 
-75 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_periodic`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_harm`, `stretch_morse`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`
+81 entries: `alchemical_angle_harm`, `alchemical_angle_harm_soft`, `alchemical_dihedral_trig`, `alchemical_dihedral_trig_soft`, `alchemical_improper_harm`, `alchemical_improper_harm_soft`, `alchemical_pair_12_6_es`, `alchemical_pair_exp_6_es`, `alchemical_softstretch_harm`, `alchemical_stretch_harm`, `alchemical_stretch_morse`, `alchemical_torsiontorsion_cmap`, `angle_anharm`, `angle_cosine_harm`, `angle_fbhw`, `angle_harm`, `angle_linear`, `angle_restricted`, `constraint_ah1`, `constraint_ah1R`, `constraint_ah2`, `constraint_ah2R`, `constraint_ah3`, `constraint_ah3R`, `constraint_ah4`, `constraint_ah4R`, `constraint_ah5`, `constraint_ah6`, `constraint_ah7`, `constraint_ah8`, `constraint_hoh`, `dihedral6_trig`, `dihedral_fourier`, `dihedral_periodic`, `dihedral_trig`, `exclusion`, `improper_anharm`, `improper_fbhw`, `improper_harm`, `inplanewag_harm`, `pair_12_6_es`, `pair_buf14_7_es`, `pair_exp_6_es`, `pair_softcore_es`, `posre_fbhw`, `posre_harm`, `pseudopol_fermi`, `rigid_explicit2`, `rigid_explicit3`, `rigid_explicit4`, `rigid_explicit5`, `rigid_explicit6`, `rigid_explicit7`, `rigid_explicit8`, `rigid_explicit9`, `softened_stretch_harm`, `softstretch_harm`, `stretch_anharm`, `stretch_harm`, `stretch_morse`, `stretchbend_harm`, `torsiontorsion_cmap`, `virtual_fdat3`, `virtual_lc1`, `virtual_lc2`, `virtual_lc2n`, `virtual_lc3`, `virtual_lc3n`, `virtual_lc4`, `virtual_lc4n`, `virtual_lc5`, `virtual_lc5n`, `virtual_lc6`, `virtual_lc6n`, `virtual_lc7`, `virtual_lc7n`, `virtual_midpoint`, `virtual_out3`, `virtual_out3n`, `virtual_sp3`, `wilson_harm`
 
 ### `boonza.NONBONDED_SCHEMAS`
 
@@ -1828,6 +1828,29 @@ with new types go first; CMAP grids are replaced. Rules merge (plugins
 and info are joined; functional forms and scale factors must agree).
 ``append_only`` refuses to replace anything. ``base`` and ``patch`` may
 be force fields or names in ``path``; neither is modified.
+
+### `boonza.mmff_patch(system: 'System', forcefields=(), *, ligandff: 'str' = 'mmff94', charges=None, path=None, tag=None, bound: 'str' = 'raise') -> 'ViparrForcefield'`
+
+A viparr patch with MMFF94 templates for what ``forcefields`` cannot parameterize.
+
+Used like :func:`boonza.gaff2_patch`, and merged the same way::
+
+    patch = boonza.mmff_patch(system, ["aa.amber.ff19SB", "water.tip3p"])
+    ff = boonza.merge_forcefields("aa.amber.ff19SB", patch)
+    out = boonza.parameterize(system, [ff, "water.tip3p"])
+
+Each group from :func:`boonza.find_unmatched` must be one free molecule in
+one residue; anything bonded to the protein, and any amino acid, raises
+and points at GAFF2 -- or, with ``bound="skip"``, is left without a
+template for GAFF2 to make.  ``ligandff`` is "mmff94" or "mmff94s"
+(:data:`VARIANTS`).  The partial charges are MMFF94's, from the formal
+charges and bond orders of the input: ``charges`` (residue name to net
+charge) can only confirm them.  ``tag`` makes the types (``C1~<tag>``)
+and template names of this patch unique, so patches made separately can
+join one force field.  With no force fields, the patch is a complete
+force field.
+
+What the energy is, and what it is not, is in :mod:`boonza.mmff`.
 
 ### `boonza.native_contacts(system, sel1, sel2, positions=None, reference=None, radius: 'float' = 4.5, method: 'str' = 'hard_cut', beta: 'float' = 5.0, lambda_constant: 'float' = 1.8, periodic: 'bool' = True) -> 'np.ndarray'`
 

@@ -79,18 +79,46 @@ def nagl_model(ligandff: str = DEFAULT) -> str | None:
     return str(handlers["NAGLCharges"].model_file) if "NAGLCharges" in handlers else None
 
 
+def whole_molecule(ligandff) -> bool:
+    """Whether ``ligandff`` types a molecule whole, as OpenFF and MMFF94 do: its
+    templates are for free ligands, and :func:`ligand_patch` makes them."""
+    from . import mmff
+
+    return str(ligandff).startswith("openff") or mmff.is_mmff(ligandff)
+
+
+def describe_ff(ligandff) -> str:
+    """The ligand force field and where it comes from, for a log."""
+    from . import mmff
+
+    if mmff.is_mmff(ligandff):
+        return f"{mmff._title(ligandff)} (RDKit)"
+    if str(ligandff).startswith("openff"):
+        return f"OpenFF {ligandff} (openmmforcefields)"
+    return f"GAFF2 {ligandff}"
+
+
 def check_charge_model(ligandff: str, model: str = "auto") -> None:
     """Refuse a charge model the ligand force field does not have: GAFF2 has
-    AM1-BCC alone.  Nothing is imported, so it can be asked anywhere."""
+    AM1-BCC alone, MMFF94 its own.  Nothing is imported, so it can be asked anywhere."""
+    from . import mmff
+
     if model not in CHARGE_MODELS:
         raise ValueError(f"charge_model must be one of {CHARGE_MODELS}")
+    if mmff.is_mmff(ligandff):
+        mmff.check(ligandff, model)
+        return
     if model == "nagl" and not str(ligandff).startswith("openff"):
         raise ValueError(f"charge_model = 'nagl' goes with an OpenFF ligandff, not {ligandff}")
 
 
 def charge_model(ligandff: str, model: str = "auto") -> str:
     """ "am1bcc" or "nagl": ``model``, or for "auto" what ``ligandff`` specifies."""
+    from . import mmff
+
     check_charge_model(ligandff, model)
+    if mmff.is_mmff(ligandff):
+        return "mmff94"
     if not str(ligandff).startswith("openff"):
         return "am1bcc"
     if model != "auto":
@@ -100,7 +128,11 @@ def charge_model(ligandff: str, model: str = "auto") -> str:
 
 def describe_charges(ligandff: str, model: str = "auto", geometry: str = "optimized") -> str:
     """The charges a run's ligands get, for its log."""
+    from . import mmff
+
     check_charge_model(ligandff, model)
+    if mmff.is_mmff(ligandff):
+        return "MMFF94 charges"
     try:
         model = charge_model(ligandff, model)
     except OpenFFError:  # not installed: the build itself will say so
@@ -163,31 +195,8 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
 
     ffs = gaff._load(forcefields, path)
     b = gaff._Builder(system, ffs, charges or {}, {}, None, None)
-    groups, skipped = [], []
-    for residues in b.groups():  # what this cannot do, before anything is installed or run
-        label = "+".join(f"{b.resnames[r] or 'LIG'}{b.resid[r]}" for r in residues)
-        atoms = [a for r in residues for a in b.res_atoms[r]]
-        inside = set(atoms)
-        if any(b._amino(r) for r in residues) or any(
-                x not in inside and b.anum[x] > 0 for a in atoms for x in b.nbrs[a]):  # fmt: skip
-            if bound == "skip":
-                skipped.append(label)
-                continue
-            raise ViparrError(
-                f"{label} is an amino acid or is bonded to one: OpenFF templates are for "
-                "free ligands, and a covalent adduct or a non-standard residue takes GAFF2 "
-                "(ligandff = \"gaff-2.11\")")  # fmt: skip
-        if len(residues) != 1:
-            if bound == "skip":
-                skipped.append(label)
-                continue
-            raise ViparrError(f"{label} is one molecule in {len(residues)} residues: an OpenFF "
-                              "template is one residue (GAFF2 takes it as it is)")  # fmt: skip
-        groups.append(residues)
-    # type tags no template of the force field it joins has: a patch made later (a
-    # second boonza fep prep) must not name its atoms as an earlier one named its own
-    used = {t.partition("~")[2] for tp in (b.host.templates if b.host else ())
-            for t in tp.btype if "~" in t}  # fmt: skip
+    groups, skipped = free_groups(b, bound, "OpenFF")
+    used = used_tags(b)
     generator = find_openff(ligandff) if groups else None
     model = globals()["charge_model"](ligandff, charge_model) if groups else "am1bcc"
     templates, params = [], {}
@@ -209,20 +218,7 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
                                  charge_geometry=charge_geometry, amberhome=amberhome)  # fmt: skip
             charge = np.asarray(am1.atoms["charge"], float)
         charge = charge + (net - charge.sum()) / len(charge)  # rounding, to the charge
-        name = f"{b.resnames[r] or 'LIG'}_openff"
-        if tag is not None:
-            name = f"{tag}_{name}"
-        taken = {t.name for t in templates} | (
-            {t.name for t in b.host.templates} if b.host else set())  # fmt: skip
-        base, n = name, 1
-        while name in taken:
-            n += 1
-            name = f"{base}{n}"
-        k, types = made, None
-        while types is None or types in used:
-            types = str(k) if tag is None else f"{tag}" + (f".{k}" if k > 1 else "")
-            k += 1
-        used.add(types)
+        name, types = new_names(b, templates, used, r, "openff", tag, made)
         one = patch_from_system(_typed(f, charge, generator, ligandff), name, types,
                                 rules=b.host.rules if b.host else None)  # fmt: skip
         templates += one.templates
@@ -242,26 +238,90 @@ def openff_patch(system: System, forcefields=(), *, ligandff: str = DEFAULT, cha
     return out
 
 
+def free_groups(b, bound: str, what: str) -> tuple[list, list[str]]:
+    """The groups of ``b`` (a GAFF2 builder) that are one free molecule in one residue,
+    and the labels of the others, which raise unless ``bound`` is "skip": templates
+    made from a whole molecule (``what``: OpenFF, MMFF94) are not for those."""
+    groups, skipped = [], []
+    for residues in b.groups():  # what this cannot do, before anything is installed or run
+        label = "+".join(f"{b.resnames[r] or 'LIG'}{b.resid[r]}" for r in residues)
+        atoms = [a for r in residues for a in b.res_atoms[r]]
+        inside = set(atoms)
+        if any(b._amino(r) for r in residues) or any(
+                x not in inside and b.anum[x] > 0 for a in atoms for x in b.nbrs[a]):  # fmt: skip
+            if bound == "skip":
+                skipped.append(label)
+                continue
+            raise ViparrError(
+                f"{label} is an amino acid or is bonded to one: {what} templates are for "
+                "free ligands, and a covalent adduct or a non-standard residue takes GAFF2 "
+                "(ligandff = \"gaff-2.11\")")  # fmt: skip
+        if len(residues) != 1:
+            if bound == "skip":
+                skipped.append(label)
+                continue
+            raise ViparrError(f"{label} is one molecule in {len(residues)} residues: "
+                              f"{'an' if what[0] in 'AEIOU' else 'a'} {what} "
+                              "template is one residue (GAFF2 takes it as it is)")  # fmt: skip
+        groups.append(residues)
+    return groups, skipped
+
+
+def used_tags(b) -> set[str]:
+    """Type tags the templates of the force field a patch joins already have: a patch
+    made later (a second boonza fep prep) must not name its atoms as an earlier one
+    named its own."""
+    return {t.partition("~")[2] for tp in (b.host.templates if b.host else ())
+            for t in tp.btype if "~" in t}  # fmt: skip
+
+
+def new_names(b, templates, used: set, r: int, suffix: str, tag, made: int) -> tuple[str, str]:
+    """A template name (``<residue>_<suffix>``) and a type tag for residue ``r`` that
+    nothing made so far or in the host force field has; the tag joins ``used``."""
+    name = f"{b.resnames[r] or 'LIG'}_{suffix}"
+    if tag is not None:
+        name = f"{tag}_{name}"
+    taken = {t.name for t in templates} | (
+        {t.name for t in b.host.templates} if b.host else set())  # fmt: skip
+    base, n = name, 1
+    while name in taken:
+        n += 1
+        name = f"{base}{n}"
+    k, types = made, None
+    while types is None or types in used:
+        types = str(k) if tag is None else f"{tag}" + (f".{k}" if k > 1 else "")
+        k += 1
+    used.add(types)
+    return name, types
+
+
 def ligand_patch(system: System, forcefields, *, ligandff: str = DEFAULT, charges=None,
                  charge_model: str = "auto", charge_geometry: str = "optimized", tag=None,
                  path=None, log=None, **gaff2) -> ViparrForcefield:  # fmt: skip
     """One patch for everything ``forcefields`` cannot parameterize, as boonza md,
-    swim and fep make it: OpenFF templates for the free ligands, and GAFF2 templates
-    (``gaff2``: :func:`boonza.gaff2_patch`'s other arguments) for what OpenFF is not
+    swim and fep make it: OpenFF templates (MMFF94 ones for ``ligandff`` "mmff94" or
+    "mmff94s", :func:`boonza.mmff_patch`) for the free ligands, and GAFF2 templates
+    (``gaff2``: :func:`boonza.gaff2_patch`'s other arguments) for what those are not
     for -- a ligand bonded to the protein, a non-standard residue -- which ``log`` is
     told of.  ``forcefields`` is a list; the patch joins its Amber protein force field."""
-    from . import gaff
+    from . import gaff, mmff
     from .viparr import merge_forcefields
 
     ffs = gaff._load(forcefields, path)
-    patch = openff_patch(system, ffs, ligandff=ligandff, charges=charges,
-                         charge_model=charge_model, charge_geometry=charge_geometry, tag=tag,
-                         bound="skip")  # fmt: skip
+    if mmff.is_mmff(ligandff):
+        mmff.check(ligandff, charge_model)
+        patch = mmff.mmff_patch(system, ffs, ligandff=ligandff, charges=charges, tag=tag,
+                                bound="skip")  # fmt: skip
+    else:
+        patch = openff_patch(system, ffs, ligandff=ligandff, charges=charges,
+                             charge_model=charge_model, charge_geometry=charge_geometry,
+                             tag=tag, bound="skip")  # fmt: skip
     if not patch.skipped:
         return patch
     if log is not None:
         log(f"GAFF2 templates for {', '.join(patch.skipped)}: bonded to the protein, or an "
-            f"amino acid, which {ligandff} templates are not for")  # fmt: skip
+            f"amino acid, which {mmff._title(ligandff) if mmff.is_mmff(ligandff) else ligandff} "
+            "templates are not for")  # fmt: skip
     host = gaff.host_index(ffs)
     joined = list(ffs)
     if patch.templates:
@@ -271,7 +331,7 @@ def ligand_patch(system: System, forcefields, *, ligandff: str = DEFAULT, charge
     params = {t: list(rows) for t, rows in patch.params.items()}
     for table, rows in rest.params.items():
         params.setdefault(table, []).extend(rows)
-    out = ViparrForcefield("openff-patch", rest.rules if not ffs else patch.rules,
+    out = ViparrForcefield(patch.name, rest.rules if not ffs else patch.rules,
                            [*patch.templates, *rest.templates], params)  # fmt: skip
     out.parents, out.units, out.drawings = rest.parents, rest.units, rest.drawings
     out.ligandff, out.skipped, out.charge_model = ligandff, patch.skipped, patch.charge_model
@@ -329,6 +389,10 @@ def _molecule(f: System, net: int | None = None):
     return mol
 
 
-def patch_directory(workdir) -> Path:
-    """Where a run keeps its OpenFF templates."""
+def patch_directory(workdir, ligandff=DEFAULT) -> Path:
+    """Where a run keeps its OpenFF templates, or its MMFF94 ones."""
+    from . import mmff
+
+    if mmff.is_mmff(ligandff):
+        return mmff.patch_directory(workdir)
     return Path(workdir) / "openff_patch"

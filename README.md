@@ -117,7 +117,11 @@ Implemented:
   AmberTools (no OpenFF), as a viparr patch merged onto an Amber protein force
   field. Protein atoms keep the protein's types, charges and CMAP as far as
   they match the parent residue; each residue gets its formal charge. A free
-  ligand reproduces tleap's prmtop term for term.
+  ligand reproduces tleap's prmtop term for term. Free ligands can take
+  OpenFF Sage (`boonza.openff_patch`, `--ligandff openff-2.2.1`) or MMFF94
+  with RDKit alone (`boonza.mmff_patch`, `--ligandff mmff94`: every MMFF94
+  term inside the ligand, equal to RDKit's energy; how it meets the protein
+  and water is boonza's own rule).
 - Simulations (`boonza md`, replacing ommflow with its options and files):
   viparr force fields (ff19SB with phosphorylated residues, TIP3P and Amber
   ions by default) plus GAFF2 ligands, solvation and msys-style ions,

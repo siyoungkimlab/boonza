@@ -155,8 +155,8 @@ ligands included.
 | `model` (`--model`) | `aa` | `martini3`, `martini2` or `sirah` coarse-grain instead; see [Martini runs](#martini-runs) and [SIRAH runs](#sirah-runs) |
 | `forcefields` (`-f`, `-m`) | see above | viparr force fields, or OpenMM XML files (all-atom only) |
 | `ligand_mode` | `auto` | GAFF2 for what the force fields cannot match; `disabled` makes it an error |
-| `ligandff` | `gaff-2.11` | the ligands' force field: GAFF2, or an OpenFF one such as `openff-2.2.1` (Sage) through openmmforcefields, for free ligands; see [Ligands](ligands.md#openff-instead-of-gaff2) |
-| `charge_model` | `auto` | an OpenFF ligand's partial charges: what its force field specifies (NAGL for `openff-2.3.0`, AM1-BCC before it), or `nagl` or `am1bcc` by name; GAFF2 has AM1-BCC alone |
+| `ligandff` | `gaff-2.11` | the ligands' force field: GAFF2, or an OpenFF one such as `openff-2.2.1` (Sage) through openmmforcefields, for free ligands; or `mmff94` / `mmff94s` (RDKit alone: exact inside the ligand, boonza's own rule toward protein and water); see [Ligands](ligands.md#openff-instead-of-gaff2) and [MMFF94](ligands.md#mmff94-instead-of-gaff2) |
+| `charge_model` | `auto` | an OpenFF ligand's partial charges: what its force field specifies (NAGL for `openff-2.3.0`, AM1-BCC before it), or `nagl` or `am1bcc` by name; GAFF2 has AM1-BCC alone, MMFF94 its own |
 | `ligand_charges` (`--charge LIG=-1`) | none | formal charges of ligands read from files without them |
 | `parents` (`--parent MSE=MET`) | none | the standard residue a modified residue comes from, where the file has no `MODRES` and the PDB's dictionary does not know it; an unclear guess stops the run |
 | `protein_extent` | `matched` | amino acids with GAFF2 atoms keep protein types as far as they match, or on the backbone and CB only (`cb`); see [Ligands](ligands.md) |

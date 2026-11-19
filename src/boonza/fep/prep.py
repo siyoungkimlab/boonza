@@ -720,6 +720,9 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
         kept = viparr.load_forcefield(str(work / "forcefield"), require_rules=False)
         ff[host] = viparr.merge_forcefields(ff[host], kept)
     ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
+    from .grow import refuse_mmff
+
+    refuse_mmff(ligandff)
     what = (f"OpenFF {ligandff} (openmmforcefields)" if ligandff.startswith("openff")
             else "GAFF2")  # fmt: skip
     if kept is not None:

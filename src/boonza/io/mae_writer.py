@@ -490,6 +490,17 @@ _CANNOT_CARRY = {
     "dihedral_periodic": "multiplicity above 6, which proper_trig has no column for",
     "angle_restricted": "Martini's restricted bending angle, which no ffio funct covers",
     "angle_cosine_harm": "an angle harmonic in cos(theta), which no ffio funct covers",
+    **dict.fromkeys(
+        (
+            "stretch_anharm",
+            "angle_anharm",
+            "angle_linear",
+            "stretchbend_harm",
+            "wilson_harm",
+            "pair_buf14_7_es",
+        ),
+        "one of MMFF94's own terms, which no ffio funct covers",
+    ),
 }
 
 
