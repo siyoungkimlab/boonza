@@ -40,6 +40,13 @@ FORMS = {
     "dihedral_periodic": "fc (1 + cos(n phi - phi0))",
     "improper_harm": "fc (phi - phi0)^2",
     "pair_12_6_es": "aij/r^12 - bij/r^6 + qij/r",
+    "stretch_anharm": "fc3 (r - r0)^3 + fc4 (r - r0)^4",
+    "angle_anharm": "fc3 (theta - theta0)^3",
+    "angle_linear": "fc (1 + cos theta)",
+    "stretchbend_harm": "(fc1 (r12 - r1) + fc2 (r32 - r2)) (theta - theta0)",
+    "wilson_harm": "fc chi^2",
+    "pair_buf14_7_es": "eij (1.07 rij/(r + 0.07 rij))^7 (1.12 rij^7/(r^7 + 0.12 rij^7) - 2) "
+    "+ 332.0716 qij/(r + 0.05)",
     "posre_harm": "0.5 (fcx (x - x0)^2 + fcy (y - y0)^2 + fcz (z - z0)^2)",
     "torsiontorsion_cmap": "cmap(phi, psi)",
     "vdw_12_6": "4 epsilon ((sigma/r)^12 - (sigma/r)^6)",

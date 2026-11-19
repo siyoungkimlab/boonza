@@ -108,6 +108,12 @@ _L_SIGN = 1.0
 # ---- force field directories -------------------------------------------------
 
 
+#: parameter tables of MMFF94's terms beyond the harmonic ones, applied wherever a
+#: force field has rows for them (no plugin names them: viparr itself has none)
+_MMFF_TABLES = ("stretch_anharm", "angle_anharm", "angle_linear", "stretchbend_harm",
+                "wilson_harm", "pair_buf14_7_es")  # fmt: skip
+
+
 def _search_path(path=None) -> list[Path]:
     if path is None:
         path = os.environ.get("VIPARR_FFPATH", "")
@@ -1279,6 +1285,7 @@ class _Parameterizer:
         self.mass: dict[int, float] = {}
         self.exclusion: dict[tuple[int, int], tuple] = {}
         self.exclusion_params: dict[tuple, tuple[int, float, float]] = {}
+        self.mmff_pairs: dict[tuple[int, int], tuple[int, int]] = {}
         self.plugins: set[str] = set()
         self.match_cache: dict = {}
         self._formulas: dict[int, str] = {}
@@ -1644,6 +1651,58 @@ class _Parameterizer:
         else:
             raise ViparrError(f"plugin {name!r} (in {Path(ff.name).name}) is not supported")
 
+    def _mmff(self, ff, ffi, typed: _Typed) -> None:
+        """MMFF94's terms beyond the harmonic ones, for the atoms whose types have rows
+        in their tables (:data:`_MMFF_TABLES`, made by :mod:`boonza.mmff`): a type
+        there is one atom of one template, so a row is found by its types alone and
+        atoms without one get nothing.  A pair row replaces whatever the two atoms
+        would otherwise have between them, one molecule (one residue) at a time."""
+
+        def index(table):
+            rows = ff.params.get(table) or []
+            return rows, {tuple(r.type.split()): i for i, r in enumerate(rows)}
+
+        def place(table, tuples, natoms, other=lambda t: t[::-1]):
+            rows, where = index(table)
+            if not rows:
+                return
+            tab = None
+            for t in tuples:
+                i = where.get(tuple(self.btype[a] for a in t))
+                if i is None:  # the same term, its atoms named the other way round
+                    t = other(t)
+                    i = where.get(tuple(self.btype[a] for a in t))
+                if i is not None:
+                    tab = tab or self._table(table, natoms)
+                    tab.add(t, (ffi, table, i), _row(rows[i]))
+
+        place("stretch_anharm", typed.bonds, 2)
+        for table in ("angle_anharm", "angle_linear", "stretchbend_harm"):
+            place(table, typed.angles, 3)
+        if ff.params.get("wilson_harm"):
+            centres = []
+            for a in typed.atoms:
+                n = [x for x in self.nbrs[a] if self.anum[x] > 0]
+                if len(n) == 3:
+                    i, j, k = n
+                    centres += [(a, i, j, k), (a, i, k, j), (a, j, k, i)]
+            place("wilson_harm", centres, 4, lambda t: (t[0], t[2], t[1], t[3]))
+        rows, where = index("pair_buf14_7_es")
+        if rows:
+            typed_ = {x for key in where for x in key}
+            groups: dict[int, list[int]] = {}
+            for a in typed.atoms:
+                if self.nbtype[a] in typed_:
+                    groups.setdefault(self.residue[a], []).append(a)
+            for atoms in groups.values():
+                for n, a in enumerate(atoms):
+                    for b in atoms[n + 1 :]:
+                        i = where.get((self.nbtype[a], self.nbtype[b]))
+                        if i is None:
+                            i = where.get((self.nbtype[b], self.nbtype[a]))
+                        if i is not None:
+                            self.mmff_pairs[(min(a, b), max(a, b))] = (ffi, i)
+
     def _exclusions(self, ff, ffi, typed: _Typed) -> None:
         rule = ff.rules.exclusions
         if rule > 4:
@@ -1699,6 +1758,8 @@ class _Parameterizer:
             for name in ff.rules.plugins:
                 self.plugins.add(name)
                 self._plugin(name, ff, ffi, typed)
+            if any(P for name in _MMFF_TABLES if (P := ff.params.get(name))):
+                self._mmff(ff, ffi, typed)
         for k, ok in enumerate(assigned):
             if not ok:
                 formula = _formula(self.anum[a] for a in fragments[k])
@@ -1767,6 +1828,16 @@ class _Parameterizer:
                 tab.add(t, ("improper", n), row)
         if self.cmap_terms:
             self._cmap(cmap_chirality)
+        if self.mmff_pairs:
+            # a buffered 14-7 pair is all there is between its two atoms: excluded from
+            # the nonbonded sum, and with no scaled 12-6 pair where they are 1-4
+            key = ("mmff", 0)
+            self.exclusion_params[key] = (-1, 0.0, 0.0)
+            tab = self._table("pair_buf14_7_es", 2)
+            for pair, (ffi, i) in self.mmff_pairs.items():
+                self.exclusion[pair] = key
+                tab.add(pair, (ffi, "pair_buf14_7_es", i),
+                        _row(self.ffs[ffi].params["pair_buf14_7_es"][i]))  # fmt: skip
         for name, tab in self.tables.items():
             self._emit(name, tab)
         self._emit_nonbonded(funct, rule)

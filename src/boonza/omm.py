@@ -38,6 +38,8 @@ _ONE_4PI_EPS0 = 138.935456  # kJ nm / (mol e^2)
 _KNOWN = {
     "stretch_harm", "angle_harm", "dihedral_trig", "dihedral_periodic", "improper_harm",
     "pair_12_6_es",
+    "stretch_anharm", "angle_anharm", "angle_linear", "stretchbend_harm", "wilson_harm",
+    "pair_buf14_7_es",
     "angle_cosine_harm", "angle_restricted", *[f"virtual_lc{n}" for n in range(4, 8)],
     "nonbonded", "exclusion", "constraint_hoh", "virtual_lc1", "virtual_lc2", "virtual_lc3",
     "virtual_out3",
@@ -201,6 +203,7 @@ def to_openmm(system, nonbonded_method: str = "NoCutoff", cutoff: float = 9.0,
                                   t.values("phi0").tolist(), strict=True):  # fmt: skip
             f.addTorsion(*atoms, [fc * KCAL, math.radians(phi)])
         add(f, "improper_harm")
+    _add_mmff(s, mm, add, constraints)
     if constraints:
         _add_constraints(s, omm)
     _add_virtual_sites(s, omm, mm)
@@ -336,6 +339,91 @@ def _fdat3_site(mm, parents, d, theta, phi):
     a, b, c = d * math.cos(th), d * math.sin(th) * math.cos(ph), d * math.sin(th) * math.sin(ph)
     return mm.LocalCoordinatesSite([int(p) for p in parents], *_FDAT3_WEIGHTS,
                                    mm.Vec3(-a * NM, b * NM, c * NM))  # fmt: skip
+
+
+#: MMFF94's own Coulomb constant, kcal Å / (mol e^2), which is not CODATA's
+_MMFF_COULOMB = 332.0716
+
+
+def _add_mmff(s, mm, add, constraints=True):
+    """MMFF94's terms beyond the harmonic ones (:mod:`boonza.mmff`), each in its table.
+
+    The anharmonic part of a constrained bond's stretch is left out with its harmonic
+    part.  Its share of a stretch-bend stays: at the rest length, where the constraint
+    holds it, that share and its force are zero.
+    """
+    tables = s.tables
+    fixed = set()
+    t = tables.get("stretch_harm")
+    if constraints and t is not None and "constrained" in t.term_props:
+        fixed = {frozenset(x) for x in t.atoms[t.values("constrained") != 0].tolist()}
+    A = 1 / NM  # Å per nm
+    if "stretch_anharm" in tables:
+        t = tables["stretch_anharm"]
+        f = mm.CustomBondForce(f"fc3*d^3 + fc4*d^4; d = {A}*r - r0")
+        for p in ("r0", "fc3", "fc4"):
+            f.addPerBondParameter(p)
+        for (i, j), r0, f3, f4 in zip(t.atoms.tolist(), t.values("r0").tolist(),
+                                      t.values("fc3").tolist(), t.values("fc4").tolist(),
+                                      strict=True):  # fmt: skip
+            if frozenset((i, j)) not in fixed:
+                f.addBond(i, j, [r0, f3 * KCAL, f4 * KCAL])
+        add(f, "stretch_anharm")
+    if "angle_anharm" in tables:
+        t = tables["angle_anharm"]
+        f = mm.CustomAngleForce("fc3*(theta - theta0)^3")
+        for p in ("theta0", "fc3"):
+            f.addPerAngleParameter(p)
+        for (i, j, k), th, f3 in zip(t.atoms.tolist(), t.values("theta0").tolist(),
+                                     t.values("fc3").tolist(), strict=True):  # fmt: skip
+            f.addAngle(i, j, k, [math.radians(th), f3 * KCAL])
+        add(f, "angle_anharm")
+    if "angle_linear" in tables:
+        t = tables["angle_linear"]
+        f = mm.CustomAngleForce("fc*(1 + cos(theta))")
+        f.addPerAngleParameter("fc")
+        for (i, j, k), fc in zip(t.atoms.tolist(), t.values("fc").tolist(), strict=True):
+            f.addAngle(i, j, k, [fc * KCAL])
+        add(f, "angle_linear")
+    if "stretchbend_harm" in tables:
+        t = tables["stretchbend_harm"]
+        f = mm.CustomCompoundBondForce(
+            3, f"(fc1*({A}*distance(p1, p2) - r1) + fc2*({A}*distance(p3, p2) - r2))"
+               "*(angle(p1, p2, p3) - theta0)")  # fmt: skip
+        names = ("r1", "r2", "theta0", "fc1", "fc2")
+        for p in names:
+            f.addPerBondParameter(p)
+        cols = np.column_stack([t.values(p) for p in names])
+        for atoms, (r1, r2, th, f1, f2) in zip(t.atoms.tolist(), cols.tolist(), strict=True):
+            f.addBond(atoms, [r1, r2, math.radians(th), f1 * KCAL, f2 * KCAL])
+        add(f, "stretchbend_harm")
+    if "wilson_harm" in tables:
+        t = tables["wilson_harm"]
+        # atom 1 is the centre, 4 the atom out of the plane of 2, 1, 3
+        f = mm.CustomCompoundBondForce(
+            4, "fc*asin(min(1, max(-1, s)))^2;"
+               "s = (nx*(x4 - x1) + ny*(y4 - y1) + nz*(z4 - z1))"
+               "/(sqrt(nx*nx + ny*ny + nz*nz)*distance(p1, p4));"
+               "nx = (y2 - y1)*(z3 - z1) - (z2 - z1)*(y3 - y1);"
+               "ny = (z2 - z1)*(x3 - x1) - (x2 - x1)*(z3 - z1);"
+               "nz = (x2 - x1)*(y3 - y1) - (y2 - y1)*(x3 - x1)")  # fmt: skip
+        f.addPerBondParameter("fc")
+        for atoms, fc in zip(t.atoms.tolist(), t.values("fc").tolist(), strict=True):
+            f.addBond(atoms, [fc * KCAL])
+        add(f, "wilson_harm")
+    if "pair_buf14_7_es" in tables:
+        t = tables["pair_buf14_7_es"]
+        f = mm.CustomBondForce(
+            "eij*(1.07*rij/(x + 0.07*rij))^7*(1.12*rij^7/(x^7 + 0.12*rij^7) - 2)"
+            f" + {_MMFF_COULOMB * KCAL}*qij/(x + 0.05); x = {A}*r"
+        )
+        for p in ("rij", "eij", "qij"):
+            f.addPerBondParameter(p)
+        for (i, j), rij, eij, qij in zip(t.atoms.tolist(), t.values("rij").tolist(),
+                                         t.values("eij").tolist(), t.values("qij").tolist(),
+                                         strict=True):  # fmt: skip
+            f.addBond(i, j, [rij, eij * KCAL, qij])
+        add(f, "pair_buf14_7_es")
 
 
 def _pair_terms(s):

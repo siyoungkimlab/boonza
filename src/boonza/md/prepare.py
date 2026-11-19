@@ -274,12 +274,17 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
                 "ligand_mode = 'auto' makes GAFF2 templates for them"
             )
         geometry = getattr(args, "charge_geometry", None) or "optimized"
-    if groups and str(args.ligandff).startswith("openff"):
-        from .. import openff
+    from .. import openff
 
+    if groups and openff.whole_molecule(args.ligandff):
         openff.refuse_pseudopeptide(args)
         model = getattr(args, "charge_model", None) or "auto"
-        log(f"OpenFF {args.ligandff} templates (openmmforcefields; "
+        what = openff.describe_ff(args.ligandff)
+        if what.endswith(" (openmmforcefields)"):  # as this line has always read
+            what, source = what[: -len(" (openmmforcefields)")], "openmmforcefields; "
+        else:
+            source = ""
+        log(f"{what} templates ({source}"
             f"{openff.describe_charges(args.ligandff, model, geometry)}) for "
             f"{_label(s, groups)}")  # fmt: skip
         patch = openff.ligand_patch(s, ff, ligandff=args.ligandff, charges=args.ligand_charges,
@@ -287,13 +292,11 @@ def build_system(args, workdir: Path, log=print, check=None) -> tuple[System, di
                                     charge_geometry=geometry, log=log, parents=args.parents,
                                     protein_extent=args.protein_extent, draw=workdir,
                                     workdir=workdir / "gaff2")  # fmt: skip
-        viparr.write_forcefield(patch, openff.patch_directory(workdir))
+        viparr.write_forcefield(patch, openff.patch_directory(workdir, args.ligandff))
         info["parents"] = patch.parents
         host = gaff.host_index(ff)
         ff[host] = viparr.merge_forcefields(ff[host], patch)
     elif groups:
-        from .. import openff
-
         openff.check_charge_model(args.ligandff, getattr(args, "charge_model", None) or "auto")
         log(f"GAFF2 {args.ligandff} templates (AM1-BCC charges, {geometry} geometry) for "
             f"{_label(s, groups)}")  # fmt: skip

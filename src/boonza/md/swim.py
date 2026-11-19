@@ -406,9 +406,9 @@ def _gaff2_job(job) -> str:
     opts = dict(opts)
     ligandff = opts.pop("ligandff", None) or "gaff-2.11"
     model = opts.pop("charge_model", None) or "auto"
-    if ligandff.startswith("openff"):  # the other ligand force field, the same job
-        from .. import openff
+    from .. import openff
 
+    if openff.whole_molecule(ligandff):  # the other ligand force fields, the same job
         opts.pop("pseudopeptide", None)
         patch = openff.ligand_patch(load(d / "ligand.dms"), _load_forcefields(spec),
                                     ligandff=ligandff, charge_model=model, tag=tag,
@@ -430,8 +430,9 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
     geometry = getattr(args, "charge_geometry", None) or "optimized"
     pseudo = getattr(args, "pseudopeptide", None) or "off"
     ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
-    openff_ = ligandff.startswith("openff")
     from .. import openff
+
+    openff_ = openff.whole_molecule(ligandff)
 
     model = getattr(args, "charge_model", None) or "auto"
     openff.check_charge_model(ligandff, model)  # nagl is an OpenFF ligand's
@@ -467,7 +468,7 @@ def ligand_patches(ligands, args, forcefields, root: Path, jobs: int = 1, log=pr
         else:
             todo.append(k)
     if todo:
-        what = f"OpenFF {ligandff} (openmmforcefields)" if openff_ else f"GAFF2 {ligandff}"
+        what = openff.describe_ff(ligandff)
         log(f"{what} templates ({openff.describe_charges(ligandff, model, geometry)}) for "
             f"{len(todo)} ligands, {jobs} at a time...")  # fmt: skip
         spec = [list(e) for e in args.forcefields]

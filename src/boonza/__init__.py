@@ -65,6 +65,7 @@ from .kinase import KinaseState, kinase_state, kinase_states  # noqa: E402
 from .kinetics import Dwell, Rates, dwells, kinetics  # noqa: E402
 from .martini import Martinized, martinize  # noqa: E402
 from .matchmaker import MatchResult, matchmaker, needleman_wunsch  # noqa: E402
+from .mmff import mmff_patch  # noqa: E402
 from .molecules import distinct_fragments  # noqa: E402
 from .omm import from_openmm, openmm_energies, to_openmm  # noqa: E402
 from .openff import openff_patch  # noqa: E402
@@ -144,6 +145,7 @@ __all__ = [
     "gaff",
     "find_unmatched",
     "gaff2_patch",
+    "mmff_patch",
     "openff_patch",
     "OpenMMForcefield",
     "load_openmm_forcefield",

@@ -9,7 +9,8 @@ as its chemistry allows.
 
 It needs [AmberTools](https://ambermd.org/AmberTools.php) (antechamber, sqm,
 parmchk2, tleap), which is installed with conda; OpenFF is not needed (it is an
-option for free ligands, [below](#openff-instead-of-gaff2)):
+option for free ligands, [below](#openff-instead-of-gaff2), as is MMFF94,
+[which needs RDKit alone](#mmff94-instead-of-gaff2)):
 
 ```bash
 conda install -c conda-forge ambertools
@@ -255,6 +256,90 @@ conda install -c conda-forge openmmforcefields openff-forcefields openff-nagl op
   A swim's kept ligand templates are made again when the force field
   changes. A `boonza fep prep --extend` must name the force field the first
   prep used: one network has one ligand force field.
+
+## MMFF94 instead of GAFF2
+
+A free ligand can also take MMFF94, with the parameters RDKit has: no
+AmberTools, no OpenFF, no quantum calculation, and a few milliseconds a
+molecule.
+
+```python
+patch = boonza.mmff_patch(s, ffs)  # or ligandff="mmff94s"
+ff = boonza.merge_forcefields("aa.amber.ff19SB", patch)
+p = boonza.parameterize(s, [ff, "water.tip3p", "ions.amber1jc.tip3p"])
+```
+
+```bash
+boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --mmff
+boonza md complex.dms --ligandff mmff94
+boonza swim receptor.dms --ligand ligand.sdf --ligandff mmff94
+```
+
+`ligandff` is `mmff94`, or `mmff94s`, the variant that keeps delocalized
+trigonal nitrogens flat (made for minimized geometries; MMFF94 is the one
+made for dynamics).
+
+- **Inside the ligand the energy is MMFF94's, every term.** MMFF94 is not an
+  Amber-style force field, and nothing is approximated to make it one: bond
+  stretches are quartic, angle bends cubic (a cosine where the angle is
+  linear at rest), a stretch-bend term couples the two, out-of-plane bending
+  is a Wilson angle, torsions have three terms, and atoms three or more
+  bonds apart meet by the buffered 14-7 potential and a buffered Coulomb term
+  (1-4 pairs at 0.75) instead of Lennard-Jones 12-6. The energy equals
+  RDKit's term by term, to 0.0002 kcal/mol, at the minimum and bent far out
+  of shape. The harmonic part of each bond and angle is an ordinary
+  `stretch_harm` or `angle_harm` term, so bonds to hydrogen are constrained
+  as everywhere else; the rest are six tables of boonza's own
+  (`stretch_anharm`, `angle_anharm`, `angle_linear`, `stretchbend_harm`,
+  `wilson_harm`, `pair_buf14_7_es`), which a `.dms` keeps and OpenMM runs as
+  custom forces. A `.mae`, GROMACS or Amber file cannot carry them.
+- **Charges** are MMFF94's own bond-charge increments, from the formal
+  charges and bond orders of the input: instant, and the same in every pose.
+  `charge_model` and `charge_geometry` do not apply, and a charge model other
+  than `auto` is refused (the energy is fitted with these charges).
+- **Between the ligand and everything else there is no MMFF94.** The
+  protein, water and ions are Amber's, with no 14-7 parameters, and MMFF94
+  has no rule for meeting them. boonza's rule is its own, and **not a
+  published or validated force field**:
+  - plain Coulomb with the MMFF94 charges;
+  - 12-6 Lennard-Jones with each ligand atom's own MMFF94 minimum distance
+    and well depth, combined with the other atom's as Amber combines;
+  - no Lennard-Jones on a hydrogen that MMFF94 counts a hydrogen-bond donor.
+    MMFF94 shrinks a donor-acceptor contact to 0.8 of its size, and Amber
+    gives a water or hydroxyl hydrogen none; a 12-6 wall at the unshrunk size
+    holds hydrogen bonds 0.6 Å too far apart (the last column below).
+
+  Hydrogen bonds to a TIP3P water, minimized in vacuum (H···acceptor
+  distance, and for the force fields that mix with Amber the binding
+  energy in kcal/mol):
+
+  | ligand, its role | MMFF94, both molecules | boonza's rule | GAFF2 | 12-6 on donor H too |
+  |---|---|---|---|---|
+  | N-methylacetamide, donor | 1.82 Å | 1.81 Å, -7.3 | 1.92 Å, -6.3 | 2.43 Å, -4.6 |
+  | N-methylacetamide, acceptor | 1.73 Å | 1.71 Å, -8.6 | 1.74 Å, -8.8 | 1.71 Å, -8.6 |
+  | methanol, donor | 1.76 Å | 1.71 Å, -6.9 | 1.78 Å, -6.5 | 2.44 Å, -3.6 |
+  | phenol, donor | 1.72 Å | 1.68 Å, -9.4 | 1.77 Å, -8.1 | 2.39 Å, -5.1 |
+  | pyrrole, donor | 1.84 Å | 1.85 Å, -6.4 | 1.92 Å, -5.7 | 2.42 Å, -4.0 |
+  | methylammonium, donor | 1.57 Å | 1.63 Å, -20.7 | 1.75 Å, -20.1 | 2.33 Å, +0.7 |
+  | acetate, acceptor | 1.87 Å | 1.95 Å, -20.8 | 1.95 Å, -20.8 | 1.95 Å, -20.8 |
+
+  So the geometry is MMFF94's, and a donor's hydrogen bond is 0.4 to 1.3
+  kcal/mol stronger than GAFF2's. Seven dimers are a sanity check, not a
+  validation: the ligand's conformational energies are MMFF94's, and its
+  binding energies are no one's tested model. Two copies of a ligand meet by
+  the same rule.
+- **Free ligands of one residue**, as with OpenFF: a covalent adduct and a
+  non-standard residue get GAFF2 templates beside the MMFF94 ones in
+  `boonza md` and `boonza swim`, and a pseudopeptide is refused.
+- **What MMFF94 has no types for** (metals, boron, most inorganic chemistry)
+  stops with a message; GAFF2 or OpenFF may take it.
+- **`boonza md` and `boonza swim`** take it. **`boonza fep` refuses it**: its
+  hybrid topology morphs harmonic, torsion, Lennard-Jones and Coulomb terms,
+  not MMFF94's own.
+- **Size.** Every pair of atoms in a ligand is a term of its own, so the
+  number of terms grows with the square of its size: 5,000 for 100 atoms,
+  140,000 for 530. Drug-sized ligands cost nothing; a peptide-sized one is
+  better served by GAFF2 or OpenFF.
 
 ## Drawings of covalent adducts
 
