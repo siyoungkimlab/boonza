@@ -538,11 +538,21 @@ def _forcefield(receptor, lig, ff, args):
 
     both = receptor.copy()
     both.append(lig)
-    patch = gaff.gaff2_patch(both, ff, charges=getattr(args, "ligand_charges", None),
-                             parents=getattr(args, "parents", None),
-                             protein_extent=getattr(args, "protein_extent", "matched"),
-                             pseudopeptide=getattr(args, "pseudopeptide", None) or "off",
-                             charge_geometry="reference")  # fmt: skip
+    ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
+    opts = dict(charges=getattr(args, "ligand_charges", None),
+                parents=getattr(args, "parents", None),
+                protein_extent=getattr(args, "protein_extent", "matched"),
+                charge_geometry="reference")  # fmt: skip
+    from .. import openff
+
+    model = getattr(args, "charge_model", None) or "auto"
+    openff.check_charge_model(ligandff, model)  # nagl is an OpenFF ligand's
+    if ligandff.startswith("openff"):
+        openff.refuse_pseudopeptide(args)
+        patch = openff.ligand_patch(both, ff, ligandff=ligandff, charge_model=model, **opts)
+    else:
+        pseudo = getattr(args, "pseudopeptide", None) or "off"
+        patch = gaff.gaff2_patch(both, ff, **opts, pseudopeptide=pseudo)
     out = list(ff)
     host = gaff.host_index(out)
     out[host] = viparr.merge_forcefields(out[host], patch)

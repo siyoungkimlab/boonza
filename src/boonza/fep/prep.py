@@ -719,14 +719,37 @@ def prep(args, ligands_path, repeats: int = 3, windows: int = 11, iteration_ps: 
     if before is not None:  # the first prep's templates as they were: only the new charged
         kept = viparr.load_forcefield(str(work / "forcefield"), require_rules=False)
         ff[host] = viparr.merge_forcefields(ff[host], kept)
-        log("GAFF2 templates of the first prep kept; the new ligands' AM1-BCC charges at "
-            "reference conformers")  # fmt: skip
+    ligandff = str(getattr(args, "ligandff", None) or "gaff-2.11")
+    what = (f"OpenFF {ligandff} (openmmforcefields)" if ligandff.startswith("openff")
+            else "GAFF2")  # fmt: skip
+    if kept is not None:
+        was = any("_openff" in t.name for t in kept.templates)
+        if was != ligandff.startswith("openff") and kept.templates:
+            raise ValueError(
+                f"the first prep made its ligands' templates with "
+                f"{'an OpenFF force field' if was else 'GAFF2'}, and ligandff = '{ligandff}' "
+                "would give the new ligands another: one network, one ligand force field"
+            )
+    from .. import openff
+
+    model = getattr(args, "charge_model", None) or "auto"
+    how = openff.describe_charges(ligandff, model, "reference")
+    if before is not None:
+        log(f"{what} templates of the first prep kept; the new ligands' {how}")
     else:
-        log("GAFF2 templates, AM1-BCC charges at reference conformers")
-    patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges, parents=args.parents,
-                             protein_extent=args.protein_extent,
-                             pseudopeptide=getattr(args, "pseudopeptide", None) or "off",
-                             draw=work, charge_geometry="reference")  # fmt: skip
+        log(f"{what} templates, {how}")
+    if ligandff.startswith("openff"):
+        openff.refuse_pseudopeptide(args)
+        patch = openff.ligand_patch(everything, ff, ligandff=ligandff,
+                                    charges=args.ligand_charges, charge_model=model,
+                                    charge_geometry="reference",
+                                    log=log, parents=args.parents,
+                                    protein_extent=args.protein_extent, draw=work)  # fmt: skip
+    else:
+        patch = gaff.gaff2_patch(everything, ff, charges=args.ligand_charges,
+                                 parents=args.parents, protein_extent=args.protein_extent,
+                                 pseudopeptide=getattr(args, "pseudopeptide", None) or "off",
+                                 draw=work, charge_geometry="reference")  # fmt: skip
     for line in gaff.describe_units(patch):
         log(line)
     if kept is not None:

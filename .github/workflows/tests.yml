@@ -63,7 +63,9 @@ jobs:
   gaff2:
     # AmberTools is conda-only, and every test that needs GAFF2 -- test_gaff.py
     # and the fep suite, which parameterizes a ligand for each leg -- skips
-    # itself everywhere else.  So this job is the only one that runs them.
+    # itself everywhere else.  So this job is the only one that runs them.  The
+    # optional OpenFF ligand force fields are conda-only too (openmmforcefields,
+    # openff-nagl), and test_openff.py runs here for the same reason.
     name: pytest GAFF2 and FEP (AmberTools)
     runs-on: ubuntu-latest
     defaults:
@@ -74,7 +76,9 @@ jobs:
       - uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: amber
-          create-args: python=3.12 ambertools
+          create-args: >-
+            python=3.12 numpy=2.2 ambertools openmmforcefields openff-forcefields
+            openff-nagl openff-nagl-models
           init-shell: bash
           cache-environment: true
       - name: Install
@@ -82,7 +86,8 @@ jobs:
       - name: Run the GAFF2 and fep tests, failing if AmberTools is missing
         env:
           BOONZA_REQUIRE_AMBERTOOLS: "1"
-        run: pytest tests/test_gaff.py tests/test_fep_*.py -q -rs -n auto
+          BOONZA_REQUIRE_OPENFF: "1"
+        run: pytest tests/test_gaff.py tests/test_fep_*.py tests/test_openff.py -q -rs -n auto
 
   docs:
     name: sphinx

@@ -3,7 +3,8 @@
 # the rest from conda-forge (environment.yml), then boonza itself with pip.
 #
 # Usage:
-#   bash install.sh [NAME] [--cuda VERSION|none] [--openmm VERSION] [--dev] [--dry-run]
+#   bash install.sh [NAME] [--cuda VERSION|none] [--openmm VERSION] [--openff] [--dev]
+#                   [--dry-run]
 #
 # NAME defaults to "boonza"; an existing environment of that name is updated.
 #
@@ -21,6 +22,11 @@
 #                  release it supports (run boonza md with --platform OpenCL);
 #                  ocl-icd-system is added so OpenCL finds the system's driver.
 # --openmm VERSION this OpenMM release, such as 8.2 or 8.4.0 (8.2 or later).
+# --openff         also the OpenFF ligand force fields (ligandff = "openff-2.2.1"):
+#                  openmmforcefields, openff-forcefields and openff-nagl with its
+#                  models, for NAGL charges. Optional: GAFF2 needs none of them,
+#                  and they bring PyTorch (about 60 packages, 150 MB). An update
+#                  without --openff removes them again.
 # --dev            also pytest, ruff and MDAnalysis, for the test suite.
 # --dry-run        show what conda would install, and change nothing.
 #
@@ -32,12 +38,14 @@
 #   bash install.sh --cuda 12.6                   # OpenMM for GPU nodes with CUDA 12.6+
 #   bash install.sh --cuda none --openmm 8.2      # OpenMM 8.2, CPU and OpenCL
 #   bash install.sh md --cuda 12.9 --dev          # env "md", with the test tools
+#   bash install.sh --openff                      # with OpenFF ligands and NAGL charges
 set -euo pipefail
 
 ENV_NAME=""
 CUDA=""
 OPENMM=""
 DEV=0
+OPENFF=0
 DRY_RUN=0
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -52,6 +60,7 @@ while [ $# -gt 0 ]; do
                     OPENMM="$2"; shift 2 ;;
         --openmm=*) OPENMM="${1#--openmm=}"; shift ;;
         --dev)      DEV=1; shift ;;
+        --openff)   OPENFF=1; shift ;;
         --dry-run)  DRY_RUN=1; shift ;;
         -h|--help)  usage; exit 0 ;;
         -*)         echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
@@ -135,6 +144,8 @@ elif [ -n "$CUDA" ]; then
     export CONDA_OVERRIDE_CUDA="$CUDA"
 fi
 [ "$DEV" -eq 1 ] && EXTRA+=("pytest" "ruff" "mdanalysis")
+# the optional ligand force fields: environment.yml lists them, commented out
+[ "$OPENFF" -eq 1 ] && EXTRA+=("openmmforcefields" "openff-forcefields" "openff-nagl" "openff-nagl-models")
 
 ENV_FILE="$WORK/environment.yml"
 awk -v openmm="  - $OPENMM_SPEC" -v extra="${EXTRA[*]-}" '
@@ -218,6 +229,21 @@ try:
     print(f"  ambertools    {home} (GAFF 2.11: {gaff.gaff_parameters(home).name})")
 except Exception as error:  # noqa: BLE001 - report whatever is wrong
     print(f"  !! ambertools {error}")
+try:
+    from boonza import openff
+
+    openff.find_openff()
+    import openmmforcefields
+
+    try:
+        import openff.nagl
+
+        nagl = f"openff-nagl {openff.nagl.__version__}"
+    except ImportError:
+        nagl = "no openff-nagl: AM1-BCC charges only"
+    print(f"  openff        openmmforcefields {openmmforcefields.__version__}, {nagl}")
+except Exception:  # noqa: BLE001 - optional: --openff installs it
+    print("  openff        not installed (optional: bash install.sh --openff)")
 try:
     from boonza import ffxml
 

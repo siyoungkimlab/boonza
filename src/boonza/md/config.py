@@ -43,8 +43,13 @@ POSITION_RESTRAINT_SCALINGS = ("com", "none")
 #: lipid bilayer around the solute (Martini only), or nothing.
 SOLVATE_MODES = ("box", "fill", "membrane", "none")
 LIGAND_MODES = ("disabled", "auto")
-LIGAND_FORCE_FIELDS = ("gaff-2.11",)
-#: where a GAFF2 ligand's AM1-BCC charges are computed (boonza.gaff.CHARGE_GEOMETRIES)
+#: GAFF2 from AmberTools (boonza.gaff), or an OpenFF force field through
+#: openmmforcefields (boonza.openff): Sage's releases
+LIGAND_FORCE_FIELDS = ("gaff-2.11", "openff-2.0.0", "openff-2.1.0", "openff-2.1.1", "openff-2.2.0",
+                       "openff-2.2.1", "openff-2.3.0")  # fmt: skip
+#: where a ligand's partial charges come from (boonza.openff.CHARGE_MODELS)
+CHARGE_MODELS = ("auto", "am1bcc", "nagl")
+#: where a ligand's AM1-BCC charges are computed (boonza.gaff.CHARGE_GEOMETRIES)
 CHARGE_GEOMETRIES = ("optimized", "reference")
 PROTEIN_EXTENTS = ("matched", "cb")
 #: amino acids inside a ligand residue and the protein force field (boonza.gaff.PSEUDOPEPTIDE)
@@ -138,7 +143,8 @@ _SIRAH = {**_CG, "cutoff_nm": 1.2, "elastic": True, "elastic_lower_nm": 0.05}
 MODEL_DEFAULTS: dict = {"martini2": dict(_MARTINI), "martini3": dict(_MARTINI),
                         "sirah": dict(_SIRAH)}  # fmt: skip
 #: Settings that only an all-atom run has; giving one to a Martini run is an error.
-ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "charge_geometry", "ligand_charges",
+ALL_ATOM_ONLY = ("forcefields", "ligand_mode", "ligandff", "charge_model", "charge_geometry",
+                 "ligand_charges",
                  "parents", "protein_extent", "pseudopeptide", "hmr")  # fmt: skip
 #: Settings that only a SIRAH run has.
 SIRAH_ONLY = ("termini", "strict_mapping")
@@ -175,6 +181,7 @@ DEFAULTS: dict = {
     "forcefields": None,
     "ligand_mode": "auto",
     "ligandff": "gaff-2.11",
+    "charge_model": "auto",
     "charge_geometry": "optimized",
     "ligand_charges": None,
     "parents": None,
@@ -323,6 +330,7 @@ _CHOICES = {
     "termini": ("Charged", "Neutral", "None"),
     "ligand_mode": LIGAND_MODES,
     "ligandff": LIGAND_FORCE_FIELDS,
+    "charge_model": CHARGE_MODELS,
     "charge_geometry": CHARGE_GEOMETRIES,
     "protein_extent": PROTEIN_EXTENTS,
     "pseudopeptide": PSEUDOPEPTIDE,
@@ -649,7 +657,18 @@ def build_parser(prog: str = "boonza md") -> argparse.ArgumentParser:
         "match; disabled: that is an error",
     )
     ff.add_argument("--ligandff", choices=LIGAND_FORCE_FIELDS,
-                    help="GAFF release for ligands: gaff-2.11 (default)")  # fmt: skip
+                    help="the ligands' force field: gaff-2.11 (default, AmberTools), or an "
+                    "OpenFF one such as openff-2.2.1 (Sage, through openmmforcefields; "
+                    "for free ligands -- what is bonded to the protein stays GAFF2)")  # fmt: skip
+    ff.add_argument(
+        "--charge-model",
+        dest="charge_model",
+        choices=CHARGE_MODELS,
+        help="where an OpenFF ligand's partial charges come from: auto (default), what "
+        "its force field specifies -- NAGL for openff-2.3.0, AM1-BCC before it; nagl, "
+        "openff-nagl's graph network (no quantum calculation: half a second for 500 "
+        "atoms, the same in every pose); am1bcc, AmberTools' sqm.  GAFF2 has am1bcc alone",
+    )
     ff.add_argument(
         "--charge-geometry",
         dest="charge_geometry",
@@ -1411,7 +1430,13 @@ workdir = "boonza_md"
 
 # GAFF2 (AM1-BCC, AmberTools) templates for ligands and covalent adducts.
 ligand_mode = "auto"
+# "gaff-2.11", or an OpenFF force field through openmmforcefields, e.g. "openff-2.2.1"
+# (Sage): for free ligands; a covalent adduct or a non-standard residue needs GAFF2.
 ligandff = "gaff-2.11"
+# Where an OpenFF ligand's charges come from: "auto" is what its force field specifies
+# (NAGL, openff-nagl's graph network, for openff-2.3.0; AM1-BCC before it); "nagl" or
+# "am1bcc" asks for one by name.  GAFF2 has AM1-BCC alone.
+charge_model = "auto"
 # Where their AM1-BCC charges are computed: "optimized" (the pose as given, optimized
 # by sqm: minutes for a drug-sized molecule) or "reference" (one AM1 calculation at a
 # conformer built from the bonds alone: under a second, the same in every pose).

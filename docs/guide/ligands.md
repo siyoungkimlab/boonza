@@ -8,7 +8,8 @@ viparr patch. The protein keeps the protein force field's parameters as far
 as its chemistry allows.
 
 It needs [AmberTools](https://ambermd.org/AmberTools.php) (antechamber, sqm,
-parmchk2, tleap), which is installed with conda; OpenFF is not needed:
+parmchk2, tleap), which is installed with conda; OpenFF is not needed (it is an
+option for free ligands, [below](#openff-instead-of-gaff2)):
 
 ```bash
 conda install -c conda-forge ambertools
@@ -188,6 +189,72 @@ one that touches an atom only one ligand has stays on throughout.
 
 Residues of a chain are not affected: a non-standard residue in a protein or
 in a peptide given residue by residue is handled as described above.
+
+## OpenFF instead of GAFF2
+
+A free ligand can take an OpenFF force field such as Sage in place of GAFF2,
+through [openmmforcefields](https://github.com/openmm/openmmforcefields):
+
+```python
+patch = boonza.openff_patch(s, ffs, ligandff="openff-2.2.1")
+ff = boonza.merge_forcefields("aa.amber.ff19SB", patch)
+p = boonza.parameterize(s, [ff, "water.tip3p", "ions.amber1jc.tip3p"])
+```
+
+```bash
+boonza parameterize in.dms out.dms -f aa.amber.ff19SB -f water.tip3p --openff
+boonza md complex.dms --ligandff openff-2.2.1
+```
+
+GAFF2 stays the default. `ligandff` (`--ligandff`) names the force field:
+`gaff-2.11`, or one of Sage's releases, `openff-2.0.0` to `openff-2.3.0`, as
+far as the installed openmmforcefields has it.
+
+It needs openmmforcefields, which brings the OpenFF toolkit, and for NAGL
+charges openff-nagl. They are optional: GAFF2 needs none of them, and they
+bring PyTorch (about 60 packages, 150 MB).
+
+```bash
+bash install.sh --openff          # with boonza's environment
+conda install -c conda-forge openmmforcefields openff-forcefields openff-nagl openff-nagl-models
+```
+
+`environment.yml` lists them commented out. Without them
+`ligandff = "openff-..."` stops with the command to install them.
+
+- **What is OpenFF's.** openmmforcefields' `SMIRNOFFTemplateGenerator` types
+  the molecule, and its bonds, angles, torsions, impropers and Lennard-Jones
+  become the patch as they are: the energies of those terms equal
+  openmmforcefields' own. Sage has three impropers to a planar centre, one
+  for each order of the outer atoms, and all three are kept.
+- **Charges** are the kind the force field specifies, unless `charge_model`
+  (`--charge-model`) names one:
+  - `openff-2.3.0` specifies **NAGL** charges: a graph network trained on
+    AM1-BCC, from openff-nagl. There is no quantum calculation, so a ligand
+    of 500 atoms is charged in under a second, the charges do not depend on
+    the pose (`charge_geometry` does not apply), and AmberTools is not
+    needed. They are the charges openmmforcefields assigns on its own.
+  - `openff-2.2.1` and earlier specify **AM1-BCC**, computed by AmberTools
+    as for GAFF2: `charge_geometry` means the same, and a molecule has the
+    same charges under GAFF2 and under these.
+  - `charge_model = "nagl"` gives an earlier release NAGL charges (what to
+    reach for when the ligand is peptide-sized), and `"am1bcc"` gives 2.3.0
+    AmberTools'. The two differ by more than rounding: 0.28 e on the sulfur
+    of a sulfonamide. GAFF2 has AM1-BCC alone.
+- **1-4 electrostatics** take the scale of the Amber force field the patch
+  joins, 0.8333 in viparr's files where Sage says 0.833333: hundredths of a
+  kcal/mol in a drug-sized molecule, and the one place the result is not
+  openmmforcefields' to the last digit.
+- **Free ligands of one residue.** A covalent adduct and a non-standard
+  residue mix protein types with the ligand's, which is built on GAFF2: in
+  `boonza md`, `swim` and `fep` they get GAFF2 templates beside the OpenFF
+  ones, and the log says which (`boonza.openff.ligand_patch` does both;
+  `openff_patch` alone stops at them). A pseudopeptide is refused: it is a
+  free ligand, and its protein types are GAFF2's to mix.
+- **`boonza md`, `boonza swim` and `boonza fep`** all take `--ligandff`.
+  A swim's kept ligand templates are made again when the force field
+  changes. A `boonza fep prep --extend` must name the force field the first
+  prep used: one network has one ligand force field.
 
 ## Drawings of covalent adducts
 
