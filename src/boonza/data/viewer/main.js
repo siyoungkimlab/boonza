@@ -1424,6 +1424,7 @@ async function main() {
     state.title = listing.title;
     state.columns = listing.columns;
     state.summary = listing.summary || [];
+    state.ligandffs = listing.ligandffs || null;  // which ligand force fields are installed
     state.groups = listing.groups || {};  // the builder's functional groups: name -> SMILES
     state.models = listing.models.map((m, index) => newModel(m, index));
     document.title = listing.title ? `${listing.title} · boonza` : "boonza";

@@ -3629,3 +3629,69 @@ def test_clipping_is_the_shaders_and_leaves_out_what_it_is_told():
     assert (
         'className: "sideview"' in panel and "Never clip" in panel and 'type: "range"' not in panel
     )
+
+
+def test_the_ligand_force_field_is_checked_before_anything_is_built(served, monkeypatch):
+    """The page's choice of a ligand force field comes with the request: one the page
+    does not offer, one that is not installed and NAGL without OpenFF are refused."""
+    from boonza.viewer import edit
+
+    session = viewer.Session(boonza.from_smiles("CCO"))
+    get, post = served(session)
+    listing = json.loads(get("api/models")[2])
+    assert set(listing["ligandffs"]["names"]) == set(edit.LIGAND_FORCE_FIELDS)
+    assert listing["ligandffs"]["names"]["gaff-2.11"] is True
+    status, out = post("api/assign_ff", {"m": 0, "ligandff": "mmff94"})
+    assert status == 400 and "gaff-2.11, openff-2.2.1, openff-2.3.0" in out["error"]
+    status, out = post("api/assign_ff", {"m": 0, "ligandff": "openff-2.2.1",
+                                         "charge_model": "am2"})  # fmt: skip
+    assert status == 400 and "charge_model" in out["error"]
+    monkeypatch.setattr(edit, "ligand_force_fields", lambda: {
+        "names": {"gaff-2.11": True, "openff-2.2.1": False, "openff-2.3.0": False},
+        "nagl": False})  # fmt: skip
+    status, out = post("api/assign_ff", {"m": 0, "ligandff": "openff-2.2.1"})
+    assert status == 400 and "install.sh --openff" in out["error"]
+    assert (
+        session.ligandff == "gaff-2.11" and getattr(session, "_param", None) is None
+    )  # nothing built
+
+
+@pytest.mark.skipif(not _amber_tools(), reason="AmberTools (GAFF2) not installed")
+def test_a_ligand_takes_the_force_field_the_page_chose(served):
+    """GAFF2 unless the request names an OpenFF force field; the force-field copy is
+    made again when the choice changes, and a click describes the atom with the one
+    there is."""
+    pytest.importorskip("openmmforcefields")
+    pytest.importorskip("openff.nagl")
+    session = viewer.Session(boonza.from_smiles("CC(=O)Nc1ccc(O)cc1"), ligand="all")
+    get, post = served(session)
+    status, out = post("api/assign_ff", {"m": 0, "a": 0})
+    assert (
+        status == 200
+        and out["atom"]["type"].startswith("c3")
+        and out["atom"]["ligandff"] == "gaff-2.11"
+    )
+    gaff_charge = out["atom"]["charge"]
+    status, out = post("api/assign_ff", {"m": 0, "a": 0, "ligandff": "openff-2.3.0"})
+    assert status == 200 and out["atom"]["ligandff"] == "openff-2.3.0"
+    assert out["atom"]["type"].startswith("C1~")  # an OpenFF template's own types
+    nagl = out["atom"]["charge"]
+    assert nagl != gaff_charge and abs(nagl - gaff_charge) < 0.1  # NAGL, trained on AM1-BCC
+    openff = session._param[1]
+    assert abs(float(np.sum(openff.atoms["charge"]))) < 1e-6
+    # the same force field, AM1-BCC by name: GAFF2's charges on OpenFF's types
+    status, out = post("api/assign_ff", {"m": 0, "a": 0, "ligandff": "openff-2.3.0",
+                                         "charge_model": "am1bcc"})  # fmt: skip
+    assert out["atom"]["charge"] == gaff_charge and session._param[1] is not openff
+    kept = session._param[1]
+    # minimize with it, and a click after: the copy that is there, not a new one
+    status, out = post("api/minimize", {"m": 0, "mode": "all", "ligandff": "openff-2.3.0",
+                                        "charge_model": "am1bcc"})  # fmt: skip
+    assert status == 200 and out["energy_after"] <= out["energy_before"]
+    atom = json.loads(get("api/atom?m=0&a=0")[2])
+    assert atom["ligandff"] == "openff-2.3.0" and session._param[1] is kept
+    # GAFF2 has AM1-BCC alone: a charge model left from OpenFF is not carried to it
+    status, out = post("api/assign_ff", {"m": 0, "a": 0, "ligandff": "gaff-2.11",
+                                         "charge_model": "nagl"})  # fmt: skip
+    assert status == 200 and out["atom"]["type"].startswith("c3")
+    assert (session.ligandff, session.charge_model) == ("gaff-2.11", "auto")

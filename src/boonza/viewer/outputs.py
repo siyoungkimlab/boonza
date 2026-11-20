@@ -116,6 +116,22 @@ class Viewer:
         self.summary: list[dict] = []
         self._lock = threading.RLock()
         self._properties: dict[int, tuple] = {}  # series_properties, by member
+        # what a ligand gets where the force fields have no template (Minimize,
+        # Dynamics, Binding Energy, a torsion profile): set_ligandff
+        self.ligandff, self.charge_model = "gaff-2.11", "auto"
+
+    def set_ligandff(self, ligandff: str, charge_model: str = "auto") -> None:
+        """The force field of every model's ligands from here on: GAFF2 or an OpenFF
+        force field (boonza.viewer.edit.LIGAND_FORCE_FIELDS), and where an OpenFF
+        ligand's charges come from (boonza.openff.CHARGE_MODELS).  A model that carries
+        its own force field (a boonza md run) keeps it."""
+        from .edit import check_ligandff
+
+        ligandff, charge_model = str(ligandff), str(charge_model or "auto")
+        if not ligandff.startswith("openff"):
+            charge_model = "auto"  # GAFF2 has AM1-BCC alone
+        check_ligandff(ligandff, charge_model)
+        self.ligandff, self.charge_model = ligandff, charge_model
 
     def __len__(self) -> int:
         return len(self.models)
@@ -132,6 +148,8 @@ class Viewer:
                 if getattr(model, "upload", None) is not None:
                     s.path = model.upload  # where Save suggests: the folder it runs in
                 model._session = s
+            model._session.ligandff = self.ligandff
+            model._session.charge_model = self.charge_model
             return model._session
 
     def _fit(self, s: Session, ref: Session) -> None:
@@ -159,9 +177,10 @@ class Viewer:
                 self._fit(s, self.session(0))
 
     def listing(self) -> dict:
-        from .edit import GROUPS
+        from .edit import GROUPS, ligand_force_fields
 
         out = {"title": self.title, "columns": self.columns, "groups": GROUPS,
+               "ligandffs": ligand_force_fields(),
                "models": [{**m.info(), "closed": m.closed} for m in self.models]}  # fmt: skip
         if self.page is not None:
             out["page"] = self.page
@@ -730,10 +749,11 @@ class Viewer:
         s.append(design.system.clone())
         ligand = np.arange(n0, s.natoms)
         key = (r, getattr(rec, "topo_version", 0), keep.tobytes(),
-               getattr(design, "topo_version", 0))  # fmt: skip
+               getattr(design, "topo_version", 0), self.ligandff, self.charge_model)  # fmt: skip
         cached = getattr(design, "_in_receptor", None)
         if cached is None or cached[0] != key:
-            design._in_receptor = (key, parameterize(s))
+            design._in_receptor = (key, parameterize(s, ligandff=self.ligandff,
+                                                     charge_model=self.charge_model))  # fmt: skip
         p = design._in_receptor[1]
         order = np.asarray(p.atoms["view_index"], dtype=np.int64)
         p.positions = np.asarray(s.positions)[order]
@@ -785,10 +805,11 @@ class Viewer:
         # the rest's heavy atoms held by springs; hydrogens are never held
         held = np.setdiff1d(np.flatnonzero(np.asarray(s.atoms["anum"]) > 1), free)
         key = (r, getattr(rec, "topo_version", 0), keep.tobytes(),
-               getattr(design, "topo_version", 0))  # fmt: skip
+               getattr(design, "topo_version", 0), self.ligandff, self.charge_model)  # fmt: skip
         cached = getattr(design, "_in_receptor", None)
         if cached is None or cached[0] != key:
-            design._in_receptor = (key, parameterize(s))
+            design._in_receptor = (key, parameterize(s, ligandff=self.ligandff,
+                                                     charge_model=self.charge_model))  # fmt: skip
         p = design._in_receptor[1]
         p.positions = np.asarray(s.positions)[np.asarray(p.atoms["view_index"])]
         with design._lock:

@@ -914,6 +914,78 @@ export function setupUI(app) {
     return () => solvent;
   }
 
+  // the force field of what Amber ff19SB has no template for (a ligand); GAFF2 is what
+  // boonza md uses by default, OpenFF needs bash install.sh --openff
+  const LIGAND_FFS = [["gaff-2.11", "GAFF2", "GAFF 2.11 from AmberTools, with AM1-BCC charges: boonza md's default"],
+                      ["openff-2.2.1", "OpenFF 2.2.1", "OpenFF Sage 2.2.1 through openmmforcefields; it specifies AM1-BCC charges"],
+                      ["openff-2.3.0", "OpenFF 2.3.0", "OpenFF Sage 2.3.0 through openmmforcefields; it specifies NAGL charges"]];
+  const CHARGE_MODELS = [["auto", "Its own", "what the force field specifies: NAGL for OpenFF 2.3.0, AM1-BCC before it"],
+                         ["am1bcc", "AM1-BCC", "AmberTools' sqm, at a conformer built from the bonds: seconds for a drug, minutes for a large ligand"],
+                         ["nagl", "NAGL", "openff-nagl's graph network, trained on AM1-BCC: no quantum calculation, under a second at any size"]];
+  // the choice as a request carries it; one the page no longer offers is GAFF2
+  function ligandFF() {
+    let ligandff = localStorage.getItem("boonza.ligandff");
+    if (!LIGAND_FFS.some(([k]) => k === ligandff)) ligandff = "gaff-2.11";
+    let charge_model = localStorage.getItem("boonza.chargeModel");
+    if (!ligandff.startsWith("openff") || !CHARGE_MODELS.some(([k]) => k === charge_model)) charge_model = "auto";
+    return { ligandff, charge_model };
+  }
+  const ligandFFName = (ligandff, charge_model = "auto") => {
+    const name = LIGAND_FFS.find(([k]) => k === ligandff)?.[1] ?? ligandff;
+    if (!String(ligandff).startsWith("openff")) return name;
+    const q = charge_model === "auto" ? (ligandff === "openff-2.3.0" ? "nagl" : "am1bcc") : charge_model;
+    return `${name}, ${q === "nagl" ? "NAGL" : "AM1-BCC"} charges`;
+  };
+  // what a Minimize or Dynamics message says of it: nothing for the default
+  const ligandFFNote = body => (String(body.ligandff).startsWith("openff")
+    ? `; ligands with ${ligandFFName(body.ligandff, body.charge_model)}` : "");
+  const forceFieldName = () => { const f = ligandFF(); return `Amber ff19SB, ${ligandFFName(f.ligandff, f.charge_model)} for ligands`; };
+  // every open panel's buttons show the one choice: each registers how to redraw its own
+  const ligandFFArms = new Set();
+  function ligandFFShown() {
+    for (const arm of [...ligandFFArms]) if (!arm()) ligandFFArms.delete(arm);  // its panel closed
+  }
+  function ligandFFChoice(body) {
+    const have = state.ligandffs || { names: {}, nagl: true };
+    const missing = "not installed: bash install.sh --openff adds openmmforcefields, the OpenFF force fields and NAGL";
+    const arm = () => {
+      const { ligandff, charge_model } = ligandFF();
+      ffs.forEach(([key, b]) => b.classList.toggle("armed", key === ligandff));
+      const openff = ligandff.startsWith("openff");
+      charges.forEach(([key, b]) => {
+        b.classList.toggle("armed", openff ? key === charge_model : key === "am1bcc");
+        b.disabled = !openff || (key === "nagl" && !have.nagl);
+      });
+      return body.isConnected;
+    };
+    const ffs = LIGAND_FFS.map(([key, label, why]) => {
+      const b = button(label, () => {
+        localStorage.setItem("boonza.ligandff", key);
+        if (!key.startsWith("openff")) localStorage.setItem("boonza.chargeModel", "auto");
+        ligandFFShown();
+      });
+      const there = have.names[key] !== false;
+      b.title = there ? why : `${why} (${missing})`;
+      b.disabled = !there;
+      return [key, b];
+    });
+    const charges = CHARGE_MODELS.map(([key, label, why]) => {
+      const b = button(label, () => {
+        localStorage.setItem("boonza.chargeModel", key);
+        ligandFFShown();
+      });
+      b.title = key === "nagl" && !have.nagl ? `${why} (${missing})` : why;
+      return [key, b];
+    });
+    arm();
+    ligandFFArms.add(arm);
+    body.append(el("p", { className: "help" }, "Ligand force field: what a molecule Amber ff19SB has no template for gets. "
+      + "OpenFF is for free ligands; one bonded to the protein, or a non-standard residue, takes GAFF2 beside it. "
+      + "A model that carries its own force field (a boonza md run) keeps it."));
+    body.append(row(...ffs.map(([, b]) => b)));
+    body.append(row(el("span", { className: "what" }, "Charges"), ...charges.map(([, b]) => b)));
+  }
+
   // what moves in each way to minimize; the rest is fixed
   const MIN_MODES = [["both", "Pocket + ligand", "the ligand and its pocket free"],
                      ["all", "Protein + ligand", "everything free"],
@@ -940,7 +1012,7 @@ export function setupUI(app) {
     if (!m.topo?.editable) { app.message("this model cannot be minimized", true); return; }
     mode = mode || localStorage.getItem("boonza.minMode") || "both";
     const c = m.state.constraint, body = { m: m.index, path: true, rem: localStorage.getItem("boonza.rem") === "1",
-                                           solvent: localStorage.getItem("boonza.solvent") || "rf" };
+                                           solvent: localStorage.getItem("boonza.solvent") || "rf", ...ligandFF() };
     if (c.some(x => x)) {  // Edit | Restraints: those, not a mode
       body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
       body.fixed = app.range(c.length).filter(a => c[a] === 2);
@@ -960,7 +1032,7 @@ export function setupUI(app) {
         ? ` (after REM: soft E ${out.rem_energy_before} → ${out.rem_energy_after})` : "";
       app.message(`${first}Minimized: E ${out.energy_before} → ${out.energy_after} kJ/mol${rem}; ${how}`
         + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : "")
-        + (out.solvent && out.solvent !== "rf" ? `; ${out.solvent_how}` : ""));
+        + (out.solvent && out.solvent !== "rf" ? `; ${out.solvent_how}` : "") + ligandFFNote(body));
       if (out.path) showPath(out.path, m);
     } catch (e) { failed(e); }
   }
@@ -974,7 +1046,7 @@ export function setupUI(app) {
     const T = +(localStorage.getItem("boonza.mdT") || 300);
     const c = m.state.constraint;
     const body = { m: m.index, path: true, picoseconds: ps, temperature: T,
-                   solvent: localStorage.getItem("boonza.solvent") || "rf",
+                   solvent: localStorage.getItem("boonza.solvent") || "rf", ...ligandFF(),
                    minimize_first: localStorage.getItem("boonza.mdMin") !== "0" };
     if (c.some(x => x)) {
       body.restraint = restraint ?? +(localStorage.getItem("boonza.restraint") || 10);
@@ -991,7 +1063,7 @@ export function setupUI(app) {
       app.message(`${added ? preparedNote(out.protonated, added) : ""}${out.picoseconds} ps at ${out.temperature} K (${out.steps} steps): `
         + `E ${out.energy_before} → ${out.energy_after} kJ/mol, mean ${out.energy_mean}; ${how}`
         + (out.mobile_rmsd ? `; moved atoms RMSD ${out.mobile_rmsd} Å (largest ${out.mobile_max} Å)` : "")
-        + `; ${out.solvent_how}`);
+        + `; ${out.solvent_how}` + ligandFFNote(body));
       if (out.path) showPath(out.path, m);
     } catch (e) { failed(e); }
   }
@@ -1006,7 +1078,7 @@ export function setupUI(app) {
     if (!m) return;
     const body = { m: m.index, model: localStorage.getItem("boonza.gbModel") || "GBn2",
                    salt: +(localStorage.getItem("boonza.gbSalt") || 0), frame: app.frameOf(m), all,
-                   stride: +(localStorage.getItem("boonza.gbStride") || 1) };
+                   stride: +(localStorage.getItem("boonza.gbStride") || 1), ...ligandFF() };
     try {
       const out = await app.busy(all ? "MM/GBSA over the frames" : "MM/GBSA (the first time may set up the force field)",
                                  () => app.post("api/gbsa", body));
@@ -1040,6 +1112,7 @@ export function setupUI(app) {
       salt.onchange = () => store("boonza.gbSalt", salt.value);
       body.append(row(el("span", { className: "what" }, "Model"), model,
                       el("span", { className: "what" }, "Salt"), salt, el("span", {}, "M")));
+      ligandFFChoice(body);
       body.append(row(button("ΔG of this frame", () => gbsa(), "blue")));
       if ((m?.topo?.nframes ?? 1) > 1) {
         const stride = el("input", { type: "number", value: localStorage.getItem("boonza.gbStride") || 1, min: 1, step: 1, style: "width:60px" });
@@ -1299,7 +1372,7 @@ export function setupUI(app) {
       const ff = info.charge === undefined
         ? "  · no force field yet (Minimize, or Analyze | Assign Force Field, gives one)"
         : `  · partial charge ${info.charge.toFixed(4)} e · σ ${info.sigma?.toFixed(3) ?? "–"} Å · ε ${info.epsilon?.toFixed(4) ?? "–"} kcal/mol`
-          + `${info.type ? ` · type ${info.type}` : ""}${info.force_field === "assigned" ? " (Amber ff19SB/GAFF2)" : ""}`;
+          + `${info.type ? ` · type ${info.type}` : ""}${info.force_field === "assigned" ? ` (Amber ff19SB/${ligandFFName(info.ligandff ?? "gaff-2.11").split(",")[0]})` : ""}`;
       app.message(`${label}${ff}`);
     } catch (e) { /* the label alone */ }
   };
@@ -1308,10 +1381,10 @@ export function setupUI(app) {
     if (!m) return;
     if (!m.topo?.editable) { app.message("this model has no atoms to assign a force field to", true); return; }
     try {
-      await app.busy("assigning the force field (Amber ff19SB, GAFF2 for ligands)", () => app.post("api/assign_ff", { m: m.index }));
+      await app.busy(`assigning the force field (${forceFieldName()})`, () => app.post("api/assign_ff", { m: m.index, ...ligandFF() }));
       const sel = app.selected(m);
       if (sel.length === 1) await app.describeAtom(m, sel[0]);
-      else app.message("force field assigned: click an atom to see its charge, σ and ε");
+      else app.message(`force field assigned (${forceFieldName()}): click an atom to see its charge, σ and ε`);
     } catch (e) { app.message(e.message, true); }
   }
 
@@ -2296,7 +2369,7 @@ export function setupUI(app) {
           + "style STYLE [SEL] (those atoms in that style only) · color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · "
           + "material opaque|glossy|matte|transparent|ghost · opacity 0.5 (the current representation's) · "
           + "surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine] · center [SEL] · fit · focus · reset\n"
-          + "editing: select SEL · minimize · dynamics [PS] · undo · redo · open PATH|PDB-ID · save PATH\n"
+          + "editing: select SEL · minimize · dynamics [PS] · ligandff gaff|openff-2.2.1|openff-2.3.0 [auto|am1bcc|nagl] · undo · redo · open PATH|PDB-ID · save PATH\n"
           + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
         return;
       case "model": {  // show these models alone
@@ -2359,6 +2432,22 @@ export function setupUI(app) {
         return;
       }
       case "minimize": await minimize(); return;
+      case "ligandff": {  // ligandff [gaff|openff-2.2.1|openff-2.3.0] [auto|am1bcc|nagl]
+        if (args[0]) {
+          const want = args[0].toLowerCase(), q = (args[1] || "auto").toLowerCase();
+          const ff = LIGAND_FFS.find(([k, label]) => k === want || label.toLowerCase().replace(" ", "-") === want
+            || (want.startsWith("gaff") && k.startsWith("gaff")))?.[0];
+          if (!ff) { app.message(`ligandff is ${LIGAND_FFS.map(([k]) => k).join(", ")}`, true); return; }
+          if (!CHARGE_MODELS.some(([k]) => k === q)) { app.message("charges are auto, am1bcc or nagl", true); return; }
+          if (state.ligandffs?.names[ff] === false) { app.message(`${ff} is not installed: bash install.sh --openff`, true); return; }
+          if (q === "nagl" && !ff.startsWith("openff")) { app.message("NAGL charges go with an OpenFF force field", true); return; }
+          localStorage.setItem("boonza.ligandff", ff);
+          localStorage.setItem("boonza.chargeModel", ff.startsWith("openff") ? q : "auto");
+          ligandFFShown();
+        }
+        app.message(`force field: ${forceFieldName()} (used the next time one is set up)`);
+        return;
+      }
       case "dynamics": case "md": await dynamics(args[0] ? { picoseconds: +args[0] } : {}); return;
       case "undo": await undo(); return;
       case "redo": await undo(true); return;
@@ -3480,14 +3569,15 @@ export function setupUI(app) {
           + `(${state.models[m.receptor]?.name ?? "none"}); it keeps its new positions, the receptor its own.`));
       }
       solventChoice(body);
+      ligandFFChoice(body);
       const rem = el("input", { type: "checkbox", checked: localStorage.getItem("boonza.rem") === "1" });
       rem.onchange = () => localStorage.setItem("boonza.rem", rem.checked ? "1" : "0");
       body.append(row(el("label", { title: "for a structure that clashes: Lennard-Jones and Coulomb made soft and bounded "
         + "(A 100, C 50 kJ/mol, as mstool's REM), then the force field; nothing holds chirality meanwhile" },
         rem, " REM first (soft potentials, for clashes)")));
       body.append(el("p", { className: "help" }, "Hydrogens are never held; a structure without any (or a design's receptor) "
-        + "gets them first, as Add / Adjust H adds them. Force field: Amber ff19SB, "
-        + "GAFF2 for ligands, AM1-BCC charges at a conformer built from the bonds (the same in every pose); "
+        + "gets them first, as Add / Adjust H adds them. Force field: Amber ff19SB, and the ligand's as chosen above "
+        + "(AM1-BCC charges are computed at a conformer built from the bonds, the same in every pose); "
         + "the solvent as chosen above, with a 12 Å cutoff. The minimization plays back after."));
     });
   }
@@ -3525,6 +3615,7 @@ export function setupUI(app) {
       }
       body.append(row(el("span", { className: "what" }, "Restraint"), k, el("span", {}, "kcal/mol/Å²")));
       solventChoice(body);
+      ligandFFChoice(body);
       const first = el("input", { type: "checkbox", checked: localStorage.getItem("boonza.mdMin") !== "0" });
       first.onchange = () => localStorage.setItem("boonza.mdMin", first.checked ? "1" : "0");
       body.append(row(el("label", { title: "dynamics started on a clash blows up; minimizing first takes the strain out" },
@@ -3546,7 +3637,7 @@ export function setupUI(app) {
     const body = p.querySelector(".body");
     try {
       const d = await app.post("api/dihedral", { m: m.index, atoms: orderChain(m, atoms), side });
-      const scan = await app.busy("torsion profile", () => app.post("api/dihedral_scan", { m: m.index, atoms: d.atoms, step: 10, side }));
+      const scan = await app.busy("torsion profile", () => app.post("api/dihedral_scan", { m: m.index, atoms: d.atoms, step: 10, side, ...ligandFF() }));
       body.innerHTML = "";
       const name = d.name ? `${d.name.replace("chi", "χ")}: ` : "";
       body.append(el("div", {}, `${name}${d.atoms.map(a => m.topo.atoms.name[a]).join("–")}`));
