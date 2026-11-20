@@ -256,6 +256,13 @@ conda install -c conda-forge openmmforcefields openff-forcefields openff-nagl op
   A swim's kept ligand templates are made again when the force field
   changes. A `boonza fep prep --extend` must name the force field the first
   prep used: one network has one ligand force field.
+- **`boonza view`** offers it in the Minimize, Dynamics and Binding Energy
+  panels: GAFF2 (the default), OpenFF 2.2.1 or OpenFF 2.3.0, and under
+  Charges the force field's own kind, AM1-BCC or NAGL. Assign Force Field
+  and a torsion profile use the same choice, as does the command
+  `ligandff openff-2.3.0 nagl`. Without the OpenFF packages the buttons are
+  greyed out and say what installs them. A model that carries its own force
+  field (a `boonza md` run) keeps it.
 
 ## MMFF94 instead of GAFF2
 
