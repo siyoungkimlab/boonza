@@ -740,10 +740,54 @@ class AtomsError(ValueError):
         self.atoms = [int(a) for a in atoms]
 
 
-def parameterize(s, forcefields=None, log=print):
-    """``s`` with the force fields ``boonza md`` uses; GAFF2 (AmberTools) for what
-    they have no template for, AM1-BCC charges at a reference conformer
-    (gaff.CHARGE_GEOMETRIES).  Atom order follows ``s`` (column ``view_index``)."""
+#: the ligand force fields the page offers: GAFF2 (the default, as in boonza md) and
+#: OpenFF Sage through openmmforcefields (boonza.openff, an optional install)
+LIGAND_FORCE_FIELDS = ("gaff-2.11", "openff-2.2.1", "openff-2.3.0")
+
+
+def ligand_force_fields() -> dict:
+    """Which of :data:`LIGAND_FORCE_FIELDS` this environment can make, and whether
+    NAGL charges can be had: asked of the installed packages, nothing imported."""
+    from importlib.util import find_spec
+
+    def has(name):
+        try:
+            return find_spec(name) is not None
+        except (ImportError, ValueError):
+            return False
+
+    openff = has("openmmforcefields") and has("openff.toolkit")
+    return {"names": {f: openff or not f.startswith("openff") for f in LIGAND_FORCE_FIELDS},
+            "nagl": openff and has("openff.nagl")}  # fmt: skip
+
+
+def check_ligandff(ligandff: str, charge_model: str = "auto") -> None:
+    """Refuse a ligand force field the page does not offer, one that is not installed,
+    or a charge model it does not have, before anything is built with it."""
+    from ..openff import check_charge_model
+
+    if ligandff not in LIGAND_FORCE_FIELDS:
+        raise ValueError(f"the ligand force field is one of {', '.join(LIGAND_FORCE_FIELDS)}, "
+                         f"not {ligandff!r}")  # fmt: skip
+    check_charge_model(ligandff, charge_model)
+    have = ligand_force_fields()
+    if not have["names"][ligandff]:
+        raise ValueError(f"{ligandff} needs openmmforcefields and the OpenFF toolkit, which "
+                         "are not installed: bash install.sh --openff adds them")  # fmt: skip
+    if charge_model == "nagl" and not have["nagl"]:
+        raise ValueError("NAGL charges need openff-nagl, which is not installed: "
+                         "bash install.sh --openff adds it")  # fmt: skip
+
+
+def parameterize(s, forcefields=None, log=print, ligandff: str = "gaff-2.11",
+                 charge_model: str = "auto"):  # fmt: skip
+    """``s`` with the force fields ``boonza md`` uses; for what they have no template
+    for, GAFF2 (AmberTools) or, with ``ligandff`` an OpenFF force field
+    (:data:`LIGAND_FORCE_FIELDS`), OpenFF templates for the free ligands and GAFF2 for
+    the rest (boonza.openff.ligand_patch).  ``charge_model`` (boonza.openff.CHARGE_MODELS)
+    says where an OpenFF ligand's charges come from; AM1-BCC charges are computed at a
+    reference conformer (gaff.CHARGE_GEOMETRIES).  Atom order follows ``s`` (column
+    ``view_index``)."""
     from .. import gaff, viparr
     from ..md.config import DEFAULT_FORCEFIELDS
     from ..md.prepare import _gather_residues
@@ -764,12 +808,23 @@ def parameterize(s, forcefields=None, log=print):
             ff = viparr.merge_forcefields(ff, viparr.load_forcefield(p))
         ffs.append(ff)
     if gaff.find_unmatched(work, ffs):
-        log("GAFF2 templates (AM1-BCC charges at a reference conformer) for what the "
-            "force fields do not match")  # fmt: skip
         # charges at a conformer made from the bonds: a second, not minutes, and the
         # same in every pose (boonza md optimizes each molecule first)
         try:
-            patch = gaff.gaff2_patch(work, ffs, charge_geometry="reference")
+            if ligandff.startswith("openff"):
+                from .. import openff
+
+                check_ligandff(ligandff, charge_model)
+                log(f"{openff.describe_ff(ligandff)} templates ("
+                    f"{openff.describe_charges(ligandff, charge_model, 'reference')}) for "
+                    "the free ligands the force fields do not match")  # fmt: skip
+                patch = openff.ligand_patch(work, ffs, ligandff=ligandff,
+                                            charge_model=charge_model,
+                                            charge_geometry="reference", log=log)  # fmt: skip
+            else:
+                log("GAFF2 templates (AM1-BCC charges at a reference conformer) for what "
+                    "the force fields do not match")  # fmt: skip
+                patch = gaff.gaff2_patch(work, ffs, charge_geometry="reference")
         except gaff.GroupError as e:  # which residues: in s's atom order, not work's
             index = np.asarray(work.atoms["view_index"])
             raise AtomsError(str(e), index[e.atoms].tolist()) from e
