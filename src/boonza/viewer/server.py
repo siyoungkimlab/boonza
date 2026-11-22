@@ -42,6 +42,10 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/series_properties {"group": series} -> each member's MW, cLogP, TPSA, ...
     POST /api/series_save     {"group": series, "path": file.sdf} -> every member, one SDF
     POST /api/series_download {"group": series} -> the same SDF, as a file
+    POST /api/series_report   {"group": series, "ph": 7.4} -> its ADME report, one
+                              self-contained HTML page, as a file
+    POST /api/series_report_save {"group": series, "path": f.html, "ph": 7.4} -> the
+                              same page, written where it says
     POST /api/hbonds          {"m": M, "a": sel, "b": sel or none, "frame": N} -> pairs
     POST /api/download        {"m": M, "fmt": pdb|cif|sdf|mae|dms|gro, "atoms": [...]} -> a file
     POST /api/python          {"code": ..., "m": current, "sel": [...]} -> output, actions
@@ -297,6 +301,18 @@ class _Handler(BaseHTTPRequestHandler):
             saved = {"Content-Disposition": f'attachment; filename="{name}"'}
             data = self.viewer.series_sdf(group).encode()
             self._send(data, "application/octet-stream", headers=saved)
+            return
+        if url.path == "/api/series_report":
+            group = str(body["group"])
+            name = group.replace(" ", "_") + ".html"
+            saved = {"Content-Disposition": f'attachment; filename="{name}"'}
+            page = self.viewer.series_report(group, float(body.get("ph", 7.4)))
+            self._send(page.encode(), "text/html; charset=utf-8", headers=saved)
+            return
+        if url.path == "/api/series_report_save":
+            path = self.viewer.save_series_report(str(body["group"]), body["path"],
+                                                  float(body.get("ph", 7.4)))  # fmt: skip
+            self._json({"path": path})
             return
         if url.path == "/api/close":
             self.viewer.close(int(body["m"]))
