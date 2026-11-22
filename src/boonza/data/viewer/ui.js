@@ -4592,6 +4592,8 @@ export function setupUI(app) {
     return [...list].sort(byColumn(column, descending));
   }
   // models in order of a column of their rows; those without it last
+  // text compared with its digits read as numbers: LIG2 before LIG10, not after it
+  const NATURAL = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
   function byColumn(column, descending) {
     const key = m => column === "name" ? m.name : value(m, column);
     return (a, b) => {
@@ -4599,7 +4601,9 @@ export function setupUI(app) {
       if (x === y) return a.index - b.index;
       if (x === undefined || x === null) return 1;
       if (y === undefined || y === null) return -1;
-      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
+      // names end in a number far more often than not (LIG2, 2PM14), and plain text
+      // order puts 2PM14 before 2PM2; NATURAL compares the digits as digits
+      const c = typeof x === "number" && typeof y === "number" ? x - y : NATURAL(String(x), String(y));
       return descending ? -c : c;
     };
   }

@@ -201,3 +201,88 @@ def test_the_table_columns_are_a_subset_of_the_report():
     everything = admet.properties(Chem.MolFromSmiles(IMATINIB))
     for column in admet.TABLE_COLUMNS:
         assert column in everything, column
+
+
+def test_the_table_sorts_names_that_start_with_a_digit():
+    """A design called 2PM1 is not the number 2, though parseFloat says it is -- that
+    made every name compare equal, so clicking the column did nothing at all.  And
+    2PM10 comes after 2PM2, which a plain text compare gets backwards.  The page's
+    sort reads a cell as a number only when the whole of it is one, and compares text
+    with its digits as digits."""
+    page = admet.report_html([], "series 1")
+    script = page[page.index("<script>") :]
+    assert "parseFloat(" not in script  # the bug: it stops at the first letter
+    assert "isFinite(Number(text))" in script  # the whole cell, or it is text
+    assert "numeric: true" in script  # 2PM2 before 2PM10
+
+
+def test_a_design_can_be_reached_from_the_table_and_from_a_point():
+    """Clicking a design anywhere -- its row, its point on the egg, its point on the
+    plot -- goes to its panel, which is the whole use of an overview."""
+    mol = Chem.MolFromSmiles(ASPIRIN)
+    designs = [(f"2PM{k}", ASPIRIN, "", admet.properties(mol), mol) for k in (1, 2)]
+    page = admet.report_html(designs, "series 1")
+    assert '<div class="card design" id="design-0"' in page
+    assert '<tr data-design="0">' in page and '<tr data-design="1">' in page
+    assert 'class="pt" data-design="0"' in page  # on the egg
+    assert "scrollIntoView" in page and "classList.add('lit')" in page
+
+
+def test_any_property_can_go_on_either_axis():
+    """A plot of one property against another, chosen by the reader, below the
+    summary: the numbers are embedded for it, and nothing is fetched to draw it."""
+    mol = Chem.MolFromSmiles(IMATINIB)
+    designs = [(f"2PM{k}", IMATINIB, "", admet.properties(mol), mol) for k in (1, 2, 3)]
+    page = admet.report_html(designs, "series 1")
+    assert 'id="plot-x"' in page and 'id="plot-y"' in page and 'id="plot"' in page
+    for column in ("MW", "cLogP", "logD", "TPSA", "QED"):
+        assert f'<option value="{column}"' in page, column
+    # the data the plot draws from is in the page, with nothing that could close the
+    # script element early
+    assert '"n": "2PM1"' in page or '"n":"2PM1"' in page
+    assert "</script" not in page[page.index("<script>") + 8 : page.rindex("</script>")]
+
+
+def test_the_report_has_a_theme_of_its_own():
+    """It follows the reader's system by default and can be set either way, which is
+    what a report opened beside a paper needs."""
+    mol = Chem.MolFromSmiles(CAFFEINE)
+    page = admet.report_html([("2PM1", CAFFEINE, "", admet.properties(mol), mol)], "series 1")
+    assert 'id="theme"' in page and "prefers-color-scheme: dark" in page
+    assert ':root[data-theme="dark"]' in page and ':root:not([data-theme="light"])' in page
+    assert "boonza.report.theme" in page  # remembered for next time
+    # a structure drawn for white paper vanishes on a dark page, so there is one of each
+    assert 'class="light-only"' in page and 'class="dark-only"' in page
+    # the SMILES is the molecule: it is read and copied, so it is not greyed out
+    css = page[page.index("<style>") : page.index("</style>")]
+    assert ".smiles" in css and "color: var(--text)" in css.split(".smiles")[1][:160]
+    assert ".struct { background: var(--bg)" in css
+
+
+def test_soft_spots_find_the_routes_these_drugs_are_known_to_take():
+    """The flags are checked against metabolism that is not in doubt."""
+
+    def labels(smiles):
+        return {s["label"] for s in admet.soft_spots(Chem.MolFromSmiles(smiles))}
+
+    # aspirin is hydrolysed to salicylic acid before anything else happens to it
+    assert "ester hydrolysis" in labels(ASPIRIN)
+    # propranolol: 4-hydroxylation and N-dealkylation are its two main routes
+    assert {"aromatic hydroxylation", "N-dealkylation"} <= labels(PROPRANOLOL)
+    # imatinib's major metabolite is N-desmethyl imatinib
+    assert "N-dealkylation" in labels(IMATINIB)
+    # a thioether oxidises; caffeine's nitrogens are amides and are not basic sites
+    assert "S-oxidation" in labels("CSc1ccccc1")
+    assert "N-oxidation" not in labels(CAFFEINE)
+    # every flag carries where it is and what happens there, for the drawing and the list
+    for spot in admet.soft_spots(Chem.MolFromSmiles(PROPRANOLOL)):
+        assert spot["atoms"] and spot["note"] and spot["phase"] in (1, 2)
+
+
+def test_the_report_says_the_soft_spots_are_not_a_prediction():
+    """They are substructure flags.  SMARTCyp ranks atoms by a computed activation
+    energy; this does not, and the page must not let a reader think it does."""
+    mol = Chem.MolFromSmiles(PROPRANOLOL)
+    page = admet.report_html([("2PM1", PROPRANOLOL, "", admet.properties(mol), mol)], "series 1")
+    assert "Metabolic soft spots" in page and "N-dealkylation" in page
+    assert "not SMARTCyp" in page and "no rate and no order" in page
