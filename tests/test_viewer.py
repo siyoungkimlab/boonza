@@ -3793,3 +3793,15 @@ def test_a_surface_offers_its_two_schemes_as_buttons_and_starts_hydrophobic():
     assert 'addSurface(kind || "hydrophobic")' in ui
     assert '["receptor", "surface", "hydrophobic"]' in ui
     assert 'rep.color = "electrostatic"' not in ui
+
+
+def test_the_model_list_sorts_names_with_their_digits_as_digits():
+    """A series is named LIG1, LIG2 ... LIG10, or 2PM1 ... 2PM14, and plain text order
+    puts LIG10 before LIG2.  Both the model list and the series' table compare the
+    digits as numbers."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    assert "new Intl.Collator(undefined, { numeric: true" in ui
+    column = ui[ui.index("function byColumn(column, descending)") :]
+    column = column[: column.index("\n  }\n")]
+    assert "NATURAL(String(x), String(y))" in column
+    assert "localeCompare" not in column

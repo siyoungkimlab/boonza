@@ -493,12 +493,154 @@ TABLE_COLUMNS = ("MW", "heavy atoms", "cLogP", "logD", "TPSA", "HBD", "HBA",
                  "Lipinski violations", "PAINS")  # fmt: skip
 
 
+# --- metabolic soft spots --------------------------------------------------------------
+#
+# Where a molecule is likely to be attacked, from the chemistry of the group alone.
+#
+# This is NOT SMARTCyp and must not be read as it: SMARTCyp ranks every atom by a
+# DFT activation energy from a published rule table, and says which site goes first.
+# What follows only recognises the textbook liabilities -- the groups a medicinal
+# chemist already looks for when a compound turns over too fast -- and says where
+# they are.  It gives no order and no rate: two molecules both carrying "N-dealkylation"
+# are not thereby equally labile.  Blocking a flagged site (deuterium, fluorine, a
+# ring) is the usual response, and a real answer needs microsomes.
+#
+# (label, SMARTS, which atoms of the match are the site, what happens there, phase)
+SOFT_SPOTS: list[tuple[str, str, tuple[int, ...], str, int]] = [
+    (
+        "N-dealkylation",
+        f"[NX3;H0,H1;{_NOT_AMIDE}][CH3,CH2;!$(C=O)]",
+        (1,),
+        "CYP takes the alkyl off the nitrogen; the commonest route of all",
+        1,
+    ),  # fmt: skip
+    (
+        "O-dealkylation",
+        "[c,C][OX2;H0][CH3,CH2;!$(C=O)]",
+        (2,),
+        "CYP takes the alkyl off the oxygen, leaving the phenol or alcohol",
+        1,
+    ),  # fmt: skip
+    (
+        "benzylic oxidation",
+        "[CH1,CH2,CH3;!$(C=O);!$(C[OX2,NX3]);$(C[a])]",
+        (0,),
+        "a carbon next to a ring: hydroxylated easily, the C-H being weak",
+        1,
+    ),  # fmt: skip
+    (
+        "allylic oxidation",
+        "[CH1,CH2,CH3;!$(C=O);$(CC=C)]",
+        (0,),
+        "a carbon next to a double bond, hydroxylated for the same reason",
+        1,
+    ),  # fmt: skip
+    (
+        "aromatic hydroxylation",
+        "[cH;$(c1ccccc1);$(c:c[OX2,NX3,CH3])]",
+        (0,),
+        "an electron-rich ring position, hydroxylated through an epoxide",
+        1,
+    ),  # fmt: skip
+    (
+        "terminal alkyl (omega-1)",
+        "[CH3][CH2][CH2]",
+        (1,),
+        "the carbon next to the end of a chain, the usual place a chain is hit",
+        1,
+    ),  # fmt: skip
+    (
+        "S-oxidation",
+        "[SX2;$(S(-[#6])-[#6]);!$(S(=O))]",
+        (0,),
+        "a thioether goes to the sulfoxide and on to the sulfone, readily",
+        1,
+    ),  # fmt: skip
+    (
+        "N-oxidation",
+        f"[NX3;H0;{_NOT_AMIDE};!$(Na)]",
+        (0,),
+        "a tertiary amine gives the N-oxide",
+        1,
+    ),  # fmt: skip
+    (
+        "alkene epoxidation",
+        "[CX3H1,CX3H2]=[CX3;!$(C=O)]",
+        (0, 1),
+        "an epoxide, which may go on to bind covalently: watch it",
+        1,
+    ),  # fmt: skip
+    (
+        "aldehyde oxidation",
+        "[CX3H1]=[OX1]",
+        (0,),
+        "oxidised to the acid quickly, by aldehyde oxidase as well as CYP",
+        1,
+    ),  # fmt: skip
+    (
+        "ester hydrolysis",
+        "[CX3](=[OX1])[OX2][#6]",
+        (0,),
+        "esterases cut it, often before CYP gets near: a prodrug handle",
+        1,
+    ),  # fmt: skip
+    (
+        "amide hydrolysis",
+        "[CX3](=[OX1])[NX3;H1,H2]",
+        (0,),
+        "amidases cut it, far more slowly than an ester",
+        1,
+    ),  # fmt: skip
+    (
+        "glucuronidation / sulfation",
+        "[c][OX2H1]",
+        (1,),
+        "a phenol is conjugated straight away (phase II), often the main route",
+        2,
+    ),  # fmt: skip
+    (
+        "glucuronidation",
+        "[CX4][OX2H1]",
+        (1,),
+        "an alcohol is conjugated, more slowly than a phenol",
+        2,
+    ),  # fmt: skip
+    (
+        "acyl glucuronidation",
+        "[CX3](=[OX1])[OX2H1]",
+        (0,),
+        "an acyl glucuronide, which can be reactive: a known liability",
+        2,
+    ),  # fmt: skip
+]
+
+
+def soft_spots(mol) -> list[dict]:
+    """Where ``mol`` is likely to be metabolised, by group.  Each is {label, atoms,
+    note, phase}; ``atoms`` are the heavy atoms of the site, for highlighting.
+
+    A flag is a liability to look at, not a rate and not an order -- see the note on
+    :data:`SOFT_SPOTS`.  Nothing here predicts which site goes first, which is what
+    SMARTCyp does and this does not."""
+    out = []
+    for label, smarts, which, note, phase in SOFT_SPOTS:
+        atoms: set[int] = set()
+        for match in mol.GetSubstructMatches(_pattern(smarts)):
+            atoms.update(match[k] for k in which if k < len(match))
+        if atoms:
+            out.append({"label": label, "atoms": sorted(atoms), "note": note, "phase": phase})
+    return out
+
+
 # --- the report ------------------------------------------------------------------------
 
 
-def depiction(mol, width: int = 240, height: int = 170) -> str:
-    """A 2D drawing of ``mol`` as SVG, for the report.  Transparent, so it sits on the
-    card's own background; returns "" if RDKit cannot lay the molecule out."""
+def depiction(mol, width: int = 240, height: int = 170, dark: bool = False,
+              highlight=None) -> str:  # fmt: skip
+    """A 2D drawing of ``mol`` as SVG.  ``dark``: drawn for a dark background, so the
+    page can carry one of each and show whichever its theme asks for.  ``highlight``:
+    atoms to ring (the metabolic soft spots).  Transparent, so it takes the card's own
+    background; "" if RDKit cannot lay the molecule out."""
     from rdkit.Chem import AllChem
     from rdkit.Chem.Draw import rdMolDraw2D
 
@@ -507,9 +649,14 @@ def depiction(mol, width: int = 240, height: int = 170) -> str:
         AllChem.Compute2DCoords(mol)
         draw = rdMolDraw2D.MolDraw2DSVG(width, height)
         opts = draw.drawOptions()
+        if dark:
+            rdMolDraw2D.SetDarkMode(opts)
         opts.setBackgroundColour((0, 0, 0, 0))
         opts.clearBackground = False
-        draw.DrawMolecule(mol)
+        hi = [int(a) for a in (highlight or [])]
+        colour = (0.96, 0.64, 0.23) if dark else (0.90, 0.52, 0.10)
+        draw.DrawMolecule(mol, highlightAtoms=hi,
+                          highlightAtomColors={a: colour for a in hi})  # fmt: skip
         draw.FinishDrawing()
         svg = draw.GetDrawingText()
     except Exception:
@@ -520,9 +667,8 @@ def depiction(mol, width: int = 240, height: int = 170) -> str:
 
 def egg_svg(points, width: int = 560, height: int = 330) -> str:
     """The BOILED-Egg as inline SVG: TPSA across, WLOGP up, the two regions as
-    ellipses and ``points`` ([(name, tpsa, wlogp)]) on top of them.  A design in the
-    yolk is likely to reach the brain, one in the white to be absorbed in the gut,
-    and one in the grey outside neither."""
+    ellipses and ``points`` ([(index, name, tpsa, wlogp)]) on them.  Each point carries
+    its design's number, so the page can scroll to it when it is clicked."""
     left, right, top, bottom = 52, width - 14, 16, height - 36
     x0, x1, y0, y1 = 0.0, 200.0, -4.0, 8.0  # the axes, wide enough for the whole egg
     sx = lambda v: left + (min(max(v, x0), x1) - x0) / (x1 - x0) * (right - left)  # noqa: E731
@@ -553,10 +699,11 @@ def egg_svg(points, width: int = 560, height: int = 330) -> str:
                f'<text x="13" y="{(top + bottom) / 2:.0f}" font-size="11" fill="currentColor" '
                f'transform="rotate(-90 13 {(top + bottom) / 2:.0f})" '
                'text-anchor="middle">WLOGP</text>')  # fmt: skip
-    for name, tpsa, logp in points:
-        out.append(f'<circle cx="{sx(tpsa):.1f}" cy="{sy(logp):.1f}" r="4.5" fill="#d2384a" '
-                   f'stroke="#ffffff" stroke-width="1.2"><title>{_escape(name)}: TPSA '
-                   f'{tpsa:g}, WLOGP {logp:g}</title></circle>')  # fmt: skip
+    for index, name, tpsa, logp in points:
+        out.append(f'<circle class="pt" data-design="{index}" cx="{sx(tpsa):.1f}" '
+                   f'cy="{sy(logp):.1f}" r="4.5" fill="#d2384a" stroke="#ffffff" '
+                   f'stroke-width="1.2"><title>{_escape(name)}: TPSA {tpsa:g}, '
+                   f'WLOGP {logp:g} &#8212; click to go to it</title></circle>')  # fmt: skip
     out.append("</svg>")
     return "".join(out)
 
@@ -633,10 +780,13 @@ PANELS: list[tuple[str, list[tuple[str, str]]]] = [
 _CSS = """
 :root { color-scheme: light dark;
   --bg: #ffffff; --card: #f7f8fa; --line: #d9dde3; --text: #1d2026; --muted: #69707c;
-  --accent: #c9711a; --warn: #b4520f; --good: #1c7a3e; }
-@media (prefers-color-scheme: dark) { :root {
+  --accent: #c9711a; --warn: #b4520f; --good: #1c7a3e; --flash: rgba(201, 113, 26, 0.22); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #15171c; --card: #1c1f26; --line: #2b3039; --text: #e6e8ec; --muted: #8a919e;
-  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; } }
+  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; --flash: rgba(240, 162, 59, 0.26); } }
+:root[data-theme="dark"] {
+  --bg: #15171c; --card: #1c1f26; --line: #2b3039; --text: #e6e8ec; --muted: #8a919e;
+  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; --flash: rgba(240, 162, 59, 0.26); }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 28px 20px 60px; background: var(--bg); color: var(--text);
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
@@ -646,56 +796,223 @@ h2 { font-size: 15px; margin: 32px 0 10px; padding-bottom: 5px;
   border-bottom: 1px solid var(--line); }
 h3 { font-size: 14px; margin: 0 0 2px; }
 .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 6px; }
+.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+button.ui { background: var(--card); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }
+button.ui:hover { border-color: var(--accent); color: var(--accent); }
+/* the SMILES is the molecule: it is read and copied, so it is not greyed out */
 .smiles { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
-  color: var(--muted); word-break: break-all; }
+  color: var(--text); word-break: break-all; margin: 0 0 7px; }
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); font-weight: 600; white-space: nowrap; }
 #summary th { cursor: pointer; user-select: none; }
 #summary th:hover { color: var(--accent); }
 #summary td.n, #summary th.n { text-align: right; font-variant-numeric: tabular-nums; }
+#summary tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--card); }
+.arrow { color: var(--accent); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
   padding: 14px 16px; margin: 14px 0; }
 .design { display: grid; grid-template-columns: 250px 1fr; gap: 18px; align-items: start; }
-.struct { background: #ffffff; border: 1px solid var(--line); border-radius: 6px; padding: 6px;
-  text-align: center; }
+/* the drawing sits on the card, in the page's own colours */
+.struct { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px; text-align: center; }
+:root[data-theme="dark"] .light-only { display: none; }
+:root[data-theme="light"] .dark-only { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .light-only { display: none; } }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .dark-only { display: none; } }
+@keyframes flash { from { background: var(--flash); } to { background: var(--card); } }
+.design.lit { animation: flash 1.6s ease-out; }
 .panels { display: grid; gap: 4px 22px;
   grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
 .panel table { font-size: 12px; }
 .panel th { width: 52%; font-weight: 400; }
 .panel td { text-align: right; font-variant-numeric: tabular-nums; }
-.pt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent);
-  margin: 10px 0 2px; }
+.pt2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--accent); margin: 10px 0 2px; }
 .flag { color: var(--warn); }
 .ok { color: var(--good); }
-.note { background: var(--card); border-left: 3px solid var(--accent); padding: 7px 11px;
+.note { background: var(--bg); border-left: 3px solid var(--accent); padding: 7px 11px;
   margin: 8px 0; font-size: 12.5px; }
 .egg { display: grid; grid-template-columns: 1fr 230px; gap: 18px; align-items: center; }
+circle.pt { cursor: pointer; }
+circle.pt:hover { fill: var(--accent); r: 6; }
+select.ui { background: var(--card); color: var(--text); border: 1px solid var(--line);
+  border-radius: 5px; padding: 3px 6px; font: inherit; font-size: 12.5px; }
+.axes { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.spots li { margin: 2px 0; }
+.spots { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; }
+.spots .what { color: var(--accent); }
 footer { margin-top: 42px; padding-top: 14px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 11.5px; }
 footer p { margin: 5px 0; }
 @media (max-width: 760px) { .design, .egg { grid-template-columns: 1fr; } }
-@media print { body { padding: 0; } .card { break-inside: avoid; } }
+@media print { body { padding: 0; } .card { break-inside: avoid; } button.ui { display: none; } }
 """
 
-# clicking a column sorts by it, again the other way.  The only script in the page: it
-# reads the table already there and reorders its rows, and touches nothing else
-_SORT_JS = """
-document.querySelectorAll('#summary th').forEach((th, col) => {
-  th.onclick = () => {
-    const body = th.closest('table').tBodies[0];
-    const down = th.dataset.down !== '1';
-    th.closest('tr').querySelectorAll('th').forEach(o => {
-      o.dataset.down = ''; o.textContent = o.dataset.label; });
-    th.dataset.down = down ? '1' : '0';
-    th.textContent = th.dataset.label + (down ? ' \\u2193' : ' \\u2191');
-    const key = tr => { const t = tr.cells[col].textContent.trim();
-      const n = parseFloat(t); return isNaN(n) ? t.toLowerCase() : n; };
-    [...body.rows].sort((a, b) => { const x = key(a), y = key(b);
-      return (x < y ? -1 : x > y ? 1 : 0) * (down ? -1 : 1); }).forEach(r => body.append(r));
+# The page's only script.  It sorts the table, moves to a design when its row or its
+# point is clicked, draws the scatter plot, and remembers the theme.  It reads nothing
+# but the page itself and fetches nothing.
+_JS = r"""
+(function () {
+  var DATA = __DATA__, NUMERIC = __NUMERIC__;
+  var root = document.documentElement;
+
+  // --- theme: the system's unless the reader says otherwise -------------------------
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   };
-});
+  var saved = store.get('boonza.report.theme');
+  if (saved === 'dark' || saved === 'light') root.dataset.theme = saved;
+  function isDark() {
+    if (root.dataset.theme) return root.dataset.theme === 'dark';
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  var themeButton = document.getElementById('theme');
+  function markTheme() {
+    themeButton.textContent = isDark() ? 'Light mode' : 'Dark mode';
+    themeButton.title = 'show this report ' + (isDark() ? 'light' : 'dark');
+  }
+  themeButton.onclick = function () {
+    root.dataset.theme = isDark() ? 'light' : 'dark';
+    store.set('boonza.report.theme', root.dataset.theme);
+    markTheme();
+    plot();
+  };
+  markTheme();
+
+  // --- go to a design, from its row or from a point -----------------------------------
+  function go(index) {
+    var card = document.getElementById('design-' + index);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.remove('lit');
+    void card.offsetWidth;  // so the animation restarts when the same one is clicked
+    card.classList.add('lit');
+  }
+  document.addEventListener('click', function (e) {
+    var node = e.target.closest ? e.target.closest('[data-design]') : null;
+    if (node) go(+node.getAttribute('data-design'));
+  });
+
+  // --- the table sorts on any column ---------------------------------------------------
+  // "2PM1" is not a number, though parseFloat would call it 2 and make every name
+  // equal; and "2PM10" comes after "2PM2", which a plain text compare gets backwards
+  var collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  function isNumber(text) { return text !== '' && isFinite(Number(text)); }
+  function compare(a, b) {
+    if (isNumber(a) && isNumber(b)) return Number(a) - Number(b);
+    if (isNumber(a) !== isNumber(b)) return isNumber(a) ? -1 : 1;  // numbers first
+    return collator.compare(a, b);
+  }
+  var table = document.getElementById('summary');
+  if (table) {
+    var headers = [].slice.call(table.tHead.rows[0].cells);
+    headers.forEach(function (th, col) {
+      th.addEventListener('click', function () {
+        var down = th.dataset.down !== '1';
+        headers.forEach(function (other) {
+          other.dataset.down = '';
+          var mark = other.querySelector('.arrow');
+          if (mark) mark.textContent = '';
+        });
+        th.dataset.down = down ? '1' : '0';
+        th.querySelector('.arrow').textContent = down ? ' ↓' : ' ↑';
+        var body = table.tBodies[0];
+        var rows = [].slice.call(body.rows);
+        rows.sort(function (x, y) {
+          return compare(x.cells[col].textContent.trim(),
+                         y.cells[col].textContent.trim()) * (down ? -1 : 1);
+        });
+        rows.forEach(function (r) { body.appendChild(r); });
+      });
+    });
+  }
+
+  // --- any property against any other ---------------------------------------------------
+  var xs = document.getElementById('plot-x'), ys = document.getElementById('plot-y');
+  var holder = document.getElementById('plot');
+  function css(name) {
+    return getComputedStyle(root).getPropertyValue(name).trim() || '#888';
+  }
+  function plot() {
+    if (!holder || !xs || !ys) return;
+    var kx = xs.value, ky = ys.value;
+    var pts = [];
+    for (var i = 0; i < DATA.length; i++) {
+      var x = DATA[i].p[kx], y = DATA[i].p[ky];
+      if (typeof x === 'number' && typeof y === 'number') {
+        pts.push({ i: DATA[i].i, name: DATA[i].n, x: x, y: y });
+      }
+    }
+    if (!pts.length) { holder.innerHTML = '<p class="sub">nothing to plot here.</p>'; return; }
+    var W = 560, H = 330, L = 58, R = 14, T = 14, B = 40;
+    var xv = pts.map(function (p) { return p.x; }), yv = pts.map(function (p) { return p.y; });
+    function span(v) {
+      var lo = Math.min.apply(null, v), hi = Math.max.apply(null, v);
+      if (lo === hi) { lo -= 1; hi += 1; }
+      var pad = (hi - lo) * 0.08;
+      return [lo - pad, hi + pad];
+    }
+    var ax = span(xv), ay = span(yv);
+    var sx = function (v) { return L + (v - ax[0]) / (ax[1] - ax[0]) * (W - L - R); };
+    var sy = function (v) { return H - B - (v - ay[0]) / (ay[1] - ay[0]) * (H - T - B); };
+    function ticks(lo, hi) {
+      var step = Math.pow(10, Math.floor(Math.log(Math.abs(hi - lo) / 4) / Math.LN10));
+      var k = (hi - lo) / step;
+      if (k > 8) step *= 5; else if (k > 4) step *= 2;
+      var out = [], start = Math.ceil(lo / step) * step;
+      for (var v = start; v <= hi + step * 1e-6 && out.length < 12; v += step) out.push(v);
+      return out;
+    }
+    function label(v) {
+      return Math.abs(v) >= 1000 || (v !== 0 && Math.abs(v) < 0.01)
+        ? v.toExponential(1) : String(Math.round(v * 1000) / 1000);
+    }
+    var line = css('--line'), text = css('--text');
+    var muted = css('--muted'), accent = css('--accent');
+    var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="'
+             + ky + ' against ' + kx + '">'];
+    s.push('<rect x="' + L + '" y="' + T + '" width="' + (W - L - R) + '" height="'
+           + (H - T - B) + '" fill="none" stroke="' + line + '"/>');
+    ticks(ax[0], ax[1]).forEach(function (v) {
+      s.push('<line x1="' + sx(v).toFixed(1) + '" y1="' + T + '" x2="' + sx(v).toFixed(1)
+             + '" y2="' + (H - B) + '" stroke="' + line + '" stroke-width="0.6"/>'
+             + '<text x="' + sx(v).toFixed(1) + '" y="' + (H - B + 15)
+             + '" text-anchor="middle" font-size="10" fill="' + muted + '">'
+             + label(v) + '</text>');
+    });
+    ticks(ay[0], ay[1]).forEach(function (v) {
+      s.push('<line x1="' + L + '" y1="' + sy(v).toFixed(1) + '" x2="' + (W - R) + '" y2="'
+             + sy(v).toFixed(1) + '" stroke="' + line + '" stroke-width="0.6"/>'
+             + '<text x="' + (L - 6) + '" y="' + (sy(v) + 3.5).toFixed(1)
+             + '" text-anchor="end" font-size="10" fill="' + muted + '">' + label(v) + '</text>');
+    });
+    s.push('<text x="' + ((L + W - R) / 2) + '" y="' + (H - 4) + '" text-anchor="middle"'
+           + ' font-size="11" fill="' + text + '">' + kx + '</text>');
+    s.push('<text x="14" y="' + ((T + H - B) / 2) + '" font-size="11" fill="' + text
+           + '" text-anchor="middle" transform="rotate(-90 14 ' + ((T + H - B) / 2) + ')">'
+           + ky + '</text>');
+    pts.forEach(function (p) {
+      s.push('<circle class="pt" data-design="' + p.i + '" cx="' + sx(p.x).toFixed(1)
+             + '" cy="' + sy(p.y).toFixed(1) + '" r="4.5" fill="' + accent
+             + '" stroke="' + css('--bg') + '" stroke-width="1.2"><title>' + p.name + ': '
+             + kx + ' ' + label(p.x) + ', ' + ky + ' ' + label(p.y)
+             + ' — click to go to it</title></circle>');
+    });
+    s.push('</svg>');
+    holder.innerHTML = s.join('');
+  }
+  if (xs && ys) {
+    xs.onchange = ys.onchange = plot;
+    plot();
+  }
+})();
 """
 
 
@@ -704,49 +1021,75 @@ def _verdict_class(value) -> str:
     text = str(value)
     if text in ("pass", "high", "yes", "none"):
         return ' class="ok"'
-    if text.startswith("fails") or text in ("low",):
+    if text.startswith("fails") or text == "low":
         return ' class="flag"'
     return ""
 
 
+def _plot_data(designs, columns) -> tuple[str, str]:
+    """The numbers the scatter plot needs, as JSON for the page's one script, and the
+    properties that can go on an axis.  ``<`` is escaped so nothing in a name can end
+    the script element early."""
+    import json
+
+    numeric = [c for c in columns
+               if any(isinstance(p.get(c), (int, float)) and not isinstance(p.get(c), bool)
+                      for _n, _s, _o, p, _m in designs)]  # fmt: skip
+    rows = []
+    for k, (name, _smiles, _note, props, _mol) in enumerate(designs):
+        mine = {c: props[c] for c in numeric if isinstance(props.get(c), (int, float))}
+        rows.append({"i": k, "n": name, "p": mine})
+    dumped = json.dumps(rows, ensure_ascii=True).replace("<", "\\u003c")
+    return dumped, json.dumps(numeric, ensure_ascii=True).replace("<", "\\u003c")
+
+
 def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
-    """A whole series as one self-contained HTML page: the BOILED-Egg, a sortable
-    table of every design, and a panel each.
+    """A whole series as one self-contained HTML page: the BOILED-Egg, a plot of any
+    property against any other, a sortable table of every design, and a panel each.
 
     ``designs``: [(name, smiles, note, properties, mol)], as :func:`properties` gives
     them; ``mol`` may be None, and then that design has no drawing.  The page carries
-    its own style and the structures as inline SVG, so it opens anywhere, offline,
-    and can be emailed as one file."""
+    its own style and the structures as inline SVG, so it opens anywhere, offline, and
+    can be emailed as one file.  Clicking a design anywhere -- a row of the table, a
+    point of either plot -- goes to its panel."""
     import datetime
 
-    columns = ["name", *[c for c in TABLE_COLUMNS
-                         if any(c in p for _n, _s, _o, p, _m in designs)]]  # fmt: skip
-    numeric = {"MW", "cLogP", "logD", "TPSA", "HBD", "HBA", "rotatable bonds", "QED",
-               "synthetic accessibility", "Lipinski violations", "PAINS"}  # fmt: skip
+    everything: list[str] = []
+    for _n, _s, _o, p, _m in designs:
+        for key in p:
+            if key not in everything and key != "caveats":
+                everything.append(key)
+    columns = ["name", *[c for c in TABLE_COLUMNS if c in everything]]
+    numeric = {"MW", "heavy atoms", "cLogP", "logD", "TPSA", "HBD", "HBA", "rotatable bonds",
+               "QED", "synthetic accessibility", "Lipinski violations", "PAINS"}  # fmt: skip
     when = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     head = _escape(title or group)
+    data, axes = _plot_data(designs, everything)
 
     out = [
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>{head} &middot; boonza</title>",
         f"<style>{_CSS}</style>\n</head>\n<body>\n<main>",
+        '<div class="top"><div>',
         f"<h1>{head}</h1>",
         f'<p class="sub">{len(designs)} design{"" if len(designs) == 1 else "s"} &middot; '
         f"properties computed at pH {ph:g} &middot; {when} &middot; boonza</p>",
         '<p class="sub">Every number here is estimated from the structure alone. '
         "Treat them as a way to rank designs against each other, not as measurements.</p>",
+        '</div><button class="ui" id="theme" type="button">Dark mode</button></div>',
     ]
 
     # the egg, with every design on it
-    points = [(n, p["TPSA"], p["cLogP"]) for n, _s, _o, p, _m in designs if "TPSA" in p]
+    points = [(k, n, p["TPSA"], p["cLogP"])
+              for k, (n, _s, _o, p, _m) in enumerate(designs) if "TPSA" in p]  # fmt: skip
     if points:
         out.append("<h2>Passive absorption and brain penetration</h2>")
         out.append('<div class="card egg"><div>' + egg_svg(points) + "</div><div>")
         out.append('<p class="sub">The BOILED-Egg (Daina &amp; Zoete 2016). A design in the '
                    "white is likely to be absorbed in the gut; one in the yolk is likely to "
                    "cross the blood-brain barrier as well. Outside both, neither is likely by "
-                   "passive diffusion.</p>")  # fmt: skip
+                   "passive diffusion. Click a point to go to that design.</p>")  # fmt: skip
         out.append('<p class="sub">It knows nothing of transporters or efflux, so a molecule '
                    "that is carried across (or pumped back out) sits in the wrong place: "
                    "caffeine, which does reach the brain, falls outside the yolk.</p>"
@@ -754,17 +1097,16 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
 
     # one row per design
     out.append(f"<h2>{_escape(group)} at a glance</h2>")
-    out.append('<p class="sub">Click a column to sort by it.</p>')
+    out.append('<p class="sub">Click a column to sort by it, or a row to go to that design.</p>')
     out.append('<table id="summary"><thead><tr>')
-    for c in columns:
-        cls = ' class="n"' if c in numeric else ""
-        out.append(f'<th{cls} data-label="{_escape(c)}">{_escape(c)}</th>')
-    if any(o for _n, _s, o, _p, _m in designs):
-        out.append('<th data-label="note">note</th>')
-    out.append("</tr></thead><tbody>")
     notes = any(o for _n, _s, o, _p, _m in designs)
-    for name, _smiles, note, props, _mol in designs:
-        out.append("<tr>")
+    for c in [*columns, *(["note"] if notes else [])]:
+        cls = ' class="n"' if c in numeric else ""
+        out.append(f'<th{cls} data-label="{_escape(c)}">{_escape(c)}'
+                   '<span class="arrow"></span></th>')  # fmt: skip
+    out.append("</tr></thead><tbody>")
+    for k, (name, _smiles, note, props, _mol) in enumerate(designs):
+        out.append(f'<tr data-design="{k}">')
         for c in columns:
             value = name if c == "name" else props.get(c, "")
             cls = ' class="n"' if c in numeric else ""
@@ -774,12 +1116,46 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         out.append("</tr>")
     out.append("</tbody></table>")
 
+    # any property against any other
+    if len(axes) > 2:
+        pick = [c for c in everything if f'"{c}"' in axes]
+        default_x = "cLogP" if "cLogP" in pick else pick[0]
+        default_y = "logD" if "logD" in pick else pick[min(1, len(pick) - 1)]
+        out.append("<h2>One property against another</h2>")
+        out.append('<div class="card"><div class="axes">')
+        for which, label, chosen in (("y", "up", default_y), ("x", "across", default_x)):
+            out.append(f'<label for="plot-{which}">{label}</label>'
+                       f'<select class="ui" id="plot-{which}">')  # fmt: skip
+            for c in pick:
+                mark = " selected" if c == chosen else ""
+                out.append(f'<option value="{_escape(c)}"{mark}>{_escape(c)}</option>')
+            out.append("</select>")
+        out.append('<span class="sub" style="margin:0">click a point to go to that design'
+                   "</span></div>")  # fmt: skip
+        out.append('<div id="plot"></div></div>')
+
     # a panel per design
     out.append("<h2>Every design</h2>")
-    for name, smiles, note, props, mol in designs:
-        out.append('<div class="card design">')
-        svg = depiction(mol) if mol is not None else ""
-        drawing = svg or '<p class="sub">no drawing</p>'
+    for k, (name, smiles, note, props, mol) in enumerate(designs):
+        spots = []
+        if mol is not None:
+            try:
+                spots = soft_spots(mol)
+            except Exception:
+                spots = []
+        marked = sorted({a for s in spots for a in s["atoms"]})
+        out.append(f'<div class="card design" id="design-{k}">')
+        if mol is not None:
+            # one drawing for each theme, since a structure drawn for white paper
+            # disappears on a dark page; the stylesheet shows whichever is wanted
+            light = depiction(mol, dark=False, highlight=marked)
+            dark = depiction(mol, dark=True, highlight=marked)
+            drawing = (f'<span class="light-only">{light}</span>'
+                       f'<span class="dark-only">{dark}</span>') if light else ""  # fmt: skip
+        else:
+            drawing = ""
+        if not drawing:
+            drawing = '<p class="sub">no drawing</p>'
         out.append(f'<div class="struct">{drawing}</div>')
         out.append("<div>")
         out.append(f"<h3>{_escape(name)}</h3>")
@@ -791,18 +1167,30 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
             out.append(f'<div class="note flag">Log D caveat: {_escape(caveat)}</div>')
         out.append('<div class="panels">')
         for heading, rows in PANELS:
-            shown = [(key, label) for key, label in rows if key in props]
+            shown = [(key, lab) for key, lab in rows if key in props]
             if not shown:
                 continue
-            out.append(f'<div class="panel"><p class="pt">{heading}</p><table>')
-            for key, label in shown:
+            out.append(f'<div class="panel"><p class="pt2">{heading}</p><table>')
+            for key, lab in shown:
                 value = props[key]
                 if key == "logD":
-                    label = f"Log D (pH {ph:g})"
-                out.append(f"<tr><th>{label}</th><td{_verdict_class(value)}>"
+                    lab = f"Log D (pH {ph:g})"
+                out.append(f"<tr><th>{lab}</th><td{_verdict_class(value)}>"
                            f"{_escape(value)}</td></tr>")  # fmt: skip
             out.append("</table></div>")
-        out.append("</div></div></div>")
+        out.append("</div>")
+        if spots:
+            out.append('<p class="pt2">Metabolic soft spots</p>')
+            out.append('<ul class="spots">')
+            for spot in spots:
+                phase = "phase II" if spot["phase"] == 2 else "phase I"
+                out.append(f'<li><span class="what">{_escape(spot["label"])}</span> '
+                           f'({phase}) &mdash; {_escape(spot["note"])}</li>')  # fmt: skip
+            out.append("</ul>")
+            out.append('<p class="sub">Marked on the drawing. These are the groups known '
+                       "to be labile, found by substructure: a liability to look at, not "
+                       "a rate. Nothing says which site goes first.</p>")  # fmt: skip
+        out.append("</div></div>")
 
     out.append(
         "<footer><p><strong>How these were computed.</strong> All of it from the structure, "
@@ -817,9 +1205,15 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         "Synthetic accessibility: Ertl &amp; Schuffenhauer 2009. Filters: Lipinski 1997, "
         "Ghose 1999, Egan 2000, Muegge 2001, Veber 2002. Alerts: the PAINS and Brenk "
         "catalogues that ship with RDKit.</p>"
+        "<p><strong>Metabolic soft spots are substructure flags, not a prediction.</strong> "
+        "They mark groups known to be labile &mdash; what a chemist looks for when a "
+        "compound turns over too fast. They give no rate and no order, and they are not "
+        "SMARTCyp, which ranks every atom by a computed activation energy. Microsomes "
+        "settle it.</p>"
         "<p>PAINS and Brenk alerts are substructures worth a second look, not verdicts; "
         "a good many marketed drugs carry one. The filters are rules of thumb, and plenty "
         "of useful molecules break them.</p></footer>"
     )
-    out.append(f"</main>\n<script>{_SORT_JS}</script>\n</body>\n</html>\n")
+    script = _JS.replace("__DATA__", data).replace("__NUMERIC__", axes)
+    out.append(f"</main>\n<script>{script}</script>\n</body>\n</html>\n")
     return "\n".join(out)
