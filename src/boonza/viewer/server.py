@@ -177,7 +177,17 @@ class _Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/ligand2d":
             sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
             dark = query.get("dark", ["1"])[0] == "1"
-            self._json(self.viewer.session(arg("m")).ligand2d(sel, dark=dark))
+            # how the drawing is laid out and what it shows; none of it touches the
+            # structure, so it stays a GET like the drawing it asks for
+            branches = json.loads(query.get("branches", ["[]"])[0] or "[]")
+            self._json(self.viewer.session(arg("m")).ligand2d(
+                sel, dark=dark, which=int(query.get("which", ["0"])[0]),
+                hydrogens=query.get("h", ["none"])[0],
+                stereo=query.get("stereo", ["0"])[0] == "1",
+                rotate=float(query.get("rotate", ["0"])[0]),
+                flip=query.get("flip", [""])[0],
+                branches=branches,
+                layout=int(query.get("layout", ["0"])[0])))  # fmt: skip
         elif url.path == "/api/atom":
             self._json(self.viewer.session(arg("m")).atom_info(arg("a")))
         elif url.path == "/api/stereocentre":

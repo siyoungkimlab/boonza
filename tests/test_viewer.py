@@ -3807,41 +3807,85 @@ def test_the_model_list_sorts_names_with_their_digits_as_digits():
     assert "localeCompare" not in column
 
 
-def test_a_bond_in_the_2d_drawing_turns_its_torsion():
-    """The 2D panel could only select atoms.  A rotatable bond now carries a handle:
-    dragging it turns that torsion through the same two calls the view uses, so it is
-    one step to undo like any other edit.
+def test_the_2d_panel_steps_through_every_ligand(served):
+    """It drew the biggest ligand and offered no way to the others, so a structure
+    with four of them showed one.  Every ligand molecule is listed now, biggest
+    first, and the panel steps through them."""
+    s = boonza.load(DATA / "1HHO.pdb")
+    session = viewer.Session(s)
+    get, post = served(session)
+    found = session.ligand_molecules()
+    labels = [x["label"] for x in found]
+    assert len(found) > 1 and "HEM143 A" in labels and "HEM147 B" in labels
+    assert [x["size"] for x in found] == sorted((x["size"] for x in found), reverse=True)
+    # each one can be asked for by its place in that list
+    for which in range(len(found)):
+        status, _, body = get(f"api/ligand2d?dark=1&which={which}")
+        out = json.loads(body)
+        assert status == 200 and out["which"] == which
+        assert len(out["molecules"]) == len(found)
+    # past the end is clamped rather than refused
+    assert json.loads(get(f"api/ligand2d?which={len(found) + 5}")[2])["which"] == len(found) - 1
 
-    The drawing itself does not change -- a 2D diagram is topological and has no
-    torsion of its own -- and the panel says so while a bond is being turned, since a
-    reader would otherwise take the still picture for a broken one."""
+
+def test_a_ligand_bonded_to_the_protein_is_still_found(served):
+    """A heme is bonded to the protein, so its fragment is the whole chain; taken by
+    fragment it disappeared from the list altogether.  Those are taken by residue."""
+    s = boonza.load(DATA / "1HHO.pdb")
+    session = viewer.Session(s, ligand="resname HEM and chain A")
+    assert [x["label"] for x in session.ligand_molecules()] == ["HEM143 A"]
+    out = session.ligand2d()
+    assert out["name"].startswith("HEM") and len(out["atoms"]) > 20
+
+
+def test_the_2d_drawing_can_be_laid_out_as_the_reader_wants():
+    """Turning, mirroring, swinging a branch and laying out again all move the
+    picture only -- the structure is not touched by any of it."""
+    s = boonza.from_smiles("CC(C)NCC(O)COc1cccc2ccccc12")
+    session = viewer.Session(s)
+    before = np.asarray(session.system.positions).copy()
+    base = session.ligand2d()
+    atoms = base["atoms"]
+    for how in ({"rotate": 45}, {"flip": "x"}, {"flip": "y"}, {"layout": 7},
+                {"branches": [[atoms[3], atoms[4], 90]]}):  # fmt: skip
+        assert session.ligand2d(**how)["svg"] != base["svg"], how
+    # a full turn and a turn of nothing are the drawing it started from
+    assert session.ligand2d(rotate=360)["svg"] == base["svg"]
+    assert session.ligand2d(branches=[[atoms[3], atoms[4], 360]])["svg"] == base["svg"]
+    # a bond in a ring has no side of its own, so swinging it does nothing
+    ring = [a for a in atoms if a >= 9][:2]
+    assert session.ligand2d(branches=[[ring[0], ring[1], 90]])["svg"] == base["svg"]
+    # nonsense is ignored rather than raising
+    assert session.ligand2d(branches=[[999, 998, 90]])["svg"] == base["svg"]
+    assert np.allclose(np.asarray(session.system.positions), before)  # nothing moved
+
+
+def test_the_2d_drawing_shows_what_it_is_asked_to():
+    """Hydrogens and stereocentres are the reader's choice: a figure usually wants
+    the polar hydrogens and the R/S marked, and the screen usually does not."""
+    s = boonza.from_smiles("C[C@H](N)C(=O)O")
+    session = viewer.Session(s)
+    counts = {h: len(session.ligand2d(hydrogens=h)["atoms"]) for h in ("none", "polar", "all")}
+    assert counts["none"] < counts["polar"] < counts["all"]
+    # the polar ones are those on N and O, not the methyl's
+    assert counts["polar"] - counts["none"] == 3
+    assert session.ligand2d(stereo=True)["svg"] != session.ligand2d(stereo=False)["svg"]
+
+
+def test_the_2d_panel_only_ever_changes_the_picture():
+    """It used to turn the real torsion, which is not what a 2D drawing is for: a
+    diagram is a picture, and the structure is turned in the view itself.  Dragging a
+    bond now swings that branch of the drawing."""
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
-    turn = ui[ui.index("async function startTurn(") :]
-    turn = turn[: turn.index('$("lig2d").addEventListener')]
-    assert "api/dihedral" in turn and "api/set_dihedral" in turn
-    assert "app.turnDihedral" in turn
-    assert "app.reloadModel" in turn  # through the app: one step to undo
-    assert "cannot be edited" in turn  # a model that may not be edited is refused
-    assert "turning !== mine" in turn  # let go before the answer came back
-    assert "a 2D diagram has no " in turn
-    # a ligand's torsion has no name of its own, and an empty one left a bare readout
-    assert "d.name || d.atoms.map(" in ui
-    # only bonds that can actually turn get a handle
-    bonds = ui[ui.index("function rotatableBonds(m, drawn)") :]
-    bonds = bonds[: bonds.index("\n  }\n")]
-    assert "order[k] || 1) !== 1" in bonds  # single bonds
-    assert "joinedWithout(m, i, j)" in bonds  # not a ring bond
-    assert "filter(heavy).length < 2" in bonds  # each end carries something to turn
-    css = (Path(boonza.__file__).parent / "data/viewer/style.css").read_text(encoding="utf-8")
-    assert ".lig2d-svg .turn" in css and "ew-resize" in css
-
-
-def test_a_ring_bond_offers_no_handle_to_turn():
-    """A bond in a ring has no side that can turn on its own, so it gets no handle;
-    the test is whether its two atoms are still joined when the bond itself is left
-    out, which is the check the page makes."""
-    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
-    walk = ui[ui.index("function joinedWithout(m, i, j)") :]
-    walk = walk[: walk.index("\n  }\n")]
-    assert "if (a === i && b === j) continue;" in walk  # never across the bond itself
-    assert "return true" in walk
+    panel = ui[ui.index("function startSwing(") :]
+    panel = panel[: panel.index("const endSwing =")]
+    assert "draw2D.branches" in panel and "refresh2D()" in panel
+    # nothing in the panel reaches for the structure any more
+    for gone in ("api/set_dihedral", "api/dihedral", "turnDihedral", "reloadModel"):
+        assert gone not in panel, gone
+    assert "the drawing only" in panel
+    tools = ui[ui.index("function tools2D(m, out)") :]
+    tools = tools[: tools.index("async function copy2D(")]
+    for control in ("‹", "›", "⟲", "⟳", "↔", "↕", "↺", "R/S", "copy", "svg"):
+        assert control in tools, control
+    assert "draw2D.hydrogens" in tools and "draw2D.stereo" in tools

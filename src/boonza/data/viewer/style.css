@@ -430,3 +430,14 @@ canvas.sideview { display: block; border: 1px solid var(--line); border-radius: 
 .lig2d-svg:hover .turn { opacity: 0.5; }
 .lig2d-svg .turn:hover { opacity: 1; border-style: solid; border-color: var(--accent);
   background: var(--accent-soft); }
+
+/* the 2D drawing's own controls: which ligand, how it is turned, what it shows */
+.lig2d-tools { display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
+  padding: 4px 6px 6px; border-top: 1px solid var(--line); }
+.lig2d-tools button { min-width: 22px; padding: 1px 5px; font-size: 11px; line-height: 16px;
+  background: var(--button); color: var(--text); border: 1px solid var(--line);
+  border-radius: 4px; cursor: pointer; }
+.lig2d-tools button:hover { background: var(--hover); border-color: var(--accent); }
+.lig2d-tools button.on { background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent); }
+.lig2d-tools .which { font-size: 10.5px; color: var(--muted); padding: 0 2px; }

@@ -2162,6 +2162,15 @@ export function setupUI(app) {
     $("vt-2d").classList.toggle("on", on);
     if (on) refresh2D();
   }
+  // how the 2D drawing is laid out and what it shows.  All of it is about the
+  // picture: none of it touches the structure
+  const draw2D = { which: 0, rotate: 0, flip: "", branches: [], layout: 0,
+                   hydrogens: "none", stereo: false, dark: null };  // fmt: skip
+  // the layout is of one molecule: stepping to another starts its picture afresh
+  function reset2D(keepWhich = true) {
+    const which = keepWhich ? draw2D.which : 0;
+    Object.assign(draw2D, { which, rotate: 0, flip: "", branches: [], layout: 0 });
+  }
   let pending2D = 0;
   async function refresh2D() {
     if ($("lig2d").hidden) return;
@@ -2170,33 +2179,36 @@ export function setupUI(app) {
     const m = sel[0]?.[0] || app.currentModel();
     if (!m?.topo) return;
     const ids = sel[0]?.[1] || [];
-    const dark = document.body.classList.contains("dark") ? 1 : 0;
+    const dark = (draw2D.dark ?? document.body.classList.contains("dark")) ? 1 : 0;
+    const how = `&which=${draw2D.which}&h=${draw2D.hydrogens}&stereo=${draw2D.stereo ? 1 : 0}`
+      + `&rotate=${draw2D.rotate}&flip=${draw2D.flip}&layout=${draw2D.layout}`
+      + `&branches=${encodeURIComponent(JSON.stringify(draw2D.branches))}`;
     try {
-      const out = await app.getJSON(`api/ligand2d?m=${m.index}&dark=${dark}&sel=${ids.slice(0, 400).join(",")}`);
+      const out = await app.getJSON(`api/ligand2d?m=${m.index}&dark=${dark}&sel=${ids.slice(0, 400).join(",")}${how}`);
       if (ticket !== pending2D) return;
       const box = $("lig2d").querySelector(".lig2d-svg");
       box.innerHTML = out.svg;
-      say2D(`${out.name}  ·  click an atom to select it (Shift: toggle) · drag a bond to turn it`);
+      say2D(`${out.name}  ·  click an atom to select it · drag a bond to swing it (the drawing only)`);
       out.coords.forEach(([x, y], k) => {
         const hit = el("div", { className: "hit", title: m.topo.atoms.name[out.atoms[k]] });
         Object.assign(hit.style, { left: `${x}px`, top: `${y}px` });
         hit.onclick = e => app.select(m, [out.atoms[k]], e.shiftKey ? "toggle" : "set");
         box.append(hit);
       });
-      // a handle on each bond a torsion can be turned about.  The drawing itself does
-      // not change: a 2D diagram is topological and has no torsion to show, so what
-      // turns is the structure in the view.  Picking the bond here is the point --
-      // in a crowded pocket the right bond is far easier to hit in the diagram
+      // a handle on each bond a branch can be swung about, to pull apart groups the
+      // layout has drawn over each other.  The picture moves, not the structure
       const at = new Map(out.atoms.map((a, k) => [a, out.coords[k]]));
       for (const [i, j] of rotatableBonds(m, at)) {
         const [xi, yi] = at.get(i), [xj, yj] = at.get(j);
         const A = m.topo.atoms.name;
         const turn = el("div", { className: "turn",
-                                 title: `drag to turn ${A[i]}-${A[j]}` });  // fmt: skip
+                                 title: `drag to swing ${A[j]} and what hangs off it, `
+                                   + "in the drawing" });  // fmt: skip
         Object.assign(turn.style, { left: `${(xi + xj) / 2}px`, top: `${(yi + yj) / 2}px` });
-        turn.onpointerdown = e => startTurn(e, m, [i, j], turn);
+        turn.onpointerdown = e => startSwing(e, m, [i, j], turn);
         box.append(turn);
       }
+      tools2D(m, out);
     } catch (e) {
       $("lig2d").querySelector(".lig2d-title").textContent = e.message;
       $("lig2d").querySelector(".lig2d-svg").innerHTML = "";
@@ -2204,6 +2216,92 @@ export function setupUI(app) {
   }
 
   const say2D = text => { $("lig2d").querySelector(".lig2d-title").textContent = text; };
+
+  // the drawing's own controls, under it: which ligand, how it is turned, what it
+  // shows, and taking it away as a picture
+  function tools2D(m, out) {
+    const bar = $("lig2d").querySelector(".lig2d-tools");
+    bar.innerHTML = "";
+    const b = (label, title, run, on = false) => {
+      const x = el("button", { className: on ? "on" : "", title }, label);
+      x.onclick = run;
+      bar.append(x);
+      return x;
+    };
+    const again = () => refresh2D();
+    const many = (out.molecules || []).length;
+    if (many > 1 && out.which >= 0) {  // which ligand, when the structure has several
+      b("‹", "the ligand before this one", () => {
+        reset2D(false);
+        draw2D.which = (out.which - 1 + many) % many;
+        again();
+      });
+      bar.append(el("span", { className: "which",
+                              title: (out.molecules || []).map(x => x.label).join(", ") },
+                    `${out.which + 1}/${many}`));  // fmt: skip
+      b("›", "the next ligand", () => {
+        reset2D(false);
+        draw2D.which = (out.which + 1) % many;
+        again();
+      });
+    } else if (out.which < 0) {
+      bar.append(el("span", { className: "which", title: "the molecule of the selection" }, "sel"));
+    }
+    b("⟲", "turn it 15° anticlockwise", () => { draw2D.rotate -= 15; again(); });
+    b("⟳", "turn it 15° clockwise", () => { draw2D.rotate += 15; again(); });
+    b("↔", "mirror it left to right", () => { draw2D.flip = draw2D.flip === "x" ? "" : "x"; again(); },
+      draw2D.flip === "x");  // fmt: skip
+    b("↕", "mirror it top to bottom", () => { draw2D.flip = draw2D.flip === "y" ? "" : "y"; again(); },
+      draw2D.flip === "y");  // fmt: skip
+    b("↺", "lay it out again, from another starting point (and undo any swung bonds)",
+      () => { const which = draw2D.which; reset2D(); draw2D.which = which;
+              draw2D.layout = Math.floor(Math.random() * 10000) + 1; again(); });  // fmt: skip
+    const H = { none: "H−", polar: "H±", all: "H+" };
+    const NEXT = { none: "polar", polar: "all", all: "none" };
+    b(H[draw2D.hydrogens], "hydrogens: none, polar, or all of them",
+      () => { draw2D.hydrogens = NEXT[draw2D.hydrogens]; again(); },
+      draw2D.hydrogens !== "none");  // fmt: skip
+    b("R/S", "mark the stereocentres RDKit can assign",
+      () => { draw2D.stereo = !draw2D.stereo; again(); }, draw2D.stereo);  // fmt: skip
+    b(draw2D.dark ?? document.body.classList.contains("dark") ? "☾" : "☀",
+      "draw it light or dark, whatever the page is: a figure usually wants it light",
+      () => { draw2D.dark = !(draw2D.dark ?? document.body.classList.contains("dark")); again(); },
+      draw2D.dark !== null);  // fmt: skip
+    b("copy", "copy the drawing as SVG: it pastes into Illustrator or Inkscape as "
+      + "shapes, not as pixels", () => copy2D(out));  // fmt: skip
+    b("svg", `save ${out.name}.svg, which stays sharp at any size`, () => save2D(out));
+  }
+  // the drawing is vector: it is copied as SVG, which an illustrator opens as shapes
+  async function copy2D(out) {
+    const svg = $("lig2d").querySelector(".lig2d-svg svg");
+    if (!svg) return;
+    const text = new XMLSerializer().serializeToString(svg);
+    try {
+      // as an image where the browser will take one, and as the markup either way, so
+      // it pastes into a drawing program and into an editor alike
+      if (navigator.clipboard && window.ClipboardItem) {
+        const blob = new Blob([text], { type: "image/svg+xml" });
+        await navigator.clipboard.write([new ClipboardItem({
+          "image/svg+xml": blob, "text/plain": new Blob([text], { type: "text/plain" }) })]);  // fmt: skip
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      app.message(`${out.name}: copied as SVG · paste it into Illustrator or Inkscape`);
+    } catch (e) {
+      try {
+        await navigator.clipboard.writeText(text);
+        app.message(`${out.name}: copied as SVG`);
+      } catch (err) { app.message(`could not reach the clipboard: use svg to save it`, true); }
+    }
+  }
+  function save2D(out) {
+    const svg = $("lig2d").querySelector(".lig2d-svg svg");
+    if (!svg) return;
+    const text = new XMLSerializer().serializeToString(svg);
+    const url = URL.createObjectURL(new Blob([text], { type: "image/svg+xml" }));
+    el("a", { href: url, download: `${out.name || "ligand"}.svg` }).click();
+    app.message(`${out.name}.svg saved`);
+  }
 
   // the bonds a torsion can be turned about: a single bond between two drawn heavy
   // atoms that each carry another heavy atom, and that is not in a ring -- a ring
@@ -2236,57 +2334,35 @@ export function setupUI(app) {
     return false;
   }
 
-  // dragging a bond in the 2D drawing turns that torsion, through the same two calls
-  // the view uses (api/dihedral for which atoms move, api/set_dihedral to keep it), so
-  // it is one step to undo like any other edit
-  let turning = null;
-  // what the readout calls a torsion: phi, psi or chi where the server knows one
-  // (an amino acid's), else the four atoms it is measured over -- a ligand's has no
-  // name of its own, and an empty one left the readout a bare "· 103°"
-  const torsionLabel = (m, d) => d.name || d.atoms.map(a => m.topo.atoms.name[a]).join("-");
-  async function startTurn(e, m, atoms, handle) {
+  // dragging a bond swings that branch of the DRAWING about it, to pull apart groups
+  // the layout has put on top of each other.  The structure is not touched: a 2D
+  // diagram is a picture, and a real torsion is turned in the view itself (Alt + drag,
+  // or the Dihedral field below it)
+  let swinging = null;
+  function startSwing(e, m, atoms, handle) {
     e.preventDefault();
     e.stopPropagation();
-    if (!m.topo.editable) { app.message("this model cannot be edited", true); return; }
     handle.setPointerCapture(e.pointerId);
-    turning = { m, x: e.clientX, d: null, moved: false };
-    const mine = turning;
-    try {
-      const out = await app.post("api/dihedral", { m: m.index, atoms });
-      if (turning !== mine) return;  // let go before the answer came back
-      mine.d = { ...out, model: m, base: m.pos.slice(), now: out.angle };
-      say2D(`${torsionLabel(m, mine.d)}  ·  ${out.angle.toFixed(1)}°  ·  drag to turn`);
-    } catch (err) {
-      turning = null;
-      app.message(err.message, true);
-    }
+    const was = draw2D.branches.find(b => b[0] === atoms[0] && b[1] === atoms[1]);
+    swinging = { m, atoms, x: e.clientX, from: was ? was[2] : 0, now: was ? was[2] : 0 };
+    const A = m.topo.atoms.name;
+    say2D(`${A[atoms[0]]}-${A[atoms[1]]}  ·  drag to swing it in the drawing`);
   }
-  function moveTurn(e) {
-    if (!turning?.d) return;
-    const dx = e.clientX - turning.x;
-    if (!dx) return;
-    turning.x = e.clientX;
-    turning.moved = true;
-    const d = turning.d;
-    d.now = ((d.now + dx * 0.6 + 540) % 360) - 180;
-    app.turnDihedral(d, d.now);
-    const what = torsionLabel(turning.m, d);
-    say2D(`${what}  ·  ${d.now.toFixed(1)}°`);
-    app.message(`${what}: ${d.now.toFixed(1)}° · the view turns; a 2D diagram has no `
-      + "torsion of its own to show");  // fmt: skip
+  function moveSwing(e) {
+    if (!swinging) return;
+    swinging.now = swinging.from + (e.clientX - swinging.x) * 1.2;
+    const [i, j] = swinging.atoms;
+    const was = draw2D.branches.find(b => b[0] === i && b[1] === j);
+    if (was) was[2] = swinging.now; else draw2D.branches.push([i, j, swinging.now]);
+    const A = swinging.m.topo.atoms.name;
+    say2D(`${A[i]}-${A[j]}  ·  ${Math.round(((swinging.now % 360) + 360) % 360)}°  ·  the drawing only`);
+    refresh2D();
   }
-  async function endTurn() {
-    const t = turning;
-    turning = null;
-    if (!t?.d || !t.moved) return;
-    try {
-      await app.post("api/set_dihedral", { m: t.m.index, atoms: t.d.atoms, angle: t.d.now });
-      await app.reloadModel(t.m, false);  // through the app: one step to undo
-    } catch (err) { app.message(err.message, true); }
-  }
-  $("lig2d").addEventListener("pointermove", moveTurn);
-  $("lig2d").addEventListener("pointerup", endTurn);
-  $("lig2d").addEventListener("pointercancel", endTurn);
+  const endSwing = () => { swinging = null; };
+  $("lig2d").addEventListener("pointermove", moveSwing);
+  $("lig2d").addEventListener("pointerup", endSwing);
+  $("lig2d").addEventListener("pointercancel", endSwing);
+
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {

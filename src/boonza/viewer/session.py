@@ -335,6 +335,70 @@ def _gbsa_report(got, which, model: str, salt: float) -> dict:
     return out
 
 
+def _lay_out_2d(mol, local, rotate: float = 0.0, flip: str = "", branches=()) -> None:
+    """Move a molecule's 2D drawing about, in place.  Only the picture changes: these
+    are the drawing's own coordinates, not the structure's, and nothing here is saved.
+
+    ``branches`` are applied first, each swinging the j side of bond i-j about j, so
+    overlapping groups can be pulled apart; then the mirror, then the turn.  ``local``
+    maps the structure's atom to its place in ``mol``."""
+    from rdkit.Geometry import Point3D
+
+    conf = mol.GetConformer()
+    xy = [[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y] for k in range(mol.GetNumAtoms())]
+
+    def turn(points, about, degrees):
+        a = math.radians(degrees)
+        cos, sin = math.cos(a), math.sin(a)
+        for k in points:
+            dx, dy = xy[k][0] - about[0], xy[k][1] - about[1]
+            xy[k] = [about[0] + dx * cos - dy * sin, about[1] + dx * sin + dy * cos]
+
+    for item in branches or ():
+        try:
+            i, j, degrees = int(item[0]), int(item[1]), float(item[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if i not in local or j not in local:
+            continue
+        a, b = local[i], local[j]
+        bond = mol.GetBondBetweenAtoms(a, b)
+        if bond is None:
+            continue
+        # the j side: everything reachable from b without going back over the bond.
+        # A bond in a ring has no side of its own -- the walk comes back round to a --
+        # so it is left alone, as it is in the structure
+        side, stack, ring = {b}, [b], False
+        while stack:
+            at = stack.pop()
+            for nb in mol.GetAtomWithIdx(at).GetNeighbors():
+                k = nb.GetIdx()
+                if at == b and k == a:
+                    continue
+                if k == a:
+                    ring = True
+                    break
+                if k not in side:
+                    side.add(k)
+                    stack.append(k)
+            if ring:
+                break
+        if ring:
+            continue
+        turn(side - {b}, xy[b], degrees)
+    if flip in ("x", "y"):
+        which = 0 if flip == "x" else 1
+        middle = sum(p[which] for p in xy) / len(xy) if xy else 0.0
+        for k in range(len(xy)):
+            xy[k][which] = 2 * middle - xy[k][which]
+    if rotate:
+        cx = sum(p[0] for p in xy) / len(xy) if xy else 0.0
+        cy = sum(p[1] for p in xy) / len(xy) if xy else 0.0
+        turn(range(len(xy)), [cx, cy], rotate)
+    for k, (x, y) in enumerate(xy):
+        conf.SetAtomPosition(k, Point3D(float(x), float(y), 0.0))
+
+
 class Session:
     """A system, optionally a trajectory, and the Glue applied to its frames.
 
@@ -1567,10 +1631,64 @@ class Session:
         frag = s.fragids
         return np.flatnonzero(frag == frag[a]).tolist()
 
-    def ligand2d(self, atoms=(), dark: bool = True, width: int = 360, height: int = 260) -> dict:
-        """A 2D drawing (SVG, RDKit) of the ligand: the molecule of the selected atoms,
-        else the first of the ligand selection; heavy atoms, hydrogens implicit.
-        ``atoms`` (selected) are highlighted; ``coords`` say where each atom is drawn."""
+    def ligand_molecules(self) -> list[dict]:
+        """Every ligand of the structure, biggest first: the atom each starts from and
+        what to call it.  The 2D panel steps through these -- a structure with four
+        ligands used to show only the largest of them, with no way to the rest."""
+        s = self.system
+        ids = s.select(f"same residue as ({self.ligand or LIGAND})").ids
+        if not len(ids):
+            return []
+        anum = np.asarray(s.atoms["anum"])
+        heavy = ids[anum[ids] > 1]
+        ids = heavy if len(heavy) else ids
+        frag = s.fragids
+        polymer = set(s.select("protein or nucleic").ids.tolist())
+        residue = np.asarray(s.atoms["residue"])
+        out, seen = [], set()
+        for a in ids.tolist():
+            if a in polymer:
+                continue
+            mine = np.flatnonzero(frag == frag[a])
+            # one bonded to the protein (a heme, a covalent ligand) is taken by its own
+            # residue instead, or its fragment would be the whole chain
+            if polymer & set(mine.tolist()):
+                key = ("residue", int(residue[a]))
+                mine = np.flatnonzero(residue == residue[a])
+            else:
+                key = ("fragment", int(frag[a]))
+            if key in seen:
+                continue
+            seen.add(key)
+            r = int(s.atoms["residue"][a])
+            chain = str(s.chains["name"][int(s.residues["chain"][r])]).strip()
+            label = f"{str(s.residues['name'][r]).strip()}{int(s.residues['resid'][r]) or ''}"
+            named = (f"{label} {chain}" if chain else label) or "ligand"
+            out.append({"atom": int(a), "label": named, "size": int((anum[mine] > 1).sum())})
+        out.sort(key=lambda x: -x["size"])
+        return out
+
+    def ligand2d(self, atoms=(), dark: bool = True, width: int = 360, height: int = 260,
+                 which: int = 0, hydrogens: str = "none", stereo: bool = False,
+                 rotate: float = 0.0, flip: str = "", branches=(),
+                 layout: int = 0) -> dict:  # fmt: skip
+        """A 2D drawing (SVG, RDKit) of a ligand: the molecule of the selected atoms,
+        else ``which`` of :meth:`ligand_molecules`.  ``atoms`` (selected) are
+        highlighted; ``coords`` say where each atom is drawn.
+
+        The rest is how it is drawn, and none of it touches the structure -- this is a
+        picture to read and to put in a figure:
+
+        ``hydrogens``  none, polar (those on N, O, S ...) or all
+        ``stereo``     R/S and E/Z marked where RDKit can assign them
+        ``rotate``     the whole drawing turned, in degrees
+        ``flip``       "x" or "y": mirrored
+        ``branches``   [[i, j, degrees], ...]: in the drawing, the j side of bond i-j
+                       swung about j, to pull overlapping groups apart.  The atoms are
+                       the structure's own, and only the picture moves
+        ``layout``     another starting point for the layout, when the first is awkward
+        """
+        from rdkit import Chem
         from rdkit.Chem import AllChem
         from rdkit.Chem.Draw import rdMolDraw2D
 
@@ -1581,53 +1699,72 @@ class Session:
         lig = [
             a for a in atoms if len(s.select(f"index {a} and not (protein or nucleic or water)"))
         ]
+        found = self.ligand_molecules()
         if not lig:
-            ids = s.select(f"same residue as ({self.ligand or LIGAND})").ids
-            if not len(ids):
+            if not found:
                 raise ValueError("no ligand: choose one (Ligand | Choose Ligand)")
-            # the largest of them (a heme, not the phosphate beside it)
-            heavy = ids[np.asarray(s.atoms["anum"])[ids] > 1]
-            ids = heavy if len(heavy) else ids
-            res = np.asarray(s.atoms["residue"])[ids]
-            biggest = np.bincount(res).argmax()
-            lig = [int(ids[res == biggest][0])]
+            which = max(0, min(int(which), len(found) - 1))
+            lig = [found[which]["atom"]]
         mol_atoms = np.flatnonzero(np.isin(frag, frag[lig]))
         polymer = set(s.select("protein or nucleic").ids.tolist())
         if polymer & set(mol_atoms.tolist()):  # bonded to the protein (heme, a covalent
             # ligand): the ligand's own residues
             res = set(np.asarray(s.atoms["residue"])[lig].tolist())
             mol_atoms = np.flatnonzero(np.isin(np.asarray(s.atoms["residue"]), list(res)))
-        heavy = [int(a) for a in mol_atoms if s.atoms["anum"][a] > 1]
-        if len(heavy) > 300:
+        anum = np.asarray(s.atoms["anum"])
+        keep = [int(a) for a in mol_atoms if anum[a] > 1]
+        if hydrogens != "none":  # the hydrogens drawn are part of the molecule drawn
+            bonded = {}
+            for i, j in zip(np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"]), strict=True):
+                bonded.setdefault(int(i), []).append(int(j))
+                bonded.setdefault(int(j), []).append(int(i))
+            heavy_set = set(keep)
+            for a in mol_atoms.tolist():
+                if anum[a] != 1:
+                    continue
+                on = [b for b in bonded.get(int(a), []) if b in heavy_set]
+                if on and (hydrogens == "all" or anum[on[0]] != 6):
+                    keep.append(int(a))
+            keep.sort()
+        if len(keep) > 300:
             raise ValueError("that molecule is too large for a 2D drawing")
         try:
-            mol = to_rdkit(s, heavy, sanitize=True, implicit_hydrogens=True)
+            mol = to_rdkit(s, keep, sanitize=True, implicit_hydrogens=hydrogens == "none")
         except Exception:  # a metal RDKit's valence rules reject (heme's iron)
-            from rdkit import Chem
-
-            mol = to_rdkit(s, heavy, sanitize=False, implicit_hydrogens=False)
+            mol = to_rdkit(s, keep, sanitize=False, implicit_hydrogens=False)
             mol.UpdatePropertyCache(strict=False)
             Chem.GetSymmSSSR(mol)
-        AllChem.Compute2DCoords(mol)
+        AllChem.Compute2DCoords(mol, canonOrient=True)
+        if layout:  # another starting point, when the first one reads badly
+            try:
+                AllChem.Compute2DCoords(mol, canonOrient=False, clearConfs=True,
+                                        coordMap={}, nFlipsPerSample=3,
+                                        nSample=10, sampleSeed=int(layout))  # fmt: skip
+            except Exception:
+                pass
+        local = {a: k for k, a in enumerate(keep)}
+        _lay_out_2d(mol, local, rotate=rotate, flip=flip, branches=branches)
         draw = rdMolDraw2D.MolDraw2DSVG(width, height)
         opts = draw.drawOptions()
         if dark:
             rdMolDraw2D.SetDarkMode(opts)
         opts.setBackgroundColour((0, 0, 0, 0))
         opts.clearBackground = False
-        local = {a: k for k, a in enumerate(heavy)}
+        if stereo:
+            opts.addStereoAnnotation = True
         hi = [local[a] for a in atoms if a in local]
         draw.DrawMolecule(mol, highlightAtoms=hi,
                           highlightAtomColors={k: (1.0, 0.45, 0.85) for k in hi})  # fmt: skip
         draw.FinishDrawing()
         coords = [
             [round(p.x, 1), round(p.y, 1)]
-            for p in (draw.GetDrawCoords(k) for k in range(len(heavy)))
+            for p in (draw.GetDrawCoords(k) for k in range(len(keep)))
         ]
-        r = int(s.atoms["residue"][heavy[0]])
+        r = int(s.atoms["residue"][keep[0]])
         name = f"{s.residues['name'][r]}{int(s.residues['resid'][r]) or ''}".strip() or "ligand"
-        return {"svg": draw.GetDrawingText(), "atoms": heavy, "coords": coords, "name": name,
-                "width": width, "height": height}  # fmt: skip
+        return {"svg": draw.GetDrawingText(), "atoms": keep, "coords": coords, "name": name,
+                "width": width, "height": height, "molecules": found,
+                "which": which if not atoms else -1}  # fmt: skip
 
     def _what_moves(self, mode, fixed, tethered, mobile, pocket=POCKET):
         """(fixed, tethered, mobile) for a ``mode`` -- both (the ligand and its pocket
