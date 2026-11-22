@@ -318,19 +318,33 @@ def test_every_mark_is_tagged_in_both_drawings():
     assert "--spot: #" in page
 
 
-def test_a_drawing_can_be_copied_as_a_picture():
-    """Inline SVG gives the browser no "Copy image" of its own, so each drawing
-    carries a button that puts a PNG on the clipboard, and saves one where the
-    clipboard cannot be reached."""
+def test_every_figure_is_copied_as_vector_with_no_background():
+    """Inline SVG gives the browser no "Copy image" of its own, and a picture of a
+    drawing is the wrong thing anyway: a figure wants shapes that stay sharp.  Each
+    drawing, the plot and the egg carry copy (to the clipboard) and svg (to a file),
+    both vector, and nothing is painted behind them, so they drop onto a slide or a
+    page of any colour."""
     mol = Chem.MolFromSmiles(ASPIRIN)
-    page = admet.report_html([("2PM1", ASPIRIN, "", admet.properties(mol), mol)], "series 1")
-    assert "data-copy" in page and ">copy</button>" in page
+    designs = [(f"2PM{k}", ASPIRIN, "", admet.properties(mol), mol) for k in (1, 2, 3)]
+    page = admet.report_html(designs, "series 1")
+    # a figure each: the three drawings, the plot and the egg (the script mentions
+    # the attribute once more, which is why the count is taken over the body alone)
+    body = page[: page.index("<script>")]
+    assert body.count("data-copy") == 5 and body.count("data-svg") == 5
+    for figure in ('data-figure="2PM1"', 'data-figure="plot"', 'data-figure="BOILED-Egg"'):
+        assert figure in page, figure
     script = page[page.index("<script>") :]
-    assert "ClipboardItem" in script and "toBlob" in script
-    assert "image/png" in script
-    # the marks are left out of the copy when they are switched off
+    assert "'image/svg+xml'" in script  # vector on the clipboard
+    assert "toBlob" not in script and "canvas" not in script  # nothing is rasterised
+    assert "fillRect" not in script  # and nothing is painted behind it
+    # the drawings themselves carry no background either
+    assert "opts.setBackgroundColour" not in page
+    assert "<svg" in page
+    # a plot's axes are drawn in the page's colours, which a copy would otherwise lose
+    assert "copy.setAttribute('color', ink)" in script
+    # the marks are left out of a copy when they are switched off
     assert "no-spots" in script and "removeChild" in script
-    # a copy is not also a jump to the design the button sits on
+    # and a copy is not also a jump to the design the button sits on
     assert "e.target.closest('[data-copy]')" in script
 
 

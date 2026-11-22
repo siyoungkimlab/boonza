@@ -4012,3 +4012,33 @@ def test_the_2d_controls_stay_on_one_line():
     tools = css[css.index(".lig2d-tools {") :]
     tools = tools[: tools.index("}") + 1]
     assert "flex-wrap: nowrap" in tools and "overflow-x: auto" in tools
+
+
+def test_the_spots_and_handles_swing_with_the_drawing():
+    """They sit over the drawing rather than in it, so an SVG transform does not reach
+    them: through a swing they stayed where the atoms used to be, as dots over a
+    molecule that had moved out from under them."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    # each one says which atoms it is on, and where it started
+    assert "hit.dataset.on = String(out.atoms[k]);" in ui
+    assert "turn.dataset.on = `${i},${j}`;" in ui
+    assert "hit.dataset.at" in ui and "turn.dataset.at" in ui
+    look = ui[ui.index("function previewer(m, out, bond, far, from)") :]
+    look = look[: look.index("\n  }\n")]
+    assert ".lig2d-svg .hit, .lig2d-svg .turn" in look
+    assert "mark.node.style.left" in look and "mark.node.style.top" in look
+    assert "dots over a molecule that has moved" in ui
+
+
+def test_the_2d_drawing_is_copied_as_vector_with_no_background():
+    """A drawing copied out of the panel is SVG, which an illustrator opens as shapes,
+    and RDKit is asked for a transparent one, so it drops onto any colour."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    copier = ui[ui.index("async function copy2D(out)") :]
+    copier = copier[: copier.index("\n  }\n")]
+    assert "image/svg+xml" in copier and "XMLSerializer" in copier
+    assert "toBlob" not in copier and "image/png" not in copier
+    # the drawing itself carries no background
+    s = boonza.from_smiles("c1ccccc1O")
+    svg = viewer.Session(s).ligand2d()["svg"]
+    assert "<rect" not in svg

@@ -848,10 +848,14 @@ tbody tr:hover { background: var(--card); }
   padding: 6px; text-align: center; position: relative; }
 /* inline SVG has no "Copy image" in the browser's own menu, so each drawing
    carries a button; it shows when the drawing is pointed at */
-.struct .copy { position: absolute; top: 5px; right: 5px; opacity: 0; transition: opacity .12s;
-  padding: 2px 8px; font-size: 11px; }
-.struct:hover .copy, .struct .copy:focus { opacity: 1; }
-@media (hover: none) { .struct .copy { opacity: 1; } }
+.figbtns { display: inline-flex; gap: 4px; }
+.figbtns button { padding: 2px 8px; font-size: 11px; }
+.struct .figbtns { position: absolute; top: 5px; right: 5px; opacity: 0;
+  transition: opacity .12s; }
+.struct:hover .figbtns, .struct:focus-within .figbtns { opacity: 1; }
+@media (hover: none) { .struct .figbtns { opacity: 1; } }
+.figrow { display: flex; justify-content: flex-end; margin-top: 6px; }
+.axes .figbtns { margin-left: auto; }
 :root[data-theme="dark"] .light-only { display: none; }
 :root[data-theme="light"] .dark-only { display: none; }
 @media (prefers-color-scheme: dark) {
@@ -942,63 +946,80 @@ _JS = r"""
     };
   }
 
-  // --- copy a drawing as a picture ------------------------------------------------------
-  // the drawing is inline SVG, which the browser will not copy for you: it is painted
-  // onto a canvas at three times the size and put on the clipboard as a PNG.  Where
-  // the clipboard cannot be reached (an older browser, a page served oddly) it is
-  // saved instead, which gets the reader the picture either way
-  function copyDrawing(button) {
-    var holder = button.parentNode;
+  // --- take a figure away: a drawing, the plot, the egg ---------------------------------
+  // Each is inline SVG, which the browser will not copy for you.  They go as vector,
+  // never as pixels: a figure wants shapes that stay sharp at any size.  Where the
+  // clipboard cannot be reached (an older browser, a page served oddly) the file is
+  // saved instead, which gets the reader the figure either way
+  function figureOf(button) {
+    var holder = button.closest('[data-figure]') || button.parentNode;
     var shown = null, svgs = holder.querySelectorAll('svg');
     for (var i = 0; i < svgs.length; i++) {
       if (svgs[i].getBoundingClientRect().width > 0) { shown = svgs[i]; break; }
     }
-    if (!shown) return;
-    var box = shown.viewBox && shown.viewBox.baseVal;
-    var w = (box && box.width) || shown.clientWidth || 240;
-    var h = (box && box.height) || shown.clientHeight || 170;
-    var copy = shown.cloneNode(true);
-    copy.setAttribute('width', w);
-    copy.setAttribute('height', h);
+    return shown ? { svg: shown, name: holder.getAttribute('data-figure') || 'figure' } : null;
+  }
+  // the SVG as it stands, with the marks left out when they are switched off
+  function figureSVG(found) {
+    var copy = found.svg.cloneNode(true);
     if (root.classList.contains('no-spots')) {
       var marks = copy.querySelectorAll('.soft');
       for (var k = 0; k < marks.length; k++) marks[k].parentNode.removeChild(marks[k]);
     }
-    var text = new XMLSerializer().serializeToString(copy);
-    var image = new Image();
-    image.onload = function () {
-      var scale = 3;  // so it is still sharp pasted into a slide
-      var canvas = document.createElement('canvas');
-      canvas.width = w * scale;
-      canvas.height = h * scale;
-      var g = canvas.getContext('2d');
-      g.fillStyle = getComputedStyle(holder).backgroundColor || '#ffffff';
-      g.fillRect(0, 0, canvas.width, canvas.height);
-      g.drawImage(image, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(function (blob) {
-        if (!blob) return;
-        var said = function (what) {
-          button.textContent = what;
-          setTimeout(function () { button.textContent = 'copy'; }, 1400);
-        };
-        var save = function () {
-          var a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = (button.getAttribute('title') || 'molecule').replace(
-            /^copy\s+|\s+as a picture$/g, '') + '.png';
-          a.click();
-          said('saved');
-        };
-        try {
-          if (navigator.clipboard && window.ClipboardItem) {
-            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
-              .then(function () { said('copied'); }, save);
-          } else { save(); }
-        } catch (e) { save(); }
-      }, 'image/png');
+    return copy;
+  }
+  function saveFigure(button) {
+    var found = figureOf(button);
+    if (!found) return;
+    var text = new XMLSerializer().serializeToString(figureSVG(found));
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+    var named = found.name;
+    if (named === 'plot' && xs && ys) named = ys.value + '-vs-' + xs.value;
+    a.download = named.replace(/[^\w.-]+/g, '_') + '.svg';
+    a.click();
+    button.textContent = 'saved';
+    setTimeout(function () { button.textContent = 'svg'; }, 1400);
+  }
+  // A figure is copied as vector, not as pixels: SVG goes on the clipboard, and
+  // Illustrator, Inkscape and Office all take it as shapes that stay sharp at any
+  // size.  Nothing is painted behind it either, so it drops onto a slide or a page of
+  // any colour.
+  function figureText(found) {
+    var shown = found.svg;
+    var box = shown.viewBox && shown.viewBox.baseVal;
+    var copy = figureSVG(found);
+    copy.setAttribute('width', (box && box.width) || shown.clientWidth || 240);
+    copy.setAttribute('height', (box && box.height) || shown.clientHeight || 170);
+    // a plot draws its axes in the page's own colours (currentColor), which a cloned
+    // node knows nothing about: the colour is written onto it so it survives the trip
+    var ink = getComputedStyle(shown).color;
+    if (ink) copy.setAttribute('color', ink);
+    return new XMLSerializer().serializeToString(copy);
+  }
+  function copyDrawing(button) {
+    var found = figureOf(button);
+    if (!found) return;
+    var text = figureText(found);
+    var said = function (what) {
+      button.textContent = what;
+      setTimeout(function () { button.textContent = 'copy'; }, 1600);
     };
-    image.onerror = function () { button.textContent = 'cannot copy'; };
-    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+    var asText = function () {
+      if (!navigator.clipboard) { saveFigure(button); return; }
+      navigator.clipboard.writeText(text).then(function () { said('copied'); },
+                                               function () { saveFigure(button); });
+    };
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        var items = {
+          'image/svg+xml': new Blob([text], { type: 'image/svg+xml' }),
+          'text/plain': new Blob([text], { type: 'text/plain' })
+        };
+        navigator.clipboard.write([new ClipboardItem(items)])
+          .then(function () { said('copied'); }, asText);
+      } else { asText(); }
+    } catch (e) { asText(); }
   }
 
   // --- go to a design, from its row or from a point -----------------------------------
@@ -1014,6 +1035,8 @@ _JS = r"""
     if (!e.target.closest) return;
     var button = e.target.closest('[data-copy]');
     if (button) { copyDrawing(button); return; }  // not a jump to the design it is on
+    var vector = e.target.closest('[data-svg]');
+    if (vector) { saveFigure(vector); return; }
     var node = e.target.closest('[data-design]');
     if (node) go(+node.getAttribute('data-design'));
   });
@@ -1134,6 +1157,18 @@ _JS = r"""
 """
 
 
+def _figure_buttons(what: str) -> str:
+    """Copy and save, for any figure on the page: the drawing of a design, the plot,
+    the egg.  Both give vector -- shapes that stay sharp and drop onto any colour."""
+    return (
+        f'<span class="figbtns"><button class="ui copy" type="button" data-copy '
+        f'title="copy {_escape(what)} as vector (SVG): it pastes into Illustrator, '
+        'Inkscape or Office as shapes, and carries no background">copy</button>'
+        '<button class="ui" type="button" data-svg '
+        f'title="save {_escape(what)} as an SVG file">svg</button></span>'
+    )
+
+
 def _verdict_class(value) -> str:
     """How a filter's verdict is coloured: a pass green, a failure amber."""
     text = str(value)
@@ -1228,7 +1263,7 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         default_x = "cLogP" if "cLogP" in pick else pick[0]
         default_y = "logD" if "logD" in pick else pick[min(1, len(pick) - 1)]
         out.append("<h2>One property against another</h2>")
-        out.append('<div class="card"><div class="axes">')
+        out.append('<div class="card" data-figure="plot"><div class="axes">')
         for which, label, chosen in (("y", "up", default_y), ("x", "across", default_x)):
             out.append(f'<label for="plot-{which}">{label}</label>'
                        f'<select class="ui" id="plot-{which}">')  # fmt: skip
@@ -1237,7 +1272,7 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
                 out.append(f'<option value="{_escape(c)}"{mark}>{_escape(c)}</option>')
             out.append("</select>")
         out.append('<span class="sub" style="margin:0">click a point to go to that design'
-                   "</span></div>")  # fmt: skip
+                   "</span>" + _figure_buttons("the plot") + "</div>")  # fmt: skip
         out.append('<div id="plot"></div></div>')
 
     # the egg, with every design on it
@@ -1245,7 +1280,9 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
               for k, (n, _s, _o, p, _m) in enumerate(designs) if "TPSA" in p]  # fmt: skip
     if points:
         out.append("<h2>Passive absorption and brain penetration</h2>")
-        out.append('<div class="card egg">' + egg_svg(points) + "</div>")
+        buttons = _figure_buttons("the BOILED-Egg")
+        out.append('<div class="card egg" data-figure="BOILED-Egg">' + egg_svg(points)
+                   + f'<div class="figrow">{buttons}</div></div>')  # fmt: skip
 
     # a panel per design
     out.append("<h2>Every design</h2>")
@@ -1270,11 +1307,8 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         if not drawing:
             out.append('<div class="struct"><p class="sub">no drawing</p></div>')
         else:
-            copy = (
-                '<button class="ui copy" type="button" data-copy '
-                f'title="copy {_escape(name)} as a picture">copy</button>'
-            )
-            out.append(f'<div class="struct">{copy}{drawing}</div>')
+            out.append(f'<div class="struct" data-figure="{_escape(name)}">'
+                       f"{_figure_buttons(name)}{drawing}</div>")  # fmt: skip
         out.append("<div>")
         out.append(f"<h3>{_escape(name)}</h3>")
         if smiles:
