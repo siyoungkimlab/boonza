@@ -421,3 +421,12 @@ button.current:not(.armed), #ldock button.current:not(.armed) { border-color: va
 
 /* Clipping: the scene from the side, its two planes to drag */
 canvas.sideview { display: block; border: 1px solid var(--line); border-radius: 4px; background: var(--canvas); touch-action: none; }
+
+/* a rotatable bond in the 2D drawing: a handle to drag, shown when the drawing is
+   pointed at so it does not clutter the picture */
+.lig2d-svg .turn { position: absolute; width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px;
+  border-radius: 50%; cursor: ew-resize; border: 1.5px dashed var(--muted); opacity: 0;
+  transition: opacity .12s; touch-action: none; }
+.lig2d-svg:hover .turn { opacity: 0.5; }
+.lig2d-svg .turn:hover { opacity: 1; border-style: solid; border-color: var(--accent);
+  background: var(--accent-soft); }
