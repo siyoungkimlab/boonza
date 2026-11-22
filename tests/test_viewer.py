@@ -3805,3 +3805,43 @@ def test_the_model_list_sorts_names_with_their_digits_as_digits():
     column = column[: column.index("\n  }\n")]
     assert "NATURAL(String(x), String(y))" in column
     assert "localeCompare" not in column
+
+
+def test_a_bond_in_the_2d_drawing_turns_its_torsion():
+    """The 2D panel could only select atoms.  A rotatable bond now carries a handle:
+    dragging it turns that torsion through the same two calls the view uses, so it is
+    one step to undo like any other edit.
+
+    The drawing itself does not change -- a 2D diagram is topological and has no
+    torsion of its own -- and the panel says so while a bond is being turned, since a
+    reader would otherwise take the still picture for a broken one."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    turn = ui[ui.index("async function startTurn(") :]
+    turn = turn[: turn.index('$("lig2d").addEventListener')]
+    assert "api/dihedral" in turn and "api/set_dihedral" in turn
+    assert "app.turnDihedral" in turn
+    assert "app.reloadModel" in turn  # through the app: one step to undo
+    assert "cannot be edited" in turn  # a model that may not be edited is refused
+    assert "turning !== mine" in turn  # let go before the answer came back
+    assert "a 2D diagram has no " in turn
+    # a ligand's torsion has no name of its own, and an empty one left a bare readout
+    assert "d.name || d.atoms.map(" in ui
+    # only bonds that can actually turn get a handle
+    bonds = ui[ui.index("function rotatableBonds(m, drawn)") :]
+    bonds = bonds[: bonds.index("\n  }\n")]
+    assert "order[k] || 1) !== 1" in bonds  # single bonds
+    assert "joinedWithout(m, i, j)" in bonds  # not a ring bond
+    assert "filter(heavy).length < 2" in bonds  # each end carries something to turn
+    css = (Path(boonza.__file__).parent / "data/viewer/style.css").read_text(encoding="utf-8")
+    assert ".lig2d-svg .turn" in css and "ew-resize" in css
+
+
+def test_a_ring_bond_offers_no_handle_to_turn():
+    """A bond in a ring has no side that can turn on its own, so it gets no handle;
+    the test is whether its two atoms are still joined when the bond itself is left
+    out, which is the check the page makes."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    walk = ui[ui.index("function joinedWithout(m, i, j)") :]
+    walk = walk[: walk.index("\n  }\n")]
+    assert "if (a === i && b === j) continue;" in walk  # never across the bond itself
+    assert "return true" in walk

@@ -2176,18 +2176,117 @@ export function setupUI(app) {
       if (ticket !== pending2D) return;
       const box = $("lig2d").querySelector(".lig2d-svg");
       box.innerHTML = out.svg;
-      $("lig2d").querySelector(".lig2d-title").textContent = `${out.name}  ·  click an atom to select it (Shift: toggle)`;
+      say2D(`${out.name}  ·  click an atom to select it (Shift: toggle) · drag a bond to turn it`);
       out.coords.forEach(([x, y], k) => {
         const hit = el("div", { className: "hit", title: m.topo.atoms.name[out.atoms[k]] });
         Object.assign(hit.style, { left: `${x}px`, top: `${y}px` });
         hit.onclick = e => app.select(m, [out.atoms[k]], e.shiftKey ? "toggle" : "set");
         box.append(hit);
       });
+      // a handle on each bond a torsion can be turned about.  The drawing itself does
+      // not change: a 2D diagram is topological and has no torsion to show, so what
+      // turns is the structure in the view.  Picking the bond here is the point --
+      // in a crowded pocket the right bond is far easier to hit in the diagram
+      const at = new Map(out.atoms.map((a, k) => [a, out.coords[k]]));
+      for (const [i, j] of rotatableBonds(m, at)) {
+        const [xi, yi] = at.get(i), [xj, yj] = at.get(j);
+        const A = m.topo.atoms.name;
+        const turn = el("div", { className: "turn",
+                                 title: `drag to turn ${A[i]}-${A[j]}` });  // fmt: skip
+        Object.assign(turn.style, { left: `${(xi + xj) / 2}px`, top: `${(yi + yj) / 2}px` });
+        turn.onpointerdown = e => startTurn(e, m, [i, j], turn);
+        box.append(turn);
+      }
     } catch (e) {
       $("lig2d").querySelector(".lig2d-title").textContent = e.message;
       $("lig2d").querySelector(".lig2d-svg").innerHTML = "";
     }
   }
+
+  const say2D = text => { $("lig2d").querySelector(".lig2d-title").textContent = text; };
+
+  // the bonds a torsion can be turned about: a single bond between two drawn heavy
+  // atoms that each carry another heavy atom, and that is not in a ring -- a ring
+  // bond has no side that can turn on its own.  (api/dihedral would refuse those
+  // anyway; they are left without a handle so nothing is offered that cannot be done)
+  function rotatableBonds(m, drawn) {
+    const heavy = a => m.topo.atoms.element[a] !== "H";
+    const B = m.topo.bonds, out = [];
+    for (let k = 0; k < B.i.length; k++) {
+      const i = B.i[k], j = B.j[k];
+      if ((B.order[k] || 1) !== 1 || !drawn.has(i) || !drawn.has(j)) continue;
+      if (m.topo.bondsOf[i].filter(heavy).length < 2) continue;
+      if (m.topo.bondsOf[j].filter(heavy).length < 2) continue;
+      if (joinedWithout(m, i, j)) continue;
+      out.push([i, j]);
+    }
+    return out;
+  }
+  // i and j still joined when their own bond is left out: the bond closes a ring
+  function joinedWithout(m, i, j) {
+    const seen = new Set([i]), stack = [i];
+    while (stack.length) {
+      const a = stack.pop();
+      for (const b of m.topo.bondsOf[a]) {
+        if (a === i && b === j) continue;  // not across the bond itself
+        if (b === j) return true;
+        if (!seen.has(b)) { seen.add(b); stack.push(b); }
+      }
+    }
+    return false;
+  }
+
+  // dragging a bond in the 2D drawing turns that torsion, through the same two calls
+  // the view uses (api/dihedral for which atoms move, api/set_dihedral to keep it), so
+  // it is one step to undo like any other edit
+  let turning = null;
+  // what the readout calls a torsion: phi, psi or chi where the server knows one
+  // (an amino acid's), else the four atoms it is measured over -- a ligand's has no
+  // name of its own, and an empty one left the readout a bare "· 103°"
+  const torsionLabel = (m, d) => d.name || d.atoms.map(a => m.topo.atoms.name[a]).join("-");
+  async function startTurn(e, m, atoms, handle) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!m.topo.editable) { app.message("this model cannot be edited", true); return; }
+    handle.setPointerCapture(e.pointerId);
+    turning = { m, x: e.clientX, d: null, moved: false };
+    const mine = turning;
+    try {
+      const out = await app.post("api/dihedral", { m: m.index, atoms });
+      if (turning !== mine) return;  // let go before the answer came back
+      mine.d = { ...out, model: m, base: m.pos.slice(), now: out.angle };
+      say2D(`${torsionLabel(m, mine.d)}  ·  ${out.angle.toFixed(1)}°  ·  drag to turn`);
+    } catch (err) {
+      turning = null;
+      app.message(err.message, true);
+    }
+  }
+  function moveTurn(e) {
+    if (!turning?.d) return;
+    const dx = e.clientX - turning.x;
+    if (!dx) return;
+    turning.x = e.clientX;
+    turning.moved = true;
+    const d = turning.d;
+    d.now = ((d.now + dx * 0.6 + 540) % 360) - 180;
+    app.turnDihedral(d, d.now);
+    const what = torsionLabel(turning.m, d);
+    say2D(`${what}  ·  ${d.now.toFixed(1)}°`);
+    app.message(`${what}: ${d.now.toFixed(1)}° · the view turns; a 2D diagram has no `
+      + "torsion of its own to show");  // fmt: skip
+  }
+  async function endTurn() {
+    const t = turning;
+    turning = null;
+    if (!t?.d || !t.moved) return;
+    try {
+      await app.post("api/set_dihedral", { m: t.m.index, atoms: t.d.atoms, angle: t.d.now });
+      await app.reloadModel(t.m, false);  // through the app: one step to undo
+    } catch (err) { app.message(err.message, true); }
+  }
+  $("lig2d").addEventListener("pointermove", moveTurn);
+  $("lig2d").addEventListener("pointerup", endTurn);
+  $("lig2d").addEventListener("pointercancel", endTurn);
 
   // the footer editing area: what the selection is, and its geometry to edit
   app.onSelection = () => {
