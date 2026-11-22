@@ -302,6 +302,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.viewer.close(int(body["m"]))
             self._json(self.viewer.listing())
             return
+        if "ligandff" in body:  # the page's choice, with every request that needs one
+            self.viewer.set_ligandff(body["ligandff"], body.get("charge_model") or "auto")
         session = self.viewer.session(int(body.get("m", 0)))
         if url.path == "/api/select":
             ids = session.select(str(body.get("sel", "")), int(body.get("frame", 0)))

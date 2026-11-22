@@ -351,6 +351,10 @@ class Session:
     for some atoms only, by selection (a site's points kept with its protein).
     """
 
+    #: the force field of ligands the force fields have no template for, and where an
+    #: OpenFF ligand's charges come from: the viewer's (Viewer.set_ligandff)
+    ligandff, charge_model = "gaff-2.11", "auto"
+
     def __init__(self, system, trajectory=None, atoms=None, whole: bool | None = None,
                  center: str | None = None, fit: str | None = None, glue: str | None = None,
                  title: str = "",
@@ -1354,7 +1358,10 @@ class Session:
         if "nonbonded" in s.table_names:
             source, sys_ = "file", s
         elif self.radii is None and (assign or getattr(self, "_param", None) is not None):
-            sys_ = self._parameterized()
+            # a click describes with the force field there is: only Assign makes one
+            have = getattr(self, "_param", None)
+            fresh = have is not None and have[0][0] == getattr(self, "topo_version", 0)
+            sys_ = have[1] if fresh and not assign else self._parameterized()
             order = np.asarray(sys_.atoms["view_index"])
             k = int(np.flatnonzero(order == a)[0])
             source = "assigned"
@@ -1369,6 +1376,8 @@ class Session:
                         v = nb.params[key][pid]
                         out[key] = str(v) if key == "type" else round(float(v), 4)
             out["force_field"] = source
+            if source == "assigned":
+                out["ligandff"] = self._param[0][1]
         return out
 
     def set_ligand(self, atoms) -> dict:
@@ -1492,11 +1501,12 @@ class Session:
         """The force-field copy for energies, kept until the topology changes."""
         from .edit import parameterize
 
-        key = getattr(self, "topo_version", 0)
+        key = (getattr(self, "topo_version", 0), self.ligandff, self.charge_model)
         cached = getattr(self, "_param", None)
         if cached is None or cached[0] != key:
             try:
-                self._param = (key, parameterize(self.system, log=log))
+                self._param = (key, parameterize(self.system, log=log, ligandff=self.ligandff,
+                                                 charge_model=self.charge_model))  # fmt: skip
             except Exception as e:
                 if getattr(e, "atoms", None):  # this model's atoms, for the page
                     e.session = self
