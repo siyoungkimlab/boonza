@@ -872,7 +872,7 @@ tbody tr:hover { background: var(--card); }
 .ok { color: var(--good); }
 .note { background: var(--bg); border-left: 3px solid var(--accent); padding: 7px 11px;
   margin: 8px 0; font-size: 12.5px; }
-.egg { display: grid; grid-template-columns: 1fr 230px; gap: 18px; align-items: center; }
+.egg svg { display: block; margin: 0 auto; max-width: 620px; }
 circle.pt { cursor: pointer; }
 circle.pt:hover { fill: var(--accent); r: 6; }
 select.ui { background: var(--card); color: var(--text); border: 1px solid var(--line);
@@ -891,7 +891,7 @@ select.ui { background: var(--card); color: var(--text); border: 1px solid var(-
 footer { margin-top: 42px; padding-top: 14px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 11.5px; }
 footer p { margin: 5px 0; }
-@media (max-width: 760px) { .design, .egg { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .design { grid-template-columns: 1fr; } }
 @media print { body { padding: 0; } .card { break-inside: avoid; } button.ui { display: none; } }
 """
 
@@ -1245,15 +1245,7 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
               for k, (n, _s, _o, p, _m) in enumerate(designs) if "TPSA" in p]  # fmt: skip
     if points:
         out.append("<h2>Passive absorption and brain penetration</h2>")
-        out.append('<div class="card egg"><div>' + egg_svg(points) + "</div><div>")
-        out.append('<p class="sub">The BOILED-Egg (Daina &amp; Zoete 2016). A design in the '
-                   "white is likely to be absorbed in the gut; one in the yolk is likely to "
-                   "cross the blood-brain barrier as well. Outside both, neither is likely by "
-                   "passive diffusion. Click a point to go to that design.</p>")  # fmt: skip
-        out.append('<p class="sub">It knows nothing of transporters or efflux, so a molecule '
-                   "that is carried across (or pumped back out) sits in the wrong place: "
-                   "caffeine, which does reach the brain, falls outside the yolk.</p>"
-                   "</div></div>")  # fmt: skip
+        out.append('<div class="card egg">' + egg_svg(points) + "</div>")
 
     # a panel per design
     out.append("<h2>Every design</h2>")
@@ -1328,11 +1320,16 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         "functional group &mdash; so it carries about 0.5&ndash;1.0 log unit of error even "
         "when the ionisation is right, and more when a group's real pKa is far from its "
         "class average.</p>"
+        "<p><strong>The BOILED-Egg</strong> (Daina &amp; Zoete 2016). A design in the white "
+        "is likely to be absorbed in the gut; one in the yolk is likely to cross the "
+        "blood-brain barrier as well. Outside both, neither is likely by passive diffusion. "
+        "Click a point to go to that design. It knows nothing of transporters or efflux, so "
+        "a molecule that is carried across (or pumped back out) sits in the wrong place: "
+        "caffeine, which does reach the brain, falls outside the yolk.</p>"
         "<p>Log S: Delaney 2004 (ESOL) and Ali et al. 2012. Log Kp: Potts &amp; Guy 1992. "
-        "Absorption and brain penetration: Daina &amp; Zoete 2016. QED: Bickerton et al. 2012. "
-        "Synthetic accessibility: Ertl &amp; Schuffenhauer 2009. Filters: Lipinski 1997, "
-        "Ghose 1999, Egan 2000, Muegge 2001, Veber 2002. Alerts: the PAINS and Brenk "
-        "catalogues that ship with RDKit.</p>"
+        "QED: Bickerton et al. 2012. Synthetic accessibility: Ertl &amp; Schuffenhauer 2009. "
+        "Filters: Lipinski 1997, Ghose 1999, Egan 2000, Muegge 2001, Veber 2002. Alerts: the "
+        "PAINS and Brenk catalogues that ship with RDKit.</p>"
         "<p><strong>Metabolic soft spots are substructure flags, not a prediction.</strong> "
         "They mark groups known to be labile &mdash; what a chemist looks for when a "
         "compound turns over too fast. They give no rate and no order, and they are not "
