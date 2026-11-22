@@ -60,6 +60,8 @@ PHARM_COLOURS = {"DON": "#87ceeb", "ACC": "#fa8072", "CAT": "#3f6fff", "ANI": "#
 MIN_RIBBON = 5
 #: split refuses to make more models than this
 SPLIT_MAX = 200
+#: where a series' logD and ionised form are worked out, physiological by default
+PH = 7.4
 #: the backbones a new peptide can be built in (boonza.build.CONFORMATIONS, less its aliases)
 PEPTIDE_CONFORMATIONS = ("helix", "sheet", "extended", "polyproline")
 
@@ -850,6 +852,39 @@ class Viewer:
                 save_sdf(s, path, append=n > 0)
             return path.read_text(encoding="utf-8")
 
+    def series_report(self, group: str, ph: float = PH) -> str:
+        """Series ``group`` as one self-contained HTML page: every design's
+        physicochemical, lipophilicity (logD at ``ph``), solubility, absorption and
+        druglikeness properties, the BOILED-Egg, and a 2D drawing each.  Everything is
+        computed here from the structures; nothing is sent anywhere."""
+        from . import admet
+
+        designs = []
+        for k in self.series(group):
+            session = self.session(k)
+            mol = _rdkit_mol(session.system)
+            props = {}
+            if mol is not None:
+                try:
+                    props = admet.properties(mol, ph)
+                except Exception as exc:  # named in the page rather than failing the run
+                    props = {"caveats": [f"its properties could not be computed: {exc}"]}
+            smiles = ".".join(
+                x for x in (y["smiles"] for y in session.smiles(range(session.system.natoms))) if x
+            )
+            designs.append((self.models[k].name, smiles, self.models[k].row.get("note", ""),
+                            props, mol))  # fmt: skip
+        return admet.report_html(designs, group, ph, title=f"{group} - {self.title}"
+                                 if self.title else group)  # fmt: skip
+
+    def save_series_report(self, group: str, path, ph: float = PH) -> str:
+        """:meth:`series_report` written to ``path`` (``.html``); the path written."""
+        path = Path(path).expanduser()
+        if path.suffix.lower() not in (".html", ".htm"):
+            path = path.with_suffix(".html")
+        path.write_text(self.series_report(group, ph), encoding="utf-8")
+        return str(path)
+
     def save_series(self, group: str, path) -> str:
         path = Path(path).expanduser()
         if path.suffix.lower() != ".sdf":
@@ -1072,22 +1107,32 @@ def from_paths(paths, merge: bool = False, fit: str = "", scaffold=None, cg_fram
     return Viewer(models, title=title, columns=columns)
 
 
-def _properties(system) -> dict:
-    """A molecule's properties as RDKit computes them (Viewer.series_properties)."""
+def _rdkit_mol(system):
+    """A system as an RDKit molecule, or None where RDKit will not have it (a
+    half-built design, a metal its valence rules reject)."""
     from rdkit import Chem
-    from rdkit.Chem import Crippen, Descriptors, Lipinski, rdMolDescriptors
 
     from ..chem import to_rdkit
 
     try:  # hydrogens implicit, as the descriptors count them (a C-OH is not rotatable)
-        mol = Chem.RemoveHs(to_rdkit(system, sanitize=True, implicit_hydrogens=True))
-    except Exception:  # a valence RDKit rejects: a half-built design, a metal
+        return Chem.RemoveHs(to_rdkit(system, sanitize=True, implicit_hydrogens=True))
+    except Exception:
+        return None
+
+
+def _properties(system, ph: float = PH) -> dict:
+    """What a series' table computes for each design: the columns worth ranking
+    designs by, out of everything :mod:`boonza.viewer.admet` works out."""
+    from . import admet
+
+    mol = _rdkit_mol(system)
+    if mol is None:
         return {}
-    return {"MW": round(Descriptors.MolWt(mol), 2), "heavy atoms": mol.GetNumHeavyAtoms(),
-            "cLogP": round(Crippen.MolLogP(mol), 2),
-            "TPSA": round(rdMolDescriptors.CalcTPSA(mol), 1),
-            "HBD": Lipinski.NumHDonors(mol), "HBA": Lipinski.NumHAcceptors(mol),
-            "rotatable bonds": rdMolDescriptors.CalcNumRotatableBonds(mol)}  # fmt: skip
+    try:
+        full = admet.properties(mol, ph)
+    except Exception:  # one odd design must not empty the whole table
+        return {}
+    return {c: full[c] for c in admet.TABLE_COLUMNS if c in full}
 
 
 def _structure_members(path) -> list[Model]:

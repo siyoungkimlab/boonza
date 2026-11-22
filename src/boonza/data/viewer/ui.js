@@ -1610,6 +1610,9 @@ export function setupUI(app) {
       { label: `${m.group} as a Table`, run: () => seriesTablePanel(m.group) },
       { label: `Save ${m.group} as SDF…`, run: () => saveSeriesPanel(m.group) },
       { label: `Download ${m.group} (SDF)`, run: () => downloadSeries(m.group) },
+      "-",
+      { label: `ADME Report of ${m.group} (HTML)`, run: () => downloadReport(m.group) },
+      { label: `Save ${m.group}'s Report as HTML…`, run: () => saveReportPanel(m.group) },
     ];
   }
   // designs moved between series: the listing again, and what hangs on a design's receptor
@@ -2057,6 +2060,35 @@ export function setupUI(app) {
         const out = await app.post("api/series_save", { group, path });
         app.message(`saved ${group}: ${out.path} (one record per design; File | Open brings it back as a series)`);
         panels.series?.remove(); delete panels.series;
+      } catch (e) { app.message(e.message, true); }
+    });
+  }
+  // every design's properties as one self-contained page (physicochemical, logD and
+  // ionisation, solubility, the BOILED-Egg, the druglikeness filters, PAINS and Brenk):
+  // computed where boonza view runs, from the structures, and never sent anywhere
+  async function downloadReport(group) {
+    const n = app.live().filter(m => m.group === group).length;
+    await app.busy(`working out the properties of ${n} design${n === 1 ? "" : "s"}`, async () => {
+      try {
+        const r = await fetch("api/series_report", { method: "POST", headers: { "Content-Type": "application/json", "X-Boonza-Token": app.TOKEN },
+          body: JSON.stringify({ group }) });
+        if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+        const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "series.html";
+        const url = URL.createObjectURL(await r.blob());
+        el("a", { href: url, download: name }).click();
+        // and opened, since a report is to be read: the download is the copy to keep
+        window.open(url, "_blank", "noopener");
+        app.message(`${name}: ${n} design${n === 1 ? "" : "s"} · logD, solubility, absorption, `
+          + "druglikeness and alerts, all worked out here from the structures");
+      } catch (e) { app.message(e.message, true); }
+    });
+  }
+  function saveReportPanel(group) {
+    pathPanel("report", `Save ${group}'s Report`, `${group.replace(/\s+/g, "_")}.html`, async path => {
+      try {
+        const out = await app.busy("working out the properties", () => app.post("api/series_report_save", { group, path }));
+        app.message(`saved ${group}'s report: ${out.path} (open it in a browser)`);
+        panels.report?.remove(); delete panels.report;
       } catch (e) { app.message(e.message, true); }
     });
   }
@@ -4518,7 +4550,11 @@ export function setupUI(app) {
       t.onclick = e => { e.preventDefault(); e.stopPropagation(); seriesTablePanel(group); };
       const sdf = el("button", { className: "table-btn", title: `download ${group} as one SDF, a record per member` }, "sdf");
       sdf.onclick = e => { e.preventDefault(); e.stopPropagation(); downloadSeries(group); };
-      header.append(t, sdf);
+      const html = el("button", { className: "table-btn", title: `${group} as an ADME report: logD and ionisation, `
+        + "solubility, gut absorption and brain penetration, the druglikeness filters, PAINS and Brenk alerts and a "
+        + "drawing of every design, as one HTML page worked out here" }, "html");
+      html.onclick = e => { e.preventDefault(); e.stopPropagation(); downloadReport(group); };
+      header.append(t, sdf, html);
     }
     if (isSeries({ group }) && members.length) {
       header.oncontextmenu = e => {

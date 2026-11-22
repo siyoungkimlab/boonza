@@ -41,6 +41,8 @@ def served():
             except urllib.error.HTTPError as e:
                 return e.code, json.loads(e.read())
 
+        # where it is, for a route that answers something other than JSON
+        post.base, post.token = base, server.RequestHandlerClass.token
         return get, post
 
     yield serve
@@ -2285,8 +2287,11 @@ def test_series_of_designs(served, tmp_path):
     group = v.models[added[0]].group
     # what RDKit computes from each structure: by member, not saved with the series
     props = v.series_properties(group)
-    assert props[added[0]] == {"MW": 46.07, "heavy atoms": 3, "cLogP": -0.0, "TPSA": 20.2,
-                               "HBD": 1, "HBA": 1, "rotatable bonds": 0}  # fmt: skip
+    assert props[added[0]] == {"MW": 46.07, "heavy atoms": 3, "cLogP": -0.0, "logD": -0.0,
+                               "TPSA": 20.2, "HBD": 1, "HBA": 1, "rotatable bonds": 0,
+                               "QED": 0.41, "synthetic accessibility": 1.98,
+                               "GI absorption": "high", "BBB permeant": "no",
+                               "Lipinski violations": 0, "PAINS": 0}  # fmt: skip
     assert props[added[1]]["MW"] == 45.08 and props[added[1]]["HBD"] == 1
     status, out = post("api/series_properties", {"group": group})
     assert status == 200 and out["properties"][str(added[0])]["MW"] == 46.07
@@ -3695,3 +3700,71 @@ def test_a_ligand_takes_the_force_field_the_page_chose(served):
                                          "charge_model": "nagl"})  # fmt: skip
     assert status == 200 and out["atom"]["type"].startswith("c3")
     assert (session.ligandff, session.charge_model) == ("gaff-2.11", "auto")
+
+
+def test_a_series_reports_its_properties_as_one_html_page(served, tmp_path):
+    """The ``html`` button beside ``sdf``: every design's physicochemical, logD,
+    solubility, absorption and druglikeness properties worked out here and written as
+    one self-contained page, which also saves where it is told."""
+    s = boonza.from_smiles("CC(C)Cc1ccc(cc1)C(C)C(=O)O")  # ibuprofen
+    v = viewer.Viewer([viewer.Model("complex", lambda: viewer.Session(s))])
+    get, post = served(v)
+    first = post("api/series", {"m": 0, "atoms": list(range(s.natoms))})[1]["added"][0]
+    post("api/series_add", {"m": first})
+    post("api/series_note", {"m": first, "note": "the parent"})
+
+    page = v.series_report("series 1")
+    assert page.startswith("<!doctype html>")
+    assert "LIG1" in page and "LIG2" in page and "the parent" in page
+    assert "Log D" in page and "<svg" in page
+
+    # the route hands it over as a file, named for the series.  It answers HTML, not
+    # JSON, so it is fetched raw rather than through the fixture's post
+    request = urllib.request.Request(
+        post.base + "api/series_report",
+        json.dumps({"group": "series 1"}).encode(),
+        method="POST",
+        headers={"X-Boonza-Token": post.token},
+    )
+    with urllib.request.urlopen(request) as r:
+        assert r.status == 200
+        assert r.headers["Content-Disposition"] == 'attachment; filename="series_1.html"'
+        assert r.read().decode().startswith("<!doctype html>")
+
+    # and saves where it is told, taking .html for itself
+    out = post("api/series_report_save", {"group": "series 1", "path": str(tmp_path / "r")})[1]
+    assert out["path"] == str(tmp_path / "r.html")
+    assert Path(out["path"]).read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert post("api/series_report", {"group": "series 9"})[0] == 400
+
+
+def test_the_series_table_carries_the_computed_properties(served):
+    """The report's columns are in the viewer's own table too, so designs can be
+    sorted and plotted by logD or QED without opening the page."""
+    from boonza.viewer import admet
+
+    s = boonza.from_smiles("CC(C)NCC(O)COc1cccc2ccccc12")  # propranolol
+    v = viewer.Viewer([viewer.Model("complex", lambda: viewer.Session(s))])
+    get, post = served(v)
+    first = post("api/series", {"m": 0, "atoms": list(range(s.natoms))})[1]["added"][0]
+    status, out = post("api/series_properties", {"group": "series 1"})
+    assert status == 200
+    computed = out["properties"][str(first)]
+    for column in admet.TABLE_COLUMNS:
+        assert column in computed, column
+    assert computed["logD"] < computed["cLogP"]  # its amine is protonated at 7.4
+    assert computed["BBB permeant"] == "yes"  # propranolol is CNS-active
+
+
+def test_the_html_button_sits_beside_the_sdf_one():
+    """Both live on the series' header in the model list, and the report is in the
+    series' menu as well."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    header = ui[ui.index('const header = el("label", { className: "mgroup" }') :]
+    header = header[: header.index("return header")]
+    assert "downloadReport(group)" in header and '"html")' in header
+    assert "header.append(t, sdf, html)" in header
+    own = ui[ui.index("function seriesOwnItems(") :]
+    own = own[: own.index("\n  }\n")]
+    assert "ADME Report" in own and "saveReportPanel" in own
+    assert "api/series_report" in ui and "api/series_report_save" in ui
