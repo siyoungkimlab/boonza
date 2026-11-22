@@ -3902,7 +3902,7 @@ def test_a_bond_is_picked_and_swung_with_a_slider():
     pick = ui[ui.index("function pickBond(e, m, atoms)") :]
     pick = pick[: pick.index("function flipSide(m)")]
     assert "draw2D.picked = { i, j }" in pick
-    assert "flipSide(m)" in pick  # the same bond again: the other half moves
+    assert "drop2D(true)" in pick  # the same bond again lets it go
     row = ui[ui.index("function swingRow(m, out)") :]
     row = row[: row.index("\n  }\n")]
     assert 'type: "range"' in row and "min: -180, max: 180" in row
@@ -4042,3 +4042,41 @@ def test_the_2d_drawing_is_copied_as_vector_with_no_background():
     s = boonza.from_smiles("c1ccccc1O")
     svg = viewer.Session(s).ligand2d()["svg"]
     assert "<rect" not in svg
+
+
+def test_nothing_is_left_behind_when_a_bond_swings():
+    """RDKit draws a few small marks after the bonds with no class at all -- nothing
+    ties them to an atom -- so the swing left them where they were, as pale dots over
+    a molecule that had moved on.  A piece that names no atom is given to the atom it
+    is nearest, and goes where that one goes."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    look = ui[ui.index("function previewer(m, out, bond, far, from)") :]
+    look = look[: look.index("\n  }\n")]
+    assert "const nearest = (x, y) =>" in look
+    assert 'querySelectorAll("path, ellipse, circle, line, text")' in look
+    assert "no atom named: take the middle of what it draws" in look
+    assert "dots over a molecule that has" in look
+
+
+def test_clicking_again_or_past_it_lets_go():
+    """The same bond, the same atom, the drawing past both of them, or the view
+    itself: each lets go of what was picked, rather than leaving it held with no way
+    out but the cross."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    drop = ui[ui.index("function drop2D(selection = false)") :]
+    drop = drop[: drop.index("\n  }\n")]
+    assert "draw2D.picked = null" in drop and "app.clearSelection()" in drop
+    # the same bond again
+    pick = ui[ui.index("function pickBond(e, m, atoms)") :]
+    pick = pick[: pick.index("function drop2D(")]
+    assert "the same bond again lets it go" in pick and "drop2D(true)" in pick
+    # the same atom again
+    assert "the same atom again lets it go, as clicking past it does" in ui
+    # a click on the drawing that is not on anything in it
+    assert 'e.target.closest(".hit, .turn, .lig2d-tools, .lig2d-swing")' in ui
+    # and a click in the view
+    assert '$("view").addEventListener("pointerdown"' in ui
+    # choosing which half swings still wins over letting go, when a bond is held
+    atom = ui[ui.index("// with a bond picked, an atom says which half should move") :]
+    atom = atom[: atom.index("app.select(m, [a]")]
+    assert "flipSide(m)" in atom and atom.index("flipSide") < atom.index("the same atom again")

@@ -2200,11 +2200,34 @@ export function setupUI(app) {
     // drawing comes apart while the slider is moving
     const mine = new Set([...far].filter(a => place.has(a)).map(a => place.get(a)));
     const svg = $("lig2d").querySelector(".lig2d-svg svg");
+    // the nearest atom to a point of the drawing, for the pieces that carry no atom
+    // of their own: RDKit draws a few small marks after the bonds with no class at
+    // all, and left where they were they stay behind as dots over a molecule that has
+    // moved on
+    const nearest = (x, y) => {
+      let best = -1, far = Infinity;
+      out.coords.forEach(([cx, cy], k) => {
+        const d = (cx - x) ** 2 + (cy - y) ** 2;
+        if (d < far) { far = d; best = k; }
+      });
+      return best;
+    };
     const parts = [];
-    for (const node of svg ? svg.querySelectorAll("[class]") : []) {
+    for (const node of svg ? svg.querySelectorAll("path, ellipse, circle, line, text") : []) {
       const names = String(node.getAttribute("class") || "").split(/\s+/);
       const atoms = names.filter(x => /^atom-\d+$/.test(x)).map(x => +x.slice(5));
-      if (atoms.length && atoms.every(a => mine.has(a))) parts.push(node);
+      if (atoms.length) {
+        if (atoms.every(a => mine.has(a))) parts.push(node);
+        continue;
+      }
+      // no atom named: take the middle of what it draws and ask which atom it is on
+      const numbers = String(node.getAttribute("d") || "").match(/-?\d+(\.\d+)?/g);
+      if (!numbers || numbers.length < 2) continue;
+      let sx = 0, sy = 0, n = 0;
+      for (let k = 0; k + 1 < numbers.length; k += 2) { sx += +numbers[k]; sy += +numbers[k + 1]; n++; }
+      if (!n) continue;
+      const who = nearest(sx / n, sy / n);
+      if (who >= 0 && mine.has(who)) parts.push(node);
     }
     // the atom spots and the bond handles are not in the drawing but over it, so a
     // transform does not reach them: they are put where their atoms have gone, or
@@ -2322,6 +2345,9 @@ export function setupUI(app) {
               return;
             }
           }
+          // the same atom again lets it go, as clicking past it does
+          const now = app.selected(m);
+          if (!e.shiftKey && now.length === 1 && now[0] === a) { drop2D(true); return; }
           app.select(m, [a], e.shiftKey ? "toggle" : "set");
         };
         box.append(hit);
@@ -2522,14 +2548,39 @@ export function setupUI(app) {
     e.stopPropagation();
     const [i, j] = atoms;
     const p = draw2D.picked;
-    // the same bond again: the other side of it moves instead
+    // the same bond again lets it go.  Which half moves is chosen with the button, or
+    // by clicking an atom on the half that is standing still
     if (p && ((p.i === i && p.j === j) || (p.i === j && p.j === i))) {
-      flipSide(m);
+      drop2D(true);
       return;
     }
     draw2D.picked = { i, j };
     refresh2D();
   }
+  // Letting go of what was picked: the bond, and the selection with it.  Clicking the
+  // same thing again, or past everything -- in the drawing or in the view -- says so.
+  function drop2D(selection = false) {
+    const had = draw2D.picked;
+    draw2D.picked = null;
+    if (selection && app.selection().length) {
+      app.clearSelection();
+      app.rebuild();
+      app.onSelection();  // which draws the panel again
+      return;
+    }
+    if (had) refresh2D();
+  }
+  // a click on the drawing, but not on anything in it
+  $("lig2d").addEventListener("click", e => {
+    if (e.target.closest(".hit, .turn, .lig2d-tools, .lig2d-swing")) return;
+    drop2D(true);
+  });
+  // and a click in the view itself: the drawing is of what is going on there, so a
+  // bond picked in it is no longer what the eye is on
+  $("view").addEventListener("pointerdown", () => {
+    if (draw2D.picked) { draw2D.picked = null; setTimeout(refresh2D, 0); }
+  });
+
   // which side swings.  The bond is written the other way round and the angle negated,
   // which leaves the two halves in the same places relative to each other and moves
   // the other one from here on.  The drawing as a whole may come out turned: it is
