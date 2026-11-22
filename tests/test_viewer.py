@@ -3877,15 +3877,63 @@ def test_the_2d_panel_only_ever_changes_the_picture():
     diagram is a picture, and the structure is turned in the view itself.  Dragging a
     bond now swings that branch of the drawing."""
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
-    panel = ui[ui.index("function startSwing(") :]
-    panel = panel[: panel.index("const endSwing =")]
-    assert "draw2D.branches" in panel and "refresh2D()" in panel
+    panel = ui[ui.index("function pickBond(e, m, atoms)") :]
+    panel = panel[: panel.index("function flipSide(m)")]
+    assert "draw2D.picked" in panel and "refresh2D()" in panel
     # nothing in the panel reaches for the structure any more
     for gone in ("api/set_dihedral", "api/dihedral", "turnDihedral", "reloadModel"):
         assert gone not in panel, gone
-    assert "the drawing only" in panel
+    # and it says so, where the reader will see it
+    assert "click a bond to swing it in the drawing" in ui
+    assert "Only the DRAWING moves" in ui
     tools = ui[ui.index("function tools2D(m, out)") :]
     tools = tools[: tools.index("async function copy2D(")]
     for control in ("‹", "›", "⟲", "⟳", "↔", "↕", "↺", "R/S", "copy", "svg"):
         assert control in tools, control
     assert "draw2D.hydrogens" in tools and "draw2D.stereo" in tools
+
+
+def test_a_bond_is_picked_and_swung_with_a_slider():
+    """Dragging the bond was the only way to swing it, and a drag is a poor way to
+    land on an angle.  A click picks the bond; a slider under the drawing then swings
+    one half of it, by as much as is wanted and back to nothing again."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    assert "function startSwing(" not in ui and "moveSwing" not in ui  # the drag is gone
+    pick = ui[ui.index("function pickBond(e, m, atoms)") :]
+    pick = pick[: pick.index("function flipSide(m)")]
+    assert "draw2D.picked = { i, j }" in pick
+    assert "flipSide(m)" in pick  # the same bond again: the other half moves
+    row = ui[ui.index("function swingRow(m, out)") :]
+    row = row[: row.index("\n  }\n")]
+    assert 'type: "range"' in row and "min: -180, max: 180" in row
+    assert "swingTo(" in row and "atom${moving === 1" in row  # it says what will move
+    assert "is in a ring: it has no side to swing" in row
+    assert "setTimeout(send, 60)" in row  # not a request per pixel of the slider
+    assert "slider.onchange" in row  # the last one always goes
+    # the handle lights up when its bond is the one picked
+    assert '`turn${on ? " on" : ""}`' in ui
+    css = (Path(boonza.__file__).parent / "data/viewer/style.css").read_text(encoding="utf-8")
+    assert ".lig2d-swing" in css and ".lig2d-svg .turn.on" in css
+
+
+def test_which_half_of_a_bond_swings_can_be_chosen():
+    """Either half can be the one that moves: the bond is written the other way round
+    and the angle negated, which leaves the two halves in the same places relative to
+    each other."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    flip = ui[ui.index("function flipSide(m)") :]
+    flip = flip[: flip.index("\n  }\n")]
+    assert "draw2D.picked = { i: p.j, j: p.i }" in flip
+    assert "push([p.j, p.i, -at])" in flip
+    # clicking an atom on the still half hands it the movement
+    assert "if (!far.has(a)) flipSide(m);" in ui
+    # a ring bond has no side of its own, and sideOf says so rather than looping
+    side = ui[ui.index("function sideOf(m, i, j)") :]
+    side = side[: side.index("\n  }\n")]
+    assert "return null;  // a ring: no side of its own" in side
+    # and the server agrees: swinging a ring bond is a no-op
+    s = boonza.from_smiles("c1ccccc1O")
+    session = viewer.Session(s)
+    atoms = session.ligand2d()["atoms"]
+    base = session.ligand2d()["svg"]
+    assert session.ligand2d(branches=[[atoms[0], atoms[1], 90]])["svg"] == base
