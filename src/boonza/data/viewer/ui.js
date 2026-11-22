@@ -2167,12 +2167,13 @@ export function setupUI(app) {
   const draw2D = { which: 0, rotate: 0, flip: "", branches: [], layout: 0,
                    hydrogens: "none", stereo: false, dark: null,
                    // the bond being swung: {i, j} with the j side the one that moves
-                   picked: null };  // fmt: skip
+                   picked: null,
+                   at: "" };  // which molecule the picture is of  // fmt: skip
   // the layout is of one molecule: stepping to another starts its picture afresh
   function reset2D(keepWhich = true) {
     const which = keepWhich ? draw2D.which : 0;
     Object.assign(draw2D, { which, rotate: 0, flip: "", branches: [], layout: 0,
-                            picked: null });  // fmt: skip
+                            picked: null, at: "" });  // fmt: skip
   }
   // how far the picked bond is swung now
   const swungBy = () => {
@@ -2186,6 +2187,33 @@ export function setupUI(app) {
     if (was) was[2] = degrees; else draw2D.branches.push([p.i, p.j, degrees]);
     refresh2D();
   }
+  // Turning the swinging half in the drawing that is already there.  RDKit labels
+  // every path it draws with the atoms it belongs to (class="bond-3 atom-4 atom-5"),
+  // so the pieces that move are those whose atoms are all on the far side; each gets
+  // an SVG rotation about the pivot.  The y axis points down in a drawing and up in a
+  // molecule, so the angle is negated to turn the same way the server will.
+  function previewer(m, out, bond, far, from) {
+    const place = new Map(out.atoms.map((a, k) => [a, k]));
+    const pivot = out.coords[place.get(bond.j)] || [0, 0];
+    // the pivot counts as moving: a rotation about it leaves it where it is, and the
+    // bonds that radiate from it have to swing with the atoms they lead to, or the
+    // drawing comes apart while the slider is moving
+    const mine = new Set([...far].filter(a => place.has(a)).map(a => place.get(a)));
+    const svg = $("lig2d").querySelector(".lig2d-svg svg");
+    const parts = [];
+    for (const node of svg ? svg.querySelectorAll("[class]") : []) {
+      const names = String(node.getAttribute("class") || "").split(/\s+/);
+      const atoms = names.filter(x => /^atom-\d+$/.test(x)).map(x => +x.slice(5));
+      if (atoms.length && atoms.every(a => mine.has(a))) parts.push(node);
+    }
+    return degrees => {
+      const by = -(degrees - from);
+      for (const node of parts) {
+        node.setAttribute("transform", `rotate(${by.toFixed(2)} ${pivot[0]} ${pivot[1]})`);
+      }
+    };
+  }
+
   // the atoms on the far side of bond i-j, j's side: what swinging it moves
   function sideOf(m, i, j) {
     const seen = new Set([j]), stack = [j];
@@ -2199,16 +2227,59 @@ export function setupUI(app) {
     }
     return seen;
   }
+  // every ligand of every model on show, in one list.  The panel used to look at the
+  // current model alone, so opening a receptor beside an SDF of designs drew whatever
+  // the receptor was carrying -- a glycol, say -- and there was no way from there to
+  // the designs at all, since each of them is a model of its own
+  let ligands2D = { key: "", list: [] };
+  async function ligandList() {
+    // shown, whether or not the page has loaded it yet: shownModels() wants a topology
+    // and a design straight out of an SDF has not been opened, so the whole series was
+    // missing from the list
+    const shown = app.live().filter(x => x.shown);
+    const key = shown.map(x => x.index).join(",");
+    if (ligands2D.key === key) return ligands2D.list;
+    let list = [];
+    try {
+      const out = await app.getJSON(`api/ligands?ms=${shown.map(x => x.index).join(",")}`);
+      list = out.ligands || [];
+    } catch (e) {  // an exported page has no server to ask: the current model alone
+      list = [];
+    }
+    ligands2D = { key, list };
+    return list;
+  }
   let pending2D = 0;
   async function refresh2D() {
     if ($("lig2d").hidden) return;
     const ticket = ++pending2D;
     const sel = app.selection();
-    const m = sel[0]?.[0] || app.currentModel();
+    // a selection says which molecule is wanted; otherwise it is the one stepped to
+    let m = sel[0]?.[0], ids = sel[0]?.[1] || [], within = draw2D.which, all = [];
+    if (!m) {
+      all = await ligandList();
+      if (ticket !== pending2D) return;
+      if (all.length) {
+        draw2D.which = Math.max(0, Math.min(draw2D.which, all.length - 1));
+        const pick = all[draw2D.which];
+        m = state.models[pick.m];
+        within = pick.k;
+      } else {
+        m = app.currentModel();
+        within = 0;
+      }
+    }
+    if (!m?.topo) {
+      try { await app.load(m); } catch (e) { /* said below */ }
+    }
     if (!m?.topo) return;
-    const ids = sel[0]?.[1] || [];
+    const drawing = `${m.index}:${within}:${ids.join(",")}`;
+    if (draw2D.at !== drawing) {  // another molecule: its own picture, not the last one's
+      Object.assign(draw2D, { rotate: 0, flip: "", branches: [], layout: 0, picked: null });
+      draw2D.at = drawing;
+    }
     const dark = (draw2D.dark ?? document.body.classList.contains("dark")) ? 1 : 0;
-    const how = `&which=${draw2D.which}&h=${draw2D.hydrogens}&stereo=${draw2D.stereo ? 1 : 0}`
+    const how = `&which=${within}&h=${draw2D.hydrogens}&stereo=${draw2D.stereo ? 1 : 0}`
       + `&rotate=${draw2D.rotate}&flip=${draw2D.flip}&layout=${draw2D.layout}`
       + `&branches=${encodeURIComponent(JSON.stringify(draw2D.branches))}`;
     try {
@@ -2216,7 +2287,8 @@ export function setupUI(app) {
       if (ticket !== pending2D) return;
       const box = $("lig2d").querySelector(".lig2d-svg");
       box.innerHTML = out.svg;
-      say2D(`${out.name}  ·  click an atom to select it · click a bond to swing it in the drawing`);
+      const whose = app.live().filter(x => x.shown).length > 1 ? `${m.name}: ` : "";
+      say2D(`${whose}${out.name}  ·  click an atom to select it · click a bond to swing it`);
       out.coords.forEach(([x, y], k) => {
         const hit = el("div", { className: "hit", title: m.topo.atoms.name[out.atoms[k]] });
         Object.assign(hit.style, { left: `${x}px`, top: `${y}px` });
@@ -2249,7 +2321,7 @@ export function setupUI(app) {
         turn.onclick = e => pickBond(e, m, [i, j]);
         box.append(turn);
       }
-      tools2D(m, out);
+      tools2D(m, { ...out, all, at: draw2D.which });
     } catch (e) {
       $("lig2d").querySelector(".lig2d-title").textContent = e.message;
       $("lig2d").querySelector(".lig2d-svg").innerHTML = "";
@@ -2270,19 +2342,21 @@ export function setupUI(app) {
       return x;
     };
     const again = () => refresh2D();
-    const many = (out.molecules || []).length;
-    if (many > 1 && out.which >= 0) {  // which ligand, when the structure has several
+    // every ligand on show, across the models: a receptor's and each design of a
+    // series alike, since a series is a model per design
+    const all = out.all || [], many = all.length, at = out.at ?? 0;
+    const naming = x => (x.model && x.label !== x.model ? `${x.label} (${x.model})` : x.label);
+    if (many > 1 && out.which >= 0) {
       b("‹", "the ligand before this one", () => {
         reset2D(false);
-        draw2D.which = (out.which - 1 + many) % many;
+        draw2D.which = (at - 1 + many) % many;
         again();
       });
-      bar.append(el("span", { className: "which",
-                              title: (out.molecules || []).map(x => x.label).join(", ") },
-                    `${out.which + 1}/${many}`));  // fmt: skip
+      bar.append(el("span", { className: "which", title: all.map(naming).join(", ") },
+                    `${at + 1}/${many}`));  // fmt: skip
       b("›", "the next ligand", () => {
         reset2D(false);
-        draw2D.which = (out.which + 1) % many;
+        draw2D.which = (at + 1) % many;
         again();
       });
     } else if (out.which < 0) {
@@ -2335,17 +2409,17 @@ export function setupUI(app) {
     const slider = el("input", { type: "range", min: -180, max: 180, step: 1, value: Math.round(at),
                                  title: `swing ${A[p.j]} and the ${moving} atom${moving === 1 ? "" : "s"} on its side` });  // fmt: skip
     const readout = el("span", { className: "which" }, `${Math.round(at)}°`);
-    // a server round trip per pixel of the slider would be most of them wasted, so
-    // they are spaced out; the last one always goes, or it could stop short of where
-    // the slider was let go
-    let waiting = null, latest = at;
-    const send = () => { waiting = null; swingTo(latest); };
+    // While the slider moves, the half that swings is turned here, in the drawing that
+    // is already on the page -- one transform, no asking anyone.  Asking the server
+    // for a new picture at every step was never going to be smooth: each one is a
+    // whole molecule laid out and drawn again, and they queue up behind the slider.
+    // The server draws it once, properly, when the slider is let go
+    const preview = previewer(m, out, p, far, at);
     slider.oninput = () => {
-      latest = +slider.value;
-      readout.textContent = `${latest}°`;
-      if (!waiting) waiting = setTimeout(send, 60);
+      readout.textContent = `${+slider.value}°`;
+      preview(+slider.value);
     };
-    slider.onchange = () => { if (waiting) clearTimeout(waiting); latest = +slider.value; send(); };
+    slider.onchange = () => swingTo(+slider.value);
     const zero = el("button", { title: "put this bond back where the layout had it" }, "0");
     zero.onclick = () => { slider.value = 0; readout.textContent = "0°"; swingTo(0); };
     const done = el("button", { title: "leave this bond alone" }, "✕");
@@ -4800,6 +4874,7 @@ export function setupUI(app) {
   app.onModels = () => {
     modelsDock(); repsPanel();
     for (const p of Object.values(panels)) p.redraw?.();  // a series' table
+    setTimeout(refresh2D, 0);  // a model shown or hidden changes what there is to draw
   };
   // a group's header: its box shows or hides every model in it (all the pockets, say)
   function groupHeader(group) {

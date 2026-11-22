@@ -3884,7 +3884,7 @@ def test_the_2d_panel_only_ever_changes_the_picture():
     for gone in ("api/set_dihedral", "api/dihedral", "turnDihedral", "reloadModel"):
         assert gone not in panel, gone
     # and it says so, where the reader will see it
-    assert "click a bond to swing it in the drawing" in ui
+    assert "click a bond to swing it" in ui
     assert "Only the DRAWING moves" in ui
     tools = ui[ui.index("function tools2D(m, out)") :]
     tools = tools[: tools.index("async function copy2D(")]
@@ -3906,10 +3906,9 @@ def test_a_bond_is_picked_and_swung_with_a_slider():
     row = ui[ui.index("function swingRow(m, out)") :]
     row = row[: row.index("\n  }\n")]
     assert 'type: "range"' in row and "min: -180, max: 180" in row
-    assert "swingTo(" in row and "atom${moving === 1" in row  # it says what will move
+    assert "atom${moving === 1" in row  # it says what will move
     assert "is in a ring: it has no side to swing" in row
-    assert "setTimeout(send, 60)" in row  # not a request per pixel of the slider
-    assert "slider.onchange" in row  # the last one always goes
+    assert "slider.onchange" in row  # the server draws it once, when it is let go
     # the handle lights up when its bond is the one picked
     assert '`turn${on ? " on" : ""}`' in ui
     css = (Path(boonza.__file__).parent / "data/viewer/style.css").read_text(encoding="utf-8")
@@ -3937,3 +3936,79 @@ def test_which_half_of_a_bond_swings_can_be_chosen():
     atoms = session.ligand2d()["atoms"]
     base = session.ligand2d()["svg"]
     assert session.ligand2d(branches=[[atoms[0], atoms[1], 90]])["svg"] == base
+
+
+def test_the_2d_panel_sees_every_ligand_on_show(served):
+    """It looked at the current model alone, so opening a receptor beside an SDF of
+    designs drew whatever the receptor carried -- a glycol -- and there was no way
+    from there to the designs, each of which is a model of its own."""
+    rec = boonza.load(DATA / "2HYY_A.pdb.gz")
+    v = viewer.Viewer([
+        viewer.Model("receptor", lambda: viewer.Session(rec)),
+        viewer.Model("2PM1", lambda: viewer.Session(boonza.from_smiles("c1ccccc1O"))),
+        viewer.Model("2PM2", lambda: viewer.Session(boonza.from_smiles("CCOC(=O)c1ccccc1"))),
+    ])  # fmt: skip
+    get, post = served(v)
+    status, _, body = get("api/ligands?ms=0,1,2")
+    found = json.loads(body)["ligands"]
+    assert status == 200
+    assert {x["model"] for x in found} == {"receptor", "2PM1", "2PM2"}
+    # each entry says which model and which of that model's ligands it is
+    for x in found:
+        assert x["k"] < len(v.session(x["m"]).ligand_molecules())
+    # only the models asked for
+    only = json.loads(get("api/ligands?ms=1")[2])["ligands"]
+    assert {x["model"] for x in only} == {"2PM1"}
+    assert json.loads(get("api/ligands?ms=")[2])["ligands"] == []
+    # a model that is not there is skipped rather than refusing the lot
+    assert json.loads(get("api/ligands?ms=0,99")[2])["ligands"]
+
+
+def test_the_2d_panel_follows_what_is_on_show():
+    """Hiding a model takes its ligands out of the list, and a model that is shown but
+    not yet opened still has them -- shownModels() wants a topology, and a design
+    straight out of an SDF has not been loaded, so a whole series was missing."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    listing = ui[ui.index("async function ligandList()") :]
+    listing = listing[: listing.index("\n  }\n")]
+    assert "app.live().filter(x => x.shown)" in listing
+    assert "app.shownModels()" not in listing
+    assert "api/ligands?ms=" in listing
+    # showing or hiding a model redraws the panel
+    models = ui[ui.index("app.onModels = () => {") :]
+    models = models[: models.index("\n  };\n")]
+    assert "refresh2D" in models
+    # and a different molecule starts its own picture, rather than wearing the last
+    # one's turns and swings
+    assert "another molecule: its own picture, not the last one's" in ui
+
+
+def test_the_swing_slider_draws_as_it_moves_and_asks_once_at_the_end():
+    """A new picture from the server at every step of the slider was never going to be
+    smooth: each is a whole molecule laid out and drawn again, and they queue up behind
+    the slider.  The swinging half is turned in the drawing already on the page while
+    it moves, and the server draws it once when the slider is let go."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    row = ui[ui.index("function swingRow(m, out)") :]
+    row = row[: row.index("\n  }\n")]
+    assert "slider.oninput = () => {" in row and "preview(+slider.value)" in row
+    assert "slider.onchange = () => swingTo(+slider.value);" in row
+    # nothing is asked for while it moves
+    assert "swingTo" not in row.split("slider.oninput")[1].split("slider.onchange")[0]
+    look = ui[ui.index("function previewer(m, out, bond, far, from)") :]
+    look = look[: look.index("\n  }\n")]
+    # RDKit labels every path with the atoms it belongs to; the moving pieces are those
+    # whose atoms are all on the far side
+    assert "atom-" in look and "atoms.every(a => mine.has(a))" in look
+    # the pivot moves with them, or the bonds out of it come away from their atoms
+    assert "drawing comes apart" in ui
+    # a drawing's y points down and a molecule's up, so the angle is negated
+    assert "const by = -(degrees - from);" in look
+
+
+def test_the_2d_controls_stay_on_one_line():
+    """A wrapped row of controls cost the drawing its height."""
+    css = (Path(boonza.__file__).parent / "data/viewer/style.css").read_text(encoding="utf-8")
+    tools = css[css.index(".lig2d-tools {") :]
+    tools = tools[: tools.index("}") + 1]
+    assert "flex-wrap: nowrap" in tools and "overflow-x: auto" in tools
