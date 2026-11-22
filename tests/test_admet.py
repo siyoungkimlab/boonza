@@ -286,3 +286,65 @@ def test_the_report_says_the_soft_spots_are_not_a_prediction():
     page = admet.report_html([("2PM1", PROPRANOLOL, "", admet.properties(mol), mol)], "series 1")
     assert "Metabolic soft spots" in page and "N-dealkylation" in page
     assert "not SMARTCyp" in page and "no rate and no order" in page
+
+
+def test_the_soft_spots_can_be_switched_off():
+    """Sometimes the structure wants reading plain.  One switch hides every mark on
+    every drawing and the lists with them, and it is remembered."""
+    mol = Chem.MolFromSmiles(PROPRANOLOL)
+    page = admet.report_html([("2PM1", PROPRANOLOL, "", admet.properties(mol), mol)], "series 1")
+    assert 'id="spots"' in page and "metabolic soft spots</label>" in page
+    assert ":root.no-spots .soft, :root.no-spots .spots-block { display: none; }" in page
+    assert 'class="spots-block"' in page
+    assert "boonza.report.spots" in page  # remembered, like the theme
+
+
+def test_every_mark_is_tagged_in_both_drawings():
+    """The mark is tagged by where it is, not by its colour: RDKit rounds a colour its
+    own way when it writes it out (0.65 came back as A5, not A6), so matching the hex
+    missed every mark on the dark drawing and left it unswitchable."""
+    mol = Chem.MolFromSmiles(PROPRANOLOL)
+    spots = sorted({a for s in admet.soft_spots(mol) for a in s["atoms"]})
+    assert spots
+    for dark in (False, True):
+        svg = admet.depiction(mol, dark=dark, highlight=spots)
+        assert svg.count(" soft") == len(spots), dark
+        assert "class='bond" in svg  # the structure itself is untouched
+    # a drawing with nothing to mark gains nothing
+    assert " soft" not in admet.depiction(mol)
+    # and the purple is not the page's amber, which is why an amber mark did not read
+    assert admet.SPOT_COLOUR[False] != admet.SPOT_COLOUR[True]
+    page = admet.report_html([("2PM1", PROPRANOLOL, "", admet.properties(mol), mol)], "series 1")
+    assert "--spot: #" in page
+
+
+def test_a_drawing_can_be_copied_as_a_picture():
+    """Inline SVG gives the browser no "Copy image" of its own, so each drawing
+    carries a button that puts a PNG on the clipboard, and saves one where the
+    clipboard cannot be reached."""
+    mol = Chem.MolFromSmiles(ASPIRIN)
+    page = admet.report_html([("2PM1", ASPIRIN, "", admet.properties(mol), mol)], "series 1")
+    assert "data-copy" in page and ">copy</button>" in page
+    script = page[page.index("<script>") :]
+    assert "ClipboardItem" in script and "toBlob" in script
+    assert "image/png" in script
+    # the marks are left out of the copy when they are switched off
+    assert "no-spots" in script and "removeChild" in script
+    # a copy is not also a jump to the design the button sits on
+    assert "e.target.closest('[data-copy]')" in script
+
+
+def test_the_plot_comes_before_the_egg():
+    """The egg is a fixed pair of ellipses; the plot is whatever the reader asks for,
+    so it is the one they want first."""
+    mol = Chem.MolFromSmiles(IMATINIB)
+    designs = [(f"2PM{k}", IMATINIB, "", admet.properties(mol), mol) for k in (1, 2, 3)]
+    page = admet.report_html(designs, "series 1")
+    import re
+
+    assert re.findall(r"<h2>(.*?)</h2>", page) == [
+        "series 1 at a glance",
+        "One property against another",
+        "Passive absorption and brain penetration",
+        "Every design",
+    ]

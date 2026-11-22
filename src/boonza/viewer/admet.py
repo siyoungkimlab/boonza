@@ -635,12 +635,20 @@ def soft_spots(mol) -> list[dict]:
 # --- the report ------------------------------------------------------------------------
 
 
+#: the metabolic soft spots' mark, light and dark.  Purple because the page's accent
+#: is amber: an amber mark read as more of the same rather than as a mark
+SPOT_COLOUR = {False: (0.70, 0.53, 0.91), True: (0.79, 0.65, 0.96)}
+
+
 def depiction(mol, width: int = 240, height: int = 170, dark: bool = False,
               highlight=None) -> str:  # fmt: skip
     """A 2D drawing of ``mol`` as SVG.  ``dark``: drawn for a dark background, so the
     page can carry one of each and show whichever its theme asks for.  ``highlight``:
-    atoms to ring (the metabolic soft spots).  Transparent, so it takes the card's own
-    background; "" if RDKit cannot lay the molecule out."""
+    atoms to mark (the metabolic soft spots).  Transparent, so it takes the card's own
+    background; "" if RDKit cannot lay the molecule out.
+
+    Each mark is given a ``soft`` class, so the page can hide them all with one rule
+    and show the structures plain."""
     from rdkit.Chem import AllChem
     from rdkit.Chem.Draw import rdMolDraw2D
 
@@ -654,7 +662,7 @@ def depiction(mol, width: int = 240, height: int = 170, dark: bool = False,
         opts.setBackgroundColour((0, 0, 0, 0))
         opts.clearBackground = False
         hi = [int(a) for a in (highlight or [])]
-        colour = (0.96, 0.64, 0.23) if dark else (0.90, 0.52, 0.10)
+        colour = SPOT_COLOUR[bool(dark)]
         draw.DrawMolecule(mol, highlightAtoms=hi,
                           highlightAtomColors={a: colour for a in hi})  # fmt: skip
         draw.FinishDrawing()
@@ -662,7 +670,24 @@ def depiction(mol, width: int = 240, height: int = 170, dark: bool = False,
     except Exception:
         return ""
     # the <?xml?> header belongs to a standalone file, not to a span of a page
-    return svg[svg.index("<svg") :] if "<svg" in svg else ""
+    svg = svg[svg.index("<svg") :] if "<svg" in svg else ""
+    return _mark_spots(svg) if hi else svg
+
+
+def _mark_spots(svg: str) -> str:
+    """The soft spots' marks given a class of their own, so the page can switch them
+    off.  RDKit draws them first, each an ellipse, and everything after the first bond
+    is the structure itself; so the ellipses before that bond are the marks.
+
+    Matching on where they are rather than on their colour is deliberate: RDKit rounds
+    a colour its own way when it writes it out (0.65 came back as A5, not A6), so the
+    hex in the file need not be the hex that was asked for."""
+    import re
+
+    first = svg.find("<path class='bond")
+    head, rest = (svg[:first], svg[first:]) if first > 0 else (svg, "")
+    head = re.sub(r"(<ellipse\b[^>]*?)class='([^']*)'", r"\1class='\2 soft'", head)
+    return head + rest
 
 
 def egg_svg(points, width: int = 560, height: int = 330) -> str:
@@ -780,13 +805,16 @@ PANELS: list[tuple[str, list[tuple[str, str]]]] = [
 _CSS = """
 :root { color-scheme: light dark;
   --bg: #ffffff; --card: #f7f8fa; --line: #d9dde3; --text: #1d2026; --muted: #69707c;
-  --accent: #c9711a; --warn: #b4520f; --good: #1c7a3e; --flash: rgba(201, 113, 26, 0.22); }
+  --accent: #c9711a; --warn: #b4520f; --good: #1c7a3e; --flash: rgba(201, 113, 26, 0.22);
+  --spot: #7c4dbe; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #15171c; --card: #1c1f26; --line: #2b3039; --text: #e6e8ec; --muted: #8a919e;
-  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; --flash: rgba(240, 162, 59, 0.26); } }
+  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; --flash: rgba(240, 162, 59, 0.26);
+  --spot: #c9a7f5; } }
 :root[data-theme="dark"] {
   --bg: #15171c; --card: #1c1f26; --line: #2b3039; --text: #e6e8ec; --muted: #8a919e;
-  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; --flash: rgba(240, 162, 59, 0.26); }
+  --accent: #f0a23b; --warn: #ffab6b; --good: #5fd089; --flash: rgba(240, 162, 59, 0.26);
+  --spot: #c9a7f5; }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 28px 20px 60px; background: var(--bg); color: var(--text);
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
@@ -817,7 +845,13 @@ tbody tr:hover { background: var(--card); }
 .design { display: grid; grid-template-columns: 250px 1fr; gap: 18px; align-items: start; }
 /* the drawing sits on the card, in the page's own colours */
 .struct { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-  padding: 6px; text-align: center; }
+  padding: 6px; text-align: center; position: relative; }
+/* inline SVG has no "Copy image" in the browser's own menu, so each drawing
+   carries a button; it shows when the drawing is pointed at */
+.struct .copy { position: absolute; top: 5px; right: 5px; opacity: 0; transition: opacity .12s;
+  padding: 2px 8px; font-size: 11px; }
+.struct:hover .copy, .struct .copy:focus { opacity: 1; }
+@media (hover: none) { .struct .copy { opacity: 1; } }
 :root[data-theme="dark"] .light-only { display: none; }
 :root[data-theme="light"] .dark-only { display: none; }
 @media (prefers-color-scheme: dark) {
@@ -833,6 +867,7 @@ tbody tr:hover { background: var(--card); }
 .panel td { text-align: right; font-variant-numeric: tabular-nums; }
 .pt2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--accent); margin: 10px 0 2px; }
+.pt2.spot { color: var(--spot); }
 .flag { color: var(--warn); }
 .ok { color: var(--good); }
 .note { background: var(--bg); border-left: 3px solid var(--accent); padding: 7px 11px;
@@ -846,7 +881,13 @@ select.ui { background: var(--card); color: var(--text); border: 1px solid var(-
   font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
 .spots li { margin: 2px 0; }
 .spots { margin: 4px 0 0; padding-left: 18px; font-size: 12.5px; }
-.spots .what { color: var(--accent); }
+.spots .what { color: var(--spot); }
+/* the soft spots switched off: the marks on every drawing and the lists with them */
+:root.no-spots .soft, :root.no-spots .spots-block { display: none; }
+.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12.5px; color: var(--muted); user-select: none; }
+.switch input { accent-color: var(--spot); margin: 0; }
+.tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 footer { margin-top: 42px; padding-top: 14px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 11.5px; }
 footer p { margin: 5px 0; }
@@ -886,6 +927,80 @@ _JS = r"""
   };
   markTheme();
 
+  // --- the soft spots, on or off ------------------------------------------------------
+  // off hides every mark on every drawing and the lists with them, leaving the
+  // structures plain; it is remembered, like the theme
+  var spotsBox = document.getElementById('spots');
+  if (spotsBox) {
+    if (store.get('boonza.report.spots') === 'off') {
+      spotsBox.checked = false;
+      root.classList.add('no-spots');
+    }
+    spotsBox.onchange = function () {
+      root.classList.toggle('no-spots', !spotsBox.checked);
+      store.set('boonza.report.spots', spotsBox.checked ? 'on' : 'off');
+    };
+  }
+
+  // --- copy a drawing as a picture ------------------------------------------------------
+  // the drawing is inline SVG, which the browser will not copy for you: it is painted
+  // onto a canvas at three times the size and put on the clipboard as a PNG.  Where
+  // the clipboard cannot be reached (an older browser, a page served oddly) it is
+  // saved instead, which gets the reader the picture either way
+  function copyDrawing(button) {
+    var holder = button.parentNode;
+    var shown = null, svgs = holder.querySelectorAll('svg');
+    for (var i = 0; i < svgs.length; i++) {
+      if (svgs[i].getBoundingClientRect().width > 0) { shown = svgs[i]; break; }
+    }
+    if (!shown) return;
+    var box = shown.viewBox && shown.viewBox.baseVal;
+    var w = (box && box.width) || shown.clientWidth || 240;
+    var h = (box && box.height) || shown.clientHeight || 170;
+    var copy = shown.cloneNode(true);
+    copy.setAttribute('width', w);
+    copy.setAttribute('height', h);
+    if (root.classList.contains('no-spots')) {
+      var marks = copy.querySelectorAll('.soft');
+      for (var k = 0; k < marks.length; k++) marks[k].parentNode.removeChild(marks[k]);
+    }
+    var text = new XMLSerializer().serializeToString(copy);
+    var image = new Image();
+    image.onload = function () {
+      var scale = 3;  // so it is still sharp pasted into a slide
+      var canvas = document.createElement('canvas');
+      canvas.width = w * scale;
+      canvas.height = h * scale;
+      var g = canvas.getContext('2d');
+      g.fillStyle = getComputedStyle(holder).backgroundColor || '#ffffff';
+      g.fillRect(0, 0, canvas.width, canvas.height);
+      g.drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function (blob) {
+        if (!blob) return;
+        var said = function (what) {
+          button.textContent = what;
+          setTimeout(function () { button.textContent = 'copy'; }, 1400);
+        };
+        var save = function () {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = (button.getAttribute('title') || 'molecule').replace(
+            /^copy\s+|\s+as a picture$/g, '') + '.png';
+          a.click();
+          said('saved');
+        };
+        try {
+          if (navigator.clipboard && window.ClipboardItem) {
+            navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+              .then(function () { said('copied'); }, save);
+          } else { save(); }
+        } catch (e) { save(); }
+      }, 'image/png');
+    };
+    image.onerror = function () { button.textContent = 'cannot copy'; };
+    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text);
+  }
+
   // --- go to a design, from its row or from a point -----------------------------------
   function go(index) {
     var card = document.getElementById('design-' + index);
@@ -896,7 +1011,10 @@ _JS = r"""
     card.classList.add('lit');
   }
   document.addEventListener('click', function (e) {
-    var node = e.target.closest ? e.target.closest('[data-design]') : null;
+    if (!e.target.closest) return;
+    var button = e.target.closest('[data-copy]');
+    if (button) { copyDrawing(button); return; }  // not a jump to the design it is on
+    var node = e.target.closest('[data-design]');
     if (node) go(+node.getAttribute('data-design'));
   });
 
@@ -1077,23 +1195,11 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         f"properties computed at pH {ph:g} &middot; {when} &middot; boonza</p>",
         '<p class="sub">Every number here is estimated from the structure alone. '
         "Treat them as a way to rank designs against each other, not as measurements.</p>",
-        '</div><button class="ui" id="theme" type="button">Dark mode</button></div>',
+        '</div><div class="tools">',
+        '<label class="switch" for="spots"><input type="checkbox" id="spots" checked>'
+        "metabolic soft spots</label>",
+        '<button class="ui" id="theme" type="button">Dark mode</button></div></div>',
     ]
-
-    # the egg, with every design on it
-    points = [(k, n, p["TPSA"], p["cLogP"])
-              for k, (n, _s, _o, p, _m) in enumerate(designs) if "TPSA" in p]  # fmt: skip
-    if points:
-        out.append("<h2>Passive absorption and brain penetration</h2>")
-        out.append('<div class="card egg"><div>' + egg_svg(points) + "</div><div>")
-        out.append('<p class="sub">The BOILED-Egg (Daina &amp; Zoete 2016). A design in the '
-                   "white is likely to be absorbed in the gut; one in the yolk is likely to "
-                   "cross the blood-brain barrier as well. Outside both, neither is likely by "
-                   "passive diffusion. Click a point to go to that design.</p>")  # fmt: skip
-        out.append('<p class="sub">It knows nothing of transporters or efflux, so a molecule '
-                   "that is carried across (or pumped back out) sits in the wrong place: "
-                   "caffeine, which does reach the brain, falls outside the yolk.</p>"
-                   "</div></div>")  # fmt: skip
 
     # one row per design
     out.append(f"<h2>{_escape(group)} at a glance</h2>")
@@ -1134,6 +1240,21 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
                    "</span></div>")  # fmt: skip
         out.append('<div id="plot"></div></div>')
 
+    # the egg, with every design on it
+    points = [(k, n, p["TPSA"], p["cLogP"])
+              for k, (n, _s, _o, p, _m) in enumerate(designs) if "TPSA" in p]  # fmt: skip
+    if points:
+        out.append("<h2>Passive absorption and brain penetration</h2>")
+        out.append('<div class="card egg"><div>' + egg_svg(points) + "</div><div>")
+        out.append('<p class="sub">The BOILED-Egg (Daina &amp; Zoete 2016). A design in the '
+                   "white is likely to be absorbed in the gut; one in the yolk is likely to "
+                   "cross the blood-brain barrier as well. Outside both, neither is likely by "
+                   "passive diffusion. Click a point to go to that design.</p>")  # fmt: skip
+        out.append('<p class="sub">It knows nothing of transporters or efflux, so a molecule '
+                   "that is carried across (or pumped back out) sits in the wrong place: "
+                   "caffeine, which does reach the brain, falls outside the yolk.</p>"
+                   "</div></div>")  # fmt: skip
+
     # a panel per design
     out.append("<h2>Every design</h2>")
     for k, (name, smiles, note, props, mol) in enumerate(designs):
@@ -1155,8 +1276,13 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         else:
             drawing = ""
         if not drawing:
-            drawing = '<p class="sub">no drawing</p>'
-        out.append(f'<div class="struct">{drawing}</div>')
+            out.append('<div class="struct"><p class="sub">no drawing</p></div>')
+        else:
+            copy = (
+                '<button class="ui copy" type="button" data-copy '
+                f'title="copy {_escape(name)} as a picture">copy</button>'
+            )
+            out.append(f'<div class="struct">{copy}{drawing}</div>')
         out.append("<div>")
         out.append(f"<h3>{_escape(name)}</h3>")
         if smiles:
@@ -1180,7 +1306,8 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
             out.append("</table></div>")
         out.append("</div>")
         if spots:
-            out.append('<p class="pt2">Metabolic soft spots</p>')
+            out.append('<div class="spots-block">')
+            out.append('<p class="pt2 spot">Metabolic soft spots</p>')
             out.append('<ul class="spots">')
             for spot in spots:
                 phase = "phase II" if spot["phase"] == 2 else "phase I"
@@ -1190,6 +1317,7 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
             out.append('<p class="sub">Marked on the drawing. These are the groups known '
                        "to be labile, found by substructure: a liability to look at, not "
                        "a rate. Nothing says which site goes first.</p>")  # fmt: skip
+            out.append("</div>")
         out.append("</div></div>")
 
     out.append(
