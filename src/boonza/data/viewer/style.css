@@ -418,3 +418,6 @@ button.armed, .panel button.armed, #ldock button.armed { background: var(--accen
 button.armed small, #ldock button.armed small { color: var(--accent-text); }
 /* what the selection is now (its formal charge), not a tool in hand: outlined, not filled */
 button.current:not(.armed), #ldock button.current:not(.armed) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+
+/* Clipping: the scene from the side, its two planes to drag */
+canvas.sideview { display: block; border: 1px solid var(--line); border-radius: 4px; background: var(--canvas); touch-action: none; }

@@ -39,15 +39,16 @@ const SIZES = {
   beads: { stick: 0.6, ball: 0.5, bond: 0.35, cross: 1.0, picked: 1.1 },
 };
 
-// models: [{topo, pos, ss, state, dashes, surface, alpha, shine}]; state: {show, style,
+// models: [{topo, pos, ss, state, dashes, surface, alpha, shine, noclip}]; state: {show, style,
 // rgb, sel, ribbon, ribbonRGB, ribbonStyle}; dashes [[x, y, z, x, y, z, r, g, b], ...].
-// Drawings of one material (opacity and shine) share a layer; the opaque, plain one first
+// Drawings of one material (opacity and shine), clipped or left out of clipping
+// (noclip), share a layer; the opaque, plain, clipped one first
 export function buildScene(models) {
   const layers = new Map();
-  const layerOf = (alpha, shine) => {
-    const key = `${alpha}|${shine}`;
+  const layerOf = (alpha, shine, noclip = false) => {
+    const key = `${alpha}|${shine}|${noclip}`;
     if (!layers.has(key)) {
-      layers.set(key, { alpha, shine, s: { center: new Grow(), radius: new Grow(), color: new Grow() },
+      layers.set(key, { alpha, shine, noclip, s: { center: new Grow(), radius: new Grow(), color: new Grow() },
                         c: { a: new Grow(), b: new Grow(), radius: new Grow(), color: new Grow() },
                         l: { position: new Grow(), color: new Grow() },
                         m: { position: new Grow(), normal: new Grow(), color: new Grow(), index: [] } });
@@ -56,12 +57,12 @@ export function buildScene(models) {
   };
   layerOf(1, 1);
   for (const model of models) {
-    const L = layerOf(model.alpha ?? 1, model.shine ?? 1);
+    const L = layerOf(model.alpha ?? 1, model.shine ?? 1, !!model.noclip);
     addModel(model, L.s, L.c, L.l, L.m);
     if (model.surface) addSurface(model.surface, L.m);
   }
-  const out = [...layers.values()].sort((a, b) => b.alpha - a.alpha).map(({ alpha, shine, s, c, l, m }) => ({
-    alpha, shine,
+  const out = [...layers.values()].sort((a, b) => b.alpha - a.alpha || a.noclip - b.noclip).map(({ alpha, shine, noclip, s, c, l, m }) => ({
+    alpha, shine, noclip,
     spheres: { center: s.center.array, radius: s.radius.array, color: s.color.array },
     cylinders: { a: c.a.array, b: c.b.array, radius: c.radius.array, color: c.color.array },
     mesh: { position: m.position.array, normal: m.normal.array, color: m.color.array, index: new Uint32Array(m.index) },

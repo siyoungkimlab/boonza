@@ -30,7 +30,12 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
     POST /api/series_add      {"m": member} -> a new member of its series, a copy of it
     POST /api/series_join     {"m": M, "group": series, "atoms": [...], "frame": N} -> M's
                               atoms as a copy (whole and free: M itself, moved) as the
-                              series' next design
+                              series' next design; "move": true takes a design out
+                              of its own series instead of copying it
+    POST /api/series_merge    {"group": series, "into": series} -> group's designs moved
+                              into the other
+    POST /api/series_split    {"members": [M, ...]} -> those designs of one series as a
+                              new series
     POST /api/series_note     {"m": member, "note": text} -> its note ("" removes it)
     POST /api/series_receptor {"group": series, "receptor": M or null} -> what its designs
                               are made against: contacts and Minimize use it
@@ -259,8 +264,17 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/api/series_join":
             added = self.viewer.join_series(int(body["m"]), str(body["group"]),
                                             body.get("atoms") or None,
-                                            int(body.get("frame", 0)))  # fmt: skip
+                                            int(body.get("frame", 0)),
+                                            bool(body.get("move", False)))  # fmt: skip
             self._json({"added": added, **self.viewer.listing()})
+            return
+        if url.path == "/api/series_merge":
+            moved = self.viewer.merge_series(str(body["group"]), str(body["into"]))
+            self._json({"moved": moved, **self.viewer.listing()})
+            return
+        if url.path == "/api/series_split":
+            moved = self.viewer.split_series(body.get("members") or [])
+            self._json({"moved": moved, **self.viewer.listing()})
             return
         if url.path == "/api/series_note":
             self.viewer.set_note(int(body["m"]), str(body.get("note", "")))

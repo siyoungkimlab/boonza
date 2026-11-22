@@ -8,7 +8,10 @@ export class Camera {
     this.radius = 20;  // of the scene, for clipping and fog
     this.fov = 0.6;    // vertical, radians
     this.pivot = null; // the center of rotation (middle-click an atom), else the view's
-    this.zclip = [1, 1]; // front and back clipping, as fractions of the default depth
+    // the clipping planes: how far in front of the center and how far behind it, as
+    // fractions of the scene's depth (1, 1: nothing clipped; a negative one is past the
+    // center, both planes on one side of it)
+    this.zclip = [1, 1];
     this.ortho = true;   // orthographic by default; perspective on request
   }
 
@@ -102,13 +105,29 @@ export class Camera {
     ]);
   }
 
-  clip() {  // near, far planes around the scene (ZClip moves them in)
+  // the clipping planes, as distances in front of the eye (the shaders drop what is
+  // outside them, except what is left out of clipping)
+  clip() {
     const near = Math.max(this.distance - this.radius * 1.5 * this.zclip[0], 0.5);
     return [near, Math.max(this.distance + this.radius * 1.5 * this.zclip[1], near + 0.5)];
   }
 
+  // near, far of the projection: around the whole scene, wherever the planes are
+  range() {
+    const near = Math.max(this.distance - this.radius * 1.5, 0.5);
+    return [near, Math.max(this.distance + this.radius * 1.5, near + 0.5)];
+  }
+
+  // the planes moved: front and back as zclip has them, kept in the scene and apart
+  setClip(front, back) {
+    front = Math.min(Math.max(front, -0.98), 1);
+    back = Math.min(Math.max(back, -0.98), 1);
+    if (front + back < 0.02) { const mid = (back - front) / 2; front = 0.01 - mid; back = 0.01 + mid; }
+    this.zclip[0] = front; this.zclip[1] = back;
+  }
+
   projection(aspect) {
-    const [n, f] = this.clip();
+    const [n, f] = this.range();
     if (this.ortho) {
       const hh = this.halfHeight();
       return new Float32Array([
