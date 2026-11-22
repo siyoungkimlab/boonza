@@ -462,7 +462,9 @@ class Viewer:
         taken = {m.group for m in self.models}
         k = next(k for k in range(1, len(self.models) + 2) if f"series {k}" not in taken)
         base = str(piece.residues["name"][0]).strip() or "design"
-        return [self._member(piece, f"series {k}", f"{base}1", receptor=src)]
+        # a design's copy starts a series against what the design was made against
+        receptor = self.receptor(src) if self.models[src].group.startswith("series") else src
+        return [self._member(piece, f"series {k}", f"{base}1", receptor=receptor)]
 
     def _base(self, m: int) -> str:
         """What a member's name numbers: its residue name (LIG of LIG3), else the name
@@ -489,22 +491,29 @@ class Viewer:
         name = self._next_name(members)
         return [self._member(self.session(m).system.clone(), group, name, self.receptor(m))]
 
-    def join_series(self, src: int, group: str, atoms=None, frame: int = 0) -> list[int]:
+    def join_series(self, src: int, group: str, atoms=None, frame: int = 0,
+                    move: bool = False) -> list[int]:  # fmt: skip
         """Model ``src`` as the next design of open series ``group``, named as its next
         member and against its receptor.  ``atoms`` (a ligand picked out of a complex)
         join as a copy, as does a model of several frames or of another series; a whole,
         free, single-structure model is moved into the series as it is.  Either way the
-        design gets hydrogens when it had none."""
+        design gets hydrogens when it had none.  ``move``: a design of another series
+        leaves it for this one instead of being copied (:meth:`_move`)."""
         from .edit import adjust_hydrogens
 
         members = self.series(group)
+        model = self.models[src]
+        if move and not atoms and model.group.startswith("series") and not model.closed:
+            if model.group == group:
+                raise ValueError(f"{model.name} is already in {group}")
+            self._move(src, group)
+            return [src]
         a = self.session(src)
         if a.cg or a.radii is not None:
             raise ValueError("a series is of molecules with atoms, not beads or points")
         atoms = [int(x) for x in atoms] if atoms else None
         name = self._next_name(members)
         receptor = self.receptor(members[0])
-        model = self.models[src]
         if atoms is None and a.nframes == 1 and not model.group.startswith("series"):
             if any(not m.closed and m.receptor == src for m in self.models):
                 raise ValueError(f"{model.name} is a receptor: designs are made against it")
@@ -521,6 +530,55 @@ class Viewer:
         if not (anum == 1).any():
             adjust_hydrogens(piece, np.flatnonzero(anum > 1).tolist())
         return [self._member(piece, group, name, receptor)]
+
+    def _move(self, m: int, group: str) -> None:
+        """Design ``m`` into series ``group`` (open, or about to be: a split's), against
+        its receptor.  It keeps its name -- a design is known by it -- unless a member
+        there has it already, and then it is named as the series' next."""
+        there = [
+            k for k, x in enumerate(self.models) if x.group == group and not x.closed and k != m
+        ]
+        model = self.models[m]
+        if there:
+            if model.name in {self.models[k].name for k in there}:
+                model.name = self._next_name(there)
+                if model._session is not None:
+                    model._session.title = model.name
+            model.receptor = self.receptor(there[0])
+        model.group = group
+
+    def merge_series(self, group: str, into: str) -> list[int]:
+        """Every design of series ``group`` moved into series ``into``, after its own
+        (the model list keeps a series together), against ``into``'s receptor."""
+        members = self.series(group)
+        self.series(into)
+        if group == into:
+            raise ValueError(f"{group} cannot be merged into itself")
+        for k in members:
+            self._move(k, into)
+        return members
+
+    def split_series(self, members) -> list[int]:
+        """``members`` of one series as a new series of their own, against the same
+        receptor, with the names they have."""
+        members = sorted({int(k) for k in members})
+        if not members:
+            raise ValueError("pick the designs to split off")
+        if any(not 0 <= k < len(self.models) or self.models[k].closed for k in members):
+            raise ValueError("a design to split off is not open")
+        groups = {self.models[k].group for k in members}
+        group = groups.pop()
+        if groups or not group.startswith("series"):
+            raise ValueError("the designs to split off are of one series")
+        if len(members) == len(self.series(group)):
+            raise ValueError(f"that is all of {group}: nothing to split it from")
+        taken = {m.group for m in self.models}
+        new = next(
+            f"series {k}" for k in range(1, len(self.models) + 2) if f"series {k}" not in taken
+        )
+        for k in members:
+            self._move(k, new)
+        return members
 
     def series_properties(self, group: str) -> dict[int, dict]:
         """What RDKit computes from each member of series ``group``'s structure: MW,

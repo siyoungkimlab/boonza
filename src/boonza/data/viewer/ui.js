@@ -1486,18 +1486,47 @@ export function setupUI(app) {
 
   const isSeries = m => m?.group?.startsWith("series");
   const seriesGroups = () => [...new Set(app.live().filter(isSeries).map(o => o.group))];
-  // a molecule's popup items: start a series from it or join an open one, or (a member)
-  // the series' own
-  function seriesItems(m, atoms) {
+  // a molecule's items, the same in the view's popup and on its row in the model list:
+  // start a series from it or join an open one; a member's: the next design, a series
+  // started from it, its way to another series, and the series' own.  ``atoms``: the
+  // molecule clicked in the view; from the list (null) the model's ligand, else all of it
+  function seriesItems(m, atoms = null) {
+    const create = { label: "Create Series from It", run: async () => { const a = atoms || await designAtoms(m); if (a) createSeries(m, a); } };
     if (!isSeries(m)) return [
-      { label: "Create Series from It", run: () => createSeries(m, atoms) },
+      create,
       ...seriesGroups().map(g => ({ label: `Add to ${g}`, run: () => joinSeries(m, atoms, g) })),
     ];
-    return seriesMemberItems(m);
-  }
-  function seriesMemberItems(m) {
+    const others = seriesGroups().filter(g => g !== m.group);
+    const members = app.live().filter(o => o.group === m.group);
+    const after = members.slice(members.indexOf(m));
     return [
       { label: "New Analogue (a copy of this)", run: () => newAnalogue(m) },
+      create,
+      { label: "Move to", sub: [
+        ...others.map(g => ({ label: g, run: () => joinSeries(m, null, g, true) })),
+        { label: "A New Series", run: () => splitSeries([m]), off: () => members.length < 2 },
+      ] },
+      ...(others.length ? [{ label: "Copy to", sub: others.map(g => ({ label: g, run: () => joinSeries(m, null, g, false) })) }] : []),
+      "-",
+      ...seriesOwnItems(m, members, after, others),
+    ];
+  }
+  // the model's atoms a series is started from, from the list: its ligand when it has
+  // one among other things, a small molecule whole
+  async function designAtoms(m) {
+    try { await app.load(m); } catch (e) { app.message(e.message, true); return null; }
+    const cls = m.topo.atoms.class, lig = app.range(m.topo.natoms).filter(a => cls[a] === 1);
+    if (lig.length) return lig;
+    if (m.topo.natoms <= 300) return app.range(m.topo.natoms);
+    app.message(`${m.name} has no ligand: select the molecule in the view, then right-click it`, true);
+    return null;
+  }
+  // what is about the whole series: on any member, and on the series' header
+  function seriesOwnItems(m, members = app.live().filter(o => o.group === m.group), after = [],
+                          others = seriesGroups().filter(g => g !== m.group)) {
+    return [
+      ...(after.length && after.length < members.length ? [{ label: `Split ${m.group} Here (this and what follows: ${after.length})`, run: () => splitSeries(after) }] : []),
+      ...(others.length ? [{ label: `Merge ${m.group} into`, sub: others.map(g => ({ label: g, run: () => mergeSeries(m.group, g) })) }] : []),
       { label: "Note…", run: () => notePanel(m) },
       { label: "Receptor", sub: () => [
         ...app.live().filter(o => !isSeries(o)).map(o => ({ label: o.name, checked: () => m.receptor === o.index,
@@ -1509,6 +1538,43 @@ export function setupUI(app) {
       { label: `Save ${m.group} as SDF…`, run: () => saveSeriesPanel(m.group) },
       { label: `Download ${m.group} (SDF)`, run: () => downloadSeries(m.group) },
     ];
+  }
+  // designs moved between series: the listing again, and what hangs on a design's receptor
+  async function regrouped(out) {
+    relist(out);
+    await app.refreshContacts();
+    app.rebuild();
+  }
+  // these designs of one series as a new series of their own
+  async function splitSeries(models) {
+    const from = models[0].group;
+    try {
+      const out = await app.post("api/series_split", { members: models.map(o => o.index) });
+      await regrouped(out);
+      pickedModels.clear();
+      const to = state.models[out.moved[0]].group;
+      app.message(`${to}: ${models.length === 1 ? models[0].name : `${models.length} designs`} split off ${from}`);
+    } catch (e) { app.message(e.message, true); }
+  }
+  async function mergeSeries(group, into) {
+    try {
+      const out = await app.post("api/series_merge", { group, into });
+      await regrouped(out);
+      app.message(`${into}: the ${out.moved.length} design${out.moved.length === 1 ? "" : "s"} of ${group} moved in `
+        + "(a name already there was numbered on)");
+    } catch (e) { app.message(e.message, true); }
+  }
+  // several models picked in the list, into series ``group``: its designs moved, anything else added
+  async function joinMany(models, group) {
+    let n = 0;
+    for (const m of models) {
+      if (m.group === group) continue;
+      await joinSeries(m, null, group, true, true);
+      n++;
+    }
+    pickedModels.clear();
+    app.onModels();
+    app.message(`${group}: ${n} model${n === 1 ? "" : "s"} moved in`);
   }
   async function createSeries(m, atoms) {
     try {
@@ -1530,20 +1596,27 @@ export function setupUI(app) {
     } catch (e) { app.message(e.message, true); }
   }
   // a ligand becomes series ``group``'s next design: clicked atoms (or a model of
-  // frames or of another series) as a copy, a whole free model moved in as it is
-  async function joinSeries(m, atoms, group) {
+  // frames) as a copy, a whole free model moved in as it is; a design of another series
+  // is moved (``move``, as a row dragged over is) or copied.  ``quiet``: one of many
+  async function joinSeries(m, atoms, group, move = false, quiet = false) {
     if (m.group === group) { app.message(`${m.name} is already in ${group}`); return; }
     try {
-      const known = state.models.length;
-      const out = await app.post("api/series_join", { m: m.index, atoms, group,
+      const known = state.models.length, was = m.name, from = m.group;
+      const out = await app.post("api/series_join", { m: m.index, atoms, group, move,
                                                        frame: Math.min(state.frame, (m.topo?.nframes ?? 1) - 1) });
       for (const info of out.models.slice(known)) state.models.push(app.newModel(info, state.models.length));
-      relist(out);  // a moved model's new name, group and receptor
       const member = state.models[out.added[0]];
+      if (out.added[0] < known && isSeries({ group: from })) {  // a design, as it is, to another series
+        await regrouped(out);
+        if (!quiet) app.message(`${group}: ${was} moved in from ${from}${member.name !== was ? ` as ${member.name} (${was} is taken there)` : ""}`);
+        return;
+      }
+      relist(out);  // a moved model's new name, group and receptor
       if (out.added[0] < known && member.topo) await app.reloadModel(member, true);  // hydrogens it may have gained
+      if (quiet) return;
       await app.solo(member);
-      app.message(out.added[0] < known ? `${group}: ${m.name} moved in as ${member.name}`
-        : `${member.name}: a copy of ${m.name}, ${group}'s next design`);
+      app.message(out.added[0] < known ? `${group}: ${was} moved in as ${member.name}`
+        : `${member.name}: a copy of ${was}, ${group}'s next design`);
     } catch (e) { app.message(e.message, true); }
   }
   // the page's models take the server's listing (names, groups, receptors, notes) as it is now
@@ -4108,6 +4181,19 @@ export function setupUI(app) {
       + `${done.map(([m, r]) => `${m.name} ${r} Å`).join(", ")}. Undo puts each back.` : "";
     app.message([said, ...failed].filter(Boolean).join(" · "), !done.length);
   }
+  // the picked models and the series: into an open one, or (designs of one series, not
+  // all of it) a new series of their own
+  function pickedSeriesItems(models) {
+    const groups = new Set(models.map(m => m.group));
+    const own = groups.size === 1 && isSeries(models[0]) ? models[0].group : null;
+    const split = own && models.length < app.live().filter(o => o.group === own).length;
+    const into = seriesGroups().filter(g => g !== own);
+    const items = [
+      ...(split ? [{ label: `Move These ${models.length} to a New Series`, run: () => splitSeries(models) }] : []),
+      ...into.map(g => ({ label: `Move These ${models.length} to ${g}`, run: () => joinMany(models, g) })),
+    ];
+    return items.length ? [...items, "-"] : [];
+  }
   function pickedMenu(ref) {
     const these = () => app.live().filter(m => pickedModels.has(m.index));
     const n = pickedModels.size;
@@ -4128,6 +4214,7 @@ export function setupUI(app) {
       { label: "Hide", run: () => app.show(these(), false) },
       { label: "Representations", sub: () => pickedReps(these()) },
       "-",
+      ...pickedSeriesItems(these()),
       { label: `Close These ${n}`, run: async () => { for (const m of these()) await closeModel(m); } },
     ];
   }
@@ -4263,8 +4350,7 @@ export function setupUI(app) {
           { label: "Select All of It", run: async () => { await app.show([m]); app.select(m, app.range(m.topo.natoms)); } },
           { label: "Copy SMILES", run: async () => { await app.show([m]); app.clearSelection(); state.current = m.index; copySmiles(); } },
           ...kinItems(m),
-          ...(isSeries(m) ? [...seriesMemberItems(m), "-"]
-            : (gs => gs.length ? [...gs.map(g => ({ label: `Add to ${g}`, run: () => joinSeries(m, null, g) })), "-"] : [])(seriesGroups())),
+          ...seriesItems(m), "-",
           { label: "Align On…", run: () => alignPanel(m.index), off: () => app.live().length < 2 },
           { label: "Copy Into", sub: copyIntoItems(m, []) },
           { label: "Clone as New Model", run: async () => { await app.load(m); cloneAtoms(m, []); } },
@@ -4303,7 +4389,7 @@ export function setupUI(app) {
       e.preventDefault();
       node.classList.remove("drop-into");
       const from = state.models[+e.dataTransfer.getData("boonza/model")];
-      if (from) joinSeries(from, null, group);
+      if (from) joinSeries(from, null, group, true);  // a design of another series: moved
     };
   }
   $("rdock-sort").onchange = () => {
@@ -4346,7 +4432,7 @@ export function setupUI(app) {
     if (isSeries({ group }) && members.length) {
       header.oncontextmenu = e => {
         e.preventDefault();
-        menu(seriesMemberItems(members.find(m => m.index === state.current) || members[members.length - 1]), e.clientX, e.clientY);
+        menu(seriesOwnItems(members.find(m => m.index === state.current) || members[members.length - 1]), e.clientX, e.clientY);
       };
       seriesDrop(header, group);
     }
@@ -4358,7 +4444,14 @@ export function setupUI(app) {
   function sortedModels() {
     const list = app.live();
     const { column, descending } = state.sort || {};
-    if (!column) return list;
+    if (!column) {
+      // as listed, each group in one piece where its first model is: a design made after
+      // another file was opened is listed with its series, not after that file
+      const first = new Map();
+      list.forEach((m, k) => { if (m.group && !first.has(m.group)) first.set(m.group, k); });
+      const at = list.map((m, k) => (m.group ? first.get(m.group) : k));
+      return list.map((m, k) => k).sort((a, b) => at[a] - at[b] || a - b).map(k => list[k]);
+    }
     return [...list].sort(byColumn(column, descending));
   }
   // models in order of a column of their rows; those without it last
@@ -4691,17 +4784,143 @@ export function setupUI(app) {
                   row(el("span", { className: "what" }, "Strength"), strength));
     }, [innerWidth - 700, innerHeight - 230]);
   }
+  // Clipping, as ChimeraX's Side View has it: the scene seen from the side -- the eye
+  // on the left looking right, turning as the view turns -- with the two planes as
+  // upright lines to drag.  Between them is what is drawn; drag there to move both.
+  // Atoms can be left out of clipping (a ligand kept whole in a slab through its pocket)
   function zclipPanel() {
-    panel("zclip", "Clipping", body => {
-      const c = app.camera.zclip;
-      const front = el("input", { type: "range", min: 0.02, max: 1, step: 0.01, value: c[0] });
-      const back = el("input", { type: "range", min: 0.02, max: 1, step: 0.01, value: c[1] });
-      const apply = () => { c[0] = +front.value; c[1] = +back.value; app.draw(); $("vt-clip").classList.toggle("on", c[0] < 1 || c[1] < 1); };
-      front.oninput = back.oninput = apply;
-      body.append(row(el("span", { className: "what" }, "Front"), front), row(el("span", { className: "what" }, "Back"), back),
-                  row(button("Reset", () => { front.value = back.value = 1; apply(); })));
-    }, [innerWidth - 640, innerHeight - 230]);
+    panel("zclip", "Clipping", (body, p) => {
+      const cam = app.camera, W = 320, H = 200, X0 = 30, X1 = W - 8;
+      const cv = el("canvas", { className: "sideview", title: "the scene from the side, the eye on the left: drag a line to "
+        + "move that plane, between the lines to move both; double-click: no clipping" });
+      cv.style.width = `${W}px`; cv.style.height = `${H}px`;
+      const info = el("p", { className: "help" }), kept = el("span", { className: "what", style: "width:auto" });
+      // the atoms drawn (a sample of them), found again only when the scene is built again
+      let sample = null, scene = null;
+      const atoms = () => {
+        if (scene === app.renderer.drawn && sample) return sample;
+        scene = app.renderer.drawn; sample = [];
+        const models = app.shownModels(), total = models.reduce((k, m) => k + m.topo.natoms, 0);
+        const every = Math.max(1, Math.ceil(total / 12000));
+        for (const m of models) {
+          const R = m.topo.residues, A = m.topo.atoms, ids = [];
+          for (let a = 0; a < m.topo.natoms; a++) {
+            const r = A.residue[a], lig = A.class[a] === 1;
+            const on = m.drawn?.[a] || (R.trace[r] === a && m.state.ribbon[r]);
+            if (on && (lig || m.state.noclip[a] || a % every === 0)) ids.push(a);
+          }
+          sample.push([m, ids]);
+        }
+        return sample;
+      };
+      const depth = () => cam.radius * 1.5;                    // the scene's, each side of the center
+      const scale = () => (X1 - X0) / (2 * depth());            // pixels per A
+      const xOf = d => (X0 + X1) / 2 + d * scale();             // d: A behind the center
+      const planes = () => [xOf(-cam.zclip[0] * depth()), xOf(cam.zclip[1] * depth())];
+      const side = () => {
+        const dpr = window.devicePixelRatio || 1;
+        if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+        const g = cv.getContext("2d"), css = getComputedStyle(document.body);
+        const color = k => css.getPropertyValue(k).trim();
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.clearRect(0, 0, W, H);
+        const sc = scale(), [xf, xb] = planes(), r = cam.rot, c = cam.center;
+        // what the planes cut away, shaded
+        g.fillStyle = color("--line"); g.globalAlpha = 0.45;
+        g.fillRect(X0, 0, Math.max(xf - X0, 0), H); g.fillRect(xb, 0, Math.max(X1 - xb, 0), H);
+        g.globalAlpha = 1;
+        // the eye and what it sees: level lines (orthographic) or a cone
+        const hh = cam.halfHeight() * sc, xe = xOf(-cam.distance);
+        g.strokeStyle = color("--muted"); g.lineWidth = 1; g.setLineDash([3, 3]);
+        g.beginPath();
+        for (const sgn of [-1, 1]) {
+          if (cam.ortho) { g.moveTo(14, H / 2 + sgn * hh); g.lineTo(X1, H / 2 + sgn * hh); }
+          else { const k = Math.tan(cam.fov / 2) * sgn; g.moveTo(Math.max(xe, 14), H / 2 + k * (Math.max(xe, 14) - xe)); g.lineTo(X1, H / 2 + k * (X1 - xe)); }
+        }
+        g.stroke(); g.setLineDash([]);
+        g.fillStyle = color("--muted");
+        g.beginPath(); g.moveTo(4, H / 2 - 6); g.lineTo(15, H / 2); g.lineTo(4, H / 2 + 6); g.closePath(); g.fill();
+        // the atoms: depth across, the view's up upward
+        const text = color("--text"), accent = color("--accent");
+        for (const [m, ids] of atoms()) {
+          const pos = m.pos, cls = m.topo.atoms.class, nc = m.state.noclip;
+          for (const a of ids) {
+            const px = pos[3 * a] - c[0], py = pos[3 * a + 1] - c[1], pz = pos[3 * a + 2] - c[2];
+            const x = xOf(-(r[6] * px + r[7] * py + r[8] * pz)), y = H / 2 - (r[3] * px + r[4] * py + r[5] * pz) * sc;
+            if (x < X0 - 2 || x > X1 + 2) continue;
+            const lig = cls[a] === 1, out = !nc[a] && (x < xf || x > xb);
+            g.globalAlpha = out ? 0.22 : lig || nc[a] ? 1 : 0.6;
+            g.fillStyle = nc[a] ? accent : lig ? "#3fbf5f" : text;
+            const w = lig || nc[a] ? 2.6 : 1.4;
+            g.fillRect(x - w / 2, y - w / 2, w, w);
+          }
+        }
+        g.globalAlpha = 1;
+        // the planes
+        g.strokeStyle = accent; g.fillStyle = accent; g.lineWidth = 2;
+        for (const x of [xf, xb]) {
+          g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+          g.fillRect(x - 4, H / 2 - 9, 8, 18);
+        }
+        const f = -cam.zclip[0] * depth(), bk = cam.zclip[1] * depth(), sign = v => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
+        info.textContent = cam.zclip[0] >= 1 && cam.zclip[1] >= 1 ? "Nothing is clipped. Drag a line inward: the left one is the front plane (toward you), the right one the back."
+          : `front ${sign(f)} Å · back ${sign(bk)} Å from the view's center · slab ${(bk - f).toFixed(1)} Å`;
+        $("vt-clip").classList.toggle("on", cam.zclip[0] < 1 || cam.zclip[1] < 1);
+      };
+      // dragging: a plane, or (between them) both
+      let drag = null;
+      const at = e => e.clientX - cv.getBoundingClientRect().left;
+      const hit = x => {
+        const [xf, xb] = planes();
+        if (x <= xf + 7 && x - xf <= (xb - xf) / 2) return "front";
+        return x >= xb - 7 ? "back" : "both";
+      };
+      cv.onpointerdown = e => { drag = { what: hit(at(e)), x: at(e), clip: cam.zclip.slice() }; cv.setPointerCapture(e.pointerId); move(e); };
+      const move = e => {
+        if (!drag) { cv.style.cursor = hit(at(e)) === "both" ? "grab" : "ew-resize"; return; }
+        const d = (at(e) - drag.x) / scale() / depth();  // how far, as a fraction of the depth
+        let [fr, bk] = drag.clip;
+        if (drag.what === "front") fr = (at(e) < X0 + 3 ? 1 : fr - d);
+        else if (drag.what === "back") bk = (at(e) > X1 - 3 ? 1 : bk + d);
+        else { const lo = Math.max(-1 - bk, fr - 1), hi = Math.min(1 - bk, fr + 1), t = Math.min(Math.max(d, lo), hi); fr -= t; bk += t; }
+        cam.setClip(fr, bk);
+        app.draw();
+      };
+      cv.onpointermove = move;
+      cv.onpointerup = cv.onpointercancel = () => { drag = null; };
+      const reset = () => { cam.setClip(1, 1); app.draw(); };
+      cv.ondblclick = reset;
+      // what the planes leave whole
+      const count = n => { kept.textContent = n ? `${n} atom${n === 1 ? "" : "s"} never clipped` : "everything is clipped"; };
+      const never = (pairs, what) => {
+        if (!pairs.length) { app.message(`${what}: nothing to leave out of clipping`, true); return; }
+        count(app.setNoClip(pairs));
+        app.message(`${what}: drawn whole whatever the planes cut (the orange points in the side view)`);
+      };
+      const ligands = () => app.shownModels().map(m => [m, app.range(m.topo.natoms).filter(a => m.topo.atoms.class[a] === 1)]).filter(([, ids]) => ids.length);
+      body.append(cv, info,
+        row(button("No Clipping", reset), button("Slab on Selection", () => {
+          // the planes around the selected atoms, 4 A clear of them each side
+          const sel = app.selection();
+          if (!sel.length) { app.message("select the atoms the slab is to hold", true); return; }
+          let lo = Infinity, hi = -Infinity;
+          const r = cam.rot, c = cam.center;
+          for (const [m, ids] of sel) for (const a of ids) {
+            const d = -(r[6] * (m.pos[3 * a] - c[0]) + r[7] * (m.pos[3 * a + 1] - c[1]) + r[8] * (m.pos[3 * a + 2] - c[2]));
+            lo = Math.min(lo, d); hi = Math.max(hi, d);
+          }
+          cam.setClip(-(lo - 4) / depth(), (hi + 4) / depth());
+          app.draw();
+        })),
+        row(el("span", { className: "what" }, "Never clip"), button("Selection", () => never(app.selection(), "the selection")),
+            button("Ligands", () => never(ligands(), "the ligands")), button("Clip Everything", () => count(app.setNoClip()))),
+        row(kept));
+      count(app.live().reduce((k, m) => k + (m.state ? m.state.noclip.reduce((x, y) => x + y, 0) : 0), 0));
+      p.side = side;
+      side();
+    }, [innerWidth - 700, innerHeight - 420]);
   }
+  app.onDraw = () => { if (panels.zclip?.isConnected) panels.zclip.side(); };
 
   // boonza on the models: fetch a PDB entry, superpose one model on another
   function fetchPanel() {

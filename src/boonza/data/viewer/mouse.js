@@ -112,10 +112,9 @@ export function setupMouse(app) {
   };
   // the two-button setting is boonza's own: the other modes use both buttons already
   const twoButton = () => state.twoButton && state.mouseMode === "boonza";
-  const clamp = v => Math.min(Math.max(v, 0.02), 1);
   function clipBy(front, back) {  // the clipping planes, as Display | Clipping sets them
     const c = camera.zclip;
-    c[0] = clamp(c[0] + front); c[1] = clamp(c[1] + back);
+    camera.setClip(c[0] + front, c[1] + back);
     app.clipChanged?.();
   }
 
@@ -350,7 +349,10 @@ export function setupMouse(app) {
     } else if (state.mouseMode === "pymol" && !e.ctrlKey && !e.metaKey) {
       const turn = e.deltaY || e.deltaX;  // with Shift, some browsers turn the wheel sideways
       if (e.shiftKey) clipBy(turn * 0.0008, -turn * 0.0008);  // the slab moves
-      else { const f = Math.exp(-turn * 0.0015), c = camera.zclip; clipBy(c[0] * f - c[0], c[1] * f - c[1]); }
+      else {  // thinner or thicker about its middle, wherever the planes were put
+        const f = Math.exp(-turn * 0.0015), c = camera.zclip, grow = (c[0] + c[1]) / 2 * (f - 1);
+        clipBy(grow, grow);
+      }
     } else {
       camera.zoom(Math.exp(e.deltaY * 0.0015));
     }

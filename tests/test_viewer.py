@@ -3540,3 +3540,92 @@ def test_a_six_membered_ring_is_built_as_a_chair(smiles):
     turns = [dihedral_angle(pos, *[(k + j) % 6 for j in range(4)]) for k in range(6)]
     assert all(45 < abs(t) < 70 for t in turns)
     assert all(a * b < 0 for a, b in zip(turns, turns[1:] + turns[:1], strict=True))
+
+
+def test_designs_move_between_series_which_merge_and_split(served):
+    """A design leaves its series for another (keeping its name unless one there has
+    it), a series merges into another, and some of a series split off as a new one,
+    against the same receptor.  A series started from a design is made against the
+    design's receptor, not against the design."""
+    s = boonza.from_smiles("c1ccccc1O")
+    v = viewer.Viewer([viewer.Model("complex", lambda: viewer.Session(s))])
+    get, post = served(v)
+    a1 = post("api/series", {"m": 0, "atoms": list(range(s.natoms))})[1]["added"][0]
+    a2 = post("api/series_add", {"m": a1})[1]["added"][0]
+    a3 = post("api/series_add", {"m": a1})[1]["added"][0]
+    # from a design: a new series, against what the design is made against
+    status, out = post("api/series", {"m": a2, "atoms": list(range(s.natoms))})
+    b1 = out["added"][0]
+    assert status == 200 and out["models"][b1]["group"] == "series 2" and v.receptor(b1) == 0
+    # moved, not copied: LIG3 keeps its name; LIG1 is taken there and is numbered on
+    status, out = post("api/series_join", {"m": a3, "group": "series 2", "move": True})
+    assert status == 200 and out["added"] == [a3] and len(out["models"]) == len(v.models)
+    assert (v.models[a3].name, v.models[a3].group) == ("LIG3", "series 2")
+    post("api/series_join", {"m": a1, "group": "series 2", "move": True})
+    assert (v.models[a1].name, v.models[a1].group) == ("LIG4", "series 2")
+    assert v.series("series 1") == [a2] and v.session(a1).title == "LIG4"
+    assert post("api/series_join", {"m": a1, "group": "series 2", "move": True})[0] == 400
+    # without "move" a design is copied, as before
+    n = len(v.models)
+    status, out = post("api/series_join", {"m": a1, "group": "series 1"})
+    assert out["added"] == [n] and v.models[a1].group == "series 2"
+    # split: two of series 2 as a series of their own, same receptor
+    status, out = post("api/series_split", {"members": [a1, a3]})
+    assert status == 200 and out["moved"] == [a1, a3]
+    assert {v.models[k].group for k in (a1, a3)} == {"series 3"} and v.receptor(a1) == 0
+    assert v.series("series 2") == [b1]
+    assert post("api/series_split", {"members": [b1]})[0] == 400  # all of it
+    assert post("api/series_split", {"members": [a2, b1]})[0] == 400  # of two series
+    assert post("api/series_split", {"members": [0]})[0] == 400  # not a design
+    # merge: series 3 into series 1; the series is gone
+    status, out = post("api/series_merge", {"group": "series 3", "into": "series 1"})
+    assert status == 200 and sorted(out["moved"]) == sorted([a1, a3])
+    assert v.series("series 1") == sorted([a2, n, a1, a3])
+    assert len({v.models[k].name for k in v.series("series 1")}) == 4
+    assert post("api/series_merge", {"group": "series 3", "into": "series 1"})[0] == 400
+    assert post("api/series_merge", {"group": "series 1", "into": "series 1"})[0] == 400
+
+
+def test_the_series_items_are_the_same_in_the_view_and_the_model_list():
+    """The model list's row had no Create Series and nothing to move a design to
+    another series; the view's popup had.  Both read one function now, and the list
+    keeps a group in one piece (a design made after another file was opened was listed
+    after that file, its series in two)."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    row = ui[ui.index("row.oncontextmenu = e => {") :]
+    row = row[: row.index("row.draggable = true")]
+    assert '...seriesItems(m), "-",' in row
+    assert "...seriesItems(c.m, c.molecule)" in ui
+    items = ui[ui.index("function seriesItems(m, atoms = null)") :]
+    items = items[: items.index("\n  }\n")]
+    for label in (
+        "Create Series from It",
+        "New Analogue",
+        '"Move to"',
+        '"Copy to"',
+        "A New Series",
+    ):
+        assert label in items
+    assert "api/series_split" in ui and "api/series_merge" in ui
+    listed = ui[ui.index("function sortedModels()") :]
+    listed = listed[: listed.index("\n  }\n")]
+    assert "first.get(m.group)" in listed
+
+
+def test_clipping_is_the_shaders_and_leaves_out_what_it_is_told():
+    """The planes were the projection's own, so nothing could be left out of them.
+    They are a test in the shaders now (uSlab), the projection reaching round the whole
+    scene, and a layer marked noclip is drawn with the planes wide open."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    gl = (here / "gl.js").read_text(encoding="utf-8")
+    assert gl.count("slab(") >= 3 and "noclip ? open : planes" in gl
+    cam = (here / "camera.js").read_text(encoding="utf-8")
+    assert "const [n, f] = this.range();" in cam and "setClip(front, back)" in cam
+    main = (here / "main.js").read_text(encoding="utf-8")
+    assert "noclip: new Uint8Array(n)" in main and "function setNoClip(" in main
+    ui = (here / "ui.js").read_text(encoding="utf-8")
+    panel = ui[ui.index("function zclipPanel()") :]
+    panel = panel[: panel.index("app.onDraw = ")]
+    assert (
+        'className: "sideview"' in panel and "Never clip" in panel and 'type: "range"' not in panel
+    )

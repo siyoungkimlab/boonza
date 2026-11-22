@@ -3,6 +3,7 @@
 // made by geometry.js.  Opaque layers (alpha 1) are drawn first; each see-through layer
 // then in two passes, its depth and then its color where it is nearest, so a
 // transparent surface shows its front over what is behind it and never itself.
+// A layer marked noclip is left whole by the clipping planes (uSlab).
 
 const SHADE = `
 uniform vec3 uBg;
@@ -10,6 +11,11 @@ uniform float uAlpha;  // the layer's opacity
 uniform float uShine;  // its highlights: 0 matte, 1 plain, more glossy
 uniform vec2 uFog;  // fog from depth uFog.x to uFog.y (view-space distance)
 uniform float uFogStrength;
+// the clipping planes, as distances in front of the eye: what is nearer than uSlab.x or
+// further than uSlab.y is not drawn.  The projection's own planes are around the whole
+// scene, so a layer left out of clipping (its uSlab wide open) is drawn whole
+uniform vec2 uSlab;
+void slab(vec3 p) { if (-p.z < uSlab.x || -p.z > uSlab.y) discard; }
 vec3 shade(vec3 color, vec3 n, vec3 p) {
   vec3 v = normalize(-p);
   if (dot(n, v) < 0.0) n = -n;
@@ -59,6 +65,7 @@ void main() {
     if (disc < 0.0) discard;
     p = d * (b - sqrt(disc));
   }
+  slab(p);
   vec4 clip = uProj * vec4(p, 1.0);
   gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
   frag = vec4(shade(vColor, normalize(p - vCenter), p), uAlpha);
@@ -100,7 +107,7 @@ precision highp float;
 in vec3 vPos, vNormal, vColor;
 out vec4 frag;
 ${SHADE}
-void main() { frag = vec4(shade(vColor, normalize(vNormal), vPos), uAlpha); }`;
+void main() { slab(vPos); frag = vec4(shade(vColor, normalize(vNormal), vPos), uAlpha); }`;
 
 const LINE_VS = `#version 300 es
 layout(location=0) in vec3 aPos;
@@ -120,8 +127,10 @@ uniform vec3 uBg;
 uniform vec2 uFog;
 uniform float uFogStrength;
 uniform float uAlpha;
+uniform vec2 uSlab;
 out vec4 frag;
 void main() {
+  if (-vPos.z < uSlab.x || -vPos.z > uSlab.y) discard;
   float fog = clamp((-vPos.z - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0);
   frag = vec4(mix(vColor, uBg, fog * uFogStrength), uAlpha);
 }`;
@@ -294,7 +303,7 @@ export class Renderer {
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
     const uniforms = {};
-    for (const name of ["uView", "uProj", "uBg", "uFog", "uFogStrength", "uOrtho", "uAlpha", "uShine", ...more]) uniforms[name] = gl.getUniformLocation(p, name);
+    for (const name of ["uView", "uProj", "uBg", "uFog", "uFogStrength", "uOrtho", "uAlpha", "uShine", "uSlab", ...more]) uniforms[name] = gl.getUniformLocation(p, name);
     return { p, uniforms };
   }
 
@@ -328,7 +337,7 @@ export class Renderer {
     const gl = this.gl;
     const layers = scene.layers || [{ alpha: 1, ...scene }];
     while (this.layers.length < layers.length) this.layers.push(this.layer());
-    this.drawn = layers.map(({ alpha, shine = 1, spheres, cylinders, mesh, lines }, k) => {
+    this.drawn = layers.map(({ alpha, shine = 1, noclip = false, spheres, cylinders, mesh, lines }, k) => {
       const L = this.layers[k];
       this.upload(L.sphereBuf, [spheres.center, spheres.radius, spheres.color]);
       this.upload(L.cylinderBuf, [cylinders.a, cylinders.b, cylinders.radius, cylinders.color]);
@@ -338,7 +347,7 @@ export class Renderer {
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.index, gl.DYNAMIC_DRAW);
       gl.bindVertexArray(null);
       this.upload(L.lineBuf, [lines.position, lines.color]);
-      return { layer: L, alpha, shine, counts: { spheres: spheres.radius.length, cylinders: cylinders.radius.length,
+      return { layer: L, alpha, shine, noclip, counts: { spheres: spheres.radius.length, cylinders: cylinders.radius.length,
                                           mesh: mesh.index.length, lines: lines.position.length / 3 } };
     });
   }
@@ -428,7 +437,7 @@ export class Renderer {
     gl.useProgram(p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t.color); gl.uniform1i(u.uColor, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, t.depth); gl.uniform1i(u.uDepth, 1);
-    gl.uniform2fv(u.uClip, camera.clip());
+    gl.uniform2fv(u.uClip, camera.range());
     gl.uniform1f(u.uOrtho, camera.ortho ? 1 : 0);
     px = px ?? (camera.ortho ? h / (2 * camera.halfHeight()) : h / 2 / Math.tan(camera.fov / 2) / camera.distance);
     gl.uniform1f(u.uPx, px);
@@ -540,7 +549,8 @@ export class Renderer {
     const fog = f.on
       ? [camera.distance - depth * (1 - 2 * f.start), camera.distance + depth]
       : [1e9, 1e9 + 1];
-    const use = ({ p, uniforms }, alpha, shine = 1) => {
+    const planes = camera.clip(), open = [-1e9, 1e9];
+    const use = ({ p, uniforms }, alpha, shine = 1, noclip = false) => {
       gl.useProgram(p);
       gl.uniformMatrix4fv(uniforms.uView, false, view);
       gl.uniformMatrix4fv(uniforms.uProj, false, proj);
@@ -550,26 +560,27 @@ export class Renderer {
       gl.uniform1f(uniforms.uOrtho, camera.ortho ? 1 : 0);
       gl.uniform1f(uniforms.uAlpha, alpha);
       gl.uniform1f(uniforms.uShine, shine);
+      gl.uniform2fv(uniforms.uSlab, noclip ? open : planes);
     };
-    const layer = ({ layer: L, counts: n, shine }, alpha) => {
+    const layer = ({ layer: L, counts: n, shine, noclip }, alpha) => {
       if (n.spheres) {
-        use(this.programs.sphere, alpha, shine);
+        use(this.programs.sphere, alpha, shine, noclip);
         gl.bindVertexArray(L.sphereVao);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n.spheres);
       }
       if (n.cylinders) {
-        use(this.programs.cylinder, alpha, shine);
+        use(this.programs.cylinder, alpha, shine, noclip);
         const cyl = L.cylinders[this.detail] || L.cylinders[1];
         gl.bindVertexArray(cyl.vao);
         gl.drawElementsInstanced(gl.TRIANGLES, cyl.count, gl.UNSIGNED_SHORT, 0, n.cylinders);
       }
       if (n.mesh) {
-        use(this.programs.mesh, alpha, shine);
+        use(this.programs.mesh, alpha, shine, noclip);
         gl.bindVertexArray(L.meshVao);
         gl.drawElements(gl.TRIANGLES, n.mesh, gl.UNSIGNED_INT, 0);
       }
       if (n.lines) {
-        use(this.programs.line, alpha, shine);
+        use(this.programs.line, alpha, shine, noclip);
         gl.bindVertexArray(L.lineVao);
         gl.drawArrays(gl.LINES, 0, n.lines);
       }

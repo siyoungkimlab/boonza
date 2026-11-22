@@ -171,6 +171,7 @@ function initialState(model) {
     // hydrogens drawn whatever the H setting says: the Builder marks the ones a
     // molecule can grow from, so the rest of a structure stays as it was
     showH: new Uint8Array(n),
+    noclip: new Uint8Array(n),  // left whole by the clipping planes (Clipping | Never clip)
   };
 }
 
@@ -411,6 +412,7 @@ function carryOver(old, model) {
     if (o === undefined) continue;
     found[a] = o;
     st.sel[a] = old.sel[o]; st.constraint[a] = old.constraint[o]; st.labels[a] = old.labels[o];
+    if (old.noclip) st.noclip[a] = old.noclip[o];
   }
   const masks = old.reps.map(rep => { const m = new Uint8Array(n); for (let a = 0; a < n; a++) if (found[a] >= 0) m[a] = rep.mask[found[a]]; return m; });
   // new atoms (a group, a side chain, hydrogens) join what the atoms they hang on are
@@ -426,6 +428,7 @@ function carryOver(old, model) {
       const nb = topo.bondsOf[a].find(b => known[b] && topo.atoms.residue[b] === r) ?? topo.bondsOf[a].find(b => known[b]);
       if (nb === undefined) continue;
       for (const m of masks) m[a] = m[nb];
+      st.noclip[a] = st.noclip[nb];
       known[a] = 1; grew = true;
     }
   }
@@ -585,6 +588,16 @@ function select(model, ids, mode = "set") {
   app.onSelection();
 }
 
+// what the clipping planes leave whole: ``pairs`` [[model, atoms], ...] added to it
+// (on) or taken out; with no pairs, everything is clipped again.  Returns how many
+// atoms are left out now
+function setNoClip(pairs = null, on = true) {
+  if (!pairs) for (const m of live()) m.state?.noclip.fill(0);
+  else for (const [m, ids] of pairs) for (const a of ids) m.state.noclip[a] = on ? 1 : 0;
+  rebuild();
+  return live().reduce((k, m) => k + (m.state ? m.state.noclip.reduce((x, y) => x + y, 0) : 0), 0);
+}
+
 // --- render state ----------------------------------------------------------------
 
 function visibleAtom(model, a) {
@@ -599,7 +612,7 @@ let drawQueued = false;
 function draw() {
   if (drawQueued) return;
   drawQueued = true;
-  requestAnimationFrame(() => { drawQueued = false; renderer.draw(camera); placeLabels(); });
+  requestAnimationFrame(() => { drawQueued = false; renderer.draw(camera); placeLabels(); });  // (placeLabels: app.onDraw too)
 }
 
 function cellLines(box) {
@@ -644,6 +657,11 @@ function modelItems(m) {
   const drawn = new Uint8Array(n), traced = new Uint8Array(n), items = [];
   const base = { topo, pos: m.pos, ss: m.ss };
   const look = rep => ({ alpha: repAlpha(rep), shine: repShine(rep) });
+  // atoms left out of clipping are a drawing of their own (a layer the planes leave
+  // whole); a bond from one to a clipped atom is drawn half by each, as between
+  // representations
+  const nc = st.noclip, free = nc.some(x => x);
+  const part = (mask, keep) => { const out = new Uint8Array(n); for (let a = 0; a < n; a++) if (mask[a] && !!nc[a] === keep) out[a] = 1; return out; };
   // what the model draws, across its representations: a bond between two of them is
   // drawn half by each (geometry.js)
   const reach = new Uint8Array(n);
@@ -659,19 +677,28 @@ function modelItems(m) {
     if (!rep.on) continue;
     if (rep.style === "surface") {
       const mesh = surfaceOf(m, rep);
-      if (mesh) items.push({ ...base, ...look(rep), state: { show: none, style: none, rgb: null, sel: none, ribbon: noRibbon }, surface: mesh });
+      // a surface is one skin: left out of clipping when every atom under it is
+      const whole = free && rep.mask.every((x, a) => !x || nc[a]);
+      if (mesh) items.push({ ...base, ...look(rep), noclip: whole, state: { show: none, style: none, rgb: null, sel: none, ribbon: noRibbon }, surface: mesh });
       continue;
     }
     if (isRibbon(rep)) {
       const ribbon = new Uint8Array(nres), sel = new Uint8Array(n);
       for (const r of repResidues(m, rep)) { ribbon[r] = 1; const t = R.trace[r]; traced[t] = 1; sel[t] = selected[t]; }
-      items.push({ ...base, ...look(rep), state: { show: none, style: none, rgb: null, sel, ribbon, ribbonRGB: rep.rgb, ribbonStyle: rep.style } });
+      // (a ribbon is one piece, clipped unless every residue of it is left out)
+      const whole = free && ribbon.every((x, r) => !x || nc[R.trace[r]]);
+      items.push({ ...base, ...look(rep), noclip: whole, state: { show: none, style: none, rgb: null, sel, ribbon, ribbonRGB: rep.rgb, ribbonStyle: rep.style } });
       continue;
     }
     // shown atoms, through the hydrogen filter
     const show = new Uint8Array(n), sel = new Uint8Array(n);
     for (let a = 0; a < n; a++) if (rep.mask[a] && visibleAtom(m, a)) { show[a] = 1; drawn[a] = 1; sel[a] = selected[a]; }
-    items.push({ ...base, ...look(rep), state: { show, style: new Uint8Array(n).fill(ATOM_STYLE[rep.style]), rgb: rep.rgb, sel, ribbon: noRibbon, reach } });
+    const style = new Uint8Array(n).fill(ATOM_STYLE[rep.style]);
+    if (!free) { items.push({ ...base, ...look(rep), state: { show, style, rgb: rep.rgb, sel, ribbon: noRibbon, reach } }); continue; }
+    for (const keep of [false, true]) {
+      const mine = part(show, keep);
+      if (mine.some(x => x)) items.push({ ...base, ...look(rep), noclip: keep, state: { show: mine, style, rgb: rep.rgb, sel: part(sel, keep), ribbon: noRibbon, reach } });
+    }
   }
   // the selected atoms nothing draws: a pink ball each; contacts, bonds and meters dashed
   const loose = new Uint8Array(n);
@@ -778,6 +805,7 @@ function placeLabels() {
     div.style.left = `${x}px`;
     div.style.top = `${y}px`;
   }
+  app.onDraw?.();  // the view was drawn: what follows it (the Clipping panel's side view)
 }
 
 // a distance (2 atoms), angle (3) or dihedral (4) and where to write it
@@ -951,12 +979,13 @@ function nearerAtom(m, atoms, x, y) {
 
 // a function giving an atom's [screen x, screen y, view z, pixels per Å], or null
 function projector() {
-  const w = canvas.clientWidth, h = canvas.clientHeight, [near] = camera.clip();
+  const w = canvas.clientWidth, h = canvas.clientHeight, [near, far] = camera.clip(), [front] = camera.range();
   const r = camera.rot, c = camera.center, dist = camera.distance;
   return (m, a) => {
     const px = m.pos[3 * a] - c[0], py = m.pos[3 * a + 1] - c[1], pz = m.pos[3 * a + 2] - c[2];
     const vz = r[6] * px + r[7] * py + r[8] * pz - dist;
-    if (vz > -near) return null;
+    // clipped away (an atom left out of clipping: only when behind the eye's own plane)
+    if (m.state.noclip[a] ? vz > -front : vz > -near || vz < -far) return null;
     const v = [r[0] * px + r[1] * py + r[2] * pz, r[3] * px + r[4] * py + r[5] * pz, vz];
     const [sx, sy, scale] = camera.screen(v, w, h);
     return [sx, sy, vz, scale];
@@ -1244,7 +1273,7 @@ function spectrum(topo) {
 
 // --- sessions: the page's state, saved with the models and put back ---------------------
 
-const ARRAYS = { sel: Uint8Array, constraint: Uint8Array, labels: Uint8Array };
+const ARRAYS = { sel: Uint8Array, constraint: Uint8Array, labels: Uint8Array, noclip: Uint8Array };
 function toB64(a) {
   const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
   let s = "";
@@ -1316,7 +1345,7 @@ async function restorePage(page) {
     if (!saved.state) continue;
     await load(m);
     if (m.topo.natoms !== saved.natoms) continue;
-    for (const [k, Type] of Object.entries(ARRAYS)) m.state[k] = fromB64(saved.state[k], Type);
+    for (const [k, Type] of Object.entries(ARRAYS)) if (saved.state[k]) m.state[k] = fromB64(saved.state[k], Type);  // (noclip: newer sessions)
     m.color = saved.color; m.tintAll = !!saved.tintAll; m.autoColor = false;
     if (saved.reps) {
       m.reps = saved.reps.map(r => {
@@ -1352,7 +1381,7 @@ const app = {
   state, camera, renderer, canvas,
   getJSON, post, busy, message, atomLabel, residueLabel, setColorBy,
   live, shownModels, currentModel, load, show, solo, reloadModel, selectIds, newModel, applyReps,
-  selected, selection, targets, select, clearSelection, visibleAtom, setSelectionColor, pocketSelection, pocketReps,
+  selected, selection, targets, select, clearSelection, visibleAtom, setNoClip, setSelectionColor, pocketSelection, pocketReps,
   rebuild, redraw, draw, flyTo, flyToView, cameraView, stopFlight, centerView, resetView, viewAll, bounds, measure, xyz,
   pick, inRect, unproject, nearerAtom, beginMove, rotateSelected, translateSelected, turnDihedral, endMove,
   setFrame, play, nframes, frameOf, updatePlayer, refreshContacts, refreshHbonds, TOKEN,
