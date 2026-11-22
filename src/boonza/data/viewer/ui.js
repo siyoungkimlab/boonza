@@ -2165,11 +2165,39 @@ export function setupUI(app) {
   // how the 2D drawing is laid out and what it shows.  All of it is about the
   // picture: none of it touches the structure
   const draw2D = { which: 0, rotate: 0, flip: "", branches: [], layout: 0,
-                   hydrogens: "none", stereo: false, dark: null };  // fmt: skip
+                   hydrogens: "none", stereo: false, dark: null,
+                   // the bond being swung: {i, j} with the j side the one that moves
+                   picked: null };  // fmt: skip
   // the layout is of one molecule: stepping to another starts its picture afresh
   function reset2D(keepWhich = true) {
     const which = keepWhich ? draw2D.which : 0;
-    Object.assign(draw2D, { which, rotate: 0, flip: "", branches: [], layout: 0 });
+    Object.assign(draw2D, { which, rotate: 0, flip: "", branches: [], layout: 0,
+                            picked: null });  // fmt: skip
+  }
+  // how far the picked bond is swung now
+  const swungBy = () => {
+    const p = draw2D.picked;
+    return p ? (draw2D.branches.find(b => b[0] === p.i && b[1] === p.j)?.[2] ?? 0) : 0;
+  };
+  function swingTo(degrees) {
+    const p = draw2D.picked;
+    if (!p) return;
+    const was = draw2D.branches.find(b => b[0] === p.i && b[1] === p.j);
+    if (was) was[2] = degrees; else draw2D.branches.push([p.i, p.j, degrees]);
+    refresh2D();
+  }
+  // the atoms on the far side of bond i-j, j's side: what swinging it moves
+  function sideOf(m, i, j) {
+    const seen = new Set([j]), stack = [j];
+    while (stack.length) {
+      const a = stack.pop();
+      for (const b of m.topo.bondsOf[a]) {
+        if (a === j && b === i) continue;
+        if (b === i) return null;  // a ring: no side of its own
+        if (!seen.has(b)) { seen.add(b); stack.push(b); }
+      }
+    }
+    return seen;
   }
   let pending2D = 0;
   async function refresh2D() {
@@ -2188,11 +2216,22 @@ export function setupUI(app) {
       if (ticket !== pending2D) return;
       const box = $("lig2d").querySelector(".lig2d-svg");
       box.innerHTML = out.svg;
-      say2D(`${out.name}  ·  click an atom to select it · drag a bond to swing it (the drawing only)`);
+      say2D(`${out.name}  ·  click an atom to select it · click a bond to swing it in the drawing`);
       out.coords.forEach(([x, y], k) => {
         const hit = el("div", { className: "hit", title: m.topo.atoms.name[out.atoms[k]] });
         Object.assign(hit.style, { left: `${x}px`, top: `${y}px` });
-        hit.onclick = e => app.select(m, [out.atoms[k]], e.shiftKey ? "toggle" : "set");
+        hit.onclick = e => {
+          // with a bond picked, an atom says which half should move
+          const p = draw2D.picked, a = out.atoms[k];
+          if (p && !e.shiftKey) {
+            const far = sideOf(m, p.i, p.j);
+            if (far && a !== p.i && a !== p.j) {
+              if (!far.has(a)) flipSide(m);
+              return;
+            }
+          }
+          app.select(m, [a], e.shiftKey ? "toggle" : "set");
+        };
         box.append(hit);
       });
       // a handle on each bond a branch can be swung about, to pull apart groups the
@@ -2201,11 +2240,13 @@ export function setupUI(app) {
       for (const [i, j] of rotatableBonds(m, at)) {
         const [xi, yi] = at.get(i), [xj, yj] = at.get(j);
         const A = m.topo.atoms.name;
-        const turn = el("div", { className: "turn",
-                                 title: `drag to swing ${A[j]} and what hangs off it, `
-                                   + "in the drawing" });  // fmt: skip
+        const p = draw2D.picked;
+        const on = p && ((p.i === i && p.j === j) || (p.i === j && p.j === i));
+        const turn = el("div", { className: `turn${on ? " on" : ""}`,
+                                 title: on ? "click again: the other side swings"
+                                   : `click to swing ${A[i]}-${A[j]} in the drawing` });  // fmt: skip
         Object.assign(turn.style, { left: `${(xi + xj) / 2}px`, top: `${(yi + yj) / 2}px` });
-        turn.onpointerdown = e => startSwing(e, m, [i, j], turn);
+        turn.onclick = e => pickBond(e, m, [i, j]);
         box.append(turn);
       }
       tools2D(m, out);
@@ -2270,6 +2311,46 @@ export function setupUI(app) {
     b("copy", "copy the drawing as SVG: it pastes into Illustrator or Inkscape as "
       + "shapes, not as pixels", () => copy2D(out));  // fmt: skip
     b("svg", `save ${out.name}.svg, which stays sharp at any size`, () => save2D(out));
+    swingRow(m, out);
+  }
+
+  // the picked bond's own row: which half of it swings, and how far
+  function swingRow(m, out) {
+    const p = draw2D.picked;
+    const row = $("lig2d").querySelector(".lig2d-swing");
+    row.innerHTML = "";
+    row.hidden = !p;
+    if (!p) return;
+    const A = m.topo.atoms.name;
+    const far = sideOf(m, p.i, p.j);
+    if (!far) {  // the picked bond turned out to close a ring: nothing can swing
+      row.append(el("span", { className: "which" }, `${A[p.i]}-${A[p.j]} is in a ring: it has no side to swing`));
+      return;
+    }
+    const moving = far.size - 1;
+    const side = el("button", { title: "swing the other half of the bond instead" },
+                    `${A[p.i]}–${A[p.j]} ⇄`);  // fmt: skip
+    side.onclick = () => flipSide(m);
+    const at = swungBy();
+    const slider = el("input", { type: "range", min: -180, max: 180, step: 1, value: Math.round(at),
+                                 title: `swing ${A[p.j]} and the ${moving} atom${moving === 1 ? "" : "s"} on its side` });  // fmt: skip
+    const readout = el("span", { className: "which" }, `${Math.round(at)}°`);
+    // a server round trip per pixel of the slider would be most of them wasted, so
+    // they are spaced out; the last one always goes, or it could stop short of where
+    // the slider was let go
+    let waiting = null, latest = at;
+    const send = () => { waiting = null; swingTo(latest); };
+    slider.oninput = () => {
+      latest = +slider.value;
+      readout.textContent = `${latest}°`;
+      if (!waiting) waiting = setTimeout(send, 60);
+    };
+    slider.onchange = () => { if (waiting) clearTimeout(waiting); latest = +slider.value; send(); };
+    const zero = el("button", { title: "put this bond back where the layout had it" }, "0");
+    zero.onclick = () => { slider.value = 0; readout.textContent = "0°"; swingTo(0); };
+    const done = el("button", { title: "leave this bond alone" }, "✕");
+    done.onclick = () => { draw2D.picked = null; refresh2D(); };
+    row.append(side, slider, readout, zero, done);
   }
   // the drawing is vector: it is copied as SVG, which an illustrator opens as shapes
   async function copy2D(out) {
@@ -2334,34 +2415,38 @@ export function setupUI(app) {
     return false;
   }
 
-  // dragging a bond swings that branch of the DRAWING about it, to pull apart groups
-  // the layout has put on top of each other.  The structure is not touched: a 2D
-  // diagram is a picture, and a real torsion is turned in the view itself (Alt + drag,
-  // or the Dihedral field below it)
-  let swinging = null;
-  function startSwing(e, m, atoms, handle) {
+  // Clicking a bond picks it; the slider under the drawing then swings one side of
+  // it, by as much as is wanted and back again.  Dragging the bond itself was all
+  // there was before, and a drag is a poor way to land on an angle.
+  //
+  // Only the DRAWING moves.  A 2D diagram is a picture: a real torsion is turned in
+  // the view itself (Alt + drag, or the Dihedral field below it).
+  function pickBond(e, m, atoms) {
     e.preventDefault();
     e.stopPropagation();
-    handle.setPointerCapture(e.pointerId);
-    const was = draw2D.branches.find(b => b[0] === atoms[0] && b[1] === atoms[1]);
-    swinging = { m, atoms, x: e.clientX, from: was ? was[2] : 0, now: was ? was[2] : 0 };
-    const A = m.topo.atoms.name;
-    say2D(`${A[atoms[0]]}-${A[atoms[1]]}  ·  drag to swing it in the drawing`);
-  }
-  function moveSwing(e) {
-    if (!swinging) return;
-    swinging.now = swinging.from + (e.clientX - swinging.x) * 1.2;
-    const [i, j] = swinging.atoms;
-    const was = draw2D.branches.find(b => b[0] === i && b[1] === j);
-    if (was) was[2] = swinging.now; else draw2D.branches.push([i, j, swinging.now]);
-    const A = swinging.m.topo.atoms.name;
-    say2D(`${A[i]}-${A[j]}  ·  ${Math.round(((swinging.now % 360) + 360) % 360)}°  ·  the drawing only`);
+    const [i, j] = atoms;
+    const p = draw2D.picked;
+    // the same bond again: the other side of it moves instead
+    if (p && ((p.i === i && p.j === j) || (p.i === j && p.j === i))) {
+      flipSide(m);
+      return;
+    }
+    draw2D.picked = { i, j };
     refresh2D();
   }
-  const endSwing = () => { swinging = null; };
-  $("lig2d").addEventListener("pointermove", moveSwing);
-  $("lig2d").addEventListener("pointerup", endSwing);
-  $("lig2d").addEventListener("pointercancel", endSwing);
+  // which side swings.  The bond is written the other way round and the angle negated,
+  // which leaves the two halves in the same places relative to each other and moves
+  // the other one from here on.  The drawing as a whole may come out turned: it is
+  // laid out again around its own middle, and that middle has moved
+  function flipSide(m) {
+    const p = draw2D.picked;
+    if (!p) return;
+    const at = swungBy();
+    draw2D.branches = draw2D.branches.filter(b => !(b[0] === p.i && b[1] === p.j));
+    draw2D.picked = { i: p.j, j: p.i };
+    if (at) draw2D.branches.push([p.j, p.i, -at]);
+    refresh2D();
+  }
 
 
   // the footer editing area: what the selection is, and its geometry to edit

@@ -441,3 +441,14 @@ canvas.sideview { display: block; border: 1px solid var(--line); border-radius: 
 .lig2d-tools button.on { background: var(--accent-soft); border-color: var(--accent);
   color: var(--accent); }
 .lig2d-tools .which { font-size: 10.5px; color: var(--muted); padding: 0 2px; }
+
+/* the picked bond's row: which half swings, and how far */
+.lig2d-swing { display: flex; gap: 5px; align-items: center; padding: 0 6px 6px; }
+.lig2d-swing[hidden] { display: none; }
+.lig2d-swing button { padding: 1px 5px; font-size: 11px; line-height: 16px;
+  background: var(--button); color: var(--text); border: 1px solid var(--line);
+  border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.lig2d-swing button:hover { background: var(--hover); border-color: var(--accent); }
+.lig2d-swing input[type=range] { flex: 1; min-width: 70px; accent-color: var(--accent); }
+.lig2d-svg .turn.on { opacity: 1; border-style: solid; border-color: var(--accent);
+  background: var(--accent-soft); }
