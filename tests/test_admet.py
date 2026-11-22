@@ -333,6 +333,12 @@ def test_every_figure_is_copied_as_vector_with_no_background():
     assert body.count("data-copy") == 5 and body.count("data-svg") == 5
     for figure in ('data-figure="2PM1"', 'data-figure="plot"', 'data-figure="BOILED-Egg"'):
         assert figure in page, figure
+    # the egg's pair sits where every drawing's does, the top right of its own card,
+    # rather than in a row under it
+    css = page[page.index("<style>") : page.index("</style>")]
+    assert ".struct .figbtns, .egg .figbtns { position: absolute; top: 5px; right: 5px;" in css
+    assert ".card.egg { position: relative; }" in css
+    assert "figrow" not in page
     script = page[page.index("<script>") :]
     assert "'image/svg+xml'" in script  # vector on the clipboard
     assert "toBlob" not in script and "canvas" not in script  # nothing is rasterised

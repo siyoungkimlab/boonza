@@ -850,11 +850,11 @@ tbody tr:hover { background: var(--card); }
    carries a button; it shows when the drawing is pointed at */
 .figbtns { display: inline-flex; gap: 4px; }
 .figbtns button { padding: 2px 8px; font-size: 11px; }
-.struct .figbtns { position: absolute; top: 5px; right: 5px; opacity: 0;
+.struct .figbtns, .egg .figbtns { position: absolute; top: 5px; right: 5px; opacity: 0;
   transition: opacity .12s; }
-.struct:hover .figbtns, .struct:focus-within .figbtns { opacity: 1; }
-@media (hover: none) { .struct .figbtns { opacity: 1; } }
-.figrow { display: flex; justify-content: flex-end; margin-top: 6px; }
+.struct:hover .figbtns, .struct:focus-within .figbtns,
+.egg:hover .figbtns, .egg:focus-within .figbtns { opacity: 1; }
+@media (hover: none) { .struct .figbtns, .egg .figbtns { opacity: 1; } }
 .axes .figbtns { margin-left: auto; }
 :root[data-theme="dark"] .light-only { display: none; }
 :root[data-theme="light"] .dark-only { display: none; }
@@ -876,6 +876,7 @@ tbody tr:hover { background: var(--card); }
 .ok { color: var(--good); }
 .note { background: var(--bg); border-left: 3px solid var(--accent); padding: 7px 11px;
   margin: 8px 0; font-size: 12.5px; }
+.card.egg { position: relative; }
 .egg svg { display: block; margin: 0 auto; max-width: 620px; }
 circle.pt { cursor: pointer; }
 circle.pt:hover { fill: var(--accent); r: 6; }
@@ -1281,8 +1282,8 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
     if points:
         out.append("<h2>Passive absorption and brain penetration</h2>")
         buttons = _figure_buttons("the BOILED-Egg")
-        out.append('<div class="card egg" data-figure="BOILED-Egg">' + egg_svg(points)
-                   + f'<div class="figrow">{buttons}</div></div>')  # fmt: skip
+        out.append(f'<div class="card egg" data-figure="BOILED-Egg">{buttons}'
+                   + egg_svg(points) + "</div>")  # fmt: skip
 
     # a panel per design
     out.append("<h2>Every design</h2>")
