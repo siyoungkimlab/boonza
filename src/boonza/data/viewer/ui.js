@@ -2206,10 +2206,28 @@ export function setupUI(app) {
       const atoms = names.filter(x => /^atom-\d+$/.test(x)).map(x => +x.slice(5));
       if (atoms.length && atoms.every(a => mine.has(a))) parts.push(node);
     }
+    // the atom spots and the bond handles are not in the drawing but over it, so a
+    // transform does not reach them: they are put where their atoms have gone, or
+    // they sit there through the turn as dots over a molecule that has moved out from
+    // under them
+    const marks = [];
+    for (const node of $("lig2d").querySelectorAll(".lig2d-svg .hit, .lig2d-svg .turn")) {
+      const on = String(node.dataset.on || "").split(",").map(Number);
+      const [bx, by] = String(node.dataset.at || "").split(",").map(Number);
+      if (!on.length || !Number.isFinite(bx)) continue;
+      if (!on.every(a => place.has(a) && mine.has(place.get(a)))) continue;
+      marks.push({ node, bx, by });
+    }
     return degrees => {
       const by = -(degrees - from);
       for (const node of parts) {
         node.setAttribute("transform", `rotate(${by.toFixed(2)} ${pivot[0]} ${pivot[1]})`);
+      }
+      const a = (by * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
+      for (const mark of marks) {
+        const dx = mark.bx - pivot[0], dy = mark.by - pivot[1];
+        mark.node.style.left = `${pivot[0] + dx * cos - dy * sin}px`;
+        mark.node.style.top = `${pivot[1] + dx * sin + dy * cos}px`;
       }
     };
   }
@@ -2291,6 +2309,8 @@ export function setupUI(app) {
       say2D(`${whose}${out.name}  ·  click an atom to select it · click a bond to swing it`);
       out.coords.forEach(([x, y], k) => {
         const hit = el("div", { className: "hit", title: m.topo.atoms.name[out.atoms[k]] });
+        hit.dataset.on = String(out.atoms[k]);
+        hit.dataset.at = `${x},${y}`;
         Object.assign(hit.style, { left: `${x}px`, top: `${y}px` });
         hit.onclick = e => {
           // with a bond picked, an atom says which half should move
@@ -2317,6 +2337,8 @@ export function setupUI(app) {
         const turn = el("div", { className: `turn${on ? " on" : ""}`,
                                  title: on ? "click again: the other side swings"
                                    : `click to swing ${A[i]}-${A[j]} in the drawing` });  // fmt: skip
+        turn.dataset.on = `${i},${j}`;
+        turn.dataset.at = `${(xi + xj) / 2},${(yi + yj) / 2}`;
         Object.assign(turn.style, { left: `${(xi + xj) / 2}px`, top: `${(yi + yj) / 2}px` });
         turn.onclick = e => pickBond(e, m, [i, j]);
         box.append(turn);
