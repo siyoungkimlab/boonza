@@ -424,7 +424,7 @@ export function setupUI(app) {
   ];
   // View | Add Surface: a surface representation of the selected atoms, else of each
   // shown model's receptor (else of all but its solvent)
-  const SURFACES = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"], ["white", "One Color"]];
+  const SURFACES = [["hydrophobic", "Hydrophobic"], ["electrostatic", "Electrostatic"], ["white", "One Color"]];
   const surfaceItems = () => [
     ...SURFACES.map(([kind, label]) => ({ label, run: () => addSurface(kind) })),
     "-",
@@ -2400,7 +2400,7 @@ export function setupUI(app) {
           + `drawing: rep SEL [${STYLE_WORDS}] [COLOR] adds a representation · show SEL [STYLE] · hide SEL · `
           + "style STYLE [SEL] (those atoms in that style only) · color SCHEME [SEL] · label name|element|residue|charge|off [SEL] · "
           + "material opaque|glossy|matte|transparent|ghost · opacity 0.5 (the current representation's) · "
-          + "surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine] · center [SEL] · fit · focus · reset\n"
+          + "surface [hydrophobic|electrostatic|COLOR] [coarse|standard|fine] · center [SEL] · fit · focus · reset\n"
           + "editing: select SEL · minimize · dynamics [PS] · ligandff gaff|openff-2.2.1|openff-2.3.0 [auto|am1bcc|nagl] · undo · redo · open PATH|PDB-ID · save PATH\n"
           + "models: model 2|1,3|NAME|all shows those alone · end a command with in 2 (or in 1,3, in NAME) to act on those models only");
         return;
@@ -2487,11 +2487,11 @@ export function setupUI(app) {
       case "save": await savePath(arg); return;
       case "focus": await focusLigand(); return;
       case "fit": app.viewAll(); return;
-      case "surface": {  // surface [electrostatic|hydrophobic|COLOR] [coarse|standard|fine]
+      case "surface": {  // surface [hydrophobic|electrostatic|COLOR] [coarse|standard|fine]
         const grids = { coarse: 1.0, standard: 0.5, fine: 0.3 };
         for (const w of rest) if (w in grids) surfaceGrid(grids[w]);
         const kind = rest.find(w => ["electrostatic", "hydrophobic"].includes(w) || (named(w) && !(w in grids)));
-        if (kind || !rest.length) addSurface(kind || "electrostatic");
+        if (kind || !rest.length) addSurface(kind || "hydrophobic");
         return;
       }
       case "reset": app.resetView(); return;
@@ -3748,7 +3748,7 @@ export function setupUI(app) {
     ["stick", "Sticks", [["all", "sticks", "element"]]],
     ["ballstick", "Ball & stick", [["all", "ballstick", "element"]]],
     ["space", "Spheres", [["all", "spheres", "element"]]],
-    ["surface", "Surface + ligand", [["receptor", "surface", "electrostatic"], ["ligand", "sticks", "carbon"]]],
+    ["surface", "Surface + ligand", [["receptor", "surface", "hydrophobic"], ["ligand", "sticks", "carbon"]]],
   ];
   const MODEL_COLORS = [["default", "Default"], ["chain", "By chain"], ...CARBONS.map(c => [c, c])];
 
@@ -3815,7 +3815,7 @@ export function setupUI(app) {
                          ["bfactor", "B-factor"], ["element/bfactor", "Element, carbons by B-factor"]];
   const SCHEMES_RIBBON = [["ss", "Secondary structure"], ["chain", "Chain"], ["spectrum", "Spectrum (N to C)"],
                           ["restype", "Residue type"], ["resname", "Residue name"], ["bfactor", "B-factor"]];
-  const SCHEMES_SURFACE = [["electrostatic", "Electrostatic"], ["hydrophobic", "Hydrophobic"]];
+  const SCHEMES_SURFACE = [["hydrophobic", "Hydrophobic"], ["electrostatic", "Electrostatic"]];
   const rgbCss = c => `rgb(${c.map(x => Math.round(x * 255)).join(",")})`;
 
   function chipColor(rep) {
@@ -3895,6 +3895,15 @@ export function setupUI(app) {
     box.append(el("div", { className: "lab" }, "Style"), seg);
     // color: a scheme, carbons of a color, or one color
     const schemes = rep.style === "surface" ? SCHEMES_SURFACE : app.isRibbon(rep) ? SCHEMES_RIBBON : SCHEMES_ATOMS;
+    // a surface has only these two schemes, so they are both on show and a click
+    // apart, the way Style and Material are chosen; a list of two hid half of what a
+    // surface is for behind a menu.  Neither is lit when the surface wears one color,
+    // which is the dot below
+    const segScheme = el("div", { className: "seg" });
+    for (const [k, label] of schemes) {
+      segScheme.append(button(label, () => setRepColor(m, rep, k),
+                              !rep.custom && rep.color === k ? "on" : ""));  // fmt: skip
+    }
     const scheme = el("select");
     scheme.add(new Option(rep.custom ? "colors of its own" : schemes.some(([k]) => k === rep.color.split("/")[0]) ? "" : `${colorName(rep.color)}`, "", false, true));
     for (const [k, label] of schemes) scheme.add(new Option(label, k, false, !rep.custom && (rep.color === k || (k === "element" && rep.color.startsWith("element") && rep.color !== "element/bfactor"))));
@@ -3909,7 +3918,8 @@ export function setupUI(app) {
       }
       return d;
     };
-    box.append(el("div", { className: "lab" }, "Color"), el("div", { className: "row" }, scheme));
+    box.append(el("div", { className: "lab" }, "Color"),
+               rep.style === "surface" ? segScheme : el("div", { className: "row" }, scheme));  // fmt: skip
     if (!app.isRibbon(rep) && rep.style !== "surface") box.append(dots("carbons", CARBONS, c => `element/${c}`, c => `element, ${c} carbons`));
     box.append(dots("one color", SINGLE, c => c, c => c));
     // material: how it shines and how opaque it is; the slider sets opacity apart from it
@@ -4074,7 +4084,7 @@ export function setupUI(app) {
     const was = rep.style;
     rep.style = style;
     // a color that means nothing in the new style: that style's usual one
-    if (style === "surface" && !["electrostatic", "hydrophobic"].includes(rep.color) && !named(rep.color)) rep.color = "electrostatic";
+    if (style === "surface" && !["electrostatic", "hydrophobic"].includes(rep.color) && !named(rep.color)) rep.color = "hydrophobic";
     else if (was === "surface" && ["electrostatic", "hydrophobic"].includes(rep.color)) rep.color = app.isRibbon(rep) ? "ss" : "element";
     rep.version++;
     app.colorRep(m, rep);

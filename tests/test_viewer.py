@@ -3768,3 +3768,28 @@ def test_the_html_button_sits_beside_the_sdf_one():
     own = own[: own.index("\n  }\n")]
     assert "ADME Report" in own and "saveReportPanel" in own
     assert "api/series_report" in ui and "api/series_report_save" in ui
+
+
+def test_a_surface_offers_its_two_schemes_as_buttons_and_starts_hydrophobic():
+    """A surface has only two colour schemes, and a list of two hid half of what a
+    surface is for behind a menu: they are buttons now, lit like Style and Material
+    beside them.  A new one is hydrophobic -- it needs no charges assigned, so it
+    draws at once, where an electrostatic surface waits for Amber ff19SB."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    # the scheme lists lead with the default, as the comment above them says they do
+    assert (
+        'SCHEMES_SURFACE = [["hydrophobic", "Hydrophobic"], ["electrostatic", "Electrostatic"]]'
+        in ui
+    )
+    assert 'SURFACES = [["hydrophobic", "Hydrophobic"], ["electrostatic", "Electrostatic"]' in ui
+    # the panel builds buttons for a surface and keeps the list for the other styles,
+    # which have six schemes or more
+    assert 'rep.style === "surface" ? segScheme : el("div", { className: "row" }, scheme)' in ui
+    seg = ui[ui.index("const segScheme = el(") :]
+    seg = seg[: seg.index("const scheme = el(")]
+    assert "setRepColor(m, rep, k)" in seg and '"on" : ""' in seg
+    # every way of making one starts hydrophobic
+    assert 'rep.color = "hydrophobic"' in ui
+    assert 'addSurface(kind || "hydrophobic")' in ui
+    assert '["receptor", "surface", "hydrophobic"]' in ui
+    assert 'rep.color = "electrostatic"' not in ui
