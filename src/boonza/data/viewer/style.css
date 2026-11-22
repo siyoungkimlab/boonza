@@ -432,15 +432,19 @@ canvas.sideview { display: block; border: 1px solid var(--line); border-radius: 
   background: var(--accent-soft); }
 
 /* the 2D drawing's own controls: which ligand, how it is turned, what it shows */
-.lig2d-tools { display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
-  padding: 4px 6px 6px; border-top: 1px solid var(--line); }
-.lig2d-tools button { min-width: 22px; padding: 1px 5px; font-size: 11px; line-height: 16px;
-  background: var(--button); color: var(--text); border: 1px solid var(--line);
-  border-radius: 4px; cursor: pointer; }
+/* one line: there are a dozen of them and a wrapped row cost the drawing its height.
+   Narrower than the panel they simply fit; narrower still they scroll sideways, so
+   none of them can become unreachable */
+.lig2d-tools { display: flex; flex-wrap: nowrap; gap: 2px; align-items: center;
+  padding: 4px 5px 6px; border-top: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: thin; }
+.lig2d-tools button { flex: none; min-width: 0; padding: 1px 3px; font-size: 10.5px;
+  line-height: 16px; background: var(--button); color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
 .lig2d-tools button:hover { background: var(--hover); border-color: var(--accent); }
 .lig2d-tools button.on { background: var(--accent-soft); border-color: var(--accent);
   color: var(--accent); }
-.lig2d-tools .which { font-size: 10.5px; color: var(--muted); padding: 0 2px; }
+.lig2d-tools .which { flex: none; font-size: 10px; color: var(--muted); padding: 0 1px; }
 
 /* the picked bond's row: which half swings, and how far */
 .lig2d-swing { display: flex; gap: 5px; align-items: center; padding: 0 6px 6px; }

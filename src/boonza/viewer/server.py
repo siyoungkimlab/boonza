@@ -7,6 +7,7 @@ The page (``data/viewer``, plain WebGL2, no libraries) only draws.  It asks:
                               DSSP, default representations (JSON, once)
     GET  /api/frame?m=M&i=N   positions of frame N as little-endian float32
                               (natoms * 3), after Glue; the cell in X-Box
+    GET  /api/ligands       {"ms": "0,1"} -> every ligand of those models, to step through
     GET  /api/ss?m=M&i=N      DSSP (simplified: H, E, C) of frame N
     GET  /api/contacts?m=M&i=N   the ligand's polar contacts in frame N
     GET  /api/smiles?m=M&sel=a,b  SMILES of the molecules of those atoms (default: ligands)
@@ -174,6 +175,25 @@ class _Handler(BaseHTTPRequestHandler):
                        headers={"X-Box": json.dumps(box.tolist())})  # fmt: skip
         elif url.path == "/api/ss":
             self._json({"ss": self.viewer.session(arg("m")).ss(arg("i"))})
+        elif url.path == "/api/ligands":
+            # every ligand of every model asked for, in one answer: the 2D panel steps
+            # through all of them, and a series is a model per design
+            out = []
+            for text in query.get("ms", [""])[0].split(","):
+                if not text:
+                    continue
+                m = int(text)
+                if not 0 <= m < len(self.viewer.models) or self.viewer.models[m].closed:
+                    continue
+                try:
+                    found = self.viewer.session(m).ligand_molecules()
+                except Exception:  # one model without a readable ligand is not fatal
+                    continue
+                name = self.viewer.models[m].name
+                for k, x in enumerate(found):
+                    out.append({"m": m, "k": k, "label": x["label"], "size": x["size"],
+                                "model": name})  # fmt: skip
+            self._json({"ligands": out})
         elif url.path == "/api/ligand2d":
             sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
             dark = query.get("dark", ["1"])[0] == "1"
