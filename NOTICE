@@ -352,6 +352,10 @@ fitting itself: the measurements were used as training data and no part of
 the collection is reproduced.  Unlike the rest of boonza this file is not
 under the MIT licence; it is used and redistributed under CC BY 4.0.
 
+The forest was fitted by the offline screening package of Zachary J
+Hagedorn, from which boonza takes the method.  The trees are his, converted
+here from Python literals to gzipped JSON without change.
+
 ------------------------------------------------------------------------
 src/boonza/data/admet/logs_forest.json.gz is a random forest for aqueous
 solubility (log S), fitted from AqSolDB and stored the same way.  AqSolDB is
@@ -364,6 +368,10 @@ licence requires it:
   aqueous solubility and 2D descriptors for a diverse set of compounds",
   Scientific Data 2019, 6, 143.  doi:10.7910/DVN/OVHAW8
   Dedicated CC0 1.0: https://creativecommons.org/publicdomain/zero/1.0/
+
+The forest was fitted by the offline screening package of Zachary J
+Hagedorn, from which boonza takes the method.  The trees are his, converted
+here from Python literals to gzipped JSON without change.
 
 ------------------------------------------------------------------------
 src/boonza/data/admet/dimorphite_sites.json is the ionisable-substructure
