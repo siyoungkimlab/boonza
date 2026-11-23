@@ -331,3 +331,63 @@ LICENSES/GPL-2.0.txt.  Unlike the rest of boonza, it is not under the MIT
 licence.  boonza reads it as data (`boonza.sirah.backmap` without a
 reference structure, `boonza.sirah.from_beads`); the code that follows its
 instructions, `src/boonza/sirah/backmapping.py`, is boonza's own.
+
+------------------------------------------------------------------------
+src/boonza/data/admet/pka_forest.json.gz is a random forest that predicts
+the pKa of an ionisable atom from its local environment, which
+`src/boonza/viewer/admet.py` walks to price the sites its own SMARTS table
+locates.  It is **adapted material**: a model fitted from the pKa collection
+of Baltruschat & Czodrowski, which is released under the Creative Commons
+Attribution 4.0 International licence.  The collection itself is not
+included -- only the fitted model, as decision trees in flat arrays.
+
+  Machine-learning meets pKa, Baltruschat M. & Czodrowski P.
+  github.com/czodrowskilab/Machine-learning-meets-pKa
+  doi:10.5281/zenodo.7884512
+  Licensed CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
+
+CC BY 4.0 permits redistribution, including of adapted material, with
+attribution and an indication that changes were made.  The change is the
+fitting itself: the measurements were used as training data and no part of
+the collection is reproduced.  Unlike the rest of boonza this file is not
+under the MIT licence; it is used and redistributed under CC BY 4.0.
+
+------------------------------------------------------------------------
+src/boonza/data/admet/logs_forest.json.gz is a random forest for aqueous
+solubility (log S), fitted from AqSolDB and stored the same way.  AqSolDB is
+released under CC0 1.0, a public-domain dedication, which attaches no
+condition to redistribution of either the data or a model fitted from it.
+The reference is given because the authors ask for it, not because the
+licence requires it:
+
+  Sorkun M. C., Khetan A. & Er S., "AqSolDB, a curated reference set of
+  aqueous solubility and 2D descriptors for a diverse set of compounds",
+  Scientific Data 2019, 6, 143.  doi:10.7910/DVN/OVHAW8
+  Dedicated CC0 1.0: https://creativecommons.org/publicdomain/zero/1.0/
+
+------------------------------------------------------------------------
+src/boonza/data/admet/dimorphite_sites.json is the ionisable-substructure
+table of Dimorphite-DL, which boonza uses only to find ionisable atoms its
+own table misses.  It is distributed under the Apache License 2.0, a copy of
+which ships beside it as src/boonza/data/admet/LICENSE.dimorphite-dl.
+
+  Copyright 2018 Jacob D. Durrant, University of Pittsburgh.
+  github.com/durrantlab/dimorphite_dl
+  Ropp P. J., Kaminsky J. C., Yablonski S. & Durrant J. D.,
+  "Dimorphite-DL: an open-source program for enumerating the ionization
+  states of drug-like small molecules", J Cheminform 2019, 11, 14.
+  doi:10.1186/s13321-019-0336-9
+
+  Licensed under the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.  You may obtain
+  a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+
+As section 4(b) of that licence requires, the changes from the original
+file (dimorphite_dl/smarts/site_substructures.smarts) are stated:
+transcribed from tab-separated text into JSON; entries whose pKa mean is the
+-1000.0 sentinel dropped, since only sites carrying a real value are used;
+the mean and standard deviation kept, the ordering unchanged, and no SMARTS
+pattern altered.  The pKa means are carried but never used as values: a site
+found this way is priced by pka_forest.json.gz.  No other part of
+Dimorphite-DL is included.  Unlike the rest of boonza this file is not under
+the MIT licence; it is used and redistributed under the Apache License 2.0.
