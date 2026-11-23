@@ -1,0 +1,740 @@
+{
+ "sites": [
+  {
+   "name": "Hydrazoic_acid",
+   "smarts": "[H]-[N+0:1]=[N+:2]=[N+0:3]-[H]",
+   "values": [
+    [
+     3,
+     4.65,
+     0.071
+    ]
+   ]
+  },
+  {
+   "name": "Azide",
+   "smarts": "[N+0:1]=[N+:2]=[N+0:3]-[H]",
+   "values": [
+    [
+     2,
+     4.65,
+     0.071
+    ]
+   ]
+  },
+  {
+   "name": "N_nitro_amide",
+   "smarts": "[NX3+0;H1;$([NX3]-[NX3](=[OX1])-[OX2]),$([NX3]-[N+](=[OX1])-[OX1-]);$([NX3]-[CX3]=[OX1]):1]-[H]",
+   "values": [
+    [
+     0,
+     3.925,
+     0.912
+    ]
+   ]
+  },
+  {
+   "name": "Nitroguanidine",
+   "smarts": "[N:1]-[C;$(C-[NX3]-[NX3](=[OX1])-[OX2]),$(C-[NX3]-[N+](=[OX1])-[OX1-]):2](-[N:3])=[NX2:4]-[H:5]",
+   "values": [
+    [
+     3,
+     -0.98,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "Nitroimine_guanidine",
+   "smarts": "[N:1]-[C:2](-[N:3])=[NX2;$(N-[NX3](=[OX1])-[OX2]),$(N-[N+](=[OX1])-[OX1-]):4]",
+   "values": [
+    [
+     3,
+     1.56,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "AmidineGuanidine1",
+   "smarts": "[N:1]-[C:2](-[N:3])=[NX2:4]-[H:5]",
+   "values": [
+    [
+     3,
+     12.025,
+     1.594
+    ]
+   ]
+  },
+  {
+   "name": "Amidine_carbon_substituted",
+   "smarts": "[#6,#1:1]-[CX3:2](-[NX3+0;!$(N-[!#6;!#1]);!$(N-c);!$(N-C=[O,S]);!$(N-C#N);!$(N-S(=O)=O):3])=[NX2+0;!$(N-[!#6;!#1]);!$(N-c);!$(N-C=[O,S,N]);!$(N-C#N);!$(N-S(=O)=O):4]",
+   "values": [
+    [
+     3,
+     12.06,
+     0.651
+    ]
+   ]
+  },
+  {
+   "name": "AmidineGuanidine2",
+   "smarts": "[C:1](-[N:2])=[NX2+0;!$(N-C#N);!$(N-S(=O)=O);!$(N-[OX2]):3]",
+   "values": [
+    [
+     2,
+     10.036,
+     2.131
+    ]
+   ]
+  },
+  {
+   "name": "Sulfate",
+   "smarts": "[SX4:1](=[O:2])(=[O:3])([O:4]-[C,c,N,n:5])-[OX2:6]-[H]",
+   "values": [
+    [
+     5,
+     -2.36,
+     1.305
+    ]
+   ]
+  },
+  {
+   "name": "Sulfonate",
+   "smarts": "[SX4:1](=[O:2])(=[O:3])(-[C,c,N,n:4])-[OX2:5]-[H]",
+   "values": [
+    [
+     4,
+     -1.818,
+     1.409
+    ]
+   ]
+  },
+  {
+   "name": "Sulfinic_acid",
+   "smarts": "[SX3:1](=[O:2])-[O:3]-[H]",
+   "values": [
+    [
+     2,
+     1.793,
+     0.437
+    ]
+   ]
+  },
+  {
+   "name": "Phenyl_carboxyl",
+   "smarts": "[c,n,o:1]-[C:2](=[O:3])-[O:4]-[H]",
+   "values": [
+    [
+     3,
+     3.463,
+     1.252
+    ]
+   ]
+  },
+  {
+   "name": "Carboxyl",
+   "smarts": "[C:1](=[O:2])-[O:3]-[H]",
+   "values": [
+    [
+     2,
+     3.457,
+     1.287
+    ]
+   ]
+  },
+  {
+   "name": "Thioic_acid",
+   "smarts": "[C,c,N,n:1](=[O,S:2])-[SX2,OX2:3]-[H]",
+   "values": [
+    [
+     2,
+     0.678,
+     1.497
+    ]
+   ]
+  },
+  {
+   "name": "Phenyl_Thiol",
+   "smarts": "[c,n:1]-[SX2:2]-[H]",
+   "values": [
+    [
+     1,
+     4.978,
+     2.614
+    ]
+   ]
+  },
+  {
+   "name": "Alkyl_thiol",
+   "smarts": "[CX4;!$([CX4]~[!#6;!#1;!#16]);!$([CX4]-[#6]~[!#6;!#1;!#16]);!$([CX4]-[#6]=[#6]);!$([CX4]-[#6]#[#6]);!$([CX4]-c):1]-[SX2:2]-[H]",
+   "values": [
+    [
+     1,
+     10.814,
+     0.301
+    ]
+   ]
+  },
+  {
+   "name": "Thiol",
+   "smarts": "[C,N:1]-[SX2:2]-[H]",
+   "values": [
+    [
+     1,
+     9.124,
+     1.332
+    ]
+   ]
+  },
+  {
+   "name": "Phosphate",
+   "smarts": "[PX4:1](=[O:2])(-[OX2:3]-[H])(-[O+0:4])-[OX2:5]-[H]",
+   "values": [
+    [
+     2,
+     2.418,
+     1.109
+    ],
+    [
+     5,
+     6.505,
+     0.951
+    ]
+   ]
+  },
+  {
+   "name": "Internal_phosphate_polyphos_chain",
+   "smarts": "[$([PX4:1](=O)([OX2][PX4](=O)([OX2])(O[H]))([OX2][PX4](=O)(O[H])([OX2])))][O:2]-[H]",
+   "values": [
+    [
+     1,
+     0.9,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "Initial_phosphate_like_in_ATP_ADP",
+   "smarts": "[$([PX4:1]([OX2][C,c,N,n])(=O)([OX2][PX4](=O)([OX2])(O[H])))]O-[H]",
+   "values": [
+    [
+     1,
+     2.418,
+     1.109
+    ]
+   ]
+  },
+  {
+   "name": "Phosphonate",
+   "smarts": "[PX4:1](=[O:2])(-[OX2:3]-[H])(-[C,c,N,n:4])-[OX2:5]-[H]",
+   "values": [
+    [
+     2,
+     1.884,
+     0.593
+    ],
+    [
+     5,
+     7.247,
+     0.851
+    ]
+   ]
+  },
+  {
+   "name": "Phenol_unactivated",
+   "smarts": "[c:1]1(-[O:2]-[H])[cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])]):3][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])]):4][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])]):5][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])]):6][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])]):7]1",
+   "values": [
+    [
+     1,
+     10.086,
+     0.143
+    ]
+   ]
+  },
+  {
+   "name": "Phenol",
+   "smarts": "[c,n,o:1]-[O:2]-[H]",
+   "values": [
+    [
+     1,
+     7.065,
+     3.277
+    ]
+   ]
+  },
+  {
+   "name": "Peroxide1",
+   "smarts": "[O:1]([$(C=O),$(C[Cl]),$(CF),$(C[Br]),$(CC#N):2])-[O:3]-[H]",
+   "values": [
+    [
+     2,
+     8.739,
+     0.756
+    ]
+   ]
+  },
+  {
+   "name": "Peroxide2",
+   "smarts": "[C:1]-[O:2]-[O:3]-[H]",
+   "values": [
+    [
+     2,
+     11.978,
+     0.87
+    ]
+   ]
+  },
+  {
+   "name": "O=C-C=C-OH",
+   "smarts": "[O:1]=[C;R:2]-[C;R:3]=[C;R:4]-[O:5]-[H]",
+   "values": [
+    [
+     4,
+     3.554,
+     0.803
+    ]
+   ]
+  },
+  {
+   "name": "Vinyl_alcohol",
+   "smarts": "[C:1]=[C:2]-[O:3]-[H]",
+   "values": [
+    [
+     2,
+     8.872,
+     1.66
+    ]
+   ]
+  },
+  {
+   "name": "Alcohol",
+   "smarts": "[C:1]-[O:2]-[H]",
+   "values": [
+    [
+     1,
+     14.78,
+     2.546
+    ]
+   ]
+  },
+  {
+   "name": "N-hydroxyamide",
+   "smarts": "[C:1](=[O:2])-[N:3]-[O:4]-[H]",
+   "values": [
+    [
+     3,
+     9.302,
+     1.218
+    ]
+   ]
+  },
+  {
+   "name": "Ringed_imide1",
+   "smarts": "[O,S:1]=[C;R:2]([$([#8]),$([#7]),$([#16]),$([#6][Cl]),$([#6]F),$([#6][Br]):3])-[N;R:4]([C;R:5]=[O,S:6])-[H]",
+   "values": [
+    [
+     3,
+     6.452,
+     0.556
+    ]
+   ]
+  },
+  {
+   "name": "Ringed_imide2",
+   "smarts": "[O,S:1]=[C;R:2]-[N;R:3]([C;R:4]=[O,S:5])-[H]",
+   "values": [
+    [
+     2,
+     8.682,
+     1.866
+    ]
+   ]
+  },
+  {
+   "name": "Imide",
+   "smarts": "[F,Cl,Br,S,s,P,p:1][#6:2][CX3:3](=[O,S:4])-[NX3+0:5]([CX3:6]=[O,S:7])-[H]",
+   "values": [
+    [
+     4,
+     2.467,
+     1.484
+    ]
+   ]
+  },
+  {
+   "name": "Imide2",
+   "smarts": "[O,S:1]=[CX3:2]-[NX3+0:3]([CX3:4]=[O,S:5])-[H]",
+   "values": [
+    [
+     2,
+     10.23,
+     1.12
+    ]
+   ]
+  },
+  {
+   "name": "Hydrazide",
+   "smarts": "[CX3;$([CX3]-[#6,#1]);!$([CX3]-[CX4](-[F,Cl,Br,I])-[F,Cl,Br,I]):1](=[OX1:2])-[NX3+0;H1;$(N-[NX3+0;!$(N-[CX3]=[O,S]);!$(N-S(=O)=O);!$(N-[!#6;!#1;!#7])]):3]-[H]",
+   "values": [
+    [
+     2,
+     11.64,
+     0.767
+    ]
+   ]
+  },
+  {
+   "name": "Acylhydrazone",
+   "smarts": "[CX3;$([CX3]-[#6,#1]);!$([CX3]-[CX4](-[F,Cl,Br,I])-[F,Cl,Br,I]):1](=[OX1:2])-[NX3+0;H1;$(N-[NX2+0]=[CX3;$([CX3](-[#6,#1])-[#6,#1])]):3]-[H]",
+   "values": [
+    [
+     2,
+     11.646,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "Amide_electronegative",
+   "smarts": "[C:1](=[O:2])-[N:3](-[Br,Cl,I,F,S,O,N,P:4])-[H]",
+   "values": [
+    [
+     2,
+     3.49,
+     2.688
+    ]
+   ]
+  },
+  {
+   "name": "Carboxamide",
+   "smarts": "[CX3;!$(C(=O)(-[#7])-[!#6;!#1]):1](=[O:2])-[NX3+0;!$(N(-C=O)-[!#6;!#1]):3]-[H]",
+   "values": [
+    [
+     2,
+     15.1,
+     1.0
+    ]
+   ]
+  },
+  {
+   "name": "Amide",
+   "smarts": "[C:1](=[O:2])-[N:3]-[H]",
+   "values": [
+    [
+     2,
+     12.006,
+     4.512
+    ]
+   ]
+  },
+  {
+   "name": "Primary_sulfonamide",
+   "smarts": "[SX4:1](=[O:2])(=[O:3])(-[$([CX4;!$([CX4]~[!#6;!#1;!#16])]),$(c1[cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])])][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])])][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])])][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])])][cX3;$([cH]),$(c-[CX4;!$([CX4]~[!#6;!#1])])]1):4])-[NX3+0:5]([H:6])[H:7]",
+   "values": [
+    [
+     4,
+     10.164,
+     0.552
+    ]
+   ]
+  },
+  {
+   "name": "Sulfonamide",
+   "smarts": "[SX4:1](=[O:2])(=[O:3])-[NX3+0:4]-[H]",
+   "values": [
+    [
+     3,
+     7.916,
+     1.984
+    ]
+   ]
+  },
+  {
+   "name": "Adenine_N9_substituted",
+   "smarts": "[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-[!#6;!#1]):1]-[c:2]1:[n+0;X2:3]:[c;!$(c-[!#6;!#1;!F;!Cl;!Br;!I]):4]:[n+0;X2:5]:[c:6]2:[c:7]:1:[n+0;X2:8]:[c;!$(c-[!#6;!#1;!F;!Cl;!Br;!I]):9]:[n+0;X3;H0:10]:2",
+   "values": [
+    [
+     2,
+     3.991,
+     0.165
+    ]
+   ]
+  },
+  {
+   "name": "Guanine_N9_substituted_N7",
+   "smarts": "[n+0;X2:1]1:[c;!$(c-[!#6;!#1;!F;!Cl;!Br;!I]):2]:[nX3+0;H0:3](-[#6:4]):[c;$(c1:[n+0;X2]:c(-[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-[!#6;!#1])]):[nX3+0;H1]:c(=[OX1]):c:1):5]:[c:6]:1",
+   "values": [
+    [
+     0,
+     2.605,
+     0.711
+    ]
+   ]
+  },
+  {
+   "name": "Guanine_N9_substituted_N1H",
+   "smarts": "[nX3+0;H1:1]1:[c:2](-[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-[!#6;!#1]):3]):[n+0;X2:4]:[c;$(c1:[nX3+0;H0](-[#6]):[c;!$(c-[!#6;!#1;!F;!Cl;!Br;!I])]:[n+0;X2]:c:1):5]:[c:6]:[c:7]:1=[OX1:8]",
+   "values": [
+    [
+     0,
+     9.454,
+     0.192
+    ]
+   ]
+  },
+  {
+   "name": "Cytosine_N1_substituted",
+   "smarts": "[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-[!#6;!#1]):1]-[c;R1:2]1:[n+0;X2:3]:[c;R1:4](=[OX1:5]):[nX3+0;H0;R1:6](-[#6:7]):[c;R1;$([cH]),$(c-[#6]):8]:[c;R1;$([cH]),$(c-[#6]):9]:1",
+   "values": [
+    [
+     2,
+     4.329,
+     0.14
+    ]
+   ]
+  },
+  {
+   "name": "Uracil_N1_substituted",
+   "smarts": "[nX3+0;H1;R1:1]1:[c;R1:2](=[OX1:3]):[nX3+0;H0;R1:4](-[#6:5]):[c;R1;$([cH]),$(c-[CX4]):6]:[c;R1;$([cH]),$(c-[CX4]):7]:[c;R1:8]:1=[OX1:9]",
+   "values": [
+    [
+     0,
+     9.595,
+     0.147
+    ]
+   ]
+  },
+  {
+   "name": "Anilines_primary",
+   "smarts": "[c:1]-[NX3+0:2]([H:3])[H:4]",
+   "values": [
+    [
+     1,
+     3.899,
+     2.069
+    ]
+   ]
+  },
+  {
+   "name": "Anilines_secondary_N_alkyl",
+   "smarts": "[c:1]-[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-N=[O,C]);!$(N-C#N);!$(N-[CX4]-[!#6;!#1]):2]([H:3])[CX4;H2,H3:4]",
+   "values": [
+    [
+     1,
+     4.982,
+     0.11
+    ]
+   ]
+  },
+  {
+   "name": "Anilines_secondary",
+   "smarts": "[c:1]-[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-N=[O,C]);!$(N-C#N):2]([H:3])[!#1:4]",
+   "values": [
+    [
+     1,
+     4.335,
+     2.177
+    ]
+   ]
+  },
+  {
+   "name": "Anilines_tertiary",
+   "smarts": "[c:1]-[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-N=[O,C]);!$(N-C#N):2]([!#1:3])[!#1:4]",
+   "values": [
+    [
+     1,
+     4.167,
+     2.006
+    ]
+   ]
+  },
+  {
+   "name": "Diazine",
+   "smarts": "[n+0;X2;$(n1:[nX2]:a:a:a:a1),$(n1:a:[nX2]:a:a:a1),$(n1:a:a:[nX2]:a:a1);!$(n1:a(!@[!#6;!#1;!F;!Cl;!Br;!I]):a:a:a:a1);!$(n1:a:a(!@[!#6;!#1;!F;!Cl;!Br;!I]):a:a:a1);!$(n1:a:a:a(!@[!#6;!#1;!F;!Cl;!Br;!I]):a:a1):1]",
+   "values": [
+    [
+     0,
+     1.767,
+     1.033
+    ]
+   ]
+  },
+  {
+   "name": "Aromatic_nitrogen_unprotonated",
+   "smarts": "[n+0&H0;!$(n1nnnc1);!$(n1nncn1):1]",
+   "values": [
+    [
+     0,
+     4.354,
+     2.071
+    ]
+   ]
+  },
+  {
+   "name": "Fluoroalkylamine",
+   "smarts": "[CX4;$([CX4]-[CX4](F)(F)F):1]-[NX3+0;!$(N-[!$([CX4]);!#1]);!$([N;r3]):2]",
+   "values": [
+    [
+     1,
+     5.5,
+     0.673
+    ]
+   ]
+  },
+  {
+   "name": "Benzylic_amine",
+   "smarts": "[CX4;$([CX4]-c):1]-[NX3+0;!$(N-[!$([CX4]);!#1]);!$(N-[CX4]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]-[#6]~[!#6;!#1]);!$([N;r3]):2]",
+   "values": [
+    [
+     1,
+     9.402,
+     0.292
+    ]
+   ]
+  },
+  {
+   "name": "Beta_hydroxy_amine",
+   "smarts": "[CX4:1]-[NX3+0;$(N-[CX4]-[CX4]-[OX2]-[H]);!$(N(-[CX4]-[CX4]-[OX2])-[CX4]-[CX4]-[OX2]);!$(N-[CX4](-[CX4]-[OX2])-[CX4]-[OX2]);!$(N-[!$([CX4]);!#1]);!$(N-[CX4]-[#6]~[!#6;!#1;!$([OX2]-[H])]);!$([N;r3]):2]",
+   "values": [
+    [
+     1,
+     9.616,
+     0.217
+    ]
+   ]
+  },
+  {
+   "name": "Alkylamine_primary",
+   "smarts": "[CX4:1]-[NX3+0;H2;!$(N-[!$([CX4]);!#1]);!$(N-[CX4]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]=[#6]);!$(N-[CX4]-[#6]#[#6]);!$(N-[CX4]-c):2]",
+   "values": [
+    [
+     1,
+     10.545,
+     0.128
+    ]
+   ]
+  },
+  {
+   "name": "Alkylamine_secondary",
+   "smarts": "[CX4:1]-[NX3+0;H1;!$(N-[!$([CX4]);!#1]);!$(N-[CX4]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]=[#6]);!$(N-[CX4]-[#6]#[#6]);!$(N-[CX4]-c);!$([N;r3]):2]",
+   "values": [
+    [
+     1,
+     11.022,
+     0.284
+    ]
+   ]
+  },
+  {
+   "name": "Alkylamine_tertiary",
+   "smarts": "[CX4:1]-[NX3+0;H0;!$(N-[!$([CX4]);!#1]);!$(N-[CX4]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]-[#6]~[!#6;!#1]);!$(N-[CX4]-[#6]=[#6]);!$(N-[CX4]-[#6]#[#6]);!$(N-[CX4]-c);!$([N;r3]):2]",
+   "values": [
+    [
+     1,
+     10.28,
+     0.369
+    ]
+   ]
+  },
+  {
+   "name": "Amines_primary_secondary_tertiary",
+   "smarts": "[C:1]-[NX3+0;!$(N-C=[O,S,N]);!$(N-S(=O)=O);!$(N-N=[O,C]);!$(N-C#N):2]",
+   "values": [
+    [
+     1,
+     8.159,
+     2.518
+    ]
+   ]
+  },
+  {
+   "name": "Phosphinic_acid",
+   "smarts": "[PX4:1](=[O:2])(-[C,c,N,n,F,Cl,Br,I:3])(-[C,c,N,n,F,Cl,Br,I:4])-[OX2:5]-[H]",
+   "values": [
+    [
+     4,
+     2.974,
+     0.687
+    ]
+   ]
+  },
+  {
+   "name": "Phosphate_diester",
+   "smarts": "[PX4:1](=[O:2])(-[OX2:3]-[C,c,N,n,F,Cl,Br,I:4])(-[O+0:5]-[C,c,N,n,F,Cl,Br,I:4])-[OX2:6]-[H]",
+   "values": [
+    [
+     6,
+     2.728,
+     2.544
+    ]
+   ]
+  },
+  {
+   "name": "Phosphonate_ester",
+   "smarts": "[PX4:1](=[O:2])(-[OX2:3]-[C,c,N,n,F,Cl,Br,I:4])(-[C,c,N,n,F,Cl,Br,I:5])-[OX2:6]-[H]",
+   "values": [
+    [
+     5,
+     2.087,
+     0.45
+    ]
+   ]
+  },
+  {
+   "name": "Primary_hydroxyl_amine",
+   "smarts": "[C,c:1]-[O:2]-[NH2:3]",
+   "values": [
+    [
+     2,
+     4.036,
+     0.846
+    ]
+   ]
+  },
+  {
+   "name": "Indole_pyrrole",
+   "smarts": "[c;R:1]1[c;R:2][c;R:3][c;R:4][n;R:5]1[H]",
+   "values": [
+    [
+     4,
+     14.529,
+     4.067
+    ]
+   ]
+  },
+  {
+   "name": "Azole_NH",
+   "smarts": "[n;$(n1naaa1),$(n1anaa1);!$(n1nnnc1);!$(n1nncn1);!$(n1c(=[O,S])aaa1);!$(n1ac(=[O,S])aa1):1]-[H]",
+   "values": [
+    [
+     0,
+     12.234,
+     2.311
+    ]
+   ]
+  },
+  {
+   "name": "Tetrazole_NH",
+   "smarts": "[nX3+0;H1;$(n1nnn[c;$([cH]),$(c-[#6])]1),$(n1nn[c;$([cH]),$(c-[#6])]n1):1]-[H]",
+   "values": [
+    [
+     0,
+     5.18,
+     0.453
+    ]
+   ]
+  },
+  {
+   "name": "Aromatic_nitrogen_protonated",
+   "smarts": "[n:1]-[H]",
+   "values": [
+    [
+     0,
+     7.17,
+     2.946
+    ]
+   ]
+  }
+ ]
+}

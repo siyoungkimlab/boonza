@@ -33,7 +33,7 @@ boonza = "boonza.cli:main"
 version = { attr = "boonza.__version__" }
 
 [tool.setuptools.package-data]
-boonza = ["data/*.dms", "data/*.zip", "data/cg_radii/*.csv",
+boonza = ["data/*.dms", "data/*.zip", "data/admet/*", "data/cg_radii/*.csv",
           "data/pockets/*.json", "data/sirah/*.json",
           "data/cavity/presets/*.json", "data/viewer/*",
           "data/martini/LICENSE",
