@@ -7,6 +7,7 @@ that the famous non-CNS drug is not called brain-penetrant.
 """
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -730,3 +731,23 @@ def test_the_forests_carry_the_attribution_their_licences_require():
     assert "Changes from the original" in readme
     licence = (admet.DATA / "LICENSE.dimorphite-dl").read_text()
     assert "Apache License" in licence and "Version 2.0, January 2004" in licence
+
+
+def test_every_bundled_data_file_is_named_in_the_repository_notice():
+    """boonza is MIT; these three files are not, and are redistributable only on
+    their own terms.  The repository's NOTICE is where a reader -- or anyone
+    redistributing boonza -- finds that out, so a file added here that is not listed
+    there is a licensing problem, not an oversight to be found later."""
+    root = Path(__file__).resolve().parent.parent
+    # NOTICE is wrapped prose, so a phrase can straddle a line break
+    notice = re.sub(r"\s+", " ", (root / "NOTICE").read_text())
+    for path in sorted(admet.DATA.iterdir()):
+        if path.name in ("README.md", "LICENSE.dimorphite-dl"):
+            continue  # the notices themselves
+        assert f"src/boonza/data/admet/{path.name}" in notice, path.name
+    # and each one's licence is named, since "attribution" is the whole condition
+    for owed in ("CC BY 4.0", "CC0 1.0", "Apache License, Version 2.0",
+                 "Baltruschat", "AqSolDB", "Durrant"):
+        assert owed in notice, owed
+    # the two that are not MIT say so in as many words
+    assert notice.count("not under the MIT licence") >= 3  # these two and SIRAH's
