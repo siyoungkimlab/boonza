@@ -1764,7 +1764,10 @@ export function setupUI(app) {
   }
   function seriesTablePanel(group) {
     const id = `table ${group}`;
-    let column = null, descending = false, chosen = [];
+    // the columns sorted on, most significant first: [{column, descending}].  A plain
+    // click on a heading starts again from that column; a shift-click adds it as the
+    // next key, which is what "first by X, then by Y" means
+    let keys = [], chosen = [];
     panel(id, group, (body, p) => {
       const draw = () => {
         const members = app.live().filter(m => m.group === group);
@@ -1776,7 +1779,8 @@ export function setupUI(app) {
         for (const m of members) for (const k of Object.keys(m.row || {})) if (!fields.includes(k)) fields.push(k);
         for (const m of members) for (const k of Object.keys(computed[group]?.[m.index] || {})) if (!calc.includes(k)) calc.push(k);
         const columns = [...fields, ...calc];
-        const rows = column ? [...members].sort(byColumn(column, descending)) : members;
+        keys = keys.filter(k => k.column === "name" || columns.includes(k.column));  // a field may be gone
+        const rows = keys.length ? [...members].sort(byColumns(keys)) : members;
         // a column of numbers as a histogram, two against each other
         const numeric = columns.filter(c => members.some(m => typeof value(m, c) === "number"));
         const tools = [];
@@ -1814,9 +1818,22 @@ export function setupUI(app) {
         head.append(el("th", { className: "tick" }, all));
         for (const c of ["name", ...columns]) {
           const made = calc.includes(c);
-          const th = el("th", { className: made ? "calc" : "", title: `${made ? "computed by RDKit from the structure (not in the SDF) · " : ""}sort by ${c}` },
-                        c + (c === column ? (descending ? " ↓" : " ↑") : ""));
-          th.onclick = () => { descending = c === column && !descending; column = c; draw(); };
+          const rank = keys.findIndex(k => k.column === c);
+          // the number is the order the keys are applied in; one key alone needs none
+          const mark = rank < 0 ? "" : ` ${keys.length > 1 ? rank + 1 : ""}${keys[rank].descending ? "↓" : "↑"}`;
+          const th = el("th", { className: made ? "calc" : "", title: `${made ? "computed by RDKit from the structure (not in the SDF) · " : ""}sort by ${c} (shift-click to sort within the columns already chosen)` },
+                        c + mark);
+          th.onclick = e => {
+            if (e.shiftKey) {
+              // already a key: turn that one round, leaving its place in the order
+              if (rank >= 0) keys[rank].descending = !keys[rank].descending;
+              else keys.push({ column: c, descending: false });
+            } else {
+              // the only key already: turn it round.  Otherwise it becomes the only key
+              keys = [{ column: c, descending: keys.length === 1 && rank === 0 && !keys[0].descending }];
+            }
+            draw();
+          };
           head.append(th);
         }
         const tbody = t.createTBody();
@@ -5002,17 +5019,37 @@ export function setupUI(app) {
   // models in order of a column of their rows; those without it last
   // text compared with its digits read as numbers: LIG2 before LIG10, not after it
   const NATURAL = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
-  function byColumn(column, descending) {
+  // one column, 0 where the two are equal on it -- which is what lets a second key
+  // decide.  A model without the column sorts last whichever way round it is
+  function onColumn(column, descending) {
     const key = m => column === "name" ? m.name : value(m, column);
     return (a, b) => {
       const x = key(a), y = key(b);
-      if (x === y) return a.index - b.index;
+      if (x === y) return 0;
       if (x === undefined || x === null) return 1;
       if (y === undefined || y === null) return -1;
       // names end in a number far more often than not (LIG2, 2PM14), and plain text
       // order puts 2PM14 before 2PM2; NATURAL compares the digits as digits
       const c = typeof x === "number" && typeof y === "number" ? x - y : NATURAL(String(x), String(y));
       return descending ? -c : c;
+    };
+  }
+  function byColumn(column, descending) {
+    const compare = onColumn(column, descending);
+    // equal on the column: the order they came in, so a sort is repeatable
+    return (a, b) => compare(a, b) || a.index - b.index;
+  }
+  // models in order of several columns at once: the first key, then the second within
+  // it, and so on.  Where every key is equal the models keep the order they came in,
+  // so a column that is the same everywhere changes nothing
+  function byColumns(keys) {
+    const each = keys.map(k => onColumn(k.column, k.descending));
+    return (a, b) => {
+      for (const compare of each) {
+        const c = compare(a, b);
+        if (c) return c;
+      }
+      return a.index - b.index;
     };
   }
   function stepModel(by) {

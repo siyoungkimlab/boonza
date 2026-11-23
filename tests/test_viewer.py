@@ -2291,7 +2291,8 @@ def test_series_of_designs(served, tmp_path):
                                "TPSA": 20.2, "HBD": 1, "HBA": 1, "rotatable bonds": 0,
                                "QED": 0.41, "synthetic accessibility": 1.98,
                                "GI absorption": "high", "BBB permeant": "no",
-                               "Lipinski violations": 0, "PAINS": 0}  # fmt: skip
+                               "Lipinski violations": 0, "PAINS": 0,
+                               "triage": "pass"}  # fmt: skip
     assert props[added[1]]["MW"] == 45.08 and props[added[1]]["HBD"] == 1
     status, out = post("api/series_properties", {"group": group})
     assert status == 200 and out["properties"][str(added[0])]["MW"] == 46.07
@@ -3801,7 +3802,7 @@ def test_the_model_list_sorts_names_with_their_digits_as_digits():
     digits as numbers."""
     ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
     assert "new Intl.Collator(undefined, { numeric: true" in ui
-    column = ui[ui.index("function byColumn(column, descending)") :]
+    column = ui[ui.index("function onColumn(column, descending)") :]
     column = column[: column.index("\n  }\n")]
     assert "NATURAL(String(x), String(y))" in column
     assert "localeCompare" not in column
@@ -4080,3 +4081,43 @@ def test_clicking_again_or_past_it_lets_go():
     atom = ui[ui.index("// with a bond picked, an atom says which half should move") :]
     atom = atom[: atom.index("app.select(m, [a]")]
     assert "flipSide(m)" in atom and atom.index("flipSide") < atom.index("the same atom again")
+
+
+def test_a_design_can_carry_its_own_measured_pka():
+    """The pKa table has one value per functional class, which is the crude part of
+    logD.  A design that has been measured says so in its own SDF field, and that value
+    replaces the table for it."""
+    from boonza.viewer.outputs import measured_pka
+
+    assert measured_pka({}) == {}
+    assert measured_pka({"pka_base": 9.5}) == {"base": [9.5]}
+    assert measured_pka({"pka_acid": "2.2", "pka_base": "9.0,12.5"}) == {
+        "acid": [2.2], "base": [9.0, 12.5]}  # fmt: skip
+    # an unreadable value is dropped, not fatal: the rest of the design still computes
+    assert measured_pka({"pka_base": "about nine"}) == {}
+    assert measured_pka({"pka_base": "9.0,oops"}) == {"base": [9.0]}
+
+    s = boonza.from_smiles("CC(C)NCC(O)COc1cccc2ccccc12")  # propranolol
+    v = viewer.Viewer([viewer.Model("LIG1", lambda: viewer.Session(s), group="series 1")])
+    plain = v.series_properties("series 1")[0]["logD"]
+    v.models[0].row["pka_base"] = "9.5"
+    given = v.series_properties("series 1")
+    # the cache is keyed on the measured value too, or the table's number would stand
+    assert given[0]["logD"] != plain
+    page = v.series_report("series 1")
+    assert "measured base 9.5" in page
+
+
+def test_the_series_table_sorts_on_several_columns_at_once():
+    """Clicking a second heading replaced the key rather than adding to it, so "by
+    series, then by logD" could not be asked for.  Shift-click adds a key."""
+    ui = (Path(boonza.__file__).parent / "data/viewer/ui.js").read_text(encoding="utf-8")
+    assert "function byColumns(keys)" in ui
+    # a plain click starts again from one column; a shift-click appends
+    assert "if (e.shiftKey) {" in ui
+    assert "keys.push({ column: c, descending: false })" in ui
+    # onColumn returns 0 on a tie, which is what lets the next key decide
+    assert "if (x === y) return 0;" in ui
+    # the heading numbers the keys so their order is never a guess
+    assert "keys.length > 1 ? rank + 1" in ui
+    assert "shift-click to sort within the columns already chosen" in ui

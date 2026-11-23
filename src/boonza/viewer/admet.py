@@ -10,7 +10,9 @@ Everything here is RDKit and arithmetic: no extra dependency, nothing downloaded
 nothing sent anywhere.  The methods are published ones, cited where they are used:
 
   logD          Henderson-Hasselbalch on RDKit's Crippen logP, with the pKa of each
-                ionisable group taken from the table below (``ACIDS``, ``BASES``)
+                ionisable group taken from the table below (``ACIDS``, ``BASES``) and
+                an ionised group left partitioning as an ion pair rather than not at
+                all (the "diff 3-4" approximation; Scherrer 1984, Avdeef ch. 4)
   ESOL          Delaney, J. Chem. Inf. Comput. Sci. 2004, 44, 1000
   Ali logS      Ali, Camilleri, Brown, Hutt & Kirton, J. Chem. Inf. Model. 2012, 52, 420
   Log Kp        Potts & Guy, Pharm. Res. 1992, 9, 663
@@ -21,10 +23,19 @@ nothing sent anywhere.  The methods are published ones, cited where they are use
   and the other Veber, J. Med. Chem. 2002, 45, 2615;  Egan, J. Med. Chem. 2000, 43, 3867;
   filters       Muegge, J. Med. Chem. 2001, 44, 1841
 
+Beside the properties there are three substructure tables and one filter, none of them
+a model: :data:`SOFT_SPOTS` (where CYP is likely to attack), :data:`PHASE2_RULES` (which
+conjugation routes are open, and which of those conjugates is itself reactive), and
+:data:`TRIAGE_FIELDS`, which reads the numbers above into one verdict per design so a
+series can be read as a shortlist -- always with the rule that produced it.
+
 These are estimates from the structure alone.  logD carries about 0.5-1.0 log unit of
 error even when the ionisation is right, and the filters are rules of thumb that
 plenty of marketed drugs break; :func:`caveats` says where a number should not be
-trusted at all.  None of this is a measurement.
+trusted at all.  None of this is a measurement.  The BOILED-Egg's own verdicts are weak
+where they have been benchmarked -- about 0.75 AUROC for gut absorption and 0.73 for
+brain penetration, and the Abbott bioavailability score about 0.57, which is hardly
+better than calling every design bioavailable -- and the report says so.
 
 Deliberately not computed: iLOGP (needs CHARMM), XLOGP3 (needs its reference
 database), MLOGP, the CYP and P-gp models (a 7 GB neural network, and a different
@@ -38,38 +49,118 @@ import math
 
 # --- ionisation ---------------------------------------------------------------------
 #
-# One representative pKa per functional class, as textbooks give them.  This is the
-# crude part of logD: every aliphatic amine is treated as 9.7 whether its real value
-# is 8 or 11, so a design whose ionisation matters deserves a measured pKa.  Each
-# entry is (label, SMARTS, which atom of the match ionises, pKa); the first pattern
-# to claim a heavy atom keeps it, so the specific ones come before the general.
+# One representative pKa per functional class.  These are **medians of measured
+# drug-like compounds**, not the textbook pKa of the unsubstituted parent: a table of
+# parent values prices the chemistry a medicinal chemist actually draws wrongly, since
+# nearly every measured example of a class carries substituents that shift it.  Where
+# the two disagree the parent value is in a comment.
+#
+# It is still one value per class, which is the crude part of logD: every aliphatic
+# amine is treated as 8.8 whether its real value is 7 or 11.  A design whose ionisation
+# matters deserves a measured pKa, which overrides this table completely -- give it as
+# a ``pka_acid`` / ``pka_base`` field on the design (see :func:`ionisable`).
+#
+# Each entry is (label, SMARTS, which atom of the match ionises, pKa); the first
+# pattern to claim a heavy atom keeps it, so the specific ones come before the general.
 
 _NOT_AMIDE = ("!$(N~[!#6;!#1]);!$(N[CX3]=[OX1,SX1,NX2]);!$(N[SX4](=O)=O);"
               "!$(N[CX2]#N);!$(Na);!$([N+]);!$(N=*)")  # fmt: skip
 _AMINE = f"[NX3;H0,H1,H2;{_NOT_AMIDE}]"
+# electron-withdrawing groups, for the phenol and pyridine subclasses
+_EWG = "[F,Cl,Br,I,$([N+](=O)[O-]),$(C#N),$([CX3]=[OX1]),$([SX4](=O)=O),$(C(F)(F)F)]"
+_FREE_NH = "[NX3;H1,H2;!$(N[CX3]=O);!$(NS(=O)=O)]"
 
 ACIDS: list[tuple[str, str, int, float]] = [
     ("sulfonic acid", "[SX4](=[OX1])(=[OX1])[OX2H1]", 3, -1.0),
     ("phosphonate", "[PX4](=[OX1])[OX2H1]", 2, 2.1),
     ("acylsulfonamide", "[SX4](=[OX1])(=[OX1])[NX3H1][CX3]=[OX1]", 3, 4.5),
-    ("tetrazole", "[nH]1nnnc1", 0, 4.9),
-    ("aryl carboxylic acid", "[c][CX3](=[OX1])[OX2H1]", 3, 4.2),
+    # both tautomers: the 1H pattern alone missed every 2H-tetrazole
+    (
+        "tetrazole",
+        "[$([nX3H1]1[n][n][n][c]1),$([nX3H1]1[c][n][n][n]1),"
+        "$([nX3H1]1[n][n][c][n]1),$([nX3H1]1[n][c][n][n]1)]",
+        0,
+        4.9,
+    ),  # fmt: skip
+    # a vinylogous acid is a much weaker acid than the enol it looks like: 6.9 measured
+    ("vinylogous acid", "[OX2H1][c][c][c]=[OX1]", 0, 6.9),
+    ("vinylogous acid", "[OX2H1][c][c]=[OX1]", 0, 6.9),
+    ("enol (1,3-dicarbonyl)", "[OX2H1][CX3]=[CX3][CX3]=[OX1]", 0, 5.0),
+    ("aryl carboxylic acid", "[c][CX3](=[OX1])[OX2H1]", 3, 3.9),
     ("carboxylic acid", "[CX3](=[OX1])[OX2H1]", 2, 4.4),
+    # already drawn deprotonated -- a zwitterion whose carboxylate cannot be
+    # neutralised without unbalancing a permanent cation.  Same site, same pKa
+    ("carboxylate (as drawn)", "[CX3](=[OX1])[OX1H0-]", 2, 4.4),
+    ("hydroxamic acid", "[OX2H1][NX3][CX3]=[OX1]", 0, 9.0),
+    (
+        "rhodanine / thiazolidinedione NH",
+        "[NX3H1;R]([CX3;R]=[OX1,SX1])[CX3;R]=[OX1,SX1]",
+        0,
+        8.3,
+    ),  # fmt: skip
+    ("imide", "[CX3](=[OX1])[NX3H1][CX3]=[OX1]", 2, 9.1),
+    (
+        "N-acyl on a heteroarene",
+        "[$([NX3H1]([CX3]=[OX1])c1[n,s,o][c,n][c,n][c,n]1),"
+        "$([NX3H1]([CX3]=[OX1])c1ccncc1),$([NX3H1]([CX3]=[OX1])c1ncccn1)]",
+        0,
+        8.1,
+    ),  # fmt: skip
+    # a lactam NH inside a conjugated ring: 2-pyridone, uracil, quinazolin-4(3H)-one.
+    # The parents are 9.5-11.6; the drug-like median is 7.5 because most measured
+    # examples carry ring EWGs
+    (
+        "conjugated lactam NH",
+        "[$([nX3H1;r5,r6]:[c]=[OX1]),$([nX3H1;r5,r6][c]=[OX1])]",
+        0,
+        7.5,
+    ),  # fmt: skip
+    (
+        "sulfonamide (N-heteroaryl)",
+        "[$([SX4](=[OX1])(=[OX1])[NX3H1]c1[n,s,o][c,n][c,n][c,n]1),"
+        "$([SX4](=O)(=O)[NX3H1]c1ccncc1),$([SX4](=O)(=O)[NX3H1]c1ncccn1)]",
+        0,
+        7.0,
+    ),  # fmt: skip
+    ("sulfonamide", "[SX4](=[OX1])(=[OX1])[NX3;H1,H2]", 3, 8.5),  # parent 10.1
+    # an activated ring drops a phenol about 1.5 units off the parent's 10.0
+    (
+        "phenol (EWG-substituted)",
+        f"[$([OX2H1][c]1[c][c][c]({_EWG})[c][c]1),$([OX2H1][c]1[c]({_EWG})[c][c][c][c]1),"
+        "$([OX2H1][c]1[n,o,s][c,n][c,n][c,n]1)]",
+        0,
+        7.5,
+    ),  # fmt: skip
+    ("phenol", "[c][OX2H1]", 1, 8.8),  # parent 10.0
+    # plain azole NH.  The parents are far weaker acids (imidazole 14.4, pyrazole 14.2,
+    # benzimidazole 12.8, 1,2,4-triazole 10.3), but drug-like examples are activated:
+    # 9.0 splits the difference and leaves the site under 2% ionised at pH 7.4
+    ("azole NH", "[nX3H1;r5]", 0, 9.0),
     ("aryl thiol", "[c][SX2H1]", 1, 6.6),
-    ("imide", "[CX3](=[OX1])[NX3H1][CX3]=[OX1]", 2, 9.5),
-    ("phenol", "[c][OX2H1]", 1, 10.0),
-    ("sulfonamide", "[SX4](=[OX1])(=[OX1])[NX3;H1,H2]", 3, 10.1),
     ("thiol", "[#6][SX2H1]", 1, 10.5),
 ]
 BASES: list[tuple[str, str, int, float]] = [
+    # guanidine 13.6 and amidine 11.6 are the aliphatic parents (arginine 12.5,
+    # benzamidine 11.6).  Conjugation to an aromatic ring takes 3-4 units off, and
+    # nearly every drug-like example is of that kind.  Every branch claims the central
+    # carbon, the same atom the parent pattern claims, so only one of them can match
+    ("guanidine (conjugated)", "[NX3;$(Na)][CX3](=[NX2])[NX3]", 1, 10.0),
+    ("guanidine (conjugated)", "[NX3][CX3](=[NX2])[NX3;$(Na)]", 1, 10.0),
+    ("guanidine (conjugated)", "[NX3][CX3](=[NX2;$(Na)])[NX3]", 1, 10.0),
     ("guanidine", "[NX3][CX3](=[NX2])[NX3]", 1, 13.6),
+    (
+        "amidine (cyclic / conjugated)",
+        "[$([CX3;!$(C[NX3][CX3]=[NX2])](=[NX2])[NX3]);$([CX3;R]),$(Ca)]",
+        0,
+        9.0,
+    ),  # fmt: skip
     ("amidine", "[CX3;!$(C[NX3][CX3]=[NX2])](=[NX2])[NX3]", 0, 11.6),
     # a nitrogen next to an electron-withdrawing group is a weaker base
     (
         "amine (next to EWG)",
         f"[NX3;H0,H1,H2;{_NOT_AMIDE};$(NCC=[OX1]),$(NC[OX2]),$(NCC#N)]",
         0,
-        8.0,
+        7.7,
     ),  # fmt: skip
     (
         "piperazine N (far N sulfonylated)",
@@ -83,19 +174,36 @@ BASES: list[tuple[str, str, int, float]] = [
         0,
         7.7,
     ),  # fmt: skip
-    ("piperazine N (far N aryl)", f"[NX3;H0,H1;{_NOT_AMIDE};$(N1CCN(CC1)a)]", 0, 8.7),
-    ("morpholine N (substituted)", "[NX3;H0;$(N1CCOCC1)]", 0, 6.9),
+    ("piperazine N (far N aryl)", f"[NX3;H0,H1;{_NOT_AMIDE};$(N1CCN(CC1)a)]", 0, 8.2),
+    ("morpholine N (substituted)", "[NX3;H0;$(N1CCOCC1)]", 0, 6.2),
     ("morpholine NH", "[NX3;H1;$(N1CCOCC1)]", 0, 8.4),
     ("amine (beta to an ether)", f"[NX3;H0,H1,H2;{_NOT_AMIDE};$(NCC[OX2H0])]", 0, 9.0),
-    ("amine", _AMINE, 0, 9.7),
+    # 8.8, not 9.7: the median of measured drug-like amines.  9.7 is a simple
+    # alkylamine, and it made every cation's logD about 0.9 too low
+    ("amine", _AMINE, 0, 8.8),
     (
         "aniline",
         "[NX3;H0,H1,H2;$(Na);!$(N[CX3]=[OX1]);!$(N[SX4](=O)=O);!$([N+])]",
         0,
-        4.6,
+        3.5,  # parent 4.6
     ),  # fmt: skip
-    ("pyridine", "[nX2;r6]", 0, 5.2),
-    ("azole N", "[nX2;r5]", 0, 5.5),
+    # ring N subclasses, each from a measured split: an amino group para or ortho to a
+    # pyridine N feeds it electron density and makes it a stronger base, a second ring
+    # N takes density off it
+    ("pyridine (4-amino)", f"[$([nX2;r6]:[c]:[c]:[c]-{_FREE_NH})]", 0, 6.2),
+    ("pyridine (2-amino)", f"[$([nX2;r6]:[c]-{_FREE_NH})]", 0, 5.3),
+    ("diazine N", "[$([nX2;r6]:[c]:[nX2;r6]),$([nX2;r6]:[nX2;r6])]", 0, 4.7),
+    ("pyridine", "[nX2;r6]", 0, 4.9),
+    # an imidazole-type ring N is much more basic than one sitting next to another ring
+    # N (pyrazole, triazole, tetrazole), where the neighbour pulls density off it
+    ("azole N (next to a ring N)", "[nX2;r5;$(n:[n])]", 0, 2.9),
+    (
+        "azole N (imidazole-type)",
+        "[$([nX2;r5]1:[c]:[n,nH]:[c]:[c]1),$([nX2;r5]1:[c]:[c]:[n,nH]:[c]1)]",
+        0,
+        5.5,
+    ),  # fmt: skip
+    ("azole N", "[nX2;r5]", 0, 3.3),
 ]
 
 _PATTERNS: dict[str, object] = {}
@@ -112,15 +220,30 @@ def _pattern(smarts: str):
     return _PATTERNS[smarts]
 
 
-def ionisable(mol) -> list[tuple[str, str, int, float]]:
+def _soft_base(mol, atom: int, label: str) -> bool:
+    """An aromatic ring N or an aniline N: a weak base, mostly neutral at pH 7.4, so it
+    does not weaken a basic centre beside it."""
+    return mol.GetAtomWithIdx(atom).GetIsAromatic() or label.startswith("aniline")
+
+
+def ionisable(mol, measured=None) -> list[tuple[str, str, int, float]]:
     """Every ionisable group of ``mol``: (acid or base, label, atom, pKa).  A heavy
     atom belongs to one group only, the first pattern that claims it, so a phenol in
-    a carboxylic acid's molecule is not counted twice."""
+    a carboxylic acid's molecule is not counted twice.
+
+    ``measured``: pKa values measured for *this* molecule, as ``{"acid": [2.2],
+    "base": [9.0, 12.5]}``.  A measured value beats any prediction, so where one is
+    given it replaces the table's sites of that kind entirely and is reported with no
+    atom (``None``): the number is known, which atom carries it need not be.  Give a
+    design's values as a ``pka_acid`` / ``pka_base`` field on its SDF record."""
     from rdkit import Chem
 
     found: list[tuple[str, str, int, float]] = []
     taken: set[int] = set()
     for kind, table in (("acid", ACIDS), ("base", BASES)):
+        if (measured or {}).get(kind):
+            found += [(kind, f"measured {kind}", None, float(p)) for p in measured[kind]]
+            continue
         for label, smarts, which, pka in table:
             for match in mol.GetSubstructMatches(_pattern(smarts)):
                 atom = match[which]
@@ -128,36 +251,72 @@ def ionisable(mol) -> list[tuple[str, str, int, float]]:
                     continue
                 taken.add(atom)
                 found.append((kind, label, atom, pka))
-    # a second basic centre near a stronger one is much weaker than on its own
-    # (piperazine: 9.8 and 5.6, not 9.8 twice), and counting them as independent
-    # drags logD far too low
+    # A second basic centre near a stronger one is much weaker than on its own
+    # (piperazine: 9.8 and 5.6, not 9.8 twice), and counting them as independent drags
+    # logD far too low.  Only an *aliphatic* base counts as the stronger centre: the
+    # drop comes from the positive charge it carries once protonated, and a pyridine,
+    # azole or aniline is mostly neutral at pH 7.4 so it has no charge to lend.  Before
+    # that proviso the second ring N of every pyrimidine, purine and quinazoline was
+    # pushed to about 1.2 where the measured median is 4.4.  An aromatic N next to a
+    # protonated amine is still weakened, as in 2-picolylamine.
+    bases = sorted((k for k, s in enumerate(found) if s[0] == "base" and s[2] is not None),
+                   key=lambda k: -found[k][3])  # fmt: skip
     strong: list[int] = []
-    distance = Chem.GetDistanceMatrix(mol) if found else None
-    for k, (kind, label, atom, pka) in enumerate(found):
-        if kind != "base":
-            continue
+    distance = Chem.GetDistanceMatrix(mol) if bases else None
+    for k in bases:
+        kind, label, atom, pka = found[k]
         if any(distance[atom][other] <= 3 for other in strong):
             found[k] = (kind, f"{label} (second basic centre)", atom, pka - 4.0)
-        else:
+        elif not _soft_base(mol, atom, label):
             strong.append(atom)
     return found
 
 
+# How much less an ion pair partitions into octanol than the neutral molecule does.
+#
+# Textbook Henderson-Hasselbalch treats an ionised molecule as not partitioning at all,
+# which has no floor: a strongly ionised design's logD keeps falling without limit, and
+# every cation comes out roughly 0.9 log units too low.  An ion does partition, as an
+# ion pair, and the plateau between logP and logD is about 3 log units for a base and
+# about 4 for an acid -- the published "diff 3-4" approximation (Scherrer, 1984; Avdeef,
+# *Absorption and Drug Development*, ch. 4).
+#
+# Set either to ``None`` for textbook Henderson-Hasselbalch on that charge type.
+ION_PAIR_DROP_ACID: float | None = 4.0
+ION_PAIR_DROP_BASE: float | None = 3.0
+
+
 def log_d(logp: float, sites, ph: float = 7.4) -> float:
-    """Crippen logP corrected for whatever is ionised at ``ph``:
+    """Crippen logP corrected for whatever is ionised at ``ph``.
 
-        logD = logP - log10(1 + SUM_acids 10^(pH - pKa) + SUM_bases 10^(pKa - pH))
+    Henderson-Hasselbalch gives how much of the molecule is neutral::
 
-    which is Henderson-Hasselbalch for each group, assuming only the neutral species
-    partitions.  An ion pair does partition a little, so a charged design's real logD
-    is higher than this; :func:`caveats` says so where it matters."""
-    term = 0.0
+        acid = SUM_acids 10^(pH - pKa)     base = SUM_bases 10^(pKa - pH)
+        neutral fraction = 1 / (1 + acid + base)
+
+    and what partitions is the neutral fraction plus whatever the ionised fractions
+    manage as ion pairs (:data:`ION_PAIR_DROP_ACID`, :data:`ION_PAIR_DROP_BASE`)::
+
+        logD = logP + log10(neutral + acid/total * 10^-drop + base/total * 10^-drop)
+    """
+    acid = base = 0.0
     for kind, _label, _atom, pka in sites:
         # a long way either side of the pKa the exponent overflows; it is saturated
         # instead, since by then the group is fully ionised and the sum is what it is
         power = min(ph - pka if kind == "acid" else pka - ph, 30.0)
-        term += 10.0**power
-    return logp - math.log10(1.0 + term)
+        if kind == "acid":
+            acid += 10.0**power
+        else:
+            base += 10.0**power
+    total = 1.0 + acid + base
+    if ION_PAIR_DROP_ACID is None and ION_PAIR_DROP_BASE is None:
+        return logp - math.log10(total)
+    share = 1.0 / total
+    if ION_PAIR_DROP_ACID is not None:
+        share += (acid / total) * 10.0**-ION_PAIR_DROP_ACID
+    if ION_PAIR_DROP_BASE is not None:
+        share += (base / total) * 10.0**-ION_PAIR_DROP_BASE
+    return logp + math.log10(share)
 
 
 def ionised_form(sites, ph: float = 7.4, charge: int = 0) -> str:
@@ -179,13 +338,16 @@ def caveats(sites, form: str, charge: int) -> list[str]:
     cases below are exactly the ones where the number looks precise and is not."""
     out = []
     if charge:
-        out.append(f"permanently charged ({charge:+d}): it is ionised at every pH, "
-                   "so logD is a lower bound")  # fmt: skip
+        out.append(f"permanently charged ({charge:+d}): it is ionised at every pH, so "
+                   "logD rests entirely on the ion-pair term and is a lower bound")  # fmt: skip
     if form == "zwitterion":
-        out.append("zwitterion: both centres are corrected for, but the ion pair "
-                   "partitions, so the real logD is higher")  # fmt: skip
+        out.append("zwitterion: both centres are corrected for, but its ion pair is "
+                   "intramolecular and partitions better than the model allows")  # fmt: skip
     if any((k == "base" and pka >= 11) or (k == "acid" and pka <= 1) for k, _l, _a, pka in sites):
-        out.append("a very strong acid or base: fully ionised, so logD is under-estimated")
+        out.append("a very strong acid or base: fully ionised at this pH, so logD is "
+                   "the ion-pair plateau rather than a Henderson-Hasselbalch number")  # fmt: skip
+    if any(atom is None for _k, _l, atom, _p in sites):
+        out.append("a measured pKa was given and used in place of the table")
     return out
 
 
@@ -394,9 +556,10 @@ def _round(x: float, places: int = 2) -> float:
     return 0.0 if v == 0 else v
 
 
-def properties(mol, ph: float = 7.4) -> dict:
+def properties(mol, ph: float = 7.4, measured=None) -> dict:
     """Every property of one RDKit molecule, flat, ready for a table or a report.
-    ``ph``: where logD and the ionised form are worked out.
+    ``ph``: where logD and the ionised form are worked out.  ``measured``: pKa values
+    measured for this molecule, which override the table -- see :func:`ionisable`.
 
     The keys that are numbers are plain floats and ints so they sort and plot; the
     filters are "pass" or what they fail; ``caveats`` is a list, empty when the
@@ -417,7 +580,7 @@ def properties(mol, ph: float = 7.4) -> dict:
     hbd, hba = Lipinski.NumHDonors(mol), Lipinski.NumHAcceptors(mol)
     mr = Crippen.MolMR(mol)
 
-    sites = ionisable(mol)
+    sites = ionisable(mol, measured)
     form = ionised_form(sites, ph, charge)
     logd = log_d(logp, sites, ph)
     gi, bbb = boiled_egg(tpsa, logp)
@@ -482,6 +645,8 @@ def properties(mol, ph: float = 7.4) -> dict:
     score = sascore(mol)
     if score is not None:
         out["synthetic accessibility"] = _round(score)
+    out["triage"], reasons = triage(out)
+    out["triage reasons"] = "; ".join(reasons) or "nothing breached"
     return out
 
 
@@ -490,7 +655,63 @@ def properties(mol, ph: float = 7.4) -> dict:
 TABLE_COLUMNS = ("MW", "heavy atoms", "cLogP", "logD", "TPSA", "HBD", "HBA",
                  "rotatable bonds", "QED",
                  "synthetic accessibility", "GI absorption", "BBB permeant",
-                 "Lipinski violations", "PAINS")  # fmt: skip
+                 "Lipinski violations", "PAINS", "triage")  # fmt: skip
+
+
+# --- triage -----------------------------------------------------------------------------
+#
+# One verdict per design, so a series of forty rows can be read as a shortlist.  Nothing
+# here is new chemistry: every rule reads a property computed above.  What it adds is a
+# single answer and, more importantly, the reason for it -- a filtered list that hides
+# the rule that produced it is worse than no filter at all.
+#
+# A design fails on any "fail" rule and is flagged for review on any "review" rule.  The
+# thresholds are the conventional ones; they are defaults, not findings, and the page
+# lets them be moved.
+#
+# (key, label, which property it reads, comparison, default threshold, level)
+TRIAGE_FIELDS: list[tuple[str, str, str, str, float, str]] = [
+    ("lipinski", "Lipinski violations", "Lipinski violations", ">=", 2, "fail"),
+    ("pains", "PAINS alerts", "PAINS", ">=", 1, "fail"),
+    ("tpsa", "TPSA", "TPSA", ">", 140.0, "fail"),
+    ("brenk", "Brenk alerts", "Brenk", ">=", 1, "review"),
+    ("qed", "QED below", "QED", "<", 0.30, "review"),
+    ("logd_low", "logD below", "logD", "<", -1.0, "review"),
+    ("logd_high", "logD above", "logD", ">", 4.0, "review"),
+    ("gi", "GI absorption not high", "GI absorption", "is not", "high", "review"),
+    ("sascore", "synthetic accessibility above", "synthetic accessibility", ">", 6.0,
+     "review"),
+]  # fmt: skip
+
+TRIAGE_LEVELS = ("pass", "review", "fail")
+
+
+def triage(props: dict, limits: dict | None = None) -> tuple[str, list[str]]:
+    """``props`` (one design's :func:`properties`) read as a verdict: ("pass", "review"
+    or "fail", the rules it breached).  ``limits``: thresholds to move, keyed as
+    :data:`TRIAGE_FIELDS` keys.
+
+    A property that could not be computed is skipped rather than counted against the
+    design: an absent SA score is not a bad SA score."""
+    worst, why = 0, []
+    for key, label, field, operator, default, level in TRIAGE_FIELDS:
+        limit = (limits or {}).get(key, default)
+        value = props.get(field)
+        if value is None:
+            continue
+        if operator == "is not":
+            # compared without case, so a verdict written "High" rather than "high"
+            # cannot quietly make the rule fire on every design
+            hit = str(value).lower() != str(limit).lower()
+        elif not isinstance(value, (int, float)):
+            continue
+        else:
+            hit = (value >= limit if operator == ">=" else
+                   value > limit if operator == ">" else value < limit)  # fmt: skip
+        if hit:
+            why.append(label if operator == "is not" else f"{label} {value:g}")
+            worst = max(worst, 2 if level == "fail" else 1)
+    return TRIAGE_LEVELS[worst], why
 
 
 # --- metabolic soft spots --------------------------------------------------------------
@@ -505,130 +726,209 @@ TABLE_COLUMNS = ("MW", "heavy atoms", "cLogP", "logD", "TPSA", "HBD", "HBA",
 # are not thereby equally labile.  Blocking a flagged site (deuterium, fluorine, a
 # ring) is the usual response, and a real answer needs microsomes.
 #
-# (label, SMARTS, which atoms of the match are the site, what happens there, phase)
-SOFT_SPOTS: list[tuple[str, str, tuple[int, ...], str, int]] = [
+# (label, SMARTS, which atoms of the match are the site, what happens there)
+SOFT_SPOTS: list[tuple[str, str, tuple[int, ...], str]] = [
     (
         "N-dealkylation",
         f"[NX3;H0,H1;{_NOT_AMIDE}][CH3,CH2;!$(C=O)]",
         (1,),
         "CYP takes the alkyl off the nitrogen; the commonest route of all",
-        1,
     ),  # fmt: skip
     (
         "O-dealkylation",
         "[c,C][OX2;H0][CH3,CH2;!$(C=O)]",
         (2,),
         "CYP takes the alkyl off the oxygen, leaving the phenol or alcohol",
-        1,
     ),  # fmt: skip
     (
         "benzylic oxidation",
         "[CH1,CH2,CH3;!$(C=O);!$(C[OX2,NX3]);$(C[a])]",
         (0,),
         "a carbon next to a ring: hydroxylated easily, the C-H being weak",
-        1,
     ),  # fmt: skip
     (
         "allylic oxidation",
         "[CH1,CH2,CH3;!$(C=O);$(CC=C)]",
         (0,),
         "a carbon next to a double bond, hydroxylated for the same reason",
-        1,
     ),  # fmt: skip
     (
         "aromatic hydroxylation",
         "[cH;$(c1ccccc1);$(c:c[OX2,NX3,CH3])]",
         (0,),
         "an electron-rich ring position, hydroxylated through an epoxide",
-        1,
     ),  # fmt: skip
     (
         "terminal alkyl (omega-1)",
         "[CH3][CH2][CH2]",
         (1,),
         "the carbon next to the end of a chain, the usual place a chain is hit",
-        1,
     ),  # fmt: skip
     (
         "S-oxidation",
         "[SX2;$(S(-[#6])-[#6]);!$(S(=O))]",
         (0,),
         "a thioether goes to the sulfoxide and on to the sulfone, readily",
-        1,
     ),  # fmt: skip
     (
         "N-oxidation",
         f"[NX3;H0;{_NOT_AMIDE};!$(Na)]",
         (0,),
         "a tertiary amine gives the N-oxide",
-        1,
     ),  # fmt: skip
     (
         "alkene epoxidation",
         "[CX3H1,CX3H2]=[CX3;!$(C=O)]",
         (0, 1),
         "an epoxide, which may go on to bind covalently: watch it",
-        1,
     ),  # fmt: skip
     (
         "aldehyde oxidation",
         "[CX3H1]=[OX1]",
         (0,),
         "oxidised to the acid quickly, by aldehyde oxidase as well as CYP",
-        1,
     ),  # fmt: skip
     (
         "ester hydrolysis",
         "[CX3](=[OX1])[OX2][#6]",
         (0,),
         "esterases cut it, often before CYP gets near: a prodrug handle",
-        1,
     ),  # fmt: skip
     (
         "amide hydrolysis",
         "[CX3](=[OX1])[NX3;H1,H2]",
         (0,),
         "amidases cut it, far more slowly than an ester",
-        1,
-    ),  # fmt: skip
-    (
-        "glucuronidation / sulfation",
-        "[c][OX2H1]",
-        (1,),
-        "a phenol is conjugated straight away (phase II), often the main route",
-        2,
-    ),  # fmt: skip
-    (
-        "glucuronidation",
-        "[CX4][OX2H1]",
-        (1,),
-        "an alcohol is conjugated, more slowly than a phenol",
-        2,
-    ),  # fmt: skip
-    (
-        "acyl glucuronidation",
-        "[CX3](=[OX1])[OX2H1]",
-        (0,),
-        "an acyl glucuronide, which can be reactive: a known liability",
-        2,
     ),  # fmt: skip
 ]
 
 
 def soft_spots(mol) -> list[dict]:
-    """Where ``mol`` is likely to be metabolised, by group.  Each is {label, atoms,
-    note, phase}; ``atoms`` are the heavy atoms of the site, for highlighting.
+    """Where ``mol`` is likely to be oxidised, by group.  Each is {label, atoms, note};
+    ``atoms`` are the heavy atoms of the site, for highlighting.
 
     A flag is a liability to look at, not a rate and not an order -- see the note on
     :data:`SOFT_SPOTS`.  Nothing here predicts which site goes first, which is what
-    SMARTCyp does and this does not."""
+    SMARTCyp does and this does not.  :func:`phase2_sites` asks the complementary
+    question: which groups are handles for conjugation."""
     out = []
-    for label, smarts, which, note, phase in SOFT_SPOTS:
+    for label, smarts, which, note in SOFT_SPOTS:
         atoms: set[int] = set()
         for match in mol.GetSubstructMatches(_pattern(smarts)):
             atoms.update(match[k] for k in which if k < len(match))
         if atoms:
-            out.append({"label": label, "atoms": sorted(atoms), "note": note, "phase": phase})
+            out.append({"label": label, "atoms": sorted(atoms), "note": note})
+    return out
+
+
+# --- phase II: where a conjugating enzyme can attach -----------------------------------
+#
+# :data:`SOFT_SPOTS` above asks where CYP oxidises a molecule.  This asks the
+# complementary question: which groups are already handles for conjugation, so the
+# molecule can be cleared without being oxidised first.  A compound with a free phenol
+# is often cleared by UGT whatever its CYP liabilities, and a report that lists only
+# oxidation misses the route that actually dominates.
+#
+# This is a substructure table, not a model.  It says "this group is a substrate type
+# for this enzyme family", which is a statement about chemistry, and it is written from
+# the standard descriptions of each family's substrates.  It does NOT predict rate,
+# extent, or which route wins in vivo -- those depend on tissue expression, competing
+# routes and dose.  Read a hit as "this route is open", not "this route dominates".
+#
+# Two things are worth more than the site list itself: the groups whose conjugate is
+# *reactive* (an acyl glucuronide can rearrange and acylate protein), and the enzymes
+# that are polymorphic in people, where a slow metaboliser reaches a quite different
+# exposure from the same dose.
+#
+# (enzyme family, group, SMARTS, which atom of the match reacts, note)
+PHASE2_RULES: list[tuple[str, str, str, int, str]] = [
+    # UGT: glucuronidation, usually the highest-capacity route
+    ("UGT", "phenol O-glucuronide", "[c][OX2H1]", 1, ""),
+    ("UGT", "aliphatic OH O-glucuronide", "[CX4][OX2H1]", 1, ""),
+    ("UGT", "acyl glucuronide (COOH)", "[CX3](=[OX1])[OX2H1]", 0,
+     "an acyl glucuronide can rearrange and acylate protein: reactive metabolite risk"),
+    ("UGT", "N-glucuronide (arylamine)",
+     "[NX3;H1,H2;$(Na);!$(N[CX3]=[OX1]);!$(N[SX4](=O)=O)]", 0, ""),
+    ("UGT", "N-glucuronide (aliphatic amine)",
+     "[NX3;H1,H2;!$(Na);!$(N[CX3]=[OX1]);!$(N[SX4](=O)=O);!$(N~[!#6;!#1])]", 0, ""),
+    ("UGT", "N-glucuronide (acidic NH)",
+     "[$([nX3H1;r5]),$([NX3H1]([SX4](=O)=O)a)]", 0, ""),
+    ("UGT", "S-glucuronide (thiol)", "[#6][SX2H1]", 1, ""),
+    # SULT: sulfation.  Low capacity, and it saturates before UGT does
+    ("SULT", "phenol O-sulfate", "[c][OX2H1]", 1,
+     "a low-capacity route: it saturates with dose, shifting the load to UGT"),
+    ("SULT", "aliphatic OH O-sulfate", "[CX4;H1,H2][OX2H1]", 1, ""),
+    ("SULT", "N-sulfate (arylamine)",
+     "[NX3;H1,H2;$(Na);!$(N[CX3]=[OX1]);!$(N[SX4](=O)=O)]", 0, ""),
+    ("SULT", "O-sulfate of an N-OH", "[NX3][OX2H1]", 1,
+     "an N-OH sulfate can ionise to a nitrenium ion: reactive metabolite risk"),
+    # NAT: N-acetylation, polymorphic (slow and fast acetylators)
+    ("NAT", "arylamine N-acetylation",
+     "[NX3;H2;$(Na);!$(N[CX3]=[OX1]);!$(N[SX4](=O)=O)]", 0,
+     "NAT2 is polymorphic: a slow acetylator reaches a higher exposure"),
+    ("NAT", "hydrazine N-acetylation", "[NX3;H1,H2][NX3;H1,H2]", 0,
+     "NAT2 is polymorphic: a slow acetylator reaches a higher exposure"),
+    ("NAT", "sulfonamide N4-acetylation",
+     "[NX3;H2;$(c1ccc([SX4](=O)(=O)[NX3])cc1)]", 0, ""),
+    # COMT: O-methylation of catechols
+    ("COMT", "catechol O-methylation", "[OX2H1][c][c][OX2H1]", 0,
+     "a catechol is also oxidised to a quinone: reactive metabolite risk"),
+    # GST: glutathione conjugation.  These are electrophiles already
+    ("GST", "epoxide", "[CX4]1[OX2][CX4]1", 0,
+     "a direct electrophile: reactive metabolite risk"),
+    ("GST", "Michael acceptor", "[CX3]=[CX3][CX3]=[OX1]", 0,
+     "a direct electrophile: reactive metabolite risk"),
+    ("GST", "quinone", "[OX1]=[CX3]1[CX3]=[CX3][CX3](=[OX1])[CX3]=[CX3]1", 0,
+     "a direct electrophile: reactive metabolite risk"),
+    ("GST", "SNAr-activated aryl halide",
+     "[c]([F,Cl,Br,I])[c,n][c,n][$([NX3+](=O)[OX1-]),$(C#N),$(S(=O)=O)]", 0, ""),
+    ("GST", "alkyl halide", "[CX4;H1,H2][Cl,Br,I]", 0, ""),
+    ("GST", "isothiocyanate", "[NX2]=[CX2]=[SX1]", 0, ""),
+    # TPMT and the other thiol methyltransferases
+    ("TPMT", "S-methylation (thiol)", "[#6][SX2H1]", 1, "TPMT is polymorphic"),
+]  # fmt: skip
+
+#: the order the families are read in: capacity first, then the reactive ones
+PHASE2_FAMILIES = ("UGT", "SULT", "NAT", "COMT", "GST", "TPMT")
+
+
+def phase2_sites(mol) -> list[dict]:
+    """``mol``'s conjugation handles, one entry per enzyme family that has any:
+    {family, atoms, groups, notes}.
+
+    An atom is reported once per family, so a phenol that both UGT and SULT can take
+    appears under each but not twice under either.  See the note on
+    :data:`PHASE2_RULES`: a hit means the route is open, not that it dominates."""
+    seen: dict[str, dict] = {}
+    claimed: set[tuple[str, int]] = set()
+    for family, group, smarts, which, note in PHASE2_RULES:
+        for match in mol.GetSubstructMatches(_pattern(smarts)):
+            if which >= len(match):
+                continue
+            atom = match[which]
+            if (family, atom) in claimed:
+                continue
+            claimed.add((family, atom))
+            out = seen.setdefault(family, {"family": family, "atoms": [], "groups": [],
+                                           "notes": []})  # fmt: skip
+            out["atoms"].append(atom)
+            if group not in out["groups"]:
+                out["groups"].append(group)
+            if note and note not in out["notes"]:
+                out["notes"].append(note)
+    for out in seen.values():
+        out["atoms"] = sorted(out["atoms"])
+    return [seen[f] for f in PHASE2_FAMILIES if f in seen]
+
+
+def phase2_warnings(sites) -> list[str]:
+    """The reactive-metabolite and polymorphism notes of :func:`phase2_sites`, once
+    each: the part of the phase II panel that changes what a chemist does next."""
+    out: list[str] = []
+    for site in sites:
+        for note in site["notes"]:
+            if note not in out:
+                out.append(note)
     return out
 
 
@@ -893,6 +1193,29 @@ select.ui { background: var(--card); color: var(--text); border: 1px solid var(-
   font-size: 12.5px; color: var(--muted); user-select: none; }
 .switch input { accent-color: var(--spot); margin: 0; }
 .tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+/* triage: the verdict, the rules that make it, and what a filter hides */
+.verdict { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  border: 1px solid currentColor; border-radius: 10px; padding: 1px 7px;
+  vertical-align: 2px; }
+.v-pass { color: var(--good); }
+.v-review { color: var(--accent); }
+.v-fail { color: var(--warn); }
+#summary td[data-verdict] { font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.04em; }
+.why { margin: 0 0 6px; }
+.rules { display: grid; gap: 2px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); }
+.rule { display: flex; align-items: center; gap: 7px; font-size: 12.5px;
+  padding: 2px 0; cursor: pointer; }
+.rule input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+.rlabel { flex: 1; }
+.thr { width: 62px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; font: inherit;
+  font-size: 12px; }
+.rlevel { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  width: 44px; text-align: right; }
+.tally { font-size: 12.5px; color: var(--text); }
+.gone { display: none; }
 footer { margin-top: 42px; padding-top: 14px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 11.5px; }
 footer p { margin: 5px 0; }
@@ -905,7 +1228,7 @@ footer p { margin: 5px 0; }
 # but the page itself and fetches nothing.
 _JS = r"""
 (function () {
-  var DATA = __DATA__, NUMERIC = __NUMERIC__;
+  var DATA = __DATA__, NUMERIC = __NUMERIC__, RULES = __RULES__;
   var root = document.documentElement;
 
   // --- theme: the system's unless the reader says otherwise -------------------------
@@ -1042,7 +1365,7 @@ _JS = r"""
     if (node) go(+node.getAttribute('data-design'));
   });
 
-  // --- the table sorts on any column ---------------------------------------------------
+  // --- the table sorts on any column, or on several ------------------------------------
   // "2PM1" is not a number, though parseFloat would call it 2 and make every name
   // equal; and "2PM10" comes after "2PM2", which a plain text compare gets backwards
   var collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -1055,26 +1378,142 @@ _JS = r"""
   var table = document.getElementById('summary');
   if (table) {
     var headers = [].slice.call(table.tHead.rows[0].cells);
+    // the keys in force, most significant first: [{col, down}].  A plain click starts
+    // again from one column; a shift-click adds a column to sort *within* the keys
+    // already chosen, which is what "first by X, then by Y" means
+    var keys = [];
+    function mark() {
+      headers.forEach(function (th) {
+        var arrow = th.querySelector('.arrow');
+        if (arrow) arrow.textContent = '';
+      });
+      keys.forEach(function (key, rank) {
+        var arrow = headers[key.col].querySelector('.arrow');
+        if (!arrow) return;
+        // the number is the order the keys are applied in; one key alone needs no number
+        arrow.textContent = ' ' + (keys.length > 1 ? (rank + 1) : '') + (key.down ? '↓' : '↑');
+      });
+    }
+    function apply() {
+      if (!keys.length) return;
+      var body = table.tBodies[0];
+      var rows = [].slice.call(body.rows);
+      rows.sort(function (x, y) {
+        for (var k = 0; k < keys.length; k++) {
+          var c = compare(x.cells[keys[k].col].textContent.trim(),
+                          y.cells[keys[k].col].textContent.trim());
+          if (c) return keys[k].down ? -c : c;
+        }
+        // every key equal: the order the designs came in, so a sort is repeatable
+        return (+x.getAttribute('data-row')) - (+y.getAttribute('data-row'));
+      });
+      rows.forEach(function (r) { body.appendChild(r); });
+    }
     headers.forEach(function (th, col) {
-      th.addEventListener('click', function () {
-        var down = th.dataset.down !== '1';
-        headers.forEach(function (other) {
-          other.dataset.down = '';
-          var mark = other.querySelector('.arrow');
-          if (mark) mark.textContent = '';
-        });
-        th.dataset.down = down ? '1' : '0';
-        th.querySelector('.arrow').textContent = down ? ' ↓' : ' ↑';
-        var body = table.tBodies[0];
-        var rows = [].slice.call(body.rows);
-        rows.sort(function (x, y) {
-          return compare(x.cells[col].textContent.trim(),
-                         y.cells[col].textContent.trim()) * (down ? -1 : 1);
-        });
-        rows.forEach(function (r) { body.appendChild(r); });
+      th.addEventListener('click', function (e) {
+        var at = -1;
+        for (var k = 0; k < keys.length; k++) if (keys[k].col === col) at = k;
+        if (e.shiftKey) {
+          // already a key: turn that one round, leaving its place in the order
+          if (at >= 0) keys[at].down = !keys[at].down;
+          else keys.push({ col: col, down: false });
+        } else {
+          // the only key already: turn it round.  Otherwise it becomes the only key
+          keys = [{ col: col, down: keys.length === 1 && at === 0 ? !keys[0].down : false }];
+        }
+        mark();
+        apply();
       });
     });
   }
+
+  // --- triage: one verdict per design, and the rules that made it ----------------------
+  // The rules come from the same table the report was written with, so the verdict the
+  // page recomputes and the one printed into it cannot disagree.  Nothing is recomputed
+  // from the structure here: every rule reads a number already on the page
+  var tally = document.getElementById('tally');
+  var show = document.getElementById('show');
+  var ORDER = ['pass', 'review', 'fail'];
+  function limits() {
+    var out = {};
+    RULES.forEach(function (rule) {
+      var on = document.getElementById('c-' + rule.key);
+      if (on && !on.checked) { out[rule.key] = null; return; }   // the rule is ignored
+      var box = document.getElementById('t-' + rule.key);
+      if (box && box.value !== '' && isFinite(Number(box.value))) out[rule.key] = Number(box.value);
+    });
+    return out;
+  }
+  function judge(design, moved) {
+    var worst = 0, why = [];
+    RULES.forEach(function (rule) {
+      if (moved[rule.key] === null) return;
+      var value = design.t[rule.field];
+      if (value === undefined || value === null) return;
+      var limit = moved.hasOwnProperty(rule.key) ? moved[rule.key] : rule.limit;
+      var hit;
+      // without case, as triage() compares it: "High" must not fire a rule set on "high"
+      if (rule.op === 'is not') {
+        hit = String(value).toLowerCase() !== String(rule.limit).toLowerCase();
+      }
+      else if (typeof value !== 'number') return;
+      else hit = rule.op === '>=' ? value >= limit : rule.op === '>' ? value > limit
+                                                                     : value < limit;
+      if (hit) {
+        why.push(rule.op === 'is not' ? rule.label : rule.label + ' ' + value);
+        worst = Math.max(worst, rule.level === 'fail' ? 2 : 1);
+      }
+    });
+    return { level: ORDER[worst], why: why };
+  }
+  function retriage() {
+    if (!RULES.length) return;
+    var moved = limits(), counts = { pass: 0, review: 0, fail: 0 };
+    var keep = show ? show.value : 'all';
+    DATA.forEach(function (design) {
+      var out = judge(design, moved);
+      counts[out.level]++;
+      var badges = document.querySelectorAll('[data-verdict="' + design.i + '"]');
+      for (var k = 0; k < badges.length; k++) {
+        badges[k].textContent = out.level;
+        badges[k].className = badges[k].className.replace(/\bv-\w+\b/g, '') + ' v-' + out.level;
+      }
+      var why = document.querySelector('[data-why="' + design.i + '"]');
+      if (why) why.textContent = out.why.length ? out.why.join('; ') : 'nothing breached';
+      // hidden, not deleted: untick a rule and it is back, with nothing recomputed
+      var hide = keep === 'pass' ? out.level !== 'pass'
+               : keep === 'review' ? out.level === 'fail' : false;
+      var row = document.querySelector('#summary tr[data-row="' + design.i + '"]');
+      if (row) row.classList.toggle('gone', hide);
+      var card = document.getElementById('design-' + design.i);
+      if (card) card.classList.toggle('gone', hide);
+    });
+    if (tally) {
+      tally.textContent = counts.pass + ' pass, ' + counts.review + ' to review, '
+                        + counts.fail + ' fail';
+    }
+  }
+  RULES.forEach(function (rule) {
+    var on = document.getElementById('c-' + rule.key);
+    var box = document.getElementById('t-' + rule.key);
+    if (on) on.onchange = retriage;
+    if (box) box.oninput = retriage;
+  });
+  if (show) show.onchange = retriage;
+  var resetButton = document.getElementById('reset');
+  if (resetButton) {
+    resetButton.onclick = function () {
+      RULES.forEach(function (rule) {
+        var on = document.getElementById('c-' + rule.key);
+        var box = document.getElementById('t-' + rule.key);
+        if (on) on.checked = true;
+        if (box) box.value = rule.limit;
+      });
+      if (show) show.value = 'all';
+      retriage();
+    };
+  }
+  retriage();
 
   // --- any property against any other ---------------------------------------------------
   var xs = document.getElementById('plot-x'), ys = document.getElementById('plot-y');
@@ -1170,6 +1609,40 @@ def _figure_buttons(what: str) -> str:
     )
 
 
+def _triage_controls() -> str:
+    """The triage rules as the page's own controls: a tick and a threshold each, and a
+    tally.  Every rule is shown whether it bites or not, so a shortlist can never hide
+    the rule that produced it, and a threshold a reader disagrees with can be moved."""
+    rows = []
+    for key, label, _field, operator, default, level in TRIAGE_FIELDS:
+        box = ""
+        if operator != "is not":
+            step = "0.1" if isinstance(default, float) else "1"
+            box = (f'<input type="number" id="t-{key}" value="{default:g}" step="{step}" '
+                   'class="thr">')  # fmt: skip
+        rows.append(f'<label class="rule"><input type="checkbox" id="c-{key}" checked>'
+                    f'<span class="rlabel">{_escape(label)}</span>{box}'
+                    f'<span class="rlevel v-{level}">{level}</span></label>')  # fmt: skip
+    return (
+        '<div class="card" id="controls"><p class="pt2">Triage rules</p>'
+        '<p class="sub">Untick a rule to ignore it, or change a threshold: the table, '
+        "the tally and every panel follow. A design fails on any <em>fail</em> rule "
+        "and is flagged on any <em>review</em> rule. These thresholds are the "
+        "conventional ones, which is not the same as being right for your series."
+        "</p>"
+        f'<div class="rules">{"".join(rows)}</div>'
+        '<div class="axes" style="margin:10px 0 0">'
+        '<span class="tally" id="tally"></span>'
+        '<label for="show">show</label>'
+        '<select class="ui" id="show">'
+        '<option value="all">every design</option>'
+        '<option value="review">pass and review</option>'
+        '<option value="pass">pass only</option></select>'
+        '<button class="ui" id="reset" type="button">reset to defaults</button>'
+        "</div></div>"
+    )
+
+
 def _verdict_class(value) -> str:
     """How a filter's verdict is coloured: a pass green, a failure amber."""
     text = str(value)
@@ -1180,21 +1653,30 @@ def _verdict_class(value) -> str:
     return ""
 
 
-def _plot_data(designs, columns) -> tuple[str, str]:
-    """The numbers the scatter plot needs, as JSON for the page's one script, and the
-    properties that can go on an axis.  ``<`` is escaped so nothing in a name can end
-    the script element early."""
+def _plot_data(designs, columns) -> tuple[str, str, str]:
+    """What the page's one script needs, as JSON: every design's numbers (for the
+    scatter plot) and the properties triage reads, the properties that can go on an
+    axis, and the triage rules themselves -- the same table :func:`triage` uses, so the
+    verdict the page recomputes and the one computed here cannot drift apart.
+
+    ``<`` is escaped so nothing in a name can end the script element early."""
     import json
+
+    def dump(value) -> str:
+        return json.dumps(value, ensure_ascii=True).replace("<", "\\u003c")
 
     numeric = [c for c in columns
                if any(isinstance(p.get(c), (int, float)) and not isinstance(p.get(c), bool)
                       for _n, _s, _o, p, _m in designs)]  # fmt: skip
+    wanted = [f[2] for f in TRIAGE_FIELDS]
     rows = []
     for k, (name, _smiles, _note, props, _mol) in enumerate(designs):
         mine = {c: props[c] for c in numeric if isinstance(props.get(c), (int, float))}
-        rows.append({"i": k, "n": name, "p": mine})
-    dumped = json.dumps(rows, ensure_ascii=True).replace("<", "\\u003c")
-    return dumped, json.dumps(numeric, ensure_ascii=True).replace("<", "\\u003c")
+        reads = {c: props[c] for c in wanted if props.get(c) is not None}
+        rows.append({"i": k, "n": name, "p": mine, "t": reads})
+    rules = [{"key": k, "label": lab, "field": f, "op": o, "limit": d, "level": lv}
+             for k, lab, f, o, d, lv in TRIAGE_FIELDS]  # fmt: skip
+    return dump(rows), dump(numeric), dump(rules)
 
 
 def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
@@ -1218,7 +1700,7 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
                "QED", "synthetic accessibility", "Lipinski violations", "PAINS"}  # fmt: skip
     when = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     head = _escape(title or group)
-    data, axes = _plot_data(designs, everything)
+    data, axes, rules = _plot_data(designs, everything)
 
     out = [
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">',
@@ -1239,7 +1721,11 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
 
     # one row per design
     out.append(f"<h2>{_escape(group)} at a glance</h2>")
-    out.append('<p class="sub">Click a column to sort by it, or a row to go to that design.</p>')
+    out.append(_triage_controls())
+    out.append('<p class="sub">Click a column to sort by it; <strong>shift-click</strong> '
+               "another to sort within that, and again to turn it round &mdash; the "
+               "headings number the keys in the order they are applied. Click a row to go "
+               "to that design.</p>")  # fmt: skip
     out.append('<table id="summary"><thead><tr>')
     notes = any(o for _n, _s, o, _p, _m in designs)
     for c in [*columns, *(["note"] if notes else [])]:
@@ -1248,10 +1734,14 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
                    '<span class="arrow"></span></th>')  # fmt: skip
     out.append("</tr></thead><tbody>")
     for k, (name, _smiles, note, props, _mol) in enumerate(designs):
-        out.append(f'<tr data-design="{k}">')
+        out.append(f'<tr data-design="{k}" data-row="{k}">')
         for c in columns:
             value = name if c == "name" else props.get(c, "")
             cls = ' class="n"' if c in numeric else ""
+            if c == "triage":
+                out.append(f'<td data-verdict="{k}" class="v-{_escape(value)}">'
+                           f"{_escape(value)}</td>")  # fmt: skip
+                continue
             out.append(f"<td{cls}>{_escape(value)}</td>")
         if notes:
             out.append(f"<td>{_escape(note or '')}</td>")
@@ -1288,13 +1778,18 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
     # a panel per design
     out.append("<h2>Every design</h2>")
     for k, (name, smiles, note, props, mol) in enumerate(designs):
-        spots = []
+        spots, conjugates = [], []
         if mol is not None:
             try:
                 spots = soft_spots(mol)
             except Exception:
                 spots = []
-        marked = sorted({a for s in spots for a in s["atoms"]})
+            try:
+                conjugates = phase2_sites(mol)
+            except Exception:
+                conjugates = []
+        marked = sorted({a for s in spots for a in s["atoms"]}
+                        | {a for s in conjugates for a in s["atoms"]})  # fmt: skip
         out.append(f'<div class="card design" id="design-{k}">')
         if mol is not None:
             # one drawing for each theme, since a structure drawn for white paper
@@ -1311,7 +1806,13 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
             out.append(f'<div class="struct" data-figure="{_escape(name)}">'
                        f"{_figure_buttons(name)}{drawing}</div>")  # fmt: skip
         out.append("<div>")
-        out.append(f"<h3>{_escape(name)}</h3>")
+        verdict = props.get("triage")
+        badge = (f'<span class="verdict v-{_escape(verdict)}" data-verdict="{k}">'
+                 f"{_escape(verdict)}</span>") if verdict else ""  # fmt: skip
+        out.append(f"<h3>{_escape(name)} {badge}</h3>")
+        if props.get("triage reasons"):
+            out.append(f'<p class="sub why" data-why="{k}">'
+                       f'{_escape(props["triage reasons"])}</p>')  # fmt: skip
         if smiles:
             out.append(f'<p class="smiles">{_escape(smiles)}</p>')
         if note:
@@ -1332,18 +1833,31 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
                            f"{_escape(value)}</td></tr>")  # fmt: skip
             out.append("</table></div>")
         out.append("</div>")
-        if spots:
+        if spots or conjugates:
             out.append('<div class="spots-block">')
-            out.append('<p class="pt2 spot">Metabolic soft spots</p>')
+        if spots:
+            out.append('<p class="pt2 spot">Metabolic soft spots &mdash; oxidation (phase I)'
+                       "</p>")  # fmt: skip
             out.append('<ul class="spots">')
             for spot in spots:
-                phase = "phase II" if spot["phase"] == 2 else "phase I"
                 out.append(f'<li><span class="what">{_escape(spot["label"])}</span> '
-                           f'({phase}) &mdash; {_escape(spot["note"])}</li>')  # fmt: skip
+                           f'&mdash; {_escape(spot["note"])}</li>')  # fmt: skip
             out.append("</ul>")
-            out.append('<p class="sub">Marked on the drawing. These are the groups known '
-                       "to be labile, found by substructure: a liability to look at, not "
-                       "a rate. Nothing says which site goes first.</p>")  # fmt: skip
+        if conjugates:
+            out.append('<p class="pt2 spot">Conjugation handles &mdash; phase II</p>')
+            out.append('<ul class="spots">')
+            for site in conjugates:
+                groups = ", ".join(site["groups"])
+                out.append(f'<li><span class="what">{_escape(site["family"])}</span> '
+                           f'&mdash; {_escape(groups)}</li>')  # fmt: skip
+            out.append("</ul>")
+            for warning in phase2_warnings(conjugates):
+                out.append(f'<div class="note flag">{_escape(warning)}</div>')
+        if spots or conjugates:
+            out.append('<p class="sub">Marked on the drawing. Both lists are substructure '
+                       "matches: they say which groups are labile and which conjugation "
+                       "routes are open, never a rate and never which route wins. Nothing "
+                       "says which site goes first.</p>")  # fmt: skip
             out.append("</div>")
         out.append("</div></div>")
 
@@ -1354,13 +1868,24 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         "corrected for ionisation by Henderson-Hasselbalch, with one representative pKa per "
         "functional group &mdash; so it carries about 0.5&ndash;1.0 log unit of error even "
         "when the ionisation is right, and more when a group's real pKa is far from its "
-        "class average.</p>"
+        "class average. The pKa values are medians of measured drug-like compounds rather "
+        "than the textbook value of the unsubstituted parent. An ionised molecule is taken "
+        "to partition as an ion pair, three log units below the neutral form for a base "
+        "and four for an acid (the published &ldquo;diff 3&ndash;4&rdquo; approximation): "
+        "without that floor logD falls without limit and every cation reads about 0.9 too "
+        "low. A measured pKa, given as a design's <code>pka_acid</code> or "
+        "<code>pka_base</code> field, replaces the table for that design and is the single "
+        "biggest thing that improves its logD.</p>"
         "<p><strong>The BOILED-Egg</strong> (Daina &amp; Zoete 2016). A design in the white "
         "is likely to be absorbed in the gut; one in the yolk is likely to cross the "
         "blood-brain barrier as well. Outside both, neither is likely by passive diffusion. "
         "Click a point to go to that design. It knows nothing of transporters or efflux, so "
         "a molecule that is carried across (or pumped back out) sits in the wrong place: "
-        "caffeine, which does reach the brain, falls outside the yolk.</p>"
+        "caffeine, which does reach the brain, falls outside the yolk. Published "
+        "benchmarks put the egg's GI verdict near 0.75 and its brain verdict near 0.73 "
+        "AUROC against measured sets, and the Abbott bioavailability score near 0.57 "
+        "&mdash; which is barely better than calling every design bioavailable. Read all "
+        "three as a sanity check, never as a decision.</p>"
         "<p>Log S: Delaney 2004 (ESOL) and Ali et al. 2012. Log Kp: Potts &amp; Guy 1992. "
         "QED: Bickerton et al. 2012. Synthetic accessibility: Ertl &amp; Schuffenhauer 2009. "
         "Filters: Lipinski 1997, Ghose 1999, Egan 2000, Muegge 2001, Veber 2002. Alerts: the "
@@ -1370,10 +1895,22 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         "compound turns over too fast. They give no rate and no order, and they are not "
         "SMARTCyp, which ranks every atom by a computed activation energy. Microsomes "
         "settle it.</p>"
+        "<p><strong>The phase II list says which conjugation routes are open</strong>, not "
+        "which one dominates. UGT is usually the highest-capacity route and SULT saturates "
+        "with dose; NAT2 and TPMT are polymorphic in people, so a slow metaboliser reaches "
+        "a quite different exposure from the same dose. The groups whose conjugate is "
+        "itself reactive are called out: an acyl glucuronide can rearrange and acylate "
+        "protein, an N-OH sulfate can ionise to a nitrenium ion, and a catechol is also "
+        "oxidised to a quinone.</p>"
+        "<p><strong>Triage is a filter, not a finding.</strong> Every rule reads a number "
+        "shown above it, and the thresholds are the conventional ones, which is not the "
+        "same as being right for a series. Move them, or untick a rule, and the verdicts "
+        "follow.</p>"
         "<p>PAINS and Brenk alerts are substructures worth a second look, not verdicts; "
         "a good many marketed drugs carry one. The filters are rules of thumb, and plenty "
         "of useful molecules break them.</p></footer>"
     )
-    script = _JS.replace("__DATA__", data).replace("__NUMERIC__", axes)
+    script = (_JS.replace("__DATA__", data).replace("__NUMERIC__", axes)
+              .replace("__RULES__", rules))  # fmt: skip
     out.append(f"</main>\n<script>{script}</script>\n</body>\n</html>\n")
     return "\n".join(out)

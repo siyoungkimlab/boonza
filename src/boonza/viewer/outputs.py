@@ -605,16 +605,21 @@ class Viewer:
         """What RDKit computes from each member of series ``group``'s structure: MW,
         heavy atoms, cLogP (Crippen), TPSA, H-bond donors and acceptors (Lipinski) and
         rotatable bonds, by member.  A member RDKit cannot read has none.  Kept by each
-        member's atoms, bonds and charges, so only an edited one is computed again."""
+        member's atoms, bonds and charges, so only an edited one is computed again.
+
+        A member carrying a measured pKa (a ``pka_acid`` or ``pka_base`` field) has it
+        used in place of the table, so that is part of the key too."""
         out = {}
         for k in self.series(group):
             s = self.session(k).system
-            key = (s.natoms, *(np.asarray(x).tobytes() for x in (
-                s.atoms["anum"], s.atoms["formal_charge"], s.bonds["i"], s.bonds["j"],
-                s.bonds["order"])))  # fmt: skip
+            measured = measured_pka(self.models[k].row)
+            key = (s.natoms, repr(sorted(measured.items())),
+                   *(np.asarray(x).tobytes() for x in (
+                       s.atoms["anum"], s.atoms["formal_charge"], s.bonds["i"], s.bonds["j"],
+                       s.bonds["order"])))  # fmt: skip
             cached = self._properties.get(k)
             if cached is None or cached[0] != key:
-                self._properties[k] = cached = (key, _properties(s))
+                self._properties[k] = cached = (key, _properties(s, measured=measured))
             out[k] = cached[1]
         return out
 
@@ -866,7 +871,7 @@ class Viewer:
             props = {}
             if mol is not None:
                 try:
-                    props = admet.properties(mol, ph)
+                    props = admet.properties(mol, ph, measured_pka(self.models[k].row))
                 except Exception as exc:  # named in the page rather than failing the run
                     props = {"caveats": [f"its properties could not be computed: {exc}"]}
             smiles = ".".join(
@@ -1120,7 +1125,32 @@ def _rdkit_mol(system):
         return None
 
 
-def _properties(system, ph: float = PH) -> dict:
+def measured_pka(row) -> dict:
+    """The pKa values measured for one design, out of its own fields: ``pka_acid`` and
+    ``pka_base``, each one value or several separated by commas.  ``{}`` when it has
+    none, which is the usual case.
+
+    A measured pKa is the single biggest thing that improves a design's logD, since the
+    table in :mod:`boonza.viewer.admet` has only one value per functional class.  An
+    unreadable value is ignored rather than failing the design: the rest of its
+    properties are still worth having."""
+    out: dict[str, list[float]] = {}
+    for kind in ("acid", "base"):
+        text = (row or {}).get(f"pka_{kind}")
+        if text is None or text == "":
+            continue
+        values = []
+        for part in str(text).replace(";", ",").split(","):
+            try:
+                values.append(float(part.strip()))
+            except ValueError:
+                continue
+        if values:
+            out[kind] = values
+    return out
+
+
+def _properties(system, ph: float = PH, measured=None) -> dict:
     """What a series' table computes for each design: the columns worth ranking
     designs by, out of everything :mod:`boonza.viewer.admet` works out."""
     from . import admet
@@ -1129,7 +1159,7 @@ def _properties(system, ph: float = PH) -> dict:
     if mol is None:
         return {}
     try:
-        full = admet.properties(mol, ph)
+        full = admet.properties(mol, ph, measured)
     except Exception:  # one odd design must not empty the whole table
         return {}
     return {c: full[c] for c in admet.TABLE_COLUMNS if c in full}
