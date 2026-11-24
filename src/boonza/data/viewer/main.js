@@ -54,6 +54,10 @@ const state = {
   pocket: +(localStorage.getItem("boonza.pocket") || 5),  // A: residues this near the ligand are its pocket
   selHidden: false,                 // (sel) unticked: still selected, not highlighted
   surfaceGrid: +(localStorage.getItem("boonza.surfaceGrid") || 0.5),  // A, View | Add Surface | Resolution
+  // the ligand's MW, heavy atoms, logP and logD, top left: on unless turned off
+  ligProps: localStorage.getItem("boonza.ligprops") !== "0",
+  // the membrane guides: null (off) or {d, radius, span} in A -- View | Membrane Guides
+  membrane: null,
 };
 
 // --- server ----------------------------------------------------------------
@@ -627,6 +631,101 @@ function cellLines(box) {
   return out;
 }
 
+// --- membrane guides ------------------------------------------------------------------
+//
+// Two planes perpendicular to z, at z = +-d/2, with a sphere at the origin: what a
+// protein is turned and slid against while it is being placed in a bilayer.
+//
+// The midplane is z = 0, which is not an arbitrary choice -- it is the convention
+// boonza's own builder already works in.  `bilayer()` in martini/membrane.py puts the
+// membrane's midplane at the centre of the box and, with `protein_origin`, the protein's
+// own z = 0 there, "as OPM orients structures".  So a protein lined up against these
+// guides is lined up for that call, with nothing to convert.
+//
+// `d` is therefore a HYDROPHOBIC thickness, not a phosphate-to-phosphate distance: the
+// acyl-chain region a transmembrane surface has to span.  30 A is a fluid POPC/POPE
+// bilayer and the mean hydrophobic thickness of the a-helical membrane proteins in OPM;
+// ~32-35 A with 30% cholesterol.  The phosphates sit about 38-40 A apart, which is a
+// different surface -- aligning a TM domain to that buries polar surface in the chains.
+//
+// The sphere is inscribed between the planes (radius d/2 unless told otherwise), so it
+// touches both: whether the protein is centred, and how deep it sits, are then read at a
+// glance rather than measured.
+function emptyLayer(alpha, shine, noclip) {
+  return { alpha, shine, noclip,
+    spheres: { center: new Float32Array(0), radius: new Float32Array(0), color: new Float32Array(0) },
+    cylinders: { a: new Float32Array(0), b: new Float32Array(0), radius: new Float32Array(0), color: new Float32Array(0) },
+    mesh: { position: new Float32Array(0), normal: new Float32Array(0), color: new Float32Array(0), index: new Uint32Array(0) },
+    lines: { position: new Float32Array(0), color: new Float32Array(0) } };
+}
+
+// how far the planes reach in x and y: around whatever is shown, so they frame the
+// protein instead of ending inside it
+function membraneSpan(models) {
+  let r = 0;
+  for (const m of models) {
+    const p = m.pos;
+    if (!p) continue;
+    for (let a = 0; a < p.length; a += 3) {
+      const x = Math.abs(p[a]), y = Math.abs(p[a + 1]);
+      if (x > r) r = x;
+      if (y > r) r = y;
+    }
+  }
+  return Math.max(25, r * 1.15);
+}
+
+// The planes and the sphere, as two layers: a barely-there fill, and the lines that do
+// the actual work.  They are drawn as wireframe for a reason -- the camera starts
+// looking down z, which is exactly face-on to these planes, and a filled plane then
+// washes the whole view; and a solid sphere at the origin is buried inside the protein,
+// which is where it is least useful.  A grid and three great circles stay readable from
+// every angle and never hide what is being placed.  Two layers, not one, because a
+// layer is drawn front-fragment-only (gl.js), so a single one would let the fill swallow
+// its own lines.
+const MEMBRANE_GRID = 10;  // Å between the grid lines on each plane
+function membraneGuides(models, g) {
+  const half = g.d / 2, span = g.span || membraneSpan(models);
+  const radius = g.radius ?? half;
+  const fill = emptyLayer(0.1, 0, true), wire = emptyLayer(0.8, 1, true);
+  const pos = [], nrm = [], col = [], idx = [], line = [], lc = [];
+  const PLANE = [0.35, 0.62, 1.0], BALL = [1.0, 0.72, 0.2];
+  const corners = [[-span, -span], [span, -span], [span, span], [-span, span]];
+  for (const side of [1, -1]) {
+    const z = side * half, base = pos.length / 3;
+    for (const [x, y] of corners) { pos.push(x, y, z); nrm.push(0, 0, side); col.push(...PLANE); }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    for (let k = 0; k < 4; k++) {  // the border, so a plane seen edge on is still there
+      line.push(...corners[k], z, ...corners[(k + 1) % 4], z);
+      lc.push(...PLANE, ...PLANE);
+    }
+    // and a grid across it, which is what makes the plane read as a surface face-on
+    const step = MEMBRANE_GRID;
+    for (let t = -Math.floor(span / step) * step; t <= span; t += step) {
+      line.push(t, -span, z, t, span, z, -span, t, z, span, t, z);
+      for (let k = 0; k < 4; k++) lc.push(...PLANE);
+    }
+  }
+  fill.mesh = { position: new Float32Array(pos), normal: new Float32Array(nrm),
+                color: new Float32Array(col), index: new Uint32Array(idx) };
+  // the sphere as its three great circles: a guide to turn against, never an object in
+  // the way.  Inscribed between the planes by default, so it touches both
+  if (radius > 0) {
+    const N = 72;
+    for (const axis of [0, 1, 2]) {
+      for (let k = 0; k < N; k++) {
+        for (const a of [(k / N) * 2 * Math.PI, ((k + 1) / N) * 2 * Math.PI]) {
+          const u = Math.cos(a) * radius, v = Math.sin(a) * radius;
+          line.push(axis === 0 ? 0 : u, axis === 0 ? u : axis === 1 ? 0 : v, axis === 2 ? 0 : v);
+          lc.push(...BALL);
+        }
+      }
+    }
+  }
+  wire.lines = { position: new Float32Array(line), color: new Float32Array(lc) };
+  return [fill, wire];
+}
+
 // a surface representation's mesh: made again when its atoms move, or its coloring,
 // atoms or the resolution change.  Electrostatic and hydrophobic color it by property;
 // a color name paints it that color, anything else leaves it plain
@@ -736,6 +835,8 @@ function rebuild() {
       base.lines = { position: p, color: c };
     }
   }
+  // the membrane guides go in as their own see-through layers, after the opaque ones
+  if (state.membrane) scene.layers.push(...membraneGuides(models, state.membrane));
   renderer.setScene(scene);
   makeLabels();
   draw();
@@ -1302,7 +1403,7 @@ function pageState() {
               ortho: camera.ortho, zclip: camera.zclip, pivot: camera.pivot },
     theme: document.body.className, current: state.current, frame: state.frame,
     hydrogens: state.hydrogens, contacts: state.contacts, labelMode: state.labelMode, masks: state.masks,
-    fog: renderer.fog, cell: !!state.cell, views: state.views,
+    fog: renderer.fog, cell: !!state.cell, membrane: state.membrane, views: state.views,
     meters: state.meters.map(x => ({ m: x.model.index, atoms: x.atoms })), models,
   };
 }
@@ -1363,7 +1464,8 @@ async function restorePage(page) {
   state.meters = (page.meters || []).map(x => ({ model: state.models[where(x.m)], atoms: x.atoms })).filter(x => x.model);
   Object.assign(state, { hydrogens: page.hydrogens ?? state.hydrogens, contacts: !!page.contacts,
                          labelMode: page.labelMode || state.labelMode, masks: page.masks || state.masks,
-                         cell: !!page.cell, views: page.views || [] });
+                         cell: !!page.cell, membrane: page.membrane || null,
+                         views: page.views || [] });
   app.onViews?.();
   if (page.fog) Object.assign(renderer.fog, page.fog);
   if (page.theme) app.setTheme?.(page.theme);
