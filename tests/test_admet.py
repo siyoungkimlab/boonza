@@ -751,3 +751,57 @@ def test_every_bundled_data_file_is_named_in_the_repository_notice():
         assert owed in notice, owed
     # the two that are not MIT say so in as many words
     assert notice.count("not under the MIT licence") >= 3  # these two and SIRAH's
+
+
+# --- a design drawn in its ionised form, which is how a prepared structure arrives ----
+
+
+def test_a_prepared_ligand_is_neutralised_before_its_pka_is_read():
+    """The pKa table matches the neutral species -- a protonated acid, an unprotonated
+    base -- and several base patterns exclude ``[N+]`` outright.  A design that comes out
+    of a prepared structure is drawn as the simulation needs it: the amine as ``[NH3+]``,
+    the acid as ``[O-]``.  Read as drawn it shows no ionisable site, so there is nothing
+    for Henderson-Hasselbalch to correct and logD comes back exactly equal to logP -- a
+    number that looks computed and is not.  Each pair below must agree to the decimal."""
+    pairs = [
+        (PROPRANOLOL, "CC(C)[NH2+]CC(O)COc1cccc2ccccc12"),
+        (IBUPROFEN, "CC(C)Cc1ccc(cc1)C(C)C(=O)[O-]"),
+        (IMATINIB, "Cc1ccc(NC(=O)c2ccc(CN3CC[NH+](C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1"),
+    ]
+    for neutral, as_prepared in pairs:
+        want, got = props(neutral), props(as_prepared)
+        assert got["logD"] == pytest.approx(want["logD"], abs=0.01), as_prepared
+        assert got["cLogP"] == pytest.approx(want["cLogP"], abs=0.01), as_prepared
+        assert got["ionisable groups"] == want["ionisable groups"], as_prepared
+        assert got["ionised form"] == want["ionised form"], as_prepared
+        # and the ionised form is actually found, not merely consistent
+        assert got["logD"] < got["cLogP"] - 0.5, as_prepared
+
+
+def test_neutralising_leaves_a_permanent_charge_and_the_callers_molecule_alone():
+    """``Uncharger`` moves only the protons that balance.  A quaternary ammonium has no
+    proton to lose, so it stays ``+1`` and its caveat still fires; a betaine stays a
+    zwitterion, whose carboxylate the "as drawn" class is there to catch.  And the
+    molecule handed in is not touched: the caller is still drawing it."""
+    choline = Chem.MolFromSmiles("C[N+](C)(C)CCO")
+    assert admet.properties(choline)["formal charge"] == 1
+    assert Chem.GetFormalCharge(choline) == 1, "the caller's molecule was neutralised"
+    betaine = admet.properties(Chem.MolFromSmiles("C[N+](C)(C)CC(=O)[O-]"))
+    assert "carboxylate (as drawn)" in betaine["ionisable groups"]
+
+
+def test_a_permanent_charge_is_held_at_the_ion_pair_plateau():
+    """No pKa governs a quaternary ammonium or a sulfonate, so it appears in none of the
+    sites and Henderson-Hasselbalch had nothing to correct: logD came back equal to logP,
+    about 3 log units too lipophilic for a molecule that is charged at every pH.  The
+    plateau is a ceiling on such a design, and anything else ionisable lowers it."""
+    assert admet.log_d(3.0, [], 7.4, charge=1) == pytest.approx(3.0 - admet.ION_PAIR_DROP_BASE)
+    assert admet.log_d(3.0, [], 7.4, charge=-1) == pytest.approx(3.0 - admet.ION_PAIR_DROP_ACID)
+    # a second ionisable group can only push it further down, never back up
+    with_acid = admet.log_d(3.0, [("acid", "sulfonic acid", 0, 0.4)], 7.4, charge=1)
+    assert with_acid <= 3.0 - admet.ION_PAIR_DROP_BASE
+    # an uncharged molecule is unaffected, and choline lands on the plateau
+    assert admet.log_d(3.0, [], 7.4, charge=0) == pytest.approx(3.0)
+    choline = props("C[N+](C)(C)CCO")
+    assert choline["logD"] == pytest.approx(choline["cLogP"] - admet.ION_PAIR_DROP_BASE, abs=0.01)
+    assert any("permanently charged" in c for c in choline["caveats"])
