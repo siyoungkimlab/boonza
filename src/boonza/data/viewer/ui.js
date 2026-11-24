@@ -2818,12 +2818,29 @@ export function setupUI(app) {
 
   // --- command line -------------------------------------------------------------------------------
 
+  // The command line sits where the atom information does -- both are at the top left of
+  // the view -- so opening it used to cover what the atom under the pointer is, which is
+  // exactly what someone typing a selection wants to read.  Everything at that corner
+  // moves down by the line's own height instead, measured rather than guessed, so it
+  // stays right whatever the font or the zoom does to it.
+  function clearsCLI() {
+    const cli = $("cli");
+    const h = cli.hidden ? 0 : cli.offsetHeight + 6;
+    $("stage").style.setProperty("--cli-h", `${h}px`);
+  }
   function openCLI(text = "") {
     $("cli").hidden = false;
+    clearsCLI();
     $("cli-input").value = text;
     $("cli-input").focus();
   }
-  const closeCLI = () => { $("cli").hidden = true; $("cli-input").blur(); };
+  const closeCLI = () => {
+    $("cli").hidden = true;
+    clearsCLI();
+    $("cli-input").blur();
+  };
+  addEventListener("resize", clearsCLI);  // the line wraps at a narrow width
+  clearsCLI();  // and right from the start, whichever way the line begins
   $("btn-cli").onclick = () => $("cli").hidden ? openCLI() : closeCLI();
   $("cli-close").onclick = closeCLI;
   // Enter runs a command and the line stays, empty, for the next; up and down bring

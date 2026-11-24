@@ -190,7 +190,7 @@ label.mgroup input { margin: 0; }
 .label.meter { color: #d4a000; font-weight: 600; }
 body.dark .label.meter { color: #ffd34d; }
 #rubber { position: absolute; border: 1px dashed var(--accent); background: var(--accent-soft); pointer-events: none; }
-#message { position: absolute; left: 10px; top: 8px; right: 10px; font: 12px system-ui, sans-serif;
+#message { position: absolute; left: 10px; top: calc(8px + var(--cli-h, 0px)); right: 10px; font: 12px system-ui, sans-serif;
   pointer-events: none; white-space: pre-wrap; }
 #message .err { color: var(--red); }
 #summary { position: absolute; top: 8px; right: 10px; z-index: 5; display: grid; grid-template-columns: auto auto;
@@ -202,7 +202,7 @@ body.dark .label.meter { color: #ffd34d; }
 #summary .v { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* the ligand's numbers, top left: live while it is edited (the mirror of #summary) */
-#ligprops { position: absolute; top: 30px; left: 10px; z-index: 5; display: grid; grid-template-columns: auto auto;
+#ligprops { position: absolute; top: calc(30px + var(--cli-h, 0px)); left: 10px; z-index: 5; display: grid; grid-template-columns: auto auto;
   gap: 1px 10px; padding: 6px 9px; font: 12px system-ui, sans-serif; background: var(--panel); opacity: 0.9;
   border: 1px solid var(--line); border-radius: 8px; }
 #ligprops[hidden] { display: none; }

@@ -4266,3 +4266,20 @@ def test_the_guides_are_wireframe_so_they_never_hide_what_is_being_placed():
     assert "great circles" in main[main.index("function membraneGuides(") - 900 :]
     assert body.count("emptyLayer(") == 2  # a faint fill, and the lines that do the work
     assert "spheres" not in body  # the sphere is lines, not an impostor that would occlude
+
+
+def test_the_command_line_does_not_cover_the_atom_information():
+    """The command line and the atom information are both at the top left of the view,
+    so opening the line used to hide what the atom under the pointer is -- exactly what
+    someone typing a selection wants to read.  Everything in that corner clears the
+    line by its own measured height instead of a guessed one, so it stays right whatever
+    the font or a narrow window does to it."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    ui = (here / "ui.js").read_text(encoding="utf-8")
+    style = (here / "style.css").read_text(encoding="utf-8")
+    assert "function clearsCLI()" in ui
+    assert "cli.offsetHeight" in ui  # measured, not a constant that drifts
+    assert ui.count("clearsCLI()") >= 4  # open, close, resize, and the start
+    for rule in ("#message {", "#ligprops {"):
+        line = style[style.index(rule) :][: style[style.index(rule) :].index("}")]
+        assert "var(--cli-h, 0px)" in line, rule

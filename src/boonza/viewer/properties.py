@@ -185,7 +185,7 @@ def lipophilicity(system) -> np.ndarray:
     alike (same names, same bonds): a protein is twenty-odd small molecules
     to type, and one residue RDKit refuses costs only itself.
     """
-    from rdkit import Chem, RDLogger
+    from rdkit import Chem, rdBase
     from rdkit.Chem import rdMolDescriptors
 
     n = system.natoms
@@ -208,8 +208,12 @@ def lipophilicity(system) -> np.ndarray:
     for a in range(n):
         members[res[a]].append(a)
     cache: dict = {}
-    RDLogger.DisableLog("rdApp.*")
-    try:
+    # Quiet while this runs -- the failures are returned, not printed -- and quiet in a
+    # way that gives the logger back exactly as it was found.  DisableLog/EnableLog is
+    # not a pair: EnableLog turns on *every* level including rdApp.info, which RDKit
+    # keeps off by default, so one call to this function left the whole process chatty
+    # ("Running Uncharger" on every property computed, forever after).
+    with rdBase.BlockLogs():
         for r, own in enumerate(members):
             if not own:
                 continue
@@ -235,8 +239,6 @@ def lipophilicity(system) -> np.ndarray:
                     if anum[a] == 6 and any(anum[x] in (7, 8) for x, _ in nbrs[a]):
                         got[k] = 0.0
             out[own] = got
-    finally:
-        RDLogger.EnableLog("rdApp.*")
     # by name too: a file with a formal charge on its metal alone says nothing of its aspartates
     q = np.maximum(np.abs(group_charges(system)), np.abs(template_charges(system)))
     charged = (q >= 0.3) & (np.asarray(anum) > 1)
