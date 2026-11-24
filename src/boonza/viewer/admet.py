@@ -16,7 +16,8 @@ methods are published ones, cited where they are used:
                 ionisable group located by the table below (``ACIDS``, ``BASES``) and
                 priced by the fitted forest, and an ionised group left partitioning as
                 an ion pair rather than not at all (the "diff 3-4" approximation;
-                Scherrer 1984, Avdeef ch. 4)
+                Scherrer 1984, Avdeef ch. 4).  The design is neutralised first
+                (:func:`neutralised`), because that is the species a pKa belongs to
   pKa           a random forest over the local environment of the ionisable atom,
                 fitted from Baltruschat & Czodrowski's collection (CC BY 4.0), with
                 extra sites from Dimorphite-DL (Ropp et al., J Cheminform 2019, 11, 14)
@@ -464,6 +465,34 @@ def refine_sites(mol, sites):
     return out
 
 
+def neutralised(mol):
+    """The neutral parent of a molecule drawn in one of its ionised forms.
+
+    Every pattern in :data:`ACIDS` and :data:`BASES` matches the *protonated* acid and
+    the *unprotonated* base -- the neutral species, which is what a pKa is a property
+    of, and several of the base patterns exclude ``[N+]`` outright.  A design that comes
+    out of a prepared structure is not drawn that way: an amine arrives as ``[NH3+]``
+    and a carboxylic acid as ``[O-]``, because that is what it is in the simulation it
+    was built for.  Matched as drawn, such a design shows *no* ionisable site at all,
+    and then Henderson-Hasselbalch has nothing to correct, so its logD comes back
+    exactly equal to its logP -- a number that looks computed and is not.
+
+    RDKit's ``Uncharger`` adds and removes the protons that balance, and leaves alone a
+    charge that nothing can balance: a quaternary ammonium stays ``+1`` (so the
+    permanent-charge caveat still fires) and a betaine stays a zwitterion (whose
+    carboxylate the ``"carboxylate (as drawn)"`` class is there to catch).  The
+    molecule is copied, never neutralised in place: the caller is still drawing it.
+    """
+    from rdkit import Chem
+    from rdkit.Chem.MolStandardize import rdMolStandardize
+
+    try:
+        neutral = rdMolStandardize.Uncharger().uncharge(Chem.Mol(mol))
+    except Exception:  # a valence the standardiser rejects: read it as drawn
+        return mol
+    return mol if neutral is None else neutral
+
+
 def ionisable(mol, measured=None, refine: bool = True) -> list[tuple[str, str, int, float]]:
     """Every ionisable group of ``mol``: (acid or base, label, atom, pKa).  A heavy
     atom belongs to one group only, the first pattern that claims it, so a phenol in
@@ -539,7 +568,7 @@ ION_PAIR_DROP_ACID: float | None = 4.0
 ION_PAIR_DROP_BASE: float | None = 3.0
 
 
-def log_d(logp: float, sites, ph: float = 7.4) -> float:
+def log_d(logp: float, sites, ph: float = 7.4, charge: int = 0) -> float:
     """Crippen logP corrected for whatever is ionised at ``ph``.
 
     Henderson-Hasselbalch gives how much of the molecule is neutral::
@@ -551,6 +580,14 @@ def log_d(logp: float, sites, ph: float = 7.4) -> float:
     manage as ion pairs (:data:`ION_PAIR_DROP_ACID`, :data:`ION_PAIR_DROP_BASE`)::
 
         logD = logP + log10(neutral + acid/total * 10^-drop + base/total * 10^-drop)
+
+    ``charge`` is a *permanent* formal charge -- a quaternary ammonium, a sulfonate --
+    which no pKa governs and which therefore appears in none of the sites above.  Such a
+    molecule is fully ionised at every pH, so it can never partition better than the ion
+    pair does: the plateau ``logP - drop`` becomes a ceiling on the result, and whatever
+    else is ionisable can only push it lower.  Without that, a permanently charged
+    design had nothing for Henderson-Hasselbalch to correct and its logD came back equal
+    to its logP, some 3 log units too lipophilic.
     """
     acid = base = 0.0
     for kind, _label, _atom, pka in sites:
@@ -569,7 +606,12 @@ def log_d(logp: float, sites, ph: float = 7.4) -> float:
         share += (acid / total) * 10.0**-ION_PAIR_DROP_ACID
     if ION_PAIR_DROP_BASE is not None:
         share += (base / total) * 10.0**-ION_PAIR_DROP_BASE
-    return logp + math.log10(share)
+    value = logp + math.log10(share)
+    # a permanent charge: the ion-pair plateau is a ceiling, not a correction to add
+    drop = ION_PAIR_DROP_BASE if charge > 0 else ION_PAIR_DROP_ACID
+    if charge and drop is not None:
+        value = min(value, logp - drop)
+    return value
 
 
 def ionised_form(sites, ph: float = 7.4, charge: int = 0) -> str:
@@ -873,6 +915,7 @@ def properties(mol, ph: float = 7.4, measured=None) -> dict:
     from rdkit.Chem import QED, Crippen, Descriptors, Lipinski, rdMolDescriptors
 
     mol = Chem.RemoveHs(mol)  # the descriptors count hydrogens themselves
+    mol = neutralised(mol)  # and the pKa table wants the neutral parent
     heavy = mol.GetNumHeavyAtoms()
     aromatic = sum(1 for a in mol.GetAtoms() if a.GetIsAromatic())
     symbols = [a.GetSymbol() for a in mol.GetAtoms()]
@@ -887,7 +930,7 @@ def properties(mol, ph: float = 7.4, measured=None) -> dict:
 
     sites = ionisable(mol, measured)
     form = ionised_form(sites, ph, charge)
-    logd = log_d(logp, sites, ph)
+    logd = log_d(logp, sites, ph, charge)
     gi, bbb = boiled_egg(tpsa, logp)
     s_esol = esol(logp, mw, rotatable, aromatic / heavy if heavy else 0.0)
     s_ali = ali_logs(logp, tpsa)
@@ -2190,7 +2233,13 @@ def report_html(designs, group: str, ph: float = 7.4, title: str = "") -> str:
         "without that floor logD falls without limit and every cation reads about 0.9 too "
         "low. A measured pKa, given as a design's <code>pka_acid</code> or "
         "<code>pka_base</code> field, replaces the table for that design and is the single "
-        "biggest thing that improves its logD.</p>"
+        "biggest thing that improves its logD. A design is neutralised before its pKa is "
+        "read, since that is the species a pKa belongs to: a design taken from a prepared "
+        "structure arrives drawn as the simulation needed it &mdash; the amine protonated, "
+        "the acid deprotonated &mdash; and read that way it would show no ionisable group "
+        "at all, leaving its logD equal to its logP. A charge no proton can balance, such "
+        "as a quaternary ammonium, survives that step, and holds logD down at the ion-pair "
+        "plateau for good.</p>"
         "<p><strong>The pKa of each group is then fitted, not looked up.</strong> The table "
         "locates the ionisable atom; a random forest over its local environment &mdash; the "
         "Gasteiger charges around it, the electron-withdrawing and donating groups at two, "
