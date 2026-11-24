@@ -4121,3 +4121,148 @@ def test_the_series_table_sorts_on_several_columns_at_once():
     # the heading numbers the keys so their order is never a guess
     assert "keys.length > 1 ? rank + 1" in ui
     assert "shift-click to sort within the columns already chosen" in ui
+
+
+# --- the ligand's numbers, live in the corner of the window ---------------------------
+
+
+def _lig_session(smiles="CC(C)Cc1ccc(C(C)C(=O)O)cc1"):
+    """A one-ligand session: the residue is named so the ligand selection finds it."""
+    s = boonza.from_smiles(smiles)
+    for r in range(s.nresidues):
+        s.residues["name"][r] = "LIG"
+    return viewer.Session(s)
+
+
+def test_the_ligand_readout_gives_the_four_numbers_and_the_reports_own_values():
+    """MW, heavy atoms, logP and logD of the ligand, for the readout at the top left.
+    They must be the ADME report's own values, computed the same way: a design that read
+    one logD in the corner of the window and another in its report would be worse than
+    no readout at all."""
+    pytest.importorskip("rdkit")
+    from rdkit import Chem
+
+    from boonza.viewer import admet
+
+    p = _lig_session().ligand_properties()
+    assert p["name"] == "LIG"
+    assert p["heavy atoms"] == 15
+    assert p["MW"] == pytest.approx(206.3, abs=0.1)
+    want = admet.properties(Chem.MolFromSmiles("CC(C)Cc1ccc(C(C)C(=O)O)cc1"))
+    for key in ("MW", "heavy atoms", "cLogP", "logD"):
+        assert p[key] == want[key], key
+    # an acid, so logD is well below logP -- the readout is worth having only if it moves
+    assert p["logD"] < p["cLogP"] - 2
+
+
+def test_the_readout_is_of_the_neutral_parent_however_the_ligand_is_drawn():
+    """A ligand out of a prepared structure is drawn as the simulation needed it: the
+    acid deprotonated, the amine protonated.  The readout must not change when it is,
+    or the same compound would read two different logD values depending on which file
+    it came from."""
+    pytest.importorskip("rdkit")
+    for neutral, prepared in (("CC(C)Cc1ccc(C(C)C(=O)O)cc1", "CC(C)Cc1ccc(C(C)C(=O)[O-])cc1"),
+                              ("CC(C)NCC(O)COc1cccc2ccccc12",
+                               "CC(C)[NH2+]CC(O)COc1cccc2ccccc12")):  # fmt: skip
+        a = _lig_session(neutral).ligand_properties()
+        b = _lig_session(prepared).ligand_properties()
+        for key in ("MW", "heavy atoms", "cLogP", "logD"):
+            assert a[key] == pytest.approx(b[key], abs=0.01), (key, prepared)
+
+
+def test_the_ligand_readout_is_served_and_says_so_when_there_is_no_ligand(served):
+    """The route the page polls after every edit.  No ligand is not an error that should
+    empty the window: the readout hides itself instead."""
+    pytest.importorskip("rdkit")
+    get, _post = served(_lig_session())
+    status, _headers, body = get("api/ligprops?m=0&which=0&sel=")
+    assert status == 200
+    out = json.loads(body)
+    assert out["heavy atoms"] == 15 and out["logD"] < out["cLogP"]
+
+    # nothing the ligand selection will have (water is not a ligand): the route answers
+    # an error rather than a number, and the readout hides itself on it
+    water = boonza.from_smiles("CCO")
+    for r in range(water.nresidues):
+        water.residues["name"][r] = "HOH"
+    get, _post = served(viewer.Session(water))
+    status, _headers, body = get("api/ligprops?m=0&which=0&sel=")
+    assert status == 200 and "error" in json.loads(body)
+
+
+def test_the_readout_refreshes_on_the_drawing_s_trigger_and_shares_its_ligand():
+    """Both left-hand panels go through ligandTarget(), so the picture and the numbers
+    beside it are always of the same molecule; and the numbers are refreshed from
+    footerEdit(), which every edit and every selection reaches.  Hooking them to
+    separate triggers is what would let them drift apart."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    ui = (here / "ui.js").read_text(encoding="utf-8")
+    assert "async function ligandTarget()" in ui
+    # the drawing asks it too, rather than keeping its own copy of the resolution
+    body = ui[ui.index("async function refresh2D()") :][:1200]
+    assert "await ligandTarget()" in body
+    footer = ui[ui.index("function footerEdit()") :]
+    footer = footer[: footer.index('const box = $("footer-edit")')]
+    assert "refreshLigProps" in footer and "refresh2D" in footer
+    assert "api/ligprops?m=" in ui and 'add("h", out.name' in ui
+    # on unless turned off, and the choice is remembered
+    main = (here / "main.js").read_text(encoding="utf-8")
+    assert 'ligProps: localStorage.getItem("boonza.ligprops") !== "0"' in main
+    assert '{ label: "Ligand Numbers"' in ui
+    style = (here / "style.css").read_text(encoding="utf-8")
+    assert "#ligprops {" in style and "#ligprops[hidden]" in style
+    assert 'id="ligprops"' in (here / "index.html").read_text(encoding="utf-8")
+
+
+def test_an_edited_ligands_weight_is_the_whole_molecules():
+    """The mass column defaults to 0.0, and an edit fills it in only for the atoms it
+    touched.  Summing the column as it stood made an edited ligand's MW the mass of the
+    single atom that had just been changed -- 14.01 for a carbon turned nitrogen -- so
+    the missing masses are filled in atom by atom, not all or nothing."""
+    pytest.importorskip("rdkit")
+    session = _lig_session()
+    masses = session.system.atoms["mass"]
+    assert not np.asarray(masses, dtype=float).any()  # none to begin with
+    masses[4] = 14.01  # as an edit of that one atom leaves it
+    whole = session.ligand_properties()["MW"]
+    assert whole == pytest.approx(206.3, abs=0.2), whole
+
+
+# --- the membrane guides --------------------------------------------------------------
+
+
+def test_the_membrane_guides_are_three_nanometres_apart_about_z_equals_zero():
+    """Two planes perpendicular to z with a sphere at the origin, for turning a protein
+    into a bilayer.  The midplane is z = 0 and the separation is a HYDROPHOBIC thickness,
+    because that is the convention boonza's own builder already works in: bilayer() puts
+    the midplane at the centre of the box and, with protein_origin, the protein's z = 0
+    there, "as OPM orients structures".  30 A, not the 38-40 A the phosphates sit apart
+    -- a transmembrane domain aligned to that buries polar surface in the acyl chains."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    main = (here / "main.js").read_text(encoding="utf-8")
+    ui = (here / "ui.js").read_text(encoding="utf-8")
+    body = main[main.index("function membraneGuides(") :][:4000]
+    assert "const half = g.d / 2" in body  # the planes straddle z = 0, not z = d
+    assert "g.radius ?? half" in body  # the sphere is inscribed: tangent to both planes
+    assert "noclip" in main and "emptyLayer(" in main
+    # off unless asked for, and it survives a saved session
+    assert "  membrane: null," in main
+    assert "membrane: state.membrane" in main and "membrane: page.membrane || null" in main
+    assert "if (state.membrane) scene.layers.push(...membraneGuides(" in main
+    # the default, and the number that is not the one to use, are both written down
+    assert "[30, " in ui and "hydrophobic" in ui and "phosphate" in ui
+    assert '{ label: "Membrane Guides' in ui and "function membranePanel()" in ui
+
+
+def test_the_guides_are_wireframe_so_they_never_hide_what_is_being_placed():
+    """The camera starts looking down z, which is face-on to these planes: a filled plane
+    washes the whole view, and a solid sphere at the origin is buried inside the protein,
+    which is where it is least useful.  So the planes carry a grid and the sphere is
+    three great circles -- readable from every angle, hiding nothing."""
+    here = Path(boonza.__file__).parent / "data/viewer"
+    main = (here / "main.js").read_text(encoding="utf-8")
+    assert "MEMBRANE_GRID" in main
+    body = main[main.index("function membraneGuides(") :][:4000]
+    assert "great circles" in main[main.index("function membraneGuides(") - 900 :]
+    assert body.count("emptyLayer(") == 2  # a faint fill, and the lines that do the work
+    assert "spheres" not in body  # the sphere is lines, not an impostor that would occlude

@@ -139,6 +139,7 @@ label.mgroup input { margin: 0; }
 #rep-edit .dot { width: 16px; height: 16px; border-radius: 50%; padding: 0; border: 1px solid var(--line); }
 #rep-edit .dot.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
 #rep-edit .note { color: var(--muted); font-size: 11px; margin-top: 5px; }
+.panel .note { color: var(--muted); font-size: 11px; margin-top: 6px; max-width: 320px; line-height: 1.4; }
 #rep-edit .opacity { flex: 1; accent-color: var(--accent); }
 #rep-edit .pct { color: var(--muted); font-size: 11px; }
 .rep .style small { color: var(--muted); font-weight: 400; }
@@ -199,6 +200,16 @@ body.dark .label.meter { color: #ffd34d; }
 #summary .k { color: var(--muted); }
 #summary .h { grid-column: 1 / -1; font-weight: 700; margin-top: 4px; border-top: 1px solid var(--line); padding-top: 3px; }
 #summary .v { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* the ligand's numbers, top left: live while it is edited (the mirror of #summary) */
+#ligprops { position: absolute; top: 30px; left: 10px; z-index: 5; display: grid; grid-template-columns: auto auto;
+  gap: 1px 10px; padding: 6px 9px; font: 12px system-ui, sans-serif; background: var(--panel); opacity: 0.9;
+  border: 1px solid var(--line); border-radius: 8px; }
+#ligprops[hidden] { display: none; }
+#ligprops .k { color: var(--muted); }
+#ligprops .v { text-align: right; font-variant-numeric: tabular-nums; }
+#ligprops .h { grid-column: 1 / -1; font-weight: 700; padding-bottom: 2px; }
+#ligprops .stale { opacity: 0.45; }  /* being recomputed: the last numbers, visibly old */
 #bubble { position: absolute; z-index: 20; pointer-events: none; background: var(--raised); color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; font-size: 11px; white-space: pre;
   box-shadow: 0 4px 12px var(--shadow); }

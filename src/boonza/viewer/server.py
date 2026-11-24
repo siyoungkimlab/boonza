@@ -208,6 +208,13 @@ class _Handler(BaseHTTPRequestHandler):
                 flip=query.get("flip", [""])[0],
                 branches=branches,
                 layout=int(query.get("layout", ["0"])[0])))  # fmt: skip
+        elif url.path == "/api/ligprops":
+            sel = [int(x) for x in query.get("sel", [""])[0].split(",") if x]
+            try:
+                self._json(self.viewer.session(arg("m")).ligand_properties(
+                    sel, which=int(query.get("which", ["0"])[0])))  # fmt: skip
+            except Exception as exc:  # no ligand yet: the readout hides, not the page
+                self._json({"error": str(exc)})
         elif url.path == "/api/atom":
             self._json(self.viewer.session(arg("m")).atom_info(arg("a")))
         elif url.path == "/api/stereocentre":

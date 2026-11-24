@@ -1668,6 +1668,94 @@ class Session:
         out.sort(key=lambda x: -x["size"])
         return out
 
+    def _ligand_molecule(self, atoms=(), which: int = 0):
+        """Which ligand is meant, as ``(its atoms, its heavy atoms, every ligand, which)``:
+        the molecule of the selected ``atoms``, else ``which`` of :meth:`ligand_molecules`.
+
+        The 2D panel and the properties readout both go through this, so the picture and
+        the numbers beside it are always of the same molecule."""
+        s = self.system
+        frag = s.fragids
+        lig = [
+            a for a in atoms if len(s.select(f"index {a} and not (protein or nucleic or water)"))
+        ]
+        found = self.ligand_molecules()
+        if not lig:
+            if not found:
+                raise ValueError("no ligand: choose one (Ligand | Choose Ligand)")
+            which = max(0, min(int(which), len(found) - 1))
+            lig = [found[which]["atom"]]
+        mol_atoms = np.flatnonzero(np.isin(frag, frag[lig]))
+        polymer = set(s.select("protein or nucleic").ids.tolist())
+        if polymer & set(mol_atoms.tolist()):  # bonded to the protein (heme, a covalent
+            # ligand): the ligand's own residues
+            res = set(np.asarray(s.atoms["residue"])[lig].tolist())
+            mol_atoms = np.flatnonzero(np.isin(np.asarray(s.atoms["residue"]), list(res)))
+        anum = np.asarray(s.atoms["anum"])
+        keep = [int(a) for a in mol_atoms if anum[a] > 1]
+        return mol_atoms, keep, found, which
+
+    def ligand_name(self, atoms=(), which: int = 0) -> str:
+        """What to call the ligand meant -- its residue name and number."""
+        s = self.system
+        keep = self._ligand_molecule(atoms, which)[1]
+        r = int(s.atoms["residue"][keep[0]])
+        return f"{s.residues['name'][r]}{int(s.residues['resid'][r]) or ''}".strip() or "ligand"
+
+    def ligand_properties(self, atoms=(), which: int = 0) -> dict:
+        """The four numbers worth watching while a ligand is edited: its molecular
+        weight, its heavy-atom count, its Crippen logP and its logD at pH 7.4.
+
+        Cheap enough to recompute on every edit -- about 9 ms, of which logD is 2 --
+        which is the point: the readout is live, so an added methyl or a swapped ring is
+        answered at once rather than at the end.  The numbers are the same ones
+        :mod:`boonza.viewer.admet` puts in the ADME report, computed the same way, so a
+        design cannot read one value in the corner of the window and another in its
+        report.  ``MW`` and ``heavy atoms`` come from the structure itself and so survive
+        a molecule RDKit will not have (a metal its valence rules reject); ``cLogP`` and
+        ``logD`` are then ``None``, since neither means anything without a sanitized
+        molecule."""
+        from ..chem import to_rdkit
+        from ..elements import _MSYS_MASSES
+
+        s = self.system
+        mol_atoms, keep, found, which = self._ligand_molecule(atoms, which)
+        # A structure's own masses where it has them, the elements' where it does not:
+        # the column defaults to 0.0, so a built or PDB-read system carries none, and an
+        # edited one carries a mass for the atoms the edit touched and zero for the rest
+        # -- which is why this fills in atom by atom.  Summing the column as it stands
+        # made an edited ligand's MW the mass of the one atom that had just been changed.
+        mass = np.asarray(s.atoms["mass"], dtype=float)[mol_atoms]
+        missing = ~(mass > 0)
+        if missing.any():
+            anum = np.asarray(s.atoms["anum"])[mol_atoms][missing]
+            mass = mass.copy()
+            mass[missing] = _MSYS_MASSES[np.clip(anum, 0, len(_MSYS_MASSES) - 1)]
+        out = {
+            "name": self.ligand_name(atoms, which),
+            "MW": round(float(mass.sum()), 2),
+            "heavy atoms": len(keep),
+            "cLogP": None,
+            "logD": None,
+            "pH": 7.4,
+            "molecules": found,
+            "which": which if not atoms else -1,
+        }
+        try:
+            from . import admet
+
+            mol = to_rdkit(s, keep, sanitize=True, implicit_hydrogens=True)
+            props = admet.properties(mol, out["pH"])
+        except Exception:  # RDKit absent, or a molecule its valence rules reject
+            return out
+        # MW from the sanitized molecule, whose implicit hydrogens are the right count
+        # even where the structure was handed over without any
+        out.update({"MW": props["MW"], "heavy atoms": props["heavy atoms"],
+                    "cLogP": props["cLogP"], "logD": props["logD"],
+                    "ionised form": props["ionised form"],
+                    "formula": props["formula"]})  # fmt: skip
+        return out
+
     def ligand2d(self, atoms=(), dark: bool = True, width: int = 360, height: int = 260,
                  which: int = 0, hydrogens: str = "none", stereo: bool = False,
                  rotate: float = 0.0, flip: str = "", branches=(),
@@ -1695,24 +1783,8 @@ class Session:
         from ..chem import to_rdkit
 
         s = self.system
-        frag = s.fragids
-        lig = [
-            a for a in atoms if len(s.select(f"index {a} and not (protein or nucleic or water)"))
-        ]
-        found = self.ligand_molecules()
-        if not lig:
-            if not found:
-                raise ValueError("no ligand: choose one (Ligand | Choose Ligand)")
-            which = max(0, min(int(which), len(found) - 1))
-            lig = [found[which]["atom"]]
-        mol_atoms = np.flatnonzero(np.isin(frag, frag[lig]))
-        polymer = set(s.select("protein or nucleic").ids.tolist())
-        if polymer & set(mol_atoms.tolist()):  # bonded to the protein (heme, a covalent
-            # ligand): the ligand's own residues
-            res = set(np.asarray(s.atoms["residue"])[lig].tolist())
-            mol_atoms = np.flatnonzero(np.isin(np.asarray(s.atoms["residue"]), list(res)))
+        mol_atoms, keep, found, which = self._ligand_molecule(atoms, which)
         anum = np.asarray(s.atoms["anum"])
-        keep = [int(a) for a in mol_atoms if anum[a] > 1]
         if hydrogens != "none":  # the hydrogens drawn are part of the molecule drawn
             bonded = {}
             for i, j in zip(np.asarray(s.bonds["i"]), np.asarray(s.bonds["j"]), strict=True):

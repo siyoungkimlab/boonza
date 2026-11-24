@@ -383,6 +383,12 @@ export function setupUI(app) {
     $("f-cell").classList.toggle("on", state.cell);
     app.rebuild();
   }
+  // on unless it has been turned off: a ligand's numbers are what the window is for
+  function toggleLigProps() {
+    state.ligProps = state.ligProps === false;
+    localStorage.setItem("boonza.ligprops", state.ligProps ? "1" : "0");
+    refreshLigProps();
+  }
   const viewItems = () => [
     { label: "Representations", run: () => toggleSide(), checked: () => !$("window").classList.contains("nomodels") },
     "-",
@@ -407,6 +413,8 @@ export function setupUI(app) {
     { label: "Secondary Structure of Each Frame", run: () => { state.ssEachFrame = !state.ssEachFrame; app.setFrame(state.frame); },
       checked: () => !!state.ssEachFrame },
     { label: "2D Ligand", run: toggle2D, checked: () => !$("lig2d").hidden },
+    { label: "Ligand Numbers", run: toggleLigProps, checked: () => state.ligProps !== false },
+    { label: "Membrane Guides…", run: membranePanel, checked: () => !!state.membrane },
     { label: "Trackball", run: toggleTrackball, checked: () => !$("trackball").hidden },
     "-",
     { label: "Fog…", run: fogPanel },
@@ -2307,16 +2315,15 @@ export function setupUI(app) {
     ligands2D = { key, list };
     return list;
   }
-  let pending2D = 0;
-  async function refresh2D() {
-    if ($("lig2d").hidden) return;
-    const ticket = ++pending2D;
+  // Which ligand the left-hand panels are about: the molecule of the selection, else
+  // the one stepped to.  The 2D drawing and the properties readout both come through
+  // here, so the picture and the numbers beside it can never be of different molecules.
+  async function ligandTarget() {
     const sel = app.selection();
-    // a selection says which molecule is wanted; otherwise it is the one stepped to
-    let m = sel[0]?.[0], ids = sel[0]?.[1] || [], within = draw2D.which, all = [];
+    let m = sel[0]?.[0], within = draw2D.which;
+    const ids = sel[0]?.[1] || [];
     if (!m) {
-      all = await ligandList();
-      if (ticket !== pending2D) return;
+      const all = await ligandList();
       if (all.length) {
         draw2D.which = Math.max(0, Math.min(draw2D.which, all.length - 1));
         const pick = all[draw2D.which];
@@ -2328,9 +2335,67 @@ export function setupUI(app) {
       }
     }
     if (!m?.topo) {
-      try { await app.load(m); } catch (e) { /* said below */ }
+      try { await app.load(m); } catch (e) { /* the caller says so */ }
     }
-    if (!m?.topo) return;
+    return m?.topo ? { m, ids, within } : null;
+  }
+  // --- the ligand's numbers, top left, live while it is built -------------------------
+  //
+  // MW, heavy atoms, logP and logD of whichever ligand the 2D panel is about, recomputed
+  // on the same trigger as the drawing, so an added methyl or a swapped ring is answered
+  // at once rather than at the end of the session.  It is affordable because it is cheap:
+  // about 9 ms on the server, of which logD is 2.  The numbers are the report's own, so
+  // a design cannot read one logD in the corner of the window and another in its report.
+  //
+  // The last numbers stay up, dimmed, while the next are fetched: blanking them made the
+  // panel flicker on every edit, and a number that is one edit old and visibly so is
+  // easier to read than no number at all.
+  const LIGPROPS = [["MW", "MW", "molecular weight"],
+                    ["heavy atoms", "N heavy", "heavy atoms (hydrogens not counted)"],
+                    ["cLogP", "logP", "Crippen logP (the WLOGP of SwissADME)"],
+                    ["logD", "logD", "logP corrected for what is ionised at pH 7.4"]];
+  let pendingProps = 0;
+  async function refreshLigProps() {
+    const box = $("ligprops");
+    if (state.ligProps === false) { box.hidden = true; box.dataset.at = ""; return; }
+    const ticket = ++pendingProps;
+    box.classList.add("stale");
+    let out = null;
+    try {
+      const target = await ligandTarget();
+      if (ticket !== pendingProps) return;
+      if (target) out = await app.getJSON(
+        `api/ligprops?m=${target.m.index}&which=${target.within}&sel=${target.ids.slice(0, 400).join(",")}`);
+    } catch (e) {  // an exported page has no server to ask, and says nothing about it
+      out = null;
+    }
+    if (ticket !== pendingProps) return;
+    box.classList.remove("stale");
+    if (!out || out.error || out.MW === undefined) { box.hidden = true; box.dataset.at = ""; return; }
+    box.innerHTML = "";
+    const add = (cls, text, title = "") => {
+      const d = document.createElement("div");
+      d.className = cls; d.textContent = text; d.title = title;
+      box.append(d);
+    };
+    add("h", out.name || "ligand", out.formula || "");
+    for (const [key, label, title] of LIGPROPS) {
+      const v = out[key];
+      add("k", label, title);
+      add("v", v === null || v === undefined ? "--" : String(v),
+          v === null ? "RDKit would not have this molecule" : title);
+    }
+    box.dataset.at = out.name || "ligand";
+    box.hidden = false;
+  }
+  let pending2D = 0;
+  async function refresh2D() {
+    if ($("lig2d").hidden) return;
+    const ticket = ++pending2D;
+    const target = await ligandTarget();
+    if (ticket !== pending2D) return;
+    if (!target) return;
+    const { m, ids, within } = target;
     const drawing = `${m.index}:${within}:${ids.join(",")}`;
     if (draw2D.at !== drawing) {  // another molecule: its own picture, not the last one's
       Object.assign(draw2D, { rotate: 0, flip: "", branches: [], layout: 0, picked: null });
@@ -2630,6 +2695,7 @@ export function setupUI(app) {
   };
   function footerEdit() {
     setTimeout(refresh2D, 0);
+    setTimeout(refreshLigProps, 0);  // the ligand's numbers, on the drawing's trigger
     const box = $("footer-edit");
     box.innerHTML = "";
     const sel = app.selection();
@@ -5358,6 +5424,50 @@ export function setupUI(app) {
     }, where);
   }
 
+  // The membrane guides: two planes perpendicular to z and a sphere at the origin, for
+  // turning and sliding a protein into a bilayer.  The separation is a hydrophobic
+  // thickness, because that is what the midplane-at-z=0 convention in
+  // martini/membrane.py (protein_origin, "as OPM orients structures") is about -- see
+  // membraneGuides() in main.js.  30 Å is the default and the one to use; the panel says
+  // what the other common value means rather than leaving it to be guessed.
+  const MEMBRANE_PRESETS = [
+    [30, "3.0 nm — hydrophobic core of a fluid POPC/POPE bilayer, and the mean hydrophobic thickness in OPM"],
+    [34, "3.4 nm — a cholesterol-rich plasma membrane"],
+    [38, "3.8 nm — phosphate to phosphate, not the hydrophobic core: a TM domain aligned to this buries polar surface"],
+  ];
+  function membranePanel() {
+    panel("membrane", "Membrane Guides", body => {
+      const g = state.membrane || { d: 30, radius: null, span: null };
+      const on = el("input", { type: "checkbox", checked: !!state.membrane });
+      const d = el("input", { type: "range", min: 20, max: 45, step: 0.5, value: g.d });
+      const shown = el("output", {}, `${(g.d / 10).toFixed(1)} nm`);
+      const tied = el("input", { type: "checkbox", checked: g.radius == null,
+                                 title: "the sphere inscribed between the planes, touching both" });
+      const r = el("input", { type: "range", min: 2, max: 30, step: 0.5, value: g.radius ?? g.d / 2 });
+      const note = el("div", { className: "note" }, "");
+      const say = () => {
+        const near = MEMBRANE_PRESETS.reduce((a, b) => Math.abs(b[0] - +d.value) < Math.abs(a[0] - +d.value) ? b : a);
+        note.textContent = Math.abs(near[0] - +d.value) <= 1 ? near[1]
+          : "the planes are the hydrophobic boundary, the midplane is z = 0 (what boonza's bilayer builder expects)";
+      };
+      const apply = () => {
+        r.disabled = tied.checked;
+        if (tied.checked) r.value = +d.value / 2;
+        shown.textContent = `${(+d.value / 10).toFixed(1)} nm`;
+        say();
+        state.membrane = on.checked ? { d: +d.value, radius: tied.checked ? null : +r.value, span: null } : null;
+        app.rebuild();
+      };
+      on.onchange = tied.onchange = apply;
+      d.oninput = r.oninput = apply;
+      r.disabled = tied.checked;
+      say();
+      body.append(row(el("label", {}, on, " show the guides")),
+                  row(el("span", { className: "what" }, "Apart"), d, shown),
+                  row(el("label", {}, tied, " sphere inscribed"), r),
+                  note);
+    }, [innerWidth - 700, innerHeight - 300]);
+  }
   function fogPanel() {
     panel("fog", "Fog", body => {
       const f = app.renderer.fog;
