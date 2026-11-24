@@ -4199,10 +4199,10 @@ def test_the_readout_refreshes_on_the_drawing_s_trigger_and_shares_its_ligand():
     ui = (here / "ui.js").read_text(encoding="utf-8")
     assert "async function ligandTarget()" in ui
     # the drawing asks it too, rather than keeping its own copy of the resolution
-    body = ui[ui.index("async function refresh2D()"):][:1200]
+    body = ui[ui.index("async function refresh2D()") :][:1200]
     assert "await ligandTarget()" in body
-    footer = ui[ui.index("function footerEdit()"):]
-    footer = footer[: footer.index("const box = $(\"footer-edit\")")]
+    footer = ui[ui.index("function footerEdit()") :]
+    footer = footer[: footer.index('const box = $("footer-edit")')]
     assert "refreshLigProps" in footer and "refresh2D" in footer
     assert "api/ligprops?m=" in ui and 'add("h", out.name' in ui
     # on unless turned off, and the choice is remembered
@@ -4241,7 +4241,7 @@ def test_the_membrane_guides_are_three_nanometres_apart_about_z_equals_zero():
     here = Path(boonza.__file__).parent / "data/viewer"
     main = (here / "main.js").read_text(encoding="utf-8")
     ui = (here / "ui.js").read_text(encoding="utf-8")
-    body = main[main.index("function membraneGuides("):][:4000]
+    body = main[main.index("function membraneGuides(") :][:4000]
     assert "const half = g.d / 2" in body  # the planes straddle z = 0, not z = d
     assert "g.radius ?? half" in body  # the sphere is inscribed: tangent to both planes
     assert "noclip" in main and "emptyLayer(" in main
@@ -4262,7 +4262,7 @@ def test_the_guides_are_wireframe_so_they_never_hide_what_is_being_placed():
     here = Path(boonza.__file__).parent / "data/viewer"
     main = (here / "main.js").read_text(encoding="utf-8")
     assert "MEMBRANE_GRID" in main
-    body = main[main.index("function membraneGuides("):][:4000]
-    assert "great circles" in main[main.index("function membraneGuides(") - 900:]
+    body = main[main.index("function membraneGuides(") :][:4000]
+    assert "great circles" in main[main.index("function membraneGuides(") - 900 :]
     assert body.count("emptyLayer(") == 2  # a faint fill, and the lines that do the work
     assert "spheres" not in body  # the sphere is lines, not an impostor that would occlude
