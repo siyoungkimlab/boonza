@@ -402,6 +402,7 @@ def test_the_floor_is_what_takes_the_bias_off_the_cations():
     """Propranolol is a protonated amine at pH 7.4, and without an ion-pair floor its
     logD was read about a log unit too low.  On the 1000 measured logD values the
     package ships, the floor takes a bias of -0.82 on the cations to +0.11."""
+
     def two_ways(smiles):
         mol = Chem.MolFromSmiles(smiles)
         sites = admet.ionisable(mol)
@@ -621,6 +622,7 @@ def test_a_pka_is_priced_by_its_substituents_not_only_by_its_class():
     assert table == [8.8]
     assert refined != table  # propranolol's amine is measured at 9.5, not the class 8.8
     assert 8.5 < refined[0] < 10.5
+
     # an amine beside an electron-withdrawing group must come out weaker than one that
     # is not, which a single class value cannot express at all
     def amine(smiles):
@@ -725,8 +727,15 @@ def test_the_forests_carry_the_attribution_their_licences_require():
     Dimorphite-DL's Apache licence also asks that the changes be stated.  The notices
     ship beside the data, not only in a commit message."""
     readme = (admet.DATA / "README.md").read_text()
-    for owed in ("Baltruschat", "CC BY 4.0", "AqSolDB", "CC0", "Durrant",
-                 "Apache License 2.0", "doi:10.1186/s13321-019-0336-9"):
+    for owed in (
+        "Baltruschat",
+        "CC BY 4.0",
+        "AqSolDB",
+        "CC0",
+        "Durrant",
+        "Apache License 2.0",
+        "doi:10.1186/s13321-019-0336-9",
+    ):
         assert owed in readme, owed
     assert "Changes from the original" in readme
     licence = (admet.DATA / "LICENSE.dimorphite-dl").read_text()
@@ -746,8 +755,14 @@ def test_every_bundled_data_file_is_named_in_the_repository_notice():
             continue  # the notices themselves
         assert f"src/boonza/data/admet/{path.name}" in notice, path.name
     # and each one's licence is named, since "attribution" is the whole condition
-    for owed in ("CC BY 4.0", "CC0 1.0", "Apache License, Version 2.0",
-                 "Baltruschat", "AqSolDB", "Durrant"):
+    for owed in (
+        "CC BY 4.0",
+        "CC0 1.0",
+        "Apache License, Version 2.0",
+        "Baltruschat",
+        "AqSolDB",
+        "Durrant",
+    ):
         assert owed in notice, owed
     # the two that are not MIT say so in as many words
     assert notice.count("not under the MIT licence") >= 3  # these two and SIRAH's
