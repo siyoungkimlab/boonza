@@ -483,11 +483,16 @@ def neutralised(mol):
     carboxylate the ``"carboxylate (as drawn)"`` class is there to catch).  The
     molecule is copied, never neutralised in place: the caller is still drawing it.
     """
-    from rdkit import Chem
+    from rdkit import Chem, rdBase
     from rdkit.Chem.MolStandardize import rdMolStandardize
 
     try:
-        neutral = rdMolStandardize.Uncharger().uncharge(Chem.Mol(mol))
+        # the Uncharger narrates itself at rdApp.info ("Running Uncharger", "Removed
+        # positive charge"), and this runs on every property of every design: blocked
+        # here rather than relying on the level being off, since anything in the process
+        # may turn it on
+        with rdBase.BlockLogs():
+            neutral = rdMolStandardize.Uncharger().uncharge(Chem.Mol(mol))
     except Exception:  # a valence the standardiser rejects: read it as drawn
         return mol
     return mol if neutral is None else neutral
